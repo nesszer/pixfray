@@ -187,6 +187,8 @@ try {
   await quick.route('**/api/catalog/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await quick.goto(base + '/overlay.html?arena=1&debug=1&cap=8&size=64');
   await quick.waitForFunction(() => window.__arenaSockets.length === 1 && window.__arenaDebug?.().profiles === 2);
+  await quick.waitForFunction(() => window.__arenaDebug().players.length === 2);
+  await quick.evaluate(() => { window.__arenaMove('101', 1200); window.__arenaMove('202', 60); });   // opposite edges, as in OBS
   await quick.evaluate(() => {
     const now = Date.now(), full = { '101': 100, '202': 100 };
     window.__sendArena(0, {
@@ -210,7 +212,9 @@ try {
   assert.equal(q.players.find(p => p.userId === '101').ko, false, 'loser stands until the finisher');
   await quick.waitForTimeout(500);
   await quick.screenshot({ path: 'screenshots/overlay-quick-duel-1280.png' });
-  await quick.waitForFunction(() => window.__arenaDebug().replays[0]?.hp['101'] === 0, null, { timeout: 4000 });
+  await quick.waitForFunction(() => window.__arenaDebug().replays[0]?.hp['101'] === 0, null, { timeout: 6000 });
+  const xs = (await quick.evaluate(() => window.__arenaDebug())).players.filter(p => p.userId === '101' || p.userId === '202').map(p => p.x);
+  assert.ok(Math.abs(xs[0] - xs[1]) < 110, 'fighters have met before the deciding roll (' + xs.join(' vs ') + ')');
   await quick.waitForFunction(() => window.__arenaDebug().replays.length === 0 && window.__arenaDebug().players.find(p => p.userId === '101').ko, null, { timeout: 4000 });
   await quick.screenshot({ path: 'screenshots/overlay-quick-ko-1280.png' });
   await quick.waitForTimeout(1500);

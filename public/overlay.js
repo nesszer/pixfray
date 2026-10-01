@@ -239,16 +239,26 @@ async function start() {
   }
   function floatText(p, text, color) { if (p) p.floatText = { text, color, until: Date.now() + 1200 }; }
   // Events of one duel that arrive together (a quick duel sends start, hit and KO at once) play one after another.
+  // The fighters first walk to meet (duel_started waits for that), then each swing gets its own beat.
   const DUEL_EVENT_GAP_MS = { duel_started: 700, duel_action: 600 };
-  const duelNextAt = new Map();
+  const DUEL_WALK_MS = 2000;   // longest walk to the meet point; far-apart fighters walk faster
+  const duelQueues = new Map();
   function queueArenaEvent(event) {
     const id = event?.duelId;
     if (!id) return handleArenaEvent(event);
-    const now = Date.now(), at = Math.max(now, duelNextAt.get(id) || 0);
-    duelNextAt.set(id, at + (DUEL_EVENT_GAP_MS[event.type] || 0));
-    if (duelNextAt.size > 50) duelNextAt.delete(duelNextAt.keys().next().value);
-    if (at <= now) handleArenaEvent(event);
-    else setTimeout(() => handleArenaEvent({ ...event, at: Number.isFinite(event.at) ? event.at + (at - now) : event.at }), at - now);
+    let q = duelQueues.get(id);
+    if (!q) duelQueues.set(id, q = { items: [], busy: false });
+    q.items.push({ event, received: Date.now() });
+    if (!q.busy) pumpDuel(id, q);
+  }
+  function pumpDuel(id, q) {
+    const item = q.items.shift();
+    if (!item) { q.busy = false; duelQueues.delete(id); return; }
+    q.busy = true;
+    const { event, received } = item, waited = Date.now() - received;
+    handleArenaEvent(waited && Number.isFinite(event.at) ? { ...event, at: event.at + waited } : event);
+    const gap = event.type === 'duel_started' ? Math.max(DUEL_EVENT_GAP_MS.duel_started, (meetPoints.get(id)?.walkMs || 0) + 200) : (DUEL_EVENT_GAP_MS[event.type] || 0);
+    if (gap) setTimeout(() => pumpDuel(id, q), gap); else pumpDuel(id, q);
   }
   function handleArenaEvent(event) {
     if (!event || typeof event !== 'object') return;
@@ -267,6 +277,14 @@ async function start() {
       case 'duel_started':
         if (event.duelId && event.a && event.b) {
           replays.set(event.duelId, { id: event.duelId, a: String(event.a), b: String(event.b), status: 'active', hp: { ...(event.hp || {}) }, rules: { maxHp: Number(arenaConfig?.maxHp) || 100 } });
+          const fa = findPlayer(String(event.a)), fb = findPlayer(String(event.b));
+          if (fa && fb && !meetPoints.has(event.duelId)) {
+            const meet = { x: freeMeetX((fa.x + fb.x) / 2, size * 1.15), aLeft: fa.x <= fb.x };
+            const far = Math.max(Math.abs(fa.x - meet.x), Math.abs(fb.x - meet.x));
+            meet.speed = Math.max(110, far / (DUEL_WALK_MS / 1000));
+            meet.walkMs = Math.min(DUEL_WALK_MS, far / meet.speed * 1000);
+            meetPoints.set(event.duelId, meet);
+          }
           for (const id of [event.a, event.b]) { const f = findPlayer(String(id)); if (f && !(f.koHoldUntil > now)) f.koUntil = 0; }   // state may already show the KO
           setTimeout(() => replays.delete(event.duelId), 15000);   // safety net if duel_completed never arrives
         }
@@ -508,7 +526,7 @@ async function start() {
         const isA = String(duel.a) === p.userId;
         const target = meet.x + ((isA === meet.aLeft) ? -gap / 2 : gap / 2);
         const diff = target - p.x;
-        if (Math.abs(diff) > 2) { p.x += Math.sign(diff) * Math.min(Math.abs(diff), 110 * dt); moving = true; p.direction = Math.sign(diff); }
+        if (Math.abs(diff) > 2) { p.x += Math.sign(diff) * Math.min(Math.abs(diff), (meet.speed || 110) * dt); moving = true; p.direction = Math.sign(diff); }
         else p.direction = opponent.x >= p.x ? 1 : -1;
       } else if (duel?.status === 'pending' && opponent) {
         p.direction = opponent.x >= p.x ? 1 : -1;
@@ -665,6 +683,7 @@ async function start() {
     clearInterval(arenaTimer);
   }, { once: true });
   if (debug && arenaEnabled) {
+    window.__arenaMove = (userId, x) => { const p = findPlayer(String(userId)); if (p) p.x = x; };   // tests: place fighters
     window.__arenaDebug = () => ({
       revision: arenaRevision,
       paused: arenaPaused,
