@@ -359,7 +359,7 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.match((await cmd('u1', 'alice', 'strike', '', rotated.secret)).body.reply, /paused/);
 });
 
-test('StreamElements quick duel: !fight settles it in one reply', async () => {
+test('StreamElements quick duel: !fight rolls the dice and settles it in one reply', async () => {
   const r = room({}, { quick: true });
   const se = (await r.call('/admin')).body.streamelements;
   await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
@@ -367,6 +367,6 @@ test('StreamElements quick duel: !fight settles it in one reply', async () => {
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 'q' + (++m) } });
   await cmd('u1', 'alice', 'challenge', 'bob');
-  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^(alice|bob) knocks out (alice|bob) in one hit and wins\. Elo: \w+ 1012, \w+ 988\.$/);
+  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^((alice|bob) rolls [1-6]: (hit lands|countered|miss)\. )+(alice|bob) knocks out (alice|bob)! Elo: \w+ 1012, \w+ 988\.$/);
   assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /not in a duel/);
 });

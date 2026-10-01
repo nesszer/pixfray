@@ -270,8 +270,9 @@ async function start() {
         } else {
           if (actor) actor.anim = { kind: 'attack', heavy: event.ability === 'heavy', start: now, until: now + 450 };
           if (target) target.anim = { kind: 'hit', heavy: event.ability === 'heavy', start: now + 120, until: now + 520 };
+          if (event.miss) { if (target) { target.anim = null; hop(target, 180); } floatText(target, 'MISS', '#e2e8f0'); break; }
           burst(target, event.ability === 'heavy' ? '#f97316' : '#fb7185', event.ability === 'heavy' ? 16 : 8, false);
-          floatText(target, '-' + (Number(event.amount) || 0), '#fb7185');
+          floatText(target, event.counter ? 'COUNTER' : '-' + (Number(event.amount) || 0), '#fb7185');
         }
         break;
       }

@@ -1,6 +1,6 @@
 const DEFAULT_CONFIG = {
   enabled: true,
-  // Quick duels: accepting settles the duel at once with one knockout hit, winner picked 50/50.
+  // Quick duels: accepting settles the duel at once with a d6 exchange (hit, counter or miss).
   // Off = the HP fight with !attack/!strike/!heavy/!heal.
   quickDuel: true,
   maxHp: 100,
@@ -327,18 +327,36 @@ function beginDuel(state, duel, now) {
   return { ok: true, duelId: duel.id };
 }
 
-// Quick duel: one knockout hit right after the duel starts. roll in [0, 1) comes from the room; < 0.5 means a wins.
-function settleQuickDuel(state, duel, roll, now) {
-  const r = Number.isFinite(roll) && roll >= 0 && roll < 1 ? roll : hashRoll(duel.id + ":" + now);
-  const winnerId = r < 0.5 ? duel.a : duel.b;
-  const loserId = winnerId === duel.a ? duel.b : duel.a;
-  const amount = duel.hp[loserId];
-  duel.hp[loserId] = 0;
-  const loser = player(state, loserId);
-  if (loser) loser.hp = 0;
-  addEvent(state, "duel_action", now, { duelId: duel.id, userId: winnerId, targetId: loserId, ability: "heavy", amount, hp: clone(duel.hp), finisher: true });
+// Quick duel: a d6 exchange settled at once. The swinging fighter rolls: 5-6 the hit lands (KO),
+// 1-2 the other fighter counters (KO the other way), 3-4 the swing misses and the other fighter swings next.
+// The challenger swings first; hit and counter are equally likely, so who starts doesn't matter.
+// rolls are numbers in [0, 1) from the room; missing ones come from a hash so the reducer stays pure.
+const QUICK_MAX_SWINGS = 8;
+function settleQuickDuel(state, duel, rolls, now) {
+  const list = Array.isArray(rolls) ? rolls : [];
+  const rollAt = (i) => (Number.isFinite(list[i]) && list[i] >= 0 && list[i] < 1 ? list[i] : hashRoll(duel.id + ":" + now + ":" + i));
+  const swings = [];
+  let attacker = duel.a, defender = duel.b, winnerId = "", loserId = "";
+  for (let i = 0; !winnerId; i++) {
+    let die = 1 + Math.floor(rollAt(i) * 6);
+    if (i === QUICK_MAX_SWINGS - 1 && (die === 3 || die === 4)) die = die === 3 ? 2 : 5;   // the last swing always decides
+    const outcome = die >= 5 ? "hit" : die <= 2 ? "counter" : "miss";
+    swings.push({ attackerId: attacker, defenderId: defender, die, outcome });
+    if (outcome === "miss") {
+      addEvent(state, "duel_action", now, { duelId: duel.id, userId: attacker, targetId: defender, ability: "strike", amount: 0, hp: clone(duel.hp), miss: true, die });
+      [attacker, defender] = [defender, attacker];
+      continue;
+    }
+    winnerId = outcome === "hit" ? attacker : defender;
+    loserId = outcome === "hit" ? defender : attacker;
+    const amount = duel.hp[loserId];
+    duel.hp[loserId] = 0;
+    const loser = player(state, loserId);
+    if (loser) loser.hp = 0;
+    addEvent(state, "duel_action", now, { duelId: duel.id, userId: winnerId, targetId: loserId, ability: "heavy", amount, hp: clone(duel.hp), finisher: true, counter: outcome === "counter", die });
+  }
   finishDuel(state, duel, winnerId, now);
-  return { ok: true, reason: "quick_duel", duelId: duel.id, winnerId, loserId };
+  return { ok: true, reason: "quick_duel", duelId: duel.id, winnerId, loserId, swings };
 }
 
 function hashRoll(text) {
@@ -450,7 +468,7 @@ function applyCommand(state, event, now) {
     const mutual = openDuels(state).find((item) => item.status === "pending" && item.a === target.userId && item.b === actor.userId);
     if (mutual) {
       const started = beginDuel(state, mutual, now);
-      if (started.ok && state.config.quickDuel) return settleQuickDuel(state, mutual, event.roll, now);
+      if (started.ok && state.config.quickDuel) return settleQuickDuel(state, mutual, event.rolls, now);
       return started.ok ? { ...started, reason: "duel_started" } : started;
     }
     return createChallenge(state, actor, target, now);
@@ -472,7 +490,7 @@ function applyCommand(state, event, now) {
       return { ok: true, reason: "challenge_declined", duelId: duel.id };
     }
     const started = beginDuel(state, duel, now);
-    if (started.ok && state.config.quickDuel) return settleQuickDuel(state, duel, event.roll, now);
+    if (started.ok && state.config.quickDuel) return settleQuickDuel(state, duel, event.rolls, now);
     return started;
   }
 

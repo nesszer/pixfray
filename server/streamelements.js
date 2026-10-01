@@ -62,7 +62,10 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     const other = duel ? (duel.a === actorId ? duel.b : duel.a) : '';
     if (reason === 'quick_duel') {
       const w = state.players.find(p => p.userId === result.winnerId), l = state.players.find(p => p.userId === result.loserId);
-      return `${nameOf(state, result.winnerId)} knocks out ${nameOf(state, result.loserId)} in one hit and wins.` + (w && l ? ` Elo: ${nameOf(state, result.winnerId)} ${w.elo}, ${nameOf(state, result.loserId)} ${l.elo}.` : '');
+      const said = { hit: 'hit lands', counter: 'countered', miss: 'miss' };
+      const swings = (result.swings || []).map(s => `${nameOf(state, s.attackerId)} rolls ${s.die}: ${said[s.outcome]}.`).join(' ');
+      const end = ` ${nameOf(state, result.winnerId)} knocks out ${nameOf(state, result.loserId)}!` + (w && l ? ` Elo: ${nameOf(state, result.winnerId)} ${w.elo}, ${nameOf(state, result.loserId)} ${l.elo}.` : '');
+      return (swings.length > 220 ? swings.slice(0, 217) + '...' : swings) + end;
     }
     if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}. Use ${n('attack')}, ${n('strike')}, ${n('heavy')} or ${n('heal')}.`;
     if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} (or ${n('challenge')} @${me}) or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
