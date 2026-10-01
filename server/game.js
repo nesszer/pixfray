@@ -779,6 +779,11 @@ function normalizeState(input) {
   return state;
 }
 
+// Stored state as the reducer sees it (defaults filled in, old presets migrated), for read-only views.
+export function normalizeGameState(input) {
+  return normalizeState(input);
+}
+
 export function defaultConfig() {
   return clone(DEFAULT_CONFIG);
 }

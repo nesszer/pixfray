@@ -4,6 +4,7 @@ import {
   chatStatus,
   createInitialState,
   defaultConfig,
+  normalizeGameState,
   parseGameCommand,
   reduceGame,
 } from "./game.js";
@@ -268,7 +269,7 @@ export class ChannelRoom extends DurableObject {
   readState(channel) {
     const stored = this.readStoredState();
     if (!stored) return createInitialState(channel);
-    return { ...createInitialState(channel), ...stored, channel };
+    return normalizeGameState({ ...createInitialState(channel), ...stored, channel });
   }
 
   writeState(state) {
