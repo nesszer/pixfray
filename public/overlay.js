@@ -55,6 +55,7 @@ async function start() {
   let arenaRelay = null, arenaTransport = arenaDemo ? 'demo' : 'connecting', arenaConfig = { maxHp: 100 };
   let arenaRevision = null, arenaDuels = [], arenaClient = null, arenaTimer = null, arenaPaused = false;
   let announcement = null, lastCatalogFetch = 0;
+  const missingAvatars = new Set();
   let lastFrame = performance.now(), lastCleanup = 0;
   const particles = [];
   function updateStatus(detail = '') {
@@ -182,7 +183,8 @@ async function start() {
     p.color = sanitizeColor(profile.color) || p.chatColor || p.color;
     const avatar = typeof profile.avatar === 'string' ? profile.avatar.toLowerCase() : '';
     if (sprites.has(avatar)) p.renderAvatar = avatar;
-    else if (avatar && !arenaDemo && Date.now() - lastCatalogFetch > 30_000) void loadArenaCatalog().then(() => { for (const q of players.values()) applyArenaProfile(q); });
+    // A newly seen id (fresh upload) refetches at once; ids that stay unknown retry at most every 30 s.
+    else if (avatar && !arenaDemo && (!missingAvatars.has(avatar) || Date.now() - lastCatalogFetch > 30_000) && missingAvatars.add(avatar)) void loadArenaCatalog().then(() => { for (const q of players.values()) applyArenaProfile(q); });
     p.defaultAbility = String(profile.defaultAbility || '').slice(0, 20);
   }
   function acceptArenaSnapshot(snapshot, metadata = {}) {
@@ -438,6 +440,21 @@ async function start() {
     if (moving) return { frame: pick(a.walk || sprite.frames) };
     return { frame: pick(a.idle || sprite.frames) };
   }
+  // Up to 5 duels run at once: keep each duel's meeting point a full slot away from the others so
+  // health bars and nameplates never overlap. Searches outward from the midpoint, nearest free spot wins.
+  function freeMeetX(mid, gap) {
+    const slot = gap * 2 + size, lo = gap, hi = Math.max(gap, width - gap);
+    const taken = [...meetPoints.values()].map(m => m.x);
+    const clamp = x => Math.max(lo, Math.min(hi, x));
+    let best = clamp(mid), bestClearance = -1;
+    for (let step = 0; step <= Math.ceil(width / slot) * 2; step++) {
+      const x = clamp(mid + (step % 2 ? 1 : -1) * Math.ceil(step / 2) * slot / 2);
+      const clearance = taken.length ? Math.min(...taken.map(t => Math.abs(t - x))) : Infinity;
+      if (clearance >= slot) return x;
+      if (clearance > bestClearance) { best = x; bestClearance = clearance; }
+    }
+    return best;
+  }
   function draw(now) {
     const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
     const clock = Date.now();
@@ -457,7 +474,7 @@ async function start() {
         let meet = meetPoints.get(duel.id);
         if (!meet) {
           const a = findPlayer(duel.a) || p, b = findPlayer(duel.b) || opponent;
-          meet = { x: Math.max(gap, Math.min(width - gap, (a.x + b.x) / 2)), aLeft: a.x <= b.x };
+          meet = { x: freeMeetX((a.x + b.x) / 2, gap), aLeft: a.x <= b.x };
           meetPoints.set(duel.id, meet);
         }
         const isA = String(duel.a) === p.userId;

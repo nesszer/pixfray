@@ -166,3 +166,34 @@ a GitHub repo, Cloudflare API secrets, OBS, or a second enabled channel.
   - npm scripts `test:all`, `test:ui`, `test:dev-ui`, `test:upload`, `test:e2e` and `seed:local`
 - Line endings were normalised back to LF in `server/auth.js`, `tests/dev-api.test.mjs` and
   `tests/upload-workerd.mjs`.
+
+## Local OBS run (2026-10-01)
+
+OBS Studio scene "Mini Chat — v2 Local", with a browser source on `http://127.0.0.1:5210/overlay.html?channel=nesszerra&arena=1&size=96`. It ran against a local `cf dev` with 10 seeded test viewers and a simulated relay. Driver: `work/obs-v2-run.mjs` (outside the repo). Nothing was streamed, recorded or deployed.
+
+24 of 24 checks passed:
+- The default balance preset is in effect.
+- Single-PNG upload works.
+  - Non-PNG files get 415.
+  - Oversize frames get 400.
+  - Viewers get 403.
+- 10 profiles were saved.
+- Duels are paused without a relay; one-time pairing works.
+- 10 characters appear after their first chat message, including the uploaded one.
+- A viewer can only be in one duel (player_busy).
+- 5 duels can run at once.
+- Cooldowns work, and heal is used.
+- All 5 duels completed.
+  - The losers are knocked out and respawn.
+  - Elo ended at 1012/988.
+  - The rematch delay applies.
+- When the relay drops, duels pause and cancel without scoring.
+- The relay reconnects with its stored credential.
+- Mods can turn duels off and on.
+- State survives an overlay reload.
+
+Fixed after looking at the OBS captures:
+- With 5 duels at once, duelists piled into two clumps and their HP bars overlapped. Each duel now gets its own spot (`freeMeetX` in `public/overlay.js`).
+- An uploaded character showed as a stock sprite for up to 30 s. The overlay now refetches the catalog as soon as it sees a new avatar ID.
+
+After these fixes, `npm run test:all` passes all 8 stages.
