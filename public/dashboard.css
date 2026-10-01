@@ -227,3 +227,4 @@ tr.me td { background: var(--accent-soft); }
 /* StreamElements replies are long URLs: let them wrap inside their cell */
 .wrap-anywhere { overflow-wrap: anywhere; word-break: break-all; font-size: var(--text-xs); }
 #se-table input { width: 9rem; }
+#se-table .btn { white-space: nowrap; }
