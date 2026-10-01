@@ -1,0 +1,17 @@
+/* Live-fix space (/admin/dev/). Page-specific rules on top of /dashboard.css; tokens only. */
+textarea.code { font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.5; tab-size: 2; white-space: pre; overflow: auto; resize: vertical; }
+ol.steps { padding-left: var(--space-5); margin: var(--space-4) 0 var(--space-5); }
+ol.steps > li { max-width: none; padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+ol.steps > li:last-child { border-bottom: 0; }
+ol.steps .toolbar, ol.steps .controls { margin-top: var(--space-3); }
+.controls.compact { padding: var(--space-4); margin-top: var(--space-3); }
+.controls .end { display: flex; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; }
+label.spaced { margin-top: var(--space-5); }
+label.inline { display: inline; margin: 0; }
+select.narrow { width: auto; }
+.toggle { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-3) 0; }
+.toggle input { width: 20px; height: 20px; }
+.toggle label { margin: 0; }
+.callout p { max-width: var(--measure); }
+td.wrap { max-width: 420px; overflow-wrap: anywhere; }
+td code, td.ctx { font-size: var(--text-xs); }

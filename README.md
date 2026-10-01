@@ -17,14 +17,39 @@ First chat message spawns a character; 10 minutes of inactivity hides it. Appear
 
 Query options: channel, demo=1, debug=1, cap=1..100, size=32..96.
 
+## V2 (local, not deployed yet)
+The working tree also holds v2. It adds:
+- Twitch sign-in profiles and a viewer dashboard (`/`).
+- Mod controls with a versioned balance editor (`/admin/`).
+- An owner-only live-fix page (`/admin/dev/`).
+- Shared server-decided duels on the overlay (add `arena=1`).
+- 15 Kenney CC0 characters and custom character uploads.
+- A local relay (`relay/`) that forwards chat commands from the OBS PC.
+
+Chat commands for v2 duels:
+- `!challenge @viewer`, then `!accept` or `!decline`.
+- `!attack`, `!strike`, `!heavy`, `!heal`.
+
+Rules and routes are in CONTRACTS.md. The plan and the open gaps are in HANDOFF.md.
+
+Tests: `npm run test:all` runs these in order:
+1. Unit and relay tests.
+2. `cf build`.
+3. The workerd upload test.
+4. The browser tests and the local end-to-end duel, against a `cf dev` it starts on port 5199 with
+   its own state folder and seeded test sessions.
+
+VALIDATION_V2.md has the commands and the spec audit. `MINI_PORT` and `MINI_PERSIST` change the dev
+port and the local state folder.
+
 ## Cloudflare
 `cf auth login`, `npm run build`, `npm run deploy`.
-Assets-only Worker on Workers Free. No database, Durable Object, R2 subscription, AI service or paid plan required.
+Live v1 is an assets-only Worker on Workers Free. V2 adds two SQLite Durable Objects (ChannelRoom, AuthStore), still on Workers Free with no paid products.
 
 ## Alpha boundary
 Uses anonymous read-only Twitch IRC over WebSocket. Real anonymous connection to #nesszerra was verified during development. Twitch documents token-based IRC authentication and recommends EventSub/API; anonymous access may change. public/chat.js isolates that adapter for later replacement.
 
-No shared viewer editor, moderator dashboard, economy or combat yet. The next step is authenticated events and a SQLite Durable Object on Workers Free for shared profiles.
+The live v1 has no shared viewer editor, moderator dashboard or combat. Those are in v2 above, which uses SQLite Durable Objects on Workers Free.
 
 ## License
 MIT software; CC0 character artwork. See ASSET_LICENSES.md. No Twitch/OBS credentials are included.

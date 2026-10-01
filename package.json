@@ -8,7 +8,14 @@
     "dev": "cf dev",
     "build": "cf build",
     "deploy": "cf deploy",
-    "test": "node tests/smoke.mjs"
+    "test": "node tests/smoke.mjs",
+    "test:unit": "node --import ./tests/register.mjs --test \"tests/*.test.mjs\"",
+    "test:ui": "node tests/ui.mjs && node tests/arena-browser.mjs",
+    "test:dev-ui": "node tests/dev-ui.mjs",
+    "test:upload": "node tests/upload-workerd.mjs",
+    "test:e2e": "node tests/e2e-local.mjs",
+    "seed:local": "node tests/seed-local.mjs",
+    "test:all": "node scripts/test-all.mjs"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "beta",

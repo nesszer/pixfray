@@ -23,7 +23,8 @@ export function createArenaClient({
   onEvent = () => {},
   onStatus = () => {},
   fetchImpl = (...args) => fetch(...args),
-  WebSocketImpl = (...args) => new WebSocket(...args),
+  // Called with `new`, so this must be a plain function (an arrow function throws "is not a constructor").
+  WebSocketImpl = function (...args) { return new WebSocket(...args); },
 }) {
   const normalizedChannel = String(channel ?? '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 25);
   if (!normalizedChannel) throw new Error('Invalid arena channel');

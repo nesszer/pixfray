@@ -1,14 +1,103 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mini Chat — nesszerra</title><link rel="stylesheet" href="/setup.css"></head>
-<body><main><div class="tag">TWITCH · OPEN SOURCE · FREE</div><h1>Your chat.<br><span>A little more alive.</span></h1>
-<p class="intro">Tiny characters that wander, react, and jump with your Twitch chat. One link for OBS.</p>
-<section class="card"><label for="channel">Twitch channel</label><div class="channel-row"><span>#</span><input id="channel" value="nesszerra" maxlength="25" autocomplete="off" spellcheck="false"></div>
-<div class="options"><label for="size">Character size <output id="size-label">64px</output></label><input id="size" type="range" min="32" max="96" value="64">
-<label for="cap">Maximum characters</label><select id="cap"><option>25</option><option selected>50</option><option>100</option></select></div>
-<label for="obs-url">OBS Browser Source URL</label><div class="url-row"><input id="obs-url" readonly aria-label="OBS overlay URL"><button id="copy">Copy link</button></div>
-<p id="copy-status" role="status"></p><div class="actions"><a id="preview" class="primary" target="_blank" rel="noopener">Open live overlay ↗</a><a id="demo" target="_blank" rel="noopener">Try the demo ↗</a></div>
-<p class="hint">In OBS, add a Browser Source, paste the link, and set 1920 × 1080 at 30 FPS. The overlay has a transparent background. Disable “Shutdown source when not visible” to keep chat connected between scenes.</p></section>
-<section class="commands"><h2>Small commands. Big personality.</h2><div class="command-grid"><article><code>!jump</code><p>Take a leap.</p></article><article><code>!avatar soldier</code><p>Pick your character.</p></article><article><code>!color #ff8844</code><p>Color your nameplate.</p></article></div><p class="catalog">Characters: adventurer · female · player · soldier · zombie</p></section>
-<footer>V1 keeps customization in chat. Choices are saved in this OBS browser; a shared viewer editor comes next.<br>Character artwork by Kenney (CC0). No Twitch login or chat-write permissions required.</footer>
-</main><script type="module" src="/src/setup.js"></script></body></html>
+<title>Mini Chat — your fighter on nesszerra</title>
+<meta name="description" content="Pick your Mini Chat character, nameplate color and default ability for the nesszerra Twitch channel.">
+<link rel="stylesheet" href="/dashboard.css" data-design></head>
+<body>
+<header class="topbar"><div class="topbar-inner">
+  <a class="brand" href="/">Mini Chat</a>
+  <nav aria-label="Pages"><a href="/" aria-current="page">Your fighter</a><a href="/admin/" id="admin-link" hidden>Mod controls</a><a href="#obs-setup">OBS setup</a></nav>
+  <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
+</div></header>
+<main class="page">
+  <header class="page-header">
+    <h1>Your fighter in nesszerra's chat</h1>
+    <p class="subtitle">Pick a character, a nameplate color and the ability <code>!attack</code> uses. Your profile is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
+  </header>
+
+  <p class="callout" id="signin-note" hidden></p>
+
+  <form id="profile-form" class="split" novalidate>
+    <div class="form-stack">
+      <fieldset>
+        <legend>Character <span class="muted small" id="char-count"></span></legend>
+        <div class="char-grid" id="characters" role="radiogroup" aria-label="Character"><p class="muted small">Loading characters…</p></div>
+      </fieldset>
+      <fieldset>
+        <legend>Nameplate color</legend>
+        <div class="swatches" id="swatches">
+          <label class="sr-only" for="color">Custom nameplate color</label><input type="color" id="color" value="#a78bfa">
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Default ability for <code>!attack</code></legend>
+        <div class="ability-grid" id="abilities">
+          <label><input type="radio" name="ability" value="strike" checked><span><span class="name">Strike</span><span class="detail" data-ability="strike">10 damage, 3 s cooldown</span></span></label>
+          <label><input type="radio" name="ability" value="heavy"><span><span class="name">Heavy strike</span><span class="detail" data-ability="heavy">25 damage, 8 s cooldown</span></span></label>
+          <label><input type="radio" name="ability" value="heal"><span><span class="name">Heal</span><span class="detail" data-ability="heal">15 HP heal, 10 s cooldown</span></span></label>
+        </div>
+        <p class="hint">You can still use any ability in chat with <code>!strike</code>, <code>!heavy</code> or <code>!heal</code>.</p>
+      </fieldset>
+    </div>
+    <aside class="stack" aria-label="Preview and save">
+      <div class="preview" aria-live="polite">
+        <canvas class="sprite" id="preview" width="128" height="128" role="img" aria-label="Selected character preview"></canvas>
+        <span class="nameplate" id="nameplate">you</span>
+        <span class="caption" id="preview-caption"></span>
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-primary" id="save" type="submit" hidden>Save profile</button>
+        <a class="btn btn-primary" id="save-signin" href="/auth/login">Sign in with Twitch to save</a>
+      </div>
+      <p class="status" id="save-status" role="status"></p>
+      <div class="stat-strip" id="my-stats" hidden>
+        <div class="stat"><div class="label">Elo</div><div class="value" id="stat-elo">—</div></div>
+        <div class="stat"><div class="label">Wins / losses</div><div class="value" id="stat-wl">—</div></div>
+      </div>
+    </aside>
+  </form>
+
+  <section class="section" aria-labelledby="lb-title">
+    <h2 id="lb-title">Leaderboard</h2>
+    <p class="muted small" id="lb-note">Ranked duels need a saved profile. Everyone starts at 1000 Elo.</p>
+    <div class="table-wrap"><table class="data" id="leaderboard">
+      <thead><tr><th class="num">Rank</th><th>Viewer</th><th>Character</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th></tr></thead>
+      <tbody><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </section>
+
+  <section class="section" aria-labelledby="cmd-title">
+    <h2 id="cmd-title">Duel from chat</h2>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>!challenge @viewer</code></td><td>Challenges a viewer. They have <span id="cmd-timeout">30 s</span> to reply.</td></tr>
+        <tr><td><code>!accept</code> / <code>!decline</code></td><td>Answers a challenge sent to you.</td></tr>
+        <tr><td><code>!attack @viewer</code></td><td>Uses your default ability.</td></tr>
+        <tr><td><code>!strike</code>, <code>!heavy</code>, <code>!heal</code></td><td>Uses that ability. Each has its own cooldown, plus <span id="cmd-shared">1 s</span> between any two actions.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="caveat">Your character appears on stream after your first chat message. Duels left idle for <span id="cmd-idle">60 s</span> are cancelled without scoring.</p>
+  </section>
+
+  <section class="section" id="obs-setup" aria-labelledby="obs-title">
+    <h2 id="obs-title">Add the overlay to OBS</h2>
+    <p class="muted">For the streamer. Builds the Browser Source link for the chat overlay.</p>
+    <div class="controls">
+      <div><label for="channel">Twitch channel</label><input id="channel" value="nesszerra" maxlength="25" autocomplete="off" spellcheck="false"></div>
+      <div><label for="size">Character size <output id="size-label">64px</output></label><input id="size" type="range" min="32" max="96" value="64"></div>
+      <div><label for="cap">Maximum characters</label><select id="cap"><option>25</option><option selected>50</option><option>100</option></select></div>
+    </div>
+    <div class="stack">
+      <div><label for="obs-url">OBS Browser Source URL</label><input id="obs-url" readonly></div>
+      <div class="toolbar"><button class="btn" id="copy" type="button">Copy link</button><a class="btn" id="preview-link" target="_blank" rel="noopener">Open live overlay</a><a class="btn" id="demo" target="_blank" rel="noopener">Open demo overlay</a></div>
+      <p class="status" id="copy-status" role="status"></p>
+      <p class="hint">In OBS, add a Browser Source, paste the link, and set 1920 × 1080 at 30 FPS. The background is transparent. Turn off "Shutdown source when not visible" to stay connected between scenes.</p>
+    </div>
+  </section>
+
+  <p class="caveat">Character artwork credits are listed in ASSET_LICENSES.md (Kenney, CC0). Signing in asks Twitch only for your public identity; Mini Chat never posts in chat.</p>
+</main>
+<script type="module" src="/src/setup.js"></script>
+<script type="module" src="/src/dashboard.js"></script>
+</body></html>

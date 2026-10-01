@@ -7,11 +7,9 @@ export class AuthStore extends DurableObject {
     if(!key || key.length>200)return Response.json({error:'Invalid key'},{status:400});
     const sql=this.ctx.storage.sql;
     if(url.pathname==='/consume' && request.method==='POST'){
-      const value=this.ctx.storage.transactionSync(()=>{
-        const rows=[...sql.exec('SELECT value,expires FROM entries WHERE key=?',key)];
-        sql.exec('DELETE FROM entries WHERE key=?',key);
-        return rows[0]&&rows[0].expires>Date.now()?JSON.parse(rows[0].value):null;
-      });
+      // One statement: the row is removed and returned atomically, so a code can only ever be read once.
+      const row=sql.exec('DELETE FROM entries WHERE key=? RETURNING value,expires',key).toArray()[0];
+      const value=row&&row.expires>Date.now()?JSON.parse(row.value):null;
       return Response.json(value);
     }
     if(request.method==='GET'){

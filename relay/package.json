@@ -2,8 +2,20 @@
   "name": "mini-chat-windows-relay",
   "private": true,
   "type": "module",
+  "license": "MIT",
+  "bin": {
+    "mini-chat-relay": "index.mjs"
+  },
   "engines": {
     "node": ">=22.18.0"
+  },
+  "scripts": {
+    "start": "node index.mjs run",
+    "pair": "node index.mjs pair",
+    "login": "node index.mjs login",
+    "stop": "node index.mjs stop",
+    "status": "node index.mjs status",
+    "test": "node --test \"../tests/relay-*.test.mjs\""
   },
   "dependencies": {
     "ws": "8.21.0"

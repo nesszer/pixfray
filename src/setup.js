@@ -9,8 +9,9 @@ function update() {
   url.searchParams.set("channel", valid ? name : "nesszerra");
   url.searchParams.set("size", size.value);
   url.searchParams.set("cap", cap.value);
+  url.searchParams.set("arena", "1"); // shared duels from the server; remove for the chat-only v1 overlay
   document.querySelector("#obs-url").value = url.href;
-  document.querySelector("#preview").href = url.href;
+  document.querySelector("#preview-link").href = url.href;
   url.searchParams.set("demo","1");
   document.querySelector("#demo").href = url.href;
   document.querySelector("#size-label").value = size.value + "px";

@@ -1,0 +1,120 @@
+// Lane E UI check: live-fix space (/admin/dev/) at 1280px and 390px.
+// Signed-out runs against the real local server; owner states stub /api/session and /api/dev/* with page.route,
+// unless MINI_OWNER_COOKIE (a local test session id) is set, which adds one unstubbed owner run.
+// Usage: MINI_BASE_URL=http://127.0.0.1:5195 node tests/dev-ui.mjs   (screenshots go to the OS temp dir)
+import { chromium } from '@playwright/test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
+const shots = path.join(os.tmpdir(), 'mini-chat-dev-shots');
+fs.mkdirSync(shots, { recursive: true });
+const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const sizes = [{ name: '1280', width: 1280, height: 900 }, { name: '390', width: 390, height: 844 }];
+const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
+const owner = { id: '900001', login: 'nesszerra', displayName: 'nesszerra' };
+const now = Date.now(), errors = [];
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 60000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, relayLeaseMs: 30000, initialElo: 1000, eloK: 24,
+  abilities: { strike: { damage: 10, cooldownMs: 3000 }, heavy: { damage: 25, cooldownMs: 8000 }, heal: { amount: 15, cooldownMs: 10000 } } };
+const diag = (configured) => ({
+  worker: { version: '0.2.0', twitchConfigured: true, productionEnabled: false, deployedVersion: configured ? { id: '5d1c9a3e-0000-4000-8000-000000000001', tag: 'gh-1a2b3c4-1234', timestamp: '' } : null },
+  room: { channel: 'nesszerra', revision: 42, relay: { connected: configured, lastSeen: now - 4000 }, paused: !configured, configVersion: 3, players: 6, openDuels: 1, sockets: { live: 2, relay: configured ? 1 : 0 }, errors: 2, errorsBySource: { room: 1, worker: 1 }, lastError: { at: now - 600000, source: 'room', message: 'room error' } },
+  integrations: { github: configured ? { configured: true, missing: [], repo: 'Finesssee/mini-chat', base: 'main', workflow: 'deploy.yml' } : { configured: false, missing: ['GITHUB_TOKEN', 'GITHUB_REPO'], repo: '', base: 'main', workflow: 'deploy.yml' },
+    cloudflare: { configured, missing: configured ? [] : ['CF_API_TOKEN', 'CF_ACCOUNT_ID'], versionMetadata: configured } },
+  usage: configured ? { configured: true, limit: 100000, requests: 18234, percent: 18.2, resetsAt: new Date(Date.UTC(2026, 9, 2)).toISOString() } : { configured: false, limit: 100000, error: 'Set CF_API_TOKEN and CF_ACCOUNT_ID to read request usage' },
+  codex: { authorized: false, note: '', updatedBy: '', updatedAt: 0 },
+});
+async function stub(page, { configured }) {
+  let codex = { authorized: false, note: '', updatedBy: '', updatedAt: 0 };
+  await page.route('**/api/session', (r) => json(r, { user: owner, owner: true, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+  await page.route('**/api/dev/**', (r) => {
+    const u = new URL(r.request().url()), op = u.pathname.slice('/api/dev/'.length), method = r.request().method();
+    if (op === 'diagnostics') return json(r, { ...diag(configured), codex });
+    if (op === 'settings' && method === 'GET') return json(r, { config, configVersion: 3, history: [{ version: 3, actorId: '900001', at: now - 3600000, note: 'Lower heavy to 25' }, { version: 2, actorId: '900001', at: now - 7200000, note: '' }, { version: 1, actorId: 'system', at: now - 86400000, note: 'initial' }] });
+    if (op === 'settings') return json(r, { ok: true });
+    if (op === 'logs') return json(r, [{ id: 2, at: now - 600000, source: 'room', message: 'room error', context: { path: '/relay', method: 'GET' } }, { id: 1, at: now - 900000, source: 'worker', message: 'Unexpected token in JSON at position 0', context: { path: '/api/profile/nesszerra' } }]);
+    if (op === 'codex' && method === 'POST') { const b = JSON.parse(r.request().postData()); codex = { authorized: b.authorized, note: b.note, updatedBy: 'nesszerra', updatedAt: Date.now() }; return json(r, codex); }
+    if (op === 'codex') return json(r, codex);
+    if (!configured) return json(r, { error: 'GitHub is not configured: set the GITHUB_TOKEN secret and GITHUB_REPO (see docs/LIVE_FIX.md)', reason: 'github_not_configured' }, 501);
+    if (op === 'runs') return json(r, [{ id: 1, title: 'deploy test live-fix/overlay-text r1a2b3c4d5e', status: 'completed', conclusion: 'success', branch: 'live-fix/overlay-text', createdAt: new Date(now - 1200000).toISOString(), url: 'https://github.com/' }, { id: 2, title: 'deploy production main r9f8e7d6c5b', status: 'in_progress', conclusion: null, branch: 'main', createdAt: new Date(now - 60000).toISOString(), url: 'https://github.com/' }]);
+    if (op === 'versions') return json(r, { production: { script: 'nesszerra-mini-chat', deployments: [{ id: 'd', createdOn: new Date(now - 60000).toISOString(), message: 'promote #7', versions: [{ versionId: '5d1c9a3e-0000-4000-8000-000000000001', percentage: 90 }, { versionId: '4c0b8a2d-0000-4000-8000-000000000000', percentage: 10 }] }], versions: [{ id: '4c0b8a2d-0000-4000-8000-000000000000', number: 11, tag: 'gh-0a1b2c3-1200', createdOn: new Date(now - 86400000).toISOString() }] }, test: { script: 'nesszerra-mini-chat-test', deployments: [], versions: [], error: 'Cloudflare API error 404' } });
+    if (op === 'code/file') return json(r, { path: 'public/overlay.js', ref: 'main', sha: 'a'.repeat(40), size: 120, content: "// overlay\nconst size = 60;\nexport function draw(ctx) {\n  ctx.fillText('hello', 10, 10);\n}\n" });
+    if (op === 'code/save') return json(r, { ok: true, path: 'public/overlay.js', branch: 'live-fix/overlay-text', branchCreated: true, sha: 'b'.repeat(40), commit: 'c'.repeat(40) });
+    if (op === 'deploy') return json(r, { ok: true, requestId: 'r0123456789' }, 202);
+    return json(r, { error: 'unexpected ' + op }, 500);
+  });
+}
+async function open(size, setup) {
+  const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height } });
+  if (setup?.cookie) await ctx.addCookies([{ name: 'mini_session', value: setup.cookie, url: base }]);
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => errors.push(size.name + ': ' + e.message));
+  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(size.name + ': ' + m.text()); });
+  if (setup?.stub) await stub(page, setup.stub);
+  await page.goto(base + '/admin/dev/', { waitUntil: 'networkidle' });
+  return { ctx, page };
+}
+async function noOverflow(page, label) {
+  const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  assert.ok(wide <= 1, `${label}: page scrolls sideways by ${wide}px`);
+}
+
+for (const size of sizes) {
+  // 1. Real server, signed out: the gate offers Twitch sign-in and hides the app.
+  let { ctx, page } = await open(size);
+  assert.match(await page.textContent('#gate-text'), /Sign in with the nesszerra Twitch account/);
+  assert.equal(await page.isVisible('#app'), false);
+  await page.screenshot({ path: path.join(shots, `dev-signed-out-${size.name}.png`), fullPage: true });
+  await ctx.close();
+
+  // 2. Owner, integrations not configured: actions are disabled and the page says why.
+  ({ ctx, page } = await open(size, { stub: { configured: false } }));
+  assert.equal(await page.isVisible('#app'), true);
+  assert.match(await page.textContent('#summary-title'), /relay offline/);
+  assert.match(await page.textContent('#github-missing'), /GITHUB_TOKEN, GITHUB_REPO/);
+  assert.equal(await page.isDisabled('#deploy-test'), true);
+  assert.equal(await page.isDisabled('#save-file'), true);
+  assert.match(await page.textContent('#s-requests-note'), /not configured/);
+  assert.match(await page.textContent('#codex-state'), /off/);
+  await noOverflow(page, 'unconfigured ' + size.name);
+  await page.screenshot({ path: path.join(shots, `dev-unconfigured-${size.name}.png`), fullPage: true });
+  await ctx.close();
+
+  // 3. Owner, everything configured: load, save, deploy, codex toggle.
+  ({ ctx, page } = await open(size, { stub: { configured: true } }));
+  assert.match(await page.textContent('#s-requests'), /18,234/);
+  assert.match(await page.textContent('#runs'), /deploy test live-fix\/overlay-text/);
+  assert.match(await page.textContent('#deployments'), /promote #7/);
+  await page.fill('#branch', 'live-fix/overlay-text');
+  await page.fill('#path', 'public/overlay.js');
+  await page.click('#load-file');
+  await page.waitForFunction(() => document.querySelector('#editor').value.includes('overlay'));
+  await page.click('#save-file');
+  await page.waitForFunction(() => /Saved to live-fix\/overlay-text/.test(document.querySelector('#code-status').textContent));
+  await page.click('#deploy-test');
+  await page.waitForFunction(() => /Test deploy of live-fix\/overlay-text started/.test(document.querySelector('#release-status').textContent));
+  page.on('dialog', (d) => d.accept());
+  await page.check('#codex-toggle');
+  await page.waitForFunction(() => document.querySelector('#codex-state').textContent === 'on');
+  await noOverflow(page, 'configured ' + size.name);
+  await page.screenshot({ path: path.join(shots, `dev-configured-${size.name}.png`), fullPage: true });
+  await ctx.close();
+}
+
+if (process.env.MINI_OWNER_COOKIE) {
+  // 4. Unstubbed owner session against the local Worker (real Durable Object storage).
+  const { ctx, page } = await open(sizes[0], { cookie: process.env.MINI_OWNER_COOKIE });
+  assert.equal(await page.isVisible('#app'), true);
+  assert.match(await page.textContent('#github-missing'), /GITHUB_TOKEN/);
+  assert.match(await page.textContent('#config-version'), /version \d+/);
+  await page.check('#codex-toggle');
+  await page.waitForFunction(() => document.querySelector('#codex-state').textContent === 'on');
+  await page.uncheck('#codex-toggle');
+  await page.waitForFunction(() => document.querySelector('#codex-state').textContent === 'off');
+  await page.screenshot({ path: path.join(shots, 'dev-real-owner-1280.png'), fullPage: true });
+  await ctx.close();
+}
+await browser.close();
+assert.deepEqual(errors, [], 'browser errors:\n' + errors.join('\n'));
+console.log('dev UI checks passed; screenshots in ' + shots);

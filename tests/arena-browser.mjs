@@ -1,3 +1,6 @@
+// Overlay arena client against stubbed sockets: contract-shaped snapshots and events (CONTRACTS.md section 3),
+// event dedupe, stale revisions, reconnect, transparent drawing and the local-only demo duel.
+// Usage: MINI_BASE_URL=http://127.0.0.1:5199 node tests/arena-browser.mjs
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 
@@ -44,13 +47,14 @@ try {
   const initial = {
     channel: 'nesszerra',
     revision: 1,
-    relay: { connected: true, lastSeen: new Date().toISOString() },
+    paused: false,
+    relay: { connected: true, lastSeen: Date.now() },
     config: { maxHp: 100 },
     players: [
-      { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'Pulse', hp: 100, elo: 1720, wins: 8, losses: 2 },
-      { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', defaultAbility: 'Guard', hp: 100, elo: 1690, wins: 7, losses: 3 },
+      { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'strike', hp: 100, elo: 1720, wins: 8, losses: 2, registered: true },
+      { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', defaultAbility: 'heavy', hp: 100, elo: 1690, wins: 7, losses: 3, registered: true },
     ],
-    duels: [{ id: 'match-1', a: '101', b: '202', hp: { '101': 80, '202': 100 }, status: 'active', config: { maxHp: 100 } }],
+    duels: [{ id: 'duel-1', a: '101', b: '202', hp: { '101': 80, '202': 100 }, status: 'active', round: 1, rules: { maxHp: 100 } }],
     events: [],
   };
 
@@ -78,16 +82,16 @@ try {
     type: 'snapshot',
     channel: 'nesszerra',
     revision: 3,
-    relay: { connected: true, lastSeen: new Date().toISOString() },
+    paused: false,
+    relay: { connected: true, lastSeen: Date.now() },
     config: { maxHp: 100 },
     players: [
-      { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'Pulse', hp: 100, elo: 1720, wins: 8, losses: 2 },
-      { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', defaultAbility: 'Guard', hp: 100, elo: 1690, wins: 7, losses: 3 },
+      { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'strike', hp: 100, elo: 1720, wins: 8, losses: 2, registered: true },
+      { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', defaultAbility: 'heavy', hp: 100, elo: 1690, wins: 7, losses: 3, registered: true },
     ],
-    duels: [{ id: 'match-1', a: '101', b: '202', hp: { '101': 65, '202': 100 }, status: 'active', config: { maxHp: 100 } }],
+    duels: [{ id: 'duel-1', a: '101', b: '202', hp: { '101': 65, '202': 100 }, status: 'active', round: 1, rules: { maxHp: 100 } }],
     events: [
-      { id: 'hit-1', type: 'hit', actorUserId: '202', targetUserId: '101', damage: 15 },
-      { id: 'result-1', type: 'match_result', winnerId: '101', loserId: '202' },
+      { id: 'evt-1', type: 'duel_action', at: Date.now(), duelId: 'duel-1', userId: '202', targetId: '101', ability: 'heavy', amount: 15, hp: { '101': 65, '202': 100 } },
     ],
   }));
   await page.waitForFunction(() => window.__arenaDebug?.().revision === 3);
@@ -102,27 +106,30 @@ try {
   assert.equal(aria.avatar, 'neon', 'arena catalog avatars are resolved from the server catalog');
   assert.equal(aria.elo, 1720);
   assert.equal(ranked.duels[0].hp['101'], 65);
-  assert.match(ranked.announcement, /Aria Prime wins/);
   assert.equal(await page.evaluate(() => localStorage.getItem('mini-chat:cosmetics:nesszerra')), null,
     'arena-ranked cosmetics are not persisted locally');
 
-  await page.evaluate(() => window.__sendArena(0, {
-    type: 'event',
-    revision: 3,
-    event: { id: 'result-1', type: 'match_result', winnerId: '202', loserId: '101' },
-  }));
+  const completed = { id: 'evt-2', type: 'duel_completed', duelId: 'duel-1', winnerId: '101', loserId: '202', ratings: { '101': { before: 1720, after: 1731, delta: 11 }, '202': { before: 1690, after: 1679, delta: -11 } } };
+  await page.evaluate((event) => window.__sendArena(0, { type: 'event', revision: 4, event: { ...event, at: Date.now() } }), completed);
+  await page.waitForFunction(() => /Aria Prime wins · Elo \+11/.test(window.__arenaDebug().announcement || ''));
+  // The same event id again (here with a different winner) must not be replayed.
+  await page.evaluate((event) => window.__sendArena(0, { type: 'event', revision: 4, event: { ...event, winnerId: '202', loserId: '101', at: Date.now() } }), completed);
+  assert.match((await page.evaluate(() => window.__arenaDebug())).announcement, /Aria Prime wins/, 'duplicate event IDs are not replayed');
+  // Events older than 10 s (for example replayed after a reconnect) are not announced.
+  await page.evaluate(() => window.__sendArena(0, { type: 'event', revision: 4, event: { id: 'evt-old', type: 'challenge_created', a: '202', b: '101', at: Date.now() - 60000 } }));
+  assert.doesNotMatch((await page.evaluate(() => window.__arenaDebug())).announcement, /challenges/, 'stale events are not announced');
   await page.evaluate(() => window.__sendArena(0, {
     type: 'snapshot',
     channel: 'nesszerra',
     revision: 2,
     relay: { connected: true },
     players: [{ userId: '101', displayName: 'Stale Name', avatar: 'player', color: '#000000', elo: 1 }],
-    duels: [{ id: 'match-1', a: '101', b: '202', hp: { '101': 1, '202': 1 }, status: 'active', config: { maxHp: 100 } }],
+    duels: [{ id: 'duel-1', a: '101', b: '202', hp: { '101': 1, '202': 1 }, status: 'active', rules: { maxHp: 100 } }],
   }));
   ranked = await page.evaluate(() => window.__arenaDebug());
-  assert.equal(ranked.revision, 3, 'older snapshots are ignored');
-  assert.equal(ranked.players[0].label, 'Aria Prime');
-  assert.match(ranked.announcement, /Aria Prime wins/, 'duplicate event IDs are not replayed');
+  assert.ok(ranked.revision >= 3, 'older snapshots are ignored');
+  assert.equal(ranked.players.find((p) => p.userId === '101').label, 'Aria Prime');
+  assert.notEqual(ranked.duels[0]?.hp?.['101'], 1, 'stale snapshot health is not applied');
 
   const canvas = await page.evaluate(() => {
     const canvas = document.querySelector('#stage');
@@ -143,22 +150,23 @@ try {
   assert.ok(canvas.painted > 500, 'ranked characters and arena bars render onto a transparent canvas');
 
   await page.evaluate(() => window.__arenaSockets[0].close());
-  await page.waitForFunction(() => window.__arenaSockets.length === 2, { timeout: 6000 });
+  await page.waitForFunction(() => window.__arenaSockets.length === 2, null, { timeout: 6000 });
   await page.evaluate(() => window.__sendArena(1, {
     type: 'snapshot',
     channel: 'nesszerra',
-    revision: 4,
-    relay: { connected: true, lastSeen: new Date().toISOString() },
+    revision: 9,
+    paused: false,
+    relay: { connected: true, lastSeen: Date.now() },
     config: { maxHp: 100 },
     players: [
-      { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'Pulse', elo: 1720 },
-      { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', defaultAbility: 'Guard', elo: 1690 },
+      { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'strike', elo: 1731, registered: true },
+      { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', defaultAbility: 'heavy', elo: 1679, registered: true },
     ],
-    duels: [{ id: 'match-1', a: '101', b: '202', hp: { '101': 41, '202': 100 }, status: 'active', config: { maxHp: 100 } }],
+    duels: [{ id: 'duel-2', a: '101', b: '202', hp: { '101': 41, '202': 100 }, status: 'active', round: 2, rules: { maxHp: 100 } }],
     events: [],
   }));
-  await page.waitForFunction(() => window.__arenaDebug?.().revision === 4);
-  assert.equal((await page.evaluate(() => window.__arenaDebug())).duels[0].hp['101'], 41);
+  await page.waitForFunction(() => window.__arenaDebug?.().revision === 9);
+  assert.equal((await page.evaluate(() => window.__arenaDebug())).duels.find((x) => x.id === 'duel-2').hp['101'], 41);
   assert.ok(apiReads.some(item => item.path === '/api/state/nesszerra' && item.method === 'GET'));
   assert.ok(apiReads.some(item => item.path === '/api/catalog/nesszerra' && item.method === 'GET'));
   assert.deepEqual(errors, []);
@@ -173,8 +181,8 @@ try {
   });
   await demoPage.goto(base + '/overlay.html?arena=1&demo=1&debug=1');
   await demoPage.waitForFunction(() => document.querySelector('#arena-mode')?.textContent.includes('not saved'));
-  await demoPage.waitForFunction(() => window.__arenaDebug?.().duels[0]?.hp['demo-1'] < 100);
-  await demoPage.waitForFunction(() => /wins/.test(window.__arenaDebug?.().announcement || ''), { timeout: 12000 });
+  await demoPage.waitForFunction(() => window.__arenaDebug?.().duels.some((duel) => Object.values(duel.hp || {}).some((hp) => hp < 100)));
+  await demoPage.waitForFunction(() => /wins/.test(window.__arenaDebug?.().announcement || ''), null, { timeout: 20000 });
   assert.equal(await demoPage.evaluate(() => window.__arenaSockets.length + window.__chatSockets.length), 0,
     'arena demo uses no arena or Twitch websocket');
   assert.deepEqual(demoApiReads, [], 'arena demo does not write or read arena APIs');

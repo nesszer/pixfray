@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mini Chat mod controls — nesszerra</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="/dashboard.css" data-design></head>
+<body>
+<header class="topbar"><div class="topbar-inner">
+  <a class="brand" href="/">Mini Chat</a>
+  <nav aria-label="Pages"><a href="/">Your fighter</a><a href="/admin/" aria-current="page">Mod controls</a><a href="/admin/dev/" id="dev-link" hidden>Live-fix space</a></nav>
+  <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
+</div></header>
+<main class="page">
+  <header class="page-header">
+    <h1>Duel controls for nesszerra</h1>
+    <p class="subtitle">For the broadcaster and channel moderators. Changes apply to every OBS overlay right away.</p>
+    <p class="meta" id="meta"></p>
+  </header>
+
+  <!-- Shown until access is confirmed: signed out, not a moderator, or the server is unreachable. -->
+  <section class="gate" id="gate">
+    <p class="muted" id="gate-text">Checking your access…</p>
+    <div class="toolbar" id="gate-actions"></div>
+  </section>
+
+  <div id="app" hidden>
+    <section class="summary" aria-live="polite">
+      <h2 id="summary-title">Loading arena state…</h2>
+      <p id="summary-text"></p>
+      <div class="toolbar">
+        <button class="btn btn-primary" id="toggle-duels" type="button">Pause duels</button>
+        <button class="btn" id="reset-health" type="button">Reset everyone's health</button>
+        <button class="btn" id="reset-round" type="button">Cancel open duels and restart rounds</button>
+      </div>
+      <p class="status" id="action-status" role="status"></p>
+    </section>
+
+    <section class="section" aria-label="Arena numbers">
+      <div class="stat-strip" id="stats"></div>
+    </section>
+
+    <section class="section" aria-labelledby="duels-title">
+      <h2 id="duels-title">Open duels</h2>
+      <div class="table-wrap"><table class="data" id="duels">
+        <thead><tr><th>Duel</th><th>Status</th><th>Health</th><th class="num">Round</th><th>Time left</th><th><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+
+    <section class="section" aria-labelledby="players-title">
+      <h2 id="players-title">In the arena now</h2>
+      <div class="table-wrap"><table class="data" id="players">
+        <thead><tr><th>Viewer</th><th>Health</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th><th>Last chat</th><th><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+
+    <section class="section" aria-labelledby="ranks-title">
+      <h2 id="ranks-title">Ranks and profiles</h2>
+      <p class="muted small">Resetting a rank sets Elo back to the starting value and clears wins and losses. Removing a viewer also deletes their saved profile.</p>
+      <div class="table-wrap"><table class="data" id="ranks">
+        <thead><tr><th class="num">Rank</th><th>Viewer</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th><th><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div class="toolbar section"><button class="btn btn-danger" id="reset-all-ranks" type="button">Reset all ranks</button><button class="btn btn-danger" id="reset-all" type="button">Clear the arena</button></div>
+    </section>
+
+    <section class="section" aria-labelledby="config-title">
+      <h2 id="config-title">Balance and rules</h2>
+      <p class="muted small">Every save creates a new version. Duels already running keep the rules they started with.</p>
+      <form id="config-form" novalidate>
+        <div id="config-fields"></div>
+        <div class="stack section">
+          <div><label for="config-note">Note for the history (optional)</label><input id="config-note" maxlength="200" placeholder="Why this change"></div>
+          <div class="toolbar"><button class="btn" id="config-save" type="submit" disabled>Save new version</button><button class="btn" id="config-discard" type="button" disabled>Discard changes</button></div>
+          <p class="status" id="config-status" role="status"></p>
+        </div>
+      </form>
+      <h3>Version history</h3>
+      <div class="table-wrap"><table class="data" id="history">
+        <thead><tr><th class="num">Version</th><th>Saved</th><th>By</th><th>Changes</th><th>Note</th><th><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+
+    <section class="section" aria-labelledby="custom-title">
+      <h2 id="custom-title">Custom characters</h2>
+      <div class="split">
+        <figure class="chart">
+          <div class="title" id="usage-title">Custom character usage</div>
+          <div class="bars" id="usage-bars"></div>
+          <figcaption>Source: /api/admin/nesszerra customUsage. Limits: PNG only, 24 frames, 128 × 128 px per frame, 1.5 MB per atlas, 8 characters per channel.</figcaption>
+        </figure>
+        <div class="small muted" id="custom-list"></div>
+      </div>
+      <!-- MOUNT POINT for Lane D's upload UI. admin.js imports /upload.js (public/upload.js) if it exists and calls
+           mountUpload(root, {channel, usage, limits, refresh}). Until then this box links nothing and says so. -->
+      <div class="mount section" id="upload-root" data-mount="upload"><p class="muted small">Uploading characters isn't available yet.</p></div>
+    </section>
+
+    <section class="section" aria-labelledby="relay-title">
+      <h2 id="relay-title">Chat relay</h2>
+      <p class="muted small" id="relay-text"></p>
+      <div class="toolbar" id="relay-actions"><button class="btn" id="disconnect-relay" type="button">Disconnect relay</button></div>
+      <div id="owner-relay" hidden class="stack section">
+        <p class="small">Pair the relay on the OBS PC with a one-time code. The code works once and expires after 5 minutes.</p>
+        <div class="toolbar"><button class="btn" id="pair-code" type="button">Create pairing code</button><button class="btn btn-danger" id="revoke-relay" type="button">Revoke all relay credentials</button><a class="btn" href="/auth/login?connect=1">Reconnect moderator checks</a></div>
+        <div id="pair-output" hidden><div class="code-box" id="pair-value"></div><p class="hint" id="pair-expiry"></p><button class="btn btn-small" id="pair-copy" type="button">Copy code</button></div>
+        <p class="status" id="relay-status" role="status"></p>
+      </div>
+    </section>
+
+    <!-- LINK to Lane E's live-fix space (admin/dev/index.html, owner only). -->
+    <section class="section" aria-labelledby="dev-title">
+      <h2 id="dev-title">Live-fix space</h2>
+      <p class="small muted" id="dev-text">Error logs, diagnostics and code changes live on a separate page that only the nesszerra account can open.</p>
+      <p><a class="btn" href="/admin/dev/" id="dev-open" hidden>Open live-fix space</a></p>
+    </section>
+  </div>
+</main>
+<script type="module" src="/src/admin.js"></script>
+</body></html>

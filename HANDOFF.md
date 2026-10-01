@@ -19,42 +19,75 @@ Test target: `cf build/deploy --mode test` → Worker `nesszerra-mini-chat-test`
 
 ## Current state
 
-### V1 (done and deployed)
+Updated 2026-10-01 after the integration pass. Nothing is committed, pushed or deployed: the
+working tree sits on top of the baseline commit (`git diff` shows every change). The live site
+still runs v1.
 
-| File | Purpose |
-|---|---|
-| `public/overlay.html`, `public/overlay.js` | Canvas overlay, characters walk and show chat |
-| `public/chat.js` | Anonymous Twitch IRC adapter (justinfan) |
-| `index.html`, `src/setup.js`, `public/setup.css` | Setup page that builds the overlay URL |
-| `public/assets/characters.json` + 5 PNGs | Kenney CC0 characters: adventurer, female, player, soldier, zombie |
-| `tests/smoke.mjs` | Playwright smoke test (`npm test`) |
-| `README.md`, `VALIDATION.md`, `ASSET_LICENSES.md`, `LICENSE` (MIT) | Docs |
+### V1 (deployed, unchanged on the live site)
 
-### V2 (written, never run, built, deployed or tested)
+`public/overlay.html` + `public/overlay.js` (canvas overlay), `public/chat.js` (anonymous IRC),
+the setup section of `index.html`, and `tests/smoke.mjs`. The v1 smoke test still passes locally.
 
-| File | Lines | Status |
+### V2 (built and tested locally, not deployed)
+
+| Area | Files | Local status |
 |---|---|---|
-| `server/worker.js` | 98 | Router. Imports `./developer.js`, which **doesn't exist**, so the build fails until it's added |
-| `server/auth.js` | 138 | AuthStore DO, Twitch OAuth, AES-GCM sealing, sessions, Helix mod check |
-| `server/channel.js` | 515 | ChannelRoom DO (per-channel state, profiles, leaderboard, admin, relay socket) |
-| `server/game.js` | 749 | Pure combat reducer: `reduceGame`, `parseGameCommand`, `applyProfile`, `defaultConfig` |
-| `public/arena-client.js` | 185 | Overlay-side client for shared arena state |
-| `relay/lib/{config,core,log}.mjs`, `relay/dpapi.ps1`, `relay/package.json` | 234 | Relay library only. **No entry script, OBS launcher or installer yet** |
-| `scripts/configure-twitch.ps1`, `TWITCH_SETUP.md` | — | Sets Worker secrets from local input |
-| `tests/auth.test.mjs`, `tests/cloudflare-test-loader.mjs`, `tests/arena-browser.mjs` | — | Never run |
-| `cloudflare.config.ts` | — | Declares ASSETS, ROOMS, AUTH, AUTH_SECRET, INTERNAL_SECRET, PUBLIC_ORIGIN. **TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET bindings are missing** |
+| Backend core | `server/worker.js`, `channel.js`, `auth.js`, `game.js`, `cloudflare.config.ts` | `npx cf build` passes; 123 unit tests pass |
+| Viewer + admin UI | `index.html`, `admin/index.html`, `src/`, `public/dashboard.css` | `tests/ui.mjs` passes at 1280/390; design check has 0 FAIL |
+| Overlay arena | `public/overlay.js` (`arena=1`), `public/arena-client.js` | `tests/arena-browser.mjs` and the live E2E pass |
+| Relay | `relay/index.mjs`, `relay/lib/*`, `relay/obs/mini-chat-relay.lua` | Relay unit and integration tests pass against local fakes |
+| Content + uploads | 15 characters, `server/uploads.js`, `public/upload.js`, `docs/CHARACTER_RESERVE.md` | Upload tests and `tests/upload-workerd.mjs` pass |
+| Live-fix | `server/developer.js`, `admin/dev/`, `public/dev.js`, `scripts/release.mjs`, `.github/` | `tests/dev-ui.mjs` and dev API tests pass with mocked GitHub/Cloudflare |
 
-All files pass `node --check`.
+Run it all with `npm run test:all` (see `VALIDATION_V2.md` for the exact commands and the spec
+audit). The local E2E (`tests/e2e-local.mjs`) runs against `npx cf dev`. It pairs a real relay
+socket and plays out these steps:
+
+1. Two viewers appear in the arena.
+2. `!challenge` / `!accept`, then attacks with cooldowns, until a KO.
+3. Elo 1012/988 and the leaderboard update.
+4. The rematch delay, the sign-in requirement, the busy player check and the inactivity cancel.
+5. A relay drop pauses combat and cancels the duel unscored.
+
+Screenshots are in `screenshots/e2e-*.png`.
 
 ### Known bugs and gaps
 
-1. `server/developer.js` is missing (`handleDeveloper` for `/api/dev/*`).
-2. `cloudflare.config.ts` lacks the `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` secret bindings.
-3. Relay pairing-code consume isn't atomic (`consume()` in `server/auth.js`). Make it a single DO transaction.
-4. The viewer dashboard, admin dashboard, upload UI and live-fix UI aren't written.
-5. Only the 5 v1 characters exist. The 5–10 launch additions and the 30+ reserve haven't been sourced.
-6. The relay has no runnable entry point and no OBS start/stop hook.
-7. No GitHub repo yet (to be created under `Finesssee`; the folder isn't a git repo).
+1. Not verified with real Twitch: sign-in (OAuth), the Helix moderator check, and the relay's
+   EventSub chat. There is no Twitch app yet, and local `.dev.vars` has no Twitch client, so
+   `/api/session` reports `configured:false`. Local runs use seeded test sessions
+   (`tests/seed-local.mjs`).
+2. Live-fix GitHub/Cloudflare flow (save → test deploy → promote → hotfix → rollback) is only
+   tested against mocked APIs. It needs the GitHub repo plus `GITHUB_TOKEN`, `GITHUB_REPO`,
+   `CF_API_TOKEN` and `CF_ACCOUNT_ID` set as Worker secrets (docs/LIVE_FIX.md).
+3. The OBS start/stop hook (`relay/obs/mini-chat-relay.lua`) was not run in OBS. The relay's
+   "stop when the watched process exits" path is tested with a stand-in process.
+4. Acceptance stages 1–4 below (OBS scene, real chat, restarts and rollback, rehearsal) have not
+   been run.
+5. No GitHub repo exists yet and nothing is committed.
+6. `tests/smoke.mjs` joins the real #nesszerra IRC anonymously and rewrites the tracked
+   `setup-preview.png` and `overlay-preview.png`.
+7. The bundled relay throttles `presence` to one per viewer per 30 s. A viewer who only chats
+   (no commands) can take up to 30 s to reappear after the 10 min idle timeout.
+8. With `debug=1` at 390 px, the overlay's debug status line covers the top announcement. This
+   only affects debug mode.
+9. During this pass, another `npx vite` dev server of this project (pid 6560) was holding port
+   5173. It was left running. Tests use `MINI_PORT=5199` and their own state folder
+   (`.cloudflare/e2e-state`).
+
+Fixed in this pass:
+- `arena-client.js` built its WebSocket with an arrow function called with `new`, so the live
+  overlay never connected (it fell back to polling).
+- `resetAll` didn't clear players or rematch locks, even though the contract and the admin UI
+  say it does.
+- The relay ack now carries `retryAt` for cooldowns.
+- Config history records `actorName` (admin and live-fix).
+- The uploader's layout was squeezed inside the admin `.controls` grid.
+- A gradient checkerboard failed the design check.
+- The admin page had two primary buttons.
+- The setup page's OBS URL now adds `arena=1`.
+- `CF_VERSION_METADATA` binding added.
+- `tests/arena-browser.mjs` now uses contract event shapes.
 
 ## Agreed v2 spec
 

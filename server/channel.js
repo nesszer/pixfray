@@ -6,12 +6,17 @@ import {
   parseGameCommand,
   reduceGame,
 } from "./game.js";
+import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
+import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError } from "./developer.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
 const USER_HEADER = "X-Mini-User-Id";
 const MAX_RELAY_MESSAGE_BYTES = 4 * 1024;
 const MAX_PROFILE_ID_LENGTH = 64;
+const MAX_LIVE_SOCKETS = 64;
+const MAX_CONFIG_HISTORY = 50;
+const RELAY_HEARTBEAT_MS = 10_000;
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -82,10 +87,24 @@ export class ChannelRoom extends DurableObject {
     sql.exec("CREATE TABLE IF NOT EXISTS game_state (id INTEGER PRIMARY KEY CHECK (id = 1), channel TEXT NOT NULL, document TEXT NOT NULL)");
     sql.exec("CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT NOT NULL, avatar TEXT NOT NULL, color TEXT NOT NULL, default_ability TEXT NOT NULL, elo INTEGER NOT NULL, wins INTEGER NOT NULL, losses INTEGER NOT NULL, last_seen INTEGER NOT NULL DEFAULT 0)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
+    sql.exec("CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')");
+    // v2.1: keep the actor's display name so history reads well for mods without a profile.
+    if (!sql.exec("PRAGMA table_info(config_history)").toArray().some((c) => c.name === "actor_name")) sql.exec("ALTER TABLE config_history ADD COLUMN actor_name TEXT NOT NULL DEFAULT ''");
+    ensureUploadSchema(sql);
+    ensureDeveloperSchema(sql);
   }
 
   async fetch(request) {
     if (!this.authorized(request)) return json({ error: "internal authorization required" }, 403);
+    try {
+      return await this.route(request);
+    } catch (error) {
+      logRoomError(this, error, { path: new URL(request.url).pathname, method: request.method });
+      return json({ error: "room error" }, 500);
+    }
+  }
+
+  async route(request) {
 
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -101,6 +120,17 @@ export class ChannelRoom extends DurableObject {
         await this.scheduleAlarm(changed.state);
       }
       return json(this.publicState(changed.state));
+    }
+
+    if (path === "/catalog" || path === "/asset" || path.startsWith("/asset/")) return handleRoomAssets(this, request, { path, channel, url });
+    if (path.startsWith("/dev/")) return handleRoomDeveloper(this, request, { path, channel, url });
+
+    if (path === "/admin" && request.method === "GET") {
+      const state = this.readState(channel);
+      this.seedConfigHistory(state);
+      const history = this.ctx.storage.sql.exec("SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?", MAX_CONFIG_HISTORY).toArray()
+        .map((row) => ({ version: row.version, config: safeJsonParse(row.config, {}), actorId: row.actor_id, actorName: row.actor_name, at: row.at, note: row.note }));
+      return json({ ...this.publicState(state), history, customUsage: customUsage(this) });
     }
 
     if (path === "/leaderboard" && request.method === "GET") {
@@ -135,24 +165,36 @@ export class ChannelRoom extends DurableObject {
       if (!body.ok) return json({ error: body.error }, 400);
       const actorId = validUserId(body.value.actorId);
       if (!actorId) return json({ error: "authorized actor required" }, 403);
-      const payload = body.value.payload && typeof body.value.payload === "object" ? body.value.payload : body.value;
+      const action = String(body.value.action || "");
+      let payload = body.value.payload && typeof body.value.payload === "object" && !Array.isArray(body.value.payload) ? body.value.payload : body.value;
+      let note = "";
+      if (action === "disconnectRelay") {
+        for (const ws of this.ctx.getWebSockets("relay")) {
+          try { ws.close(4003, "Relay revoked"); } catch {}
+        }
+        const state = this.readState(channel);
+        const result = this.advance(channel, { type: "relay_offline", sessionId: state.relay.sessionId }, Date.now());
+        this.broadcast(result.state);
+        await this.scheduleAlarm(result.state);
+        return json({ ok: true, reason: "relay_disconnected", revision: result.state.revision });
+      }
+      if (action === "rollbackConfig") {
+        const version = Number(payload.version);
+        const row = Number.isInteger(version) ? this.ctx.storage.sql.exec("SELECT config FROM config_history WHERE version = ?", version).toArray()[0] : null;
+        if (!row) return json({ ok: false, reason: "config_version_not_found", error: "config_version_not_found" }, 404);
+        payload = { patch: safeJsonParse(row.config, {}) };
+        note = "rollback to v" + version;
+      }
       const targetId = validUserId(payload.userId);
       const targetProfile = targetId ? this.getProfile(targetId, this.readState(channel).config) : null;
-      const event = { type: "admin", actorId, action: body.value.action, payload, targetProfile };
+      const actorName = String(body.value.actorName || "").slice(0, 48);
+      const event = { type: "admin", actorId, actorName, action: action === "rollbackConfig" ? "config" : action, payload, targetProfile, note: note || String(payload.note || "").slice(0, 200) };
       const result = this.advance(channel, event, Date.now());
-      if (!result.result.ok) return json(result.result, result.result.reason === "unauthorized" ? 403 : 400);
-      if (result.result.resetAllRanks) this.resetAllRanks(result.state.config.initialElo);
-      for (const userId of result.dirtyProfileIds) {
-        const profile = result.state.players.find((item) => item.userId === userId);
-        if (profile?.registered) this.upsertProfile(profile);
-      }
-      for (const userId of result.deletedProfileIds) this.deleteProfile(userId);
+      if (!result.result.ok) return json({ ...result.result, error: result.result.reason }, result.result.reason === "unauthorized" ? 403 : result.result.reason === "config_version_conflict" ? 409 : 400);
       this.broadcast(result.state);
       await this.scheduleAlarm(result.state);
       return json({ ...result.result, revision: result.state.revision });
     }
-
-    if (path === "/catalog" && request.method === "GET") return json([]);
 
     if (path === "/live" && request.method === "GET") return this.upgrade(request, "live", channel);
     if (path === "/relay" && request.method === "GET") return this.upgrade(request, "relay", channel);
@@ -194,6 +236,7 @@ export class ChannelRoom extends DurableObject {
   advance(channel, event, now) {
     return this.ctx.storage.transactionSync(() => {
       const state = this.readState(channel);
+      if (event.type === "admin" && event.action === "config") this.seedConfigHistory(state);
       const result = reduceGame(state, event, now);
       if (result.changed) this.writeState(result.state);
       for (const userId of result.dirtyProfileIds) {
@@ -201,8 +244,27 @@ export class ChannelRoom extends DurableObject {
         if (profile?.registered) this.upsertProfile(profile);
       }
       if (result.resetAllRanks) this.resetAllRanks(result.state.config.initialElo);
+      for (const userId of result.rankResetIds || []) {
+        this.ctx.storage.sql.exec("UPDATE profiles SET elo = ?, wins = 0, losses = 0 WHERE user_id = ?", result.state.config.initialElo, userId);
+      }
+      for (const userId of result.deletedProfileIds || []) this.deleteProfile(userId);
+      if (result.result?.reason === "config_updated") {
+        this.recordConfigVersion(result.state.configVersion, result.state.config, event.actorId, event.note || "", now, event.actorName);
+      }
       return result;
     });
+  }
+
+  // Config history keeps every version so mods can review and roll back (see CONTRACTS.md).
+  seedConfigHistory(state) {
+    const [{ n }] = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM config_history").toArray();
+    if (!n) this.recordConfigVersion(state.configVersion, state.config, "system", "initial", Date.now());
+  }
+
+  recordConfigVersion(version, config, actorId, note, now, actorName = "") {
+    const sql = this.ctx.storage.sql;
+    sql.exec("INSERT OR REPLACE INTO config_history (version, config, actor_id, actor_name, at, note) VALUES (?, ?, ?, ?, ?, ?)", version, JSON.stringify(config), String(actorId || "system"), String(actorName || ""), now, note);
+    sql.exec("DELETE FROM config_history WHERE version <= ?", version - 200);
   }
 
   async readJson(request) {
@@ -283,6 +345,12 @@ export class ChannelRoom extends DurableObject {
   }
 
   upsertProfile(profile) {
+    // Twitch logins can be renamed and later reused; free the login if a stale row still holds it.
+    this.ctx.storage.sql.exec(
+      "UPDATE profiles SET username = '~' || user_id WHERE username = ? COLLATE NOCASE AND user_id <> ?",
+      profile.username,
+      profile.userId,
+    );
     this.ctx.storage.sql.exec(
       "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, avatar = excluded.avatar, color = excluded.color, default_ability = excluded.default_ability, elo = excluded.elo, wins = excluded.wins, losses = excluded.losses, last_seen = excluded.last_seen",
@@ -321,10 +389,14 @@ export class ChannelRoom extends DurableObject {
 
   publicState(state) {
     return {
+      type: "snapshot",
       channel: state.channel,
       revision: state.revision,
+      paused: !state.relay.connected || !state.config.enabled,
       relay: { connected: Boolean(state.relay.connected), lastSeen: Number(state.relay.lastSeen) || 0 },
       config: state.config,
+      configVersion: state.configVersion,
+      round: state.round,
       players: state.players.map((profile) => ({ ...profile })),
       duels: state.duels.map((duel) => ({ ...duel })),
       events: state.events.slice(-50).map((event) => ({ ...event })),
@@ -337,6 +409,8 @@ export class ChannelRoom extends DurableObject {
       for (const ws of this.ctx.getWebSockets("relay")) {
         try { ws.close(4001, "Relay replaced"); } catch {}
       }
+    } else if (this.ctx.getWebSockets("live").length >= MAX_LIVE_SOCKETS) {
+      return json({ error: "too many overlay connections" }, 429);
     }
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -346,8 +420,13 @@ export class ChannelRoom extends DurableObject {
     server.serializeAttachment({ kind, sessionId, channel });
     if (kind === "relay") {
       const result = this.advance(channel, { type: "relay_connected", sessionId }, Date.now());
+      server.send(JSON.stringify({ type: "hello", sessionId, channel, heartbeatMs: RELAY_HEARTBEAT_MS, leaseMs: result.state.config.relayLeaseMs }));
       this.broadcast(result.state);
       await this.scheduleAlarm(result.state);
+    } else {
+      const result = this.advance(channel, { type: "tick" }, Date.now());
+      server.send(JSON.stringify(this.publicState(result.state)));
+      if (result.changed) this.broadcast(result.state);
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -399,12 +478,15 @@ export class ChannelRoom extends DurableObject {
       try { ws.close(1000, "Relay offline"); } catch {}
     } else if (payload.type === "presence" || payload.type === "command") {
       result = this.processRelayEvent(channel, sessionId, payload);
+      if (payload.type === "command") {
+        try { ws.send(JSON.stringify({ type: "ack", messageId: String(payload.messageId || "").slice(0, 64), ok: Boolean(result?.result?.ok), reason: String(result?.result?.reason || ""), ...(Number.isFinite(result?.result?.retryAt) ? { retryAt: result.result.retryAt } : {}) })); } catch {}
+      }
     } else {
       try { ws.close(1008, "Unknown relay message"); } catch {}
       return;
     }
 
-    if (result?.changed) this.broadcast(result.state);
+    if (result?.visible ?? result?.changed) this.broadcast(result.state);
     if (result?.changed || payload.type === "heartbeat" || payload.type === "offline") {
       await this.scheduleAlarm(result.state);
     }
@@ -416,7 +498,7 @@ export class ChannelRoom extends DurableObject {
     const displayName = String(payload.displayName || username).trim().slice(0, 48);
     const timestamp = Number(payload.timestamp);
     if (!userId || !username || !Number.isFinite(timestamp) || !displayName) {
-      return this.advance(channel, { type: "tick" }, Date.now());
+      return { ...this.advance(channel, { type: "tick" }, Date.now()), result: { ok: false, reason: "invalid_event" } };
     }
 
     const now = Date.now();

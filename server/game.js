@@ -93,6 +93,8 @@ export function createInitialState(channel = "nesszerra") {
     revision: 0,
     relay: { connected: false, socketConnected: false, lastSeen: 0, sessionId: "" },
     config: clone(DEFAULT_CONFIG),
+    configVersion: 1,
+    round: 0,
     players: [],
     duels: [],
     rematchLocks: [],
@@ -154,8 +156,9 @@ function recentProfile(state, profile, now) {
   if (Number.isInteger(profile.elo) && profile.registered) merged.elo = profile.elo;
   if (Number.isInteger(profile.wins) && profile.registered) merged.wins = profile.wins;
   if (Number.isInteger(profile.losses) && profile.registered) merged.losses = profile.losses;
-  if (Number.isInteger(profile.hp) && profile.registered) merged.hp = Math.min(state.config.maxHp, Math.max(0, profile.hp));
-  if (Number.isInteger(profile.respawnAt)) merged.respawnAt = profile.respawnAt;
+  // hp/respawnAt only seed a new player, so a later chat message can never undo a KO.
+  if (!existing && Number.isInteger(profile.hp) && profile.registered) merged.hp = Math.min(state.config.maxHp, Math.max(0, profile.hp));
+  if (!existing && Number.isInteger(profile.respawnAt)) merged.respawnAt = profile.respawnAt;
   if (existing) Object.assign(existing, merged);
   else {
     if (state.players.length >= MAX_ACTIVE_PLAYERS) {
@@ -170,23 +173,29 @@ function recentProfile(state, profile, now) {
   return player(state, userId);
 }
 
+// Cancelled duels are unscored: no Elo, no wins/losses, no KO. Fighters are restored to full health.
 function cancelDuel(state, duel, now, reason) {
   if (duel.status !== "pending" && duel.status !== "active") return false;
+  const wasActive = duel.status === "active";
   duel.status = "cancelled";
   duel.endedAt = now;
   duel.cancelReason = reason;
   duel.winnerId = null;
-  if (duel.status === "active" || duel.hp) {
+  if (wasActive) {
     for (const userId of [duel.a, duel.b]) {
       const p = player(state, userId);
       if (p) {
-        p.hp = 0;
-        p.respawnAt = now + state.config.respawnMs;
+        p.hp = state.config.maxHp;
+        p.respawnAt = 0;
       }
     }
   }
-  addEvent(state, "duel_cancelled", now, { duelId: duel.id, reason });
+  addEvent(state, "duel_cancelled", now, { duelId: duel.id, a: duel.a, b: duel.b, reason, wasActive });
   return true;
+}
+
+function isTerminal(duel) {
+  return duel.status === "completed" || duel.status === "cancelled" || duel.status === "expired" || duel.status === "declined";
 }
 
 function expireState(state, now) {
@@ -217,6 +226,7 @@ function expireState(state, now) {
     if (p.respawnAt && now >= p.respawnAt) {
       p.hp = state.config.maxHp;
       p.respawnAt = 0;
+      addEvent(state, "player_respawned", now, { userId: p.userId });
       changed = true;
     }
   }
@@ -227,7 +237,7 @@ function expireState(state, now) {
   state.players = state.players.filter((p) => inDuel.has(p.userId) || p.respawnAt > now || now - p.lastSeen <= ACTIVE_TTL_MS);
   if (state.players.length !== before) changed = true;
 
-  const terminal = state.duels.filter((duel) => duel.status === "completed" || duel.status === "cancelled" || duel.status === "expired");
+  const terminal = state.duels.filter(isTerminal);
   if (terminal.length > MAX_DUEL_HISTORY) {
     const keep = new Set(terminal.slice(-MAX_DUEL_HISTORY).map((duel) => duel.id));
     state.duels = state.duels.filter((duel) => duel.status === "pending" || duel.status === "active" || keep.has(duel.id));
@@ -292,6 +302,8 @@ function beginDuel(state, duel, now) {
   const a = player(state, duel.a);
   const b = player(state, duel.b);
   if (!a?.registered || !b?.registered) return { ok: false, reason: "ranked_sign_in_required" };
+  state.round += 1;
+  duel.round = state.round;
   duel.status = "active";
   duel.startedAt = now;
   duel.lastActionAt = now;
@@ -312,7 +324,7 @@ function beginDuel(state, duel, now) {
   b.hp = state.config.maxHp;
   a.respawnAt = 0;
   b.respawnAt = 0;
-  addEvent(state, "duel_started", now, { duelId: duel.id, a: duel.a, b: duel.b, hp: clone(duel.hp) });
+  addEvent(state, "duel_started", now, { duelId: duel.id, a: duel.a, b: duel.b, round: duel.round, hp: clone(duel.hp) });
   return { ok: true, duelId: duel.id };
 }
 
@@ -335,10 +347,13 @@ function finishDuel(state, duel, winnerId, now) {
     b.wins += 1;
     a.losses += 1;
   }
-  a.hp = duel.hp[duel.a];
-  b.hp = duel.hp[duel.b];
-  a.respawnAt = now + duel.rules.respawnMs;
-  b.respawnAt = now + duel.rules.respawnMs;
+  // The loser is knocked out (hp 0) and respawns at full health after respawnMs; the winner is healed at once.
+  const winner = winnerId === duel.a ? a : b;
+  const loser = winnerId === duel.a ? b : a;
+  winner.hp = state.config.maxHp;
+  winner.respawnAt = 0;
+  loser.hp = 0;
+  loser.respawnAt = now + duel.rules.respawnMs;
   duel.status = "completed";
   duel.winnerId = winnerId;
   duel.endedAt = now;
@@ -353,12 +368,16 @@ function finishDuel(state, duel, winnerId, now) {
   addEvent(state, "duel_completed", now, {
     duelId: duel.id,
     winnerId,
-    loserId: winnerId === duel.a ? duel.b : duel.a,
+    loserId: loser.userId,
+    round: duel.round,
+    respawnAt: loser.respawnAt,
+    hp: clone(duel.hp),
     ratings: clone(duel.ratings),
   });
 }
 
 function applyAbility(state, duel, actor, abilityName, now) {
+  if (!ABILITIES.has(abilityName)) return { ok: false, reason: "invalid_ability" };
   const ability = duel.rules.abilities[abilityName];
   if (!ability) return { ok: false, reason: "invalid_ability" };
   const cooldown = duel.cooldowns[actor.userId];
@@ -387,11 +406,11 @@ function applyAbility(state, duel, actor, abilityName, now) {
   const target = player(state, targetId);
   if (target) target.hp = duel.hp[targetId];
 
+  addEvent(state, "duel_action", now, { duelId: duel.id, userId: actor.userId, targetId: abilityName === "heal" ? actor.userId : targetId, ability: abilityName, amount, hp: clone(duel.hp) });
   if (duel.hp[targetId] <= 0) {
     finishDuel(state, duel, actor.userId, now);
     return { ok: true, reason: "duel_completed", duelId: duel.id, ability: abilityName, amount, winnerId: actor.userId };
   }
-  addEvent(state, "duel_action", now, { duelId: duel.id, userId: actor.userId, targetId: abilityName === "heal" ? actor.userId : targetId, ability: abilityName, amount, hp: clone(duel.hp) });
   return { ok: true, reason: "action_applied", duelId: duel.id, ability: abilityName, amount };
 }
 
@@ -493,7 +512,10 @@ function applyAdmin(state, event, now) {
   const deletedProfileIds = [];
 
   if (action === "config") {
-    const patchResult = validateConfigPatch(payload.patch || payload.config || payload);
+    if (payload.baseVersion !== undefined && payload.baseVersion !== state.configVersion) {
+      return { ok: false, reason: "config_version_conflict", configVersion: state.configVersion };
+    }
+    const patchResult = validateConfigPatch(payload.patch || payload.config);
     if (!patchResult.ok) return patchResult;
     const config = { ...state.config };
     for (const [key, value] of Object.entries(patchResult.patch)) {
@@ -503,11 +525,12 @@ function applyAdmin(state, event, now) {
       } else config[key] = value;
     }
     state.config = normalizeConfig(config);
+    state.configVersion += 1;
     if (!state.config.enabled) {
       for (const duel of openDuels(state)) cancelDuel(state, duel, now, "duels_disabled");
     }
-    addEvent(state, "config_updated", now, { actorId, config: clone(state.config) });
-    return { ok: true, reason: "config_updated", config: clone(state.config), dirtyProfileIds, deletedProfileIds };
+    addEvent(state, "config_updated", now, { actorId, configVersion: state.configVersion, config: clone(state.config) });
+    return { ok: true, reason: "config_updated", config: clone(state.config), configVersion: state.configVersion, dirtyProfileIds, deletedProfileIds };
   }
 
   if (action === "cancelDuel") {
@@ -543,13 +566,15 @@ function applyAdmin(state, event, now) {
   if (action === "resetRank") {
     const userId = normalizeUserId(payload.userId);
     const p = player(state, userId);
-    if (!userId || !p?.registered) return { ok: false, reason: "profile_not_found" };
-    p.elo = state.config.initialElo;
-    p.wins = 0;
-    p.losses = 0;
-    dirtyProfileIds.push(userId);
+    const stored = event.targetProfile?.userId === userId && event.targetProfile?.registered;
+    if (!userId || (!p?.registered && !stored)) return { ok: false, reason: "profile_not_found" };
+    if (p) {
+      p.elo = state.config.initialElo;
+      p.wins = 0;
+      p.losses = 0;
+    }
     addEvent(state, "rank_reset", now, { actorId, userId });
-    return { ok: true, reason: "rank_reset", dirtyProfileIds, deletedProfileIds };
+    return { ok: true, reason: "rank_reset", dirtyProfileIds, deletedProfileIds, rankResetIds: [userId] };
   }
 
   if (action === "resetAllRanks") {
@@ -565,13 +590,18 @@ function applyAdmin(state, event, now) {
   }
 
   if (action === "resetAll") {
+    // CONTRACTS.md: clears players, duels and rematch locks; stored profiles and ranks stay.
     for (const duel of openDuels(state)) cancelDuel(state, duel, now, "moderator_reset");
-    for (const p of state.players) {
-      p.hp = state.config.maxHp;
-      p.respawnAt = 0;
-    }
+    state.players = [];
+    state.rematchLocks = [];
     addEvent(state, "game_reset", now, { actorId });
     return { ok: true, reason: "game_reset", dirtyProfileIds, resetAllRanks: false, deletedProfileIds };
+  }
+
+  if (action === "resetRound") {
+    state.round = 0;
+    addEvent(state, "round_reset", now, { actorId });
+    return { ok: true, reason: "round_reset", round: 0, dirtyProfileIds, deletedProfileIds };
   }
 
   if (action === "removePlayer") {
@@ -595,10 +625,6 @@ export function parseGameCommand(text) {
   if (action === "challenge") action = "duel";
   const target = match[2] ? normalizeUsername(match[2]) : "";
   if (action === "duel" && !target) return null;
-  if (["strike", "heavy", "heal", "accept", "decline"].includes(action) && target) {
-    return { action, target };
-  }
-  if (["strike", "heavy", "heal"].includes(action) && target) return null;
   return { action, target };
 }
 
@@ -638,13 +664,18 @@ export function applyProfile(state, profile, now) {
 export function reduceGame(inputState, event, now = Date.now()) {
   const state = normalizeState(inputState);
   const dirtyProfileIds = [];
+  const deletedProfileIds = [];
+  const rankResetIds = [];
   let resetAllRanks = false;
+  let touched = false;
   let result;
   const beforeRevision = state.revision;
   const didExpire = expireState(state, now);
 
   if (event?.type === "relay_connected") {
     const sessionId = safeString(event.sessionId, 100);
+    // A (re)connecting relay means the previous link dropped: unfinished duels are cancelled unscored.
+    for (const duel of openDuels(state)) cancelDuel(state, duel, now, "relay_disconnected");
     state.relay.socketConnected = true;
     state.relay.connected = false;
     state.relay.sessionId = sessionId;
@@ -664,9 +695,10 @@ export function reduceGame(inputState, event, now = Date.now()) {
       state.relay.connected = true;
       state.relay.socketConnected = true;
       state.relay.lastSeen = now;
+      // Routine heartbeats only refresh the lease; they persist state but add no event.
       if (!wasConnected) addEvent(state, "twitch_connected", now);
-      else addEvent(state, "relay_heartbeat", now);
-      result = { ok: true, reason: "heartbeat" };
+      else touched = true;
+      result = { ok: true, reason: wasConnected ? "heartbeat" : "twitch_connected" };
     }
   } else if (event?.type === "relay_offline") {
     if (event.sessionId && state.relay.sessionId && event.sessionId !== state.relay.sessionId) {
@@ -717,6 +749,8 @@ export function reduceGame(inputState, event, now = Date.now()) {
   } else if (event?.type === "admin") {
     result = applyAdmin(state, event, now);
     if (result?.dirtyProfileIds) dirtyProfileIds.push(...result.dirtyProfileIds);
+    if (result?.deletedProfileIds) deletedProfileIds.push(...result.deletedProfileIds);
+    if (result?.rankResetIds) rankResetIds.push(...result.rankResetIds);
     resetAllRanks = Boolean(result?.resetAllRanks);
   } else if (event?.type === "tick") {
     result = { ok: true, reason: didExpire ? "state_advanced" : "no_change" };
@@ -724,13 +758,16 @@ export function reduceGame(inputState, event, now = Date.now()) {
     result = { ok: false, reason: "unknown_event" };
   }
 
-  const changed = state.revision !== beforeRevision || didExpire;
-  return { state, result, changed, dirtyProfileIds: [...new Set(dirtyProfileIds)], resetAllRanks };
+  // changed: state must be persisted. visible: overlays should receive a new snapshot.
+  const visible = state.revision !== beforeRevision || didExpire;
+  const changed = visible || touched;
+  return { state, result, changed, visible, dirtyProfileIds: [...new Set(dirtyProfileIds)], deletedProfileIds: [...new Set(deletedProfileIds)], rankResetIds: [...new Set(rankResetIds)], resetAllRanks };
 }
 
 function normalizeState(input) {
   const initial = createInitialState(input?.channel || "nesszerra");
-  const state = { ...initial, ...(input && typeof input === "object" ? input : {}) };
+  // Deep copy so the reducer never mutates its input.
+  const state = { ...initial, ...(input && typeof input === "object" ? clone(input) : {}) };
   state.channel = safeString(state.channel, 25).toLowerCase() || "nesszerra";
   state.revision = Number.isInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
   state.relay = { ...initial.relay, ...(state.relay && typeof state.relay === "object" ? state.relay : {}) };
@@ -741,6 +778,8 @@ function normalizeState(input) {
   state.events = Array.isArray(state.events) ? state.events.slice(-MAX_RECENT_EVENTS) : [];
   state.appliedMessageIds = Array.isArray(state.appliedMessageIds) ? state.appliedMessageIds.slice(-MAX_APPLIED_MESSAGE_IDS) : [];
   state.nextDuelId = Number.isInteger(state.nextDuelId) && state.nextDuelId > 0 ? state.nextDuelId : 1;
+  state.configVersion = Number.isInteger(state.configVersion) && state.configVersion > 0 ? state.configVersion : 1;
+  state.round = Number.isInteger(state.round) && state.round >= 0 ? state.round : 0;
   return state;
 }
 

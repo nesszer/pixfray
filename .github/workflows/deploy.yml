@@ -1,0 +1,148 @@
+# Live-fix deploy flow for mini-chat (docs/LIVE_FIX.md). Started by /api/dev/{deploy,promote,hotfix,rollback}
+# through workflow_dispatch, or by hand from the Actions tab.
+#   deploy   + test        any allowed ref (base branch, live-fix/*, hotfix/*) -> test.chat.miolaf.xyz
+#   deploy   + production  base branch only (promote), or hotfix/* with hotfix=true -> chat.miolaf.xyz
+#   rollback + target      points 100% of traffic at an earlier Worker version (no build)
+# Inputs reach shell steps only through env, never by ${{ }} inside run scripts.
+name: Deploy
+run-name: "${{ inputs.operation }} ${{ inputs.target }} ${{ github.ref_name }} ${{ inputs.request_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: deploy or rollback
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+        required: true
+      target:
+        description: test or production
+        type: choice
+        options: [test, production]
+        default: test
+        required: true
+      sha:
+        description: Commit to deploy (must be on the dispatched branch); empty = branch head
+        type: string
+        default: ""
+      percentage:
+        description: Production traffic share for the new version (1-100); the rest stays on the current version
+        type: string
+        default: "100"
+      version_id:
+        description: Rollback target Worker version UUID; empty = previous deployment
+        type: string
+        default: ""
+      hotfix:
+        description: Allow a production deploy from a hotfix/* branch
+        type: boolean
+        default: false
+      request_id:
+        description: Correlation id set by /api/dev
+        type: string
+        default: manual
+      reason:
+        description: Short note stored on the Worker deployment
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mini-chat-${{ inputs.target }}
+  cancel-in-progress: false
+
+env:
+  BASE_BRANCH: main
+
+jobs:
+  deploy:
+    if: inputs.operation == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.target }}
+    env:
+      TARGET: ${{ inputs.target }}
+      REF_NAME: ${{ github.ref_name }}
+      INPUT_SHA: ${{ inputs.sha }}
+      PERCENTAGE: ${{ inputs.percentage }}
+      HOTFIX: ${{ inputs.hotfix }}
+      REASON: ${{ inputs.reason }}
+      RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Check the ref is allowed for this target
+        run: |
+          case "$REF_NAME" in
+            "$BASE_BRANCH"|live-fix/*|hotfix/*) ;;
+            *) echo "::error::Ref $REF_NAME is not deployable"; exit 1 ;;
+          esac
+          if [ "$TARGET" = production ]; then
+            if [ "$REF_NAME" != "$BASE_BRANCH" ]; then
+              case "$REF_NAME" in hotfix/*) ;; *) echo "::error::Production deploys come from $BASE_BRANCH (promote) or hotfix/*"; exit 1 ;; esac
+              if [ "$HOTFIX" != true ]; then echo "::error::Set hotfix=true to deploy $REF_NAME to production"; exit 1; fi
+            fi
+          elif [ "$PERCENTAGE" != 100 ]; then
+            echo "::error::Gradual deployments are for production only"; exit 1
+          fi
+          if [ -n "$INPUT_SHA" ] && ! printf '%s' "$INPUT_SHA" | grep -Eq '^[0-9a-f]{40}$'; then echo "::error::sha must be a full commit sha"; exit 1; fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the commit belongs to the dispatched branch
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$SHA" "origin/$REF_NAME" || { echo "::error::$SHA is not on $REF_NAME"; exit 1; }
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+          echo "TAG=gh-${SHA:0:7}-$RUN_ID" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Upload the version and move traffic
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/release.mjs deploy --target "$TARGET" --percentage "$PERCENTAGE" --tag "$TAG" --message "${REASON:-deploy $REF_NAME}"
+
+  rollback:
+    if: inputs.operation == 'rollback'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target }}
+    env:
+      TARGET: ${{ inputs.target }}
+      VERSION_ID: ${{ inputs.version_id }}
+      REASON: ${{ inputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Roll back
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$VERSION_ID" ]; then
+            node scripts/release.mjs rollback --target "$TARGET" --version "$VERSION_ID" --message "${REASON:-rollback}"
+          else
+            node scripts/release.mjs rollback --target "$TARGET" --message "${REASON:-rollback}"
+          fi

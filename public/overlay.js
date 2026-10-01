@@ -18,6 +18,15 @@ export function parseCommand(text) {
   return /^[a-z0-9_-]{1,64}$/i.test(match[2] || '') ? { type, value: match[2].toLowerCase() } : null;
 }
 
+// Arena events (CONTRACTS.md section 3) older than this are history from the first snapshot, not news.
+const EVENT_FRESH_MS = 10_000;
+const OPEN = new Set(['pending', 'active']);
+const CANCEL_TEXT = {
+  inactivity: 'no action for a while', relay_disconnected: 'relay offline', twitch_disconnected: 'Twitch chat offline',
+  duels_disabled: 'duels turned off', moderator_cancelled: 'cancelled by a moderator', moderator_reset: 'reset by a moderator',
+  player_removed: 'player removed',
+};
+
 async function start() {
   const canvas = document.querySelector('#stage');
   if (!canvas) return;
@@ -41,35 +50,29 @@ async function start() {
   const players = new Map();
   const sprites = new Map();
   const profilesById = new Map();
+  const meetPoints = new Map();
   let width = 1, height = 1, connectionState = demo ? 'demo' : 'connecting';
-  let arenaSnapshot = null, arenaRelay = null, arenaTransport = arenaDemo ? 'demo' : 'connecting';
-  let arenaRevision = null, arenaDuels = [], arenaClient = null, arenaTimer = null;
-  let announcement = null;
+  let arenaRelay = null, arenaTransport = arenaDemo ? 'demo' : 'connecting', arenaConfig = { maxHp: 100 };
+  let arenaRevision = null, arenaDuels = [], arenaClient = null, arenaTimer = null, arenaPaused = false;
+  let announcement = null, lastCatalogFetch = 0;
   let lastFrame = performance.now(), lastCleanup = 0;
+  const particles = [];
   function updateStatus(detail = '') {
     if (!status) return;
     const chatStatus = channel + ' · ' + connectionState + ' · ' + players.size + '/' + cap + ' characters';
     const relayOnline = arenaDemo || (arenaRelay?.connected === true && ['connected', 'live'].includes(arenaTransport));
-    const relaySeenAt = typeof arenaRelay?.lastSeen === 'number'
-      ? (arenaRelay.lastSeen < 1e12 ? arenaRelay.lastSeen * 1000 : arenaRelay.lastSeen)
-      : Date.parse(arenaRelay?.lastSeen || '');
-    const relayAge = Number.isFinite(relaySeenAt)
-      ? Math.max(0, Math.floor((Date.now() - relaySeenAt) / 1000))
-      : null;
-    const relayAgeText = relayAge === null ? '' : relayAge < 60 ? ' · relay seen ' + relayAge + 's ago'
-      : ' · relay seen ' + Math.floor(relayAge / 60) + 'm ago';
+    const relayAge = Number(arenaRelay?.lastSeen) > 0 ? Math.max(0, Math.floor((Date.now() - Number(arenaRelay.lastSeen)) / 1000)) : null;
     const relayStatus = arenaEnabled
       ? ' · arena ' + (relayOnline ? 'relay live' : arenaTransport) +
-        (arenaRelay?.connected && !relayOnline ? ' · stream ' + arenaTransport : '') +
-        relayAgeText +
+        (relayAge === null ? '' : ' · relay seen ' + (relayAge < 60 ? relayAge + 's' : Math.floor(relayAge / 60) + 'm') + ' ago') +
         (arenaRevision !== null ? ' r' + arenaRevision : '') +
-        ' · ' + profilesById.size + ' profiles · ' + arenaDuels.length + ' duels'
+        ' · ' + profilesById.size + ' profiles · ' + openDuels().length + ' duels'
       : '';
     if (debug) {
       status.textContent = chatStatus + relayStatus + (detail ? ' · ' + detail : '');
       status.hidden = false;
-    } else if (arenaEnabled && !relayOnline) {
-      status.textContent = arenaDemo ? 'DEMO arena · local only' : 'Arena offline · rankings paused';
+    } else if (arenaEnabled && !arenaDemo && (!relayOnline || arenaPaused)) {
+      status.textContent = relayOnline ? 'Duels paused' : 'Duels paused · relay offline';
       status.hidden = false;
     } else {
       status.textContent = '';
@@ -97,38 +100,45 @@ async function start() {
     }
     return [];
   }
+  const validFrames = list => Array.isArray(list) ? list.filter(f =>
+    f && [f.x, f.y, f.w, f.h].every(Number.isFinite) && f.x >= 0 && f.y >= 0 && f.w > 0 && f.h > 0) : [];
+  function addSprite(id, item) {
+    if (!item || typeof item.url !== 'string' || sprites.has(id)) return;
+    const url = new URL(item.url, location.href);
+    if (url.origin !== location.origin) return;
+    const animations = {};
+    for (const [name, list] of Object.entries(item.animations || {})) {
+      const frames = validFrames(list);
+      if (frames.length) animations[name] = frames;
+    }
+    const image = new Image();
+    const sprite = { ...item, frames: validFrames(item.frames), animations, image, loaded: false, fps: Math.max(1, Math.min(30, Number(item.fps) || 8)) };
+    image.onload = () => {
+      if (!sprite.frames.length && image.naturalWidth && image.naturalHeight) {
+        sprite.frames = [{ x: 0, y: 0, w: image.naturalWidth, h: image.naturalHeight }];
+      }
+      sprite.loaded = sprite.frames.length > 0;
+    };
+    image.onerror = () => { sprite.loaded = false; };
+    image.src = url.href;
+    sprites.set(id, sprite);
+  }
+  // Custom characters can be uploaded while OBS is running; fetch the merged catalog again when one is missing.
+  async function loadArenaCatalog() {
+    lastCatalogFetch = Date.now();
+    try {
+      for (const item of await catalogItems('/api/catalog/' + encodeURIComponent(channel))) {
+        if (typeof item?.id === 'string') addSprite(item.id.toLowerCase(), item);
+      }
+    } catch { /* The bundled sprite set stays available. */ }
+  }
   try {
-    const entries = new Map();
     for (const item of await catalogItems('./assets/characters.json')) {
-      if (typeof item?.id === 'string') entries.set(item.id.toLowerCase(), item);
-    }
-    if (arenaEnabled && !arenaDemo) {
-      try {
-        const remoteItems = await catalogItems('/api/catalog/' + encodeURIComponent(channel));
-        for (const item of remoteItems) if (typeof item?.id === 'string') entries.set(item.id.toLowerCase(), item);
-      } catch { /* A missing arena catalog leaves the bundled sprite set available. */ }
-    }
-    for (const [id, item] of entries) {
-      if (!item || typeof item.url !== 'string') continue;
-      const url = new URL(item.url, location.href);
-      if (url.origin !== location.origin) continue;
-      const frames = Array.isArray(item.frames) ? item.frames.filter(f =>
-        [f.x, f.y, f.w, f.h].every(Number.isFinite) && f.x >= 0 && f.y >= 0 && f.w > 0 && f.h > 0
-      ) : [];
-      const image = new Image();
-      const sprite = { ...item, frames, image, loaded: false, fps: Math.max(1, Math.min(30, Number(item.fps) || 8)) };
-      image.onload = () => {
-        if (!sprite.frames.length && image.naturalWidth && image.naturalHeight) {
-          sprite.frames = [{ x: 0, y: 0, w: image.naturalWidth, h: image.naturalHeight }];
-        }
-        sprite.loaded = sprite.frames.length > 0;
-      };
-      image.onerror = () => { sprite.loaded = false; };
-      image.src = url.href;
-      sprites.set(id, sprite);
+      if (typeof item?.id === 'string') addSprite(item.id.toLowerCase(), item);
     }
   } catch { updateStatus('Using fallback characters'); }
-  const ids = [...sprites.keys()];
+  if (arenaEnabled && !arenaDemo) await loadArenaCatalog();
+  const ids = [...sprites.keys()].filter(id => !sprites.get(id).custom);
   function persist() {
     // Bound storage so chat activity cannot grow an unlimited local profile file.
     const keys = Object.keys(settings);
@@ -136,124 +146,165 @@ async function start() {
     try { localStorage.setItem(storageKey, JSON.stringify(settings)); } catch { /* Storage is optional. */ }
   }
   function hop(p, amount) { p.vy = -amount; }
-  function applyArenaProfile(p) {
-    const profile = arenaEnabled && p.userId ? profilesById.get(String(p.userId)) : null;
-    p.arenaProfile = profile || null;
-    p.arenaEffect = p.userId ? recentArenaEffects.get(String(p.userId)) : null;
-    if (!profile) {
-      p.renderAvatar = p.avatar;
-      return;
+  const nameOf = id => {
+    const profile = profilesById.get(String(id));
+    return String(profile?.displayName || profile?.username || 'Player').slice(0, 24);
+  };
+  function openDuels() { return arenaDuels.filter(duel => OPEN.has(duel?.status)); }
+  function findPlayer(userId) {
+    if (userId === null || userId === undefined || userId === '') return null;
+    for (const p of players.values()) if (p.userId === String(userId)) return p;
+    return null;
+  }
+  function spawn(key, init) {
+    if (players.size >= cap) {
+      const oldest = [...players.values()].reduce((a, b) => a.lastSeen < b.lastSeen ? a : b);
+      players.delete(oldest.key);
     }
-    p.label = String(profile.displayName || profile.username || p.chatLabel || p.label).slice(0, 24);
+    const saved = settings[key] && typeof settings[key] === 'object' ? settings[key] : {};
+    const p = { key, userId: '', label: key, chatLabel: key, x: size / 2 + Math.random() * Math.max(0, width - size),
+      speed: 14 + Math.random() * 20, direction: Math.random() < 0.5 ? -1 : 1, lane: Math.random() * 28, y: 0, vy: 0,
+      avatar: sprites.has(saved.avatar) ? saved.avatar : ids[Math.floor(Math.random() * ids.length)],
+      color: sanitizeColor(saved.color) || '#a78bfa', chatColor: null, lastJump: 0, phase: Math.random() * 1000,
+      lastSeen: Date.now(), anim: null, ...init };
+    players.set(key, p);
+    return p;
+  }
+  // Registered profiles (saved on the website) decide name, color and character. Unregistered chatters keep their chat look.
+  function applyArenaProfile(p) {
+    const profile = arenaEnabled && p.userId ? profilesById.get(p.userId) : null;
+    p.arenaProfile = profile || null;
+    p.renderAvatar = p.avatar;
+    p.defaultAbility = '';
+    if (!profile) return;
+    if (profile.displayName || profile.username) p.label = String(profile.displayName || profile.username).slice(0, 24);
+    if (!profile.registered) return;
     p.color = sanitizeColor(profile.color) || p.chatColor || p.color;
-    p.renderAvatar = typeof profile.avatar === 'string' ? profile.avatar.toLowerCase() : p.avatar;
+    const avatar = typeof profile.avatar === 'string' ? profile.avatar.toLowerCase() : '';
+    if (sprites.has(avatar)) p.renderAvatar = avatar;
+    else if (avatar && !arenaDemo && Date.now() - lastCatalogFetch > 30_000) void loadArenaCatalog().then(() => { for (const q of players.values()) applyArenaProfile(q); });
     p.defaultAbility = String(profile.defaultAbility || '').slice(0, 20);
   }
   function acceptArenaSnapshot(snapshot, metadata = {}) {
     if (!snapshot || typeof snapshot !== 'object') return;
-    arenaSnapshot = snapshot;
     arenaRelay = snapshot.relay && typeof snapshot.relay === 'object' ? snapshot.relay : null;
-    arenaRevision = Number.isFinite(Number(metadata.revision))
-      ? Number(metadata.revision)
+    if (snapshot.config && typeof snapshot.config === 'object') arenaConfig = snapshot.config;
+    arenaPaused = snapshot.paused === true;
+    arenaRevision = Number.isFinite(Number(metadata.revision)) ? Number(metadata.revision)
       : Number.isFinite(Number(snapshot.revision)) ? Number(snapshot.revision) : arenaRevision;
-    const nextProfiles = new Map();
-    for (const profile of Array.isArray(snapshot.players) ? snapshot.players : []) {
-      if (profile?.userId !== undefined && profile?.userId !== null) nextProfiles.set(String(profile.userId), profile);
-    }
     profilesById.clear();
-    for (const [id, profile] of nextProfiles) profilesById.set(id, profile);
+    for (const profile of Array.isArray(snapshot.players) ? snapshot.players : []) {
+      if (profile?.userId !== undefined && profile?.userId !== null) profilesById.set(String(profile.userId), profile);
+    }
     arenaDuels = Array.isArray(snapshot.duels) ? snapshot.duels : [];
     if (arenaRelay?.connected === true) arenaTransport = 'live';
-    for (const p of players.values()) applyArenaProfile(p);
-    const completed = arenaDuels.find(duel => /complete|finished|resolved/i.test(String(duel?.status || '')));
-    const winnerId = completed?.winnerId ?? completed?.winnerUserId ?? completed?.winner;
-    if (winnerId !== undefined && winnerId !== null) {
-      const winner = profilesById.get(String(typeof winnerId === 'object' ? winnerId.userId ?? winnerId.id : winnerId));
-      if (winner) announceArena(String(winner.displayName || winner.username || 'Player') + ' wins', '#a7f3d0');
+    // Every overlay shows the same arena: the server's player list (fed by the relay) spawns characters even
+    // when this overlay's own chat connection is down, and players the server dropped leave the stage.
+    for (const [key, p] of players) if (p.fromArena && !profilesById.has(p.userId)) players.delete(key);
+    for (const [userId, profile] of profilesById) {
+      if (findPlayer(userId)) continue;
+      const key = String(profile.username || 'id:' + userId).toLowerCase().slice(0, 64);
+      const existing = players.get(key);
+      if (existing) { existing.userId = userId; continue; }
+      spawn(key, { userId, fromArena: true, label: String(profile.displayName || key).slice(0, 24), chatLabel: String(profile.displayName || key).slice(0, 24) });
     }
+    const now = Date.now();
+    for (const p of players.values()) {
+      applyArenaProfile(p);
+      const respawnAt = Number(p.arenaProfile?.respawnAt) || 0;
+      if (respawnAt > now && !(p.koUntil > now)) p.koStart = now;
+      p.koUntil = respawnAt > now ? respawnAt : 0;
+    }
+    for (const id of meetPoints.keys()) if (!arenaDuels.some(duel => duel.id === id && duel.status === 'active')) meetPoints.delete(id);
     updateStatus();
   }
   function announceArena(text, color = '#fde68a') {
     if (text) announcement = { text: String(text).slice(0, 100), color, until: Date.now() + 5500 };
   }
-  function eventUserId(value) {
-    if (value && typeof value === 'object') return value.userId ?? value.id ?? value.playerId ?? null;
-    return value === undefined || value === null ? null : value;
+  function burst(p, color, count, rise) {
+    if (!p) return;
+    for (let i = 0; i < count; i++) {
+      particles.push({ x: p.x + (Math.random() - .5) * size * .5, y: -size * (.3 + Math.random() * .5), owner: p, color,
+        vx: (Math.random() - .5) * 120, vy: rise ? -40 - Math.random() * 60 : -120 - Math.random() * 120, born: Date.now(), life: 700 });
+    }
+    if (particles.length > 300) particles.splice(0, particles.length - 300);
   }
-  const recentArenaEffects = new Map();
+  function floatText(p, text, color) { if (p) p.floatText = { text, color, until: Date.now() + 1200 }; }
   function handleArenaEvent(event) {
     if (!event || typeof event !== 'object') return;
-    const type = String(event.type || event.kind || '').toLowerCase().replace(/[_. ]+/g, '-');
-    const targetId = eventUserId(event.targetUserId ?? event.targetId ?? event.target ?? event.victimId ?? event.playerId ?? event.userId);
-    const actorId = eventUserId(event.actorUserId ?? event.actorId ?? event.actor ?? event.attackerId ?? event.sourceUserId);
-    if (/match|duel|result|finish|complete/.test(type) || event.winnerId !== undefined || event.winnerUserId !== undefined) {
-      const winnerId = eventUserId(event.winnerId ?? event.winnerUserId ?? event.winner);
-      const winner = winnerId === null ? null : profilesById.get(String(winnerId));
-      const loserId = eventUserId(event.loserId ?? event.loserUserId ?? event.loser);
-      const loser = loserId === null ? null : profilesById.get(String(loserId));
-      if (winner) announceArena((winner.displayName || winner.username || 'Player') + ' wins' + (loser ? ' · ' + (loser.displayName || loser.username) : ''), '#a7f3d0');
-    }
-    const effect = /heal|restore/.test(type) ? 'heal'
-      : /hit|damage|attack/.test(type) ? 'hit'
-      : /ability|cast|skill/.test(type) ? 'ability'
-      : '';
-    const affectedId = effect === 'hit' || effect === 'heal' ? targetId : actorId ?? targetId;
-    if (effect && affectedId !== null) {
-      const id = String(affectedId);
-      const now = Date.now();
-      const amount = Number(event.damage ?? event.amount ?? event.heal ?? event.value);
-      const label = effect === 'ability'
-        ? String(event.ability || event.abilityName || profilesById.get(id)?.defaultAbility || 'Ability').slice(0, 20)
-        : effect === 'heal' ? '+' + (Number.isFinite(amount) ? amount : '')
-        : '-' + (Number.isFinite(amount) ? amount : '');
-      const visual = { kind: effect, label, until: now + 1100, startedAt: now };
-      recentArenaEffects.set(id, visual);
-      for (const p of players.values()) if (String(p.userId) === id) p.arenaEffect = visual;
-    }
-    if (event.duel && typeof event.duel === 'object') {
-      const id = String(event.duel.id ?? '');
-      const index = arenaDuels.findIndex(duel => String(duel?.id ?? '') === id);
-      if (index >= 0) arenaDuels[index] = event.duel;
-      else arenaDuels = [...arenaDuels, event.duel];
+    if (Number.isFinite(event.at) && Date.now() - event.at > EVENT_FRESH_MS) return;
+    const now = Date.now();
+    switch (event.type) {
+      case 'challenge_created':
+        announceArena(nameOf(event.a) + ' challenges ' + nameOf(event.b) + ' · !accept to fight');
+        break;
+      case 'challenge_declined':
+        announceArena(nameOf(event.declinedBy) + ' declined the duel', '#e2e8f0');
+        break;
+      case 'challenge_expired':
+        announceArena('Challenge to ' + nameOf(event.b) + ' expired', '#e2e8f0');
+        break;
+      case 'duel_started':
+        announceArena('Round ' + event.round + ': ' + nameOf(event.a) + ' vs ' + nameOf(event.b));
+        break;
+      case 'duel_action': {
+        const actor = findPlayer(event.userId), target = findPlayer(event.targetId);
+        if (event.ability === 'heal') {
+          if (actor) actor.anim = { kind: 'heal', start: now, until: now + 900 };
+          burst(actor, '#4ade80', 10, true);
+          floatText(actor, '+' + (Number(event.amount) || 0), '#4ade80');
+        } else {
+          if (actor) actor.anim = { kind: 'attack', heavy: event.ability === 'heavy', start: now, until: now + 450 };
+          if (target) target.anim = { kind: 'hit', heavy: event.ability === 'heavy', start: now + 120, until: now + 520 };
+          burst(target, event.ability === 'heavy' ? '#f97316' : '#fb7185', event.ability === 'heavy' ? 16 : 8, false);
+          floatText(target, '-' + (Number(event.amount) || 0), '#fb7185');
+        }
+        break;
+      }
+      case 'duel_completed': {
+        const winner = findPlayer(event.winnerId), loser = findPlayer(event.loserId);
+        if (loser) { loser.koUntil = Number(event.respawnAt) || now + 3000; loser.koStart = now; }
+        if (winner) { winner.anim = { kind: 'cheer', start: now, until: now + 1400 }; hop(winner, 220); }
+        burst(loser, '#fbbf24', 18, false);
+        const delta = event.ratings?.[event.winnerId]?.delta;
+        announceArena(nameOf(event.winnerId) + ' wins' + (Number.isFinite(delta) ? ' · Elo +' + delta : '') + ' · ' + nameOf(event.loserId) + ' is knocked out', '#a7f3d0');
+        break;
+      }
+      case 'duel_cancelled':
+        announceArena('Duel cancelled · ' + (CANCEL_TEXT[event.reason] || 'not scored'), '#e2e8f0');
+        break;
+      case 'player_respawned': {
+        const p = findPlayer(event.userId);
+        if (p) { p.koUntil = 0; p.anim = { kind: 'respawn', start: now, until: now + 700 }; burst(p, '#bfdbfe', 10, true); }
+        break;
+      }
+      case 'relay_disconnected': case 'relay_stale':
+        announceArena('Duels paused · relay offline', '#e2e8f0');
+        break;
+      case 'relay_connected':
+        if (arenaRelay?.connected !== false) announceArena('Duels are live', '#a7f3d0');
+        break;
+      default:
     }
     updateStatus();
   }
-  function arenaDuelFor(p) {
+  function duelFor(p) {
     if (!arenaEnabled || !p.userId) return null;
-    const userId = String(p.userId);
-    for (const duel of arenaDuels) {
-      const a = eventUserId(duel?.a ?? duel?.aUserId ?? duel?.playerA);
-      const b = eventUserId(duel?.b ?? duel?.bUserId ?? duel?.playerB);
-      if (String(a) !== userId && String(b) !== userId) continue;
-      const health = duel?.hp && typeof duel.hp === 'object' ? duel.hp[userId] : undefined;
-      const current = Number(health?.hp ?? health);
-      if (!Number.isFinite(current)) continue;
-      const max = Number(duel?.config?.maxHp ?? duel?.config?.health ?? duel?.maxHp ?? 100);
-      return { current: Math.max(0, current), max: Math.max(1, Number.isFinite(max) ? max : 100) };
-    }
-    const profileHp = Number(p.arenaProfile?.hp);
-    return Number.isFinite(profileHp) ? { current: Math.max(0, profileHp), max: 100 } : null;
+    return openDuels().find(duel => String(duel.a) === p.userId || String(duel.b) === p.userId) || null;
+  }
+  function healthOf(p, duel) {
+    if (!duel || duel.status !== 'active') return null;
+    const current = Number(duel.hp?.[p.userId]);
+    if (!Number.isFinite(current)) return null;
+    const max = Number(duel.rules?.maxHp ?? arenaConfig?.maxHp ?? 100);
+    return { current: Math.max(0, current), max: Math.max(1, Number.isFinite(max) ? max : 100) };
   }
   function onMessage(message) {
     const username = String(message.username || message.userId || '').toLowerCase().slice(0, 64);
     if (!username) return;
     const now = Date.now();
-    let p = players.get(username);
-    if (!p) {
-      if (players.size >= cap) {
-        const oldest = [...players.values()].reduce((a, b) => a.lastSeen < b.lastSeen ? a : b);
-        players.delete(oldest.key);
-      }
-      const saved = settings[username] && typeof settings[username] === 'object' ? settings[username] : {};
-      p = { key: username, userId: String(message.userId || ''), label: String(message.displayName || username).slice(0, 24),
-        chatLabel: String(message.displayName || username).slice(0, 24),
-        x: size / 2 + Math.random() * Math.max(0, width - size), speed: 14 + Math.random() * 20,
-        direction: Math.random() < 0.5 ? -1 : 1, lane: Math.random() * 28, y: 0, vy: 0,
-        avatar: sprites.has(saved.avatar) ? saved.avatar : ids[Math.floor(Math.random() * ids.length)],
-        color: sanitizeColor(saved.color) || sanitizeColor(message.color) || '#a78bfa',
-        chatColor: sanitizeColor(message.color), lastJump: 0, phase: Math.random() * 1000 };
-      players.set(username, p);
-    }
+    let p = players.get(username) || (message.userId ? findPlayer(message.userId) : null);
+    if (!p) p = spawn(username, { label: String(message.displayName || username).slice(0, 24), chatLabel: String(message.displayName || username).slice(0, 24) });
     if (message.userId !== undefined && message.userId !== null) p.userId = String(message.userId);
     if (message.displayName) p.chatLabel = String(message.displayName).slice(0, 24);
     if (sanitizeColor(message.color)) p.chatColor = sanitizeColor(message.color);
@@ -262,22 +313,23 @@ async function start() {
       p.color = sanitizeColor(settings[username]?.color) || p.chatColor || p.color;
     }
     applyArenaProfile(p);
+    const ranked = Boolean(p.arenaProfile?.registered);
     p.lastSeen = now; p.messageId = message.id || ''; p.text = String(message.text || '').slice(0, 72); p.bubbleUntil = now + 4000;
     const command = parseCommand(message.text || '');
     if (command?.type === 'jump') {
       if (now - p.lastJump >= 3000) { hop(p, 300); p.lastJump = now; }
-      p.text = ''; 
+      p.text = '';
     } else if (command?.type === 'avatar') {
-      if (!p.arenaProfile && sprites.has(command.value)) { p.avatar = command.value; settings[username] = { avatar: p.avatar, color: p.color }; persist(); }
+      if (!ranked && sprites.has(command.value)) { p.avatar = command.value; settings[username] = { avatar: p.avatar, color: p.color }; persist(); applyArenaProfile(p); }
       p.text = '';
     } else if (command?.type === 'color') {
-      if (!p.arenaProfile) { p.color = command.value; settings[username] = { avatar: p.avatar, color: p.color }; persist(); }
+      if (!ranked) { p.color = command.value; settings[username] = { avatar: p.avatar, color: p.color }; persist(); }
       p.text = '';
-    } else if (now - (p.lastReaction || 0) > 1500) { hop(p, 140); p.lastReaction = now; }
+    } else if (now - (p.lastReaction || 0) > 1500 && !duelFor(p)) { hop(p, 140); p.lastReaction = now; }
     updateStatus();
   }
   function onModeration(event) {
-    if (event.type === 'clear') players.clear();
+    if (event.type === 'clear') { for (const [key, p] of players) if (!p.fromArena) players.delete(key); }
     else if (event.type === 'delete') {
       for (const p of players.values()) if (p.messageId === event.messageId) { p.text = ''; p.bubbleUntil = 0; }
     } else {
@@ -294,9 +346,7 @@ async function start() {
     ctx.beginPath(); ctx.arc(x, y - 39, 13, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#ffffff'; ctx.fillRect(x + p.direction * 3 - 5, y - 42, 3, 4); ctx.fillRect(x + p.direction * 3 + 2, y - 42, 3, 4);
   }
-  function drawHealthBar(p, x, y) {
-    const health = arenaDuelFor(p);
-    if (!health) return;
+  function drawHealthBar(p, x, y, health) {
     const barWidth = Math.max(36, Math.min(58, size * 0.86));
     const left = x - barWidth / 2;
     const top = y - size - 13;
@@ -308,40 +358,54 @@ async function start() {
     ctx.strokeStyle = 'rgba(255,255,255,.72)';
     ctx.lineWidth = 1;
     ctx.strokeRect(left, top, barWidth, 4);
-    const elo = Number(p.arenaProfile?.elo);
-    if (Number.isFinite(elo)) {
-      ctx.font = 'bold 9px system-ui, sans-serif';
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,.9)';
+    ctx.fillStyle = '#e2e8f0';
+    const text = Math.round(health.current) + '/' + Math.round(health.max);
+    ctx.strokeText(text, x, top - 4);
+    ctx.fillText(text, x, top - 4);
+  }
+  function drawEffects(p, x, y, now) {
+    const anim = p.anim && now < p.anim.until ? p.anim : null;
+    if (anim && (anim.kind === 'heal' || anim.kind === 'hit' || anim.kind === 'respawn')) {
+      const t = Math.max(0, Math.min(1, (now - anim.start) / (anim.until - anim.start)));
+      const color = anim.kind === 'heal' ? '#4ade80' : anim.kind === 'hit' ? '#fb7185' : '#bfdbfe';
+      ctx.save();
+      ctx.globalAlpha = 1 - t;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y - size * .55, size * (.4 + t * .25), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (p.floatText && now < p.floatText.until) {
+      const t = 1 - (p.floatText.until - now) / 1200;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, 2 - t * 2);
+      ctx.font = 'bold 14px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = 'rgba(0,0,0,.9)';
-      ctx.fillStyle = '#e2e8f0';
-      ctx.strokeText(String(Math.round(elo)), x, top - 3);
-      ctx.fillText(String(Math.round(elo)), x, top - 3);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,.85)';
+      ctx.fillStyle = p.floatText.color;
+      ctx.strokeText(p.floatText.text, x, y - size - 34 - t * 24);
+      ctx.fillText(p.floatText.text, x, y - size - 34 - t * 24);
+      ctx.restore();
     }
   }
-  function drawArenaEffect(p, x, y, now) {
-    const effect = p.arenaEffect;
-    if (!effect || now >= effect.until) return;
-    const remaining = Math.max(0, (effect.until - now) / 1100);
-    const color = effect.kind === 'heal' ? '#4ade80' : effect.kind === 'hit' ? '#fb7185' : '#60a5fa';
-    ctx.save();
-    ctx.globalAlpha = remaining;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 18;
-    ctx.beginPath();
-    ctx.arc(x, y - size * .55, size * (.44 + (1 - remaining) * .2), 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.font = 'bold 12px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(0,0,0,.85)';
-    ctx.fillStyle = color;
-    const lift = (1 - remaining) * 22;
-    ctx.strokeText(effect.label, x, y - size - 30 - lift);
-    ctx.fillText(effect.label, x, y - size - 30 - lift);
-    ctx.restore();
+  function drawParticles(now, dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const s = particles[i];
+      const age = now - s.born;
+      if (age > s.life || !players.has(s.owner.key)) { particles.splice(i, 1); continue; }
+      s.vy += 380 * dt; s.x += s.vx * dt; s.y += s.vy * dt;
+      ctx.globalAlpha = 1 - age / s.life;
+      ctx.fillStyle = s.color;
+      ctx.fillRect(s.x - 2, height - 22 - s.owner.lane + s.y - 2, 4, 4);
+    }
+    ctx.globalAlpha = 1;
   }
   function drawAnnouncement() {
     if (!announcement || Date.now() >= announcement.until) return;
@@ -358,53 +422,101 @@ async function start() {
     ctx.fillText(announcement.text, width / 2, 52, boxWidth - 24);
     ctx.restore();
   }
+  // Picks the animation for the current action. Characters without drawn attack/ko frames
+  // (combatFallback "effects", or a single-PNG custom character) get engine-driven motion instead.
+  function frameFor(sprite, p, now, moving) {
+    const a = sprite.animations || {};
+    const anim = p.anim && now < p.anim.until ? p.anim : null;
+    const pick = (list, hold) => {
+      if (hold) return list[Math.min(list.length - 1, Math.floor((now - (p.koStart || now)) / 1000 * sprite.fps))];
+      return list[Math.floor((now + p.phase) / 1000 * sprite.fps) % list.length];
+    };
+    if (p.koUntil > now && a.ko) return { frame: pick(a.ko, true), drawn: true };
+    if (anim?.kind === 'attack' && a.attack) return { frame: a.attack[Math.min(a.attack.length - 1, Math.floor((now - anim.start) / (anim.until - anim.start) * a.attack.length))], drawn: true };
+    if (anim?.kind === 'cheer' && a.cheer) return { frame: pick(a.cheer), drawn: true };
+    if (p.vy < 0 && a.jump) return { frame: a.jump[0], drawn: true };
+    if (moving) return { frame: pick(a.walk || sprite.frames) };
+    return { frame: pick(a.idle || sprite.frames) };
+  }
   function draw(now) {
     const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
     const clock = Date.now();
     ctx.clearRect(0, 0, width, height);
     if (clock - lastCleanup > 1000) {
-      for (const [key, p] of players) if (clock - p.lastSeen > 600000) players.delete(key);
+      for (const [key, p] of players) if (!p.fromArena && clock - p.lastSeen > 600000) players.delete(key);
       lastCleanup = clock; updateStatus();
     }
+    const gap = size * 1.15;
     for (const p of players.values()) {
-      p.x += p.speed * p.direction * dt;
+      const duel = duelFor(p);
+      const opponent = duel ? findPlayer(String(duel.a) === p.userId ? duel.b : duel.a) : null;
+      const ko = p.koUntil > clock;
+      let moving = false;
+      if (duel?.status === 'active' && opponent) {
+        // Duels happen where the characters stand: both walk to the midpoint between them and face each other.
+        let meet = meetPoints.get(duel.id);
+        if (!meet) {
+          const a = findPlayer(duel.a) || p, b = findPlayer(duel.b) || opponent;
+          meet = { x: Math.max(gap, Math.min(width - gap, (a.x + b.x) / 2)), aLeft: a.x <= b.x };
+          meetPoints.set(duel.id, meet);
+        }
+        const isA = String(duel.a) === p.userId;
+        const target = meet.x + ((isA === meet.aLeft) ? -gap / 2 : gap / 2);
+        const diff = target - p.x;
+        if (Math.abs(diff) > 2) { p.x += Math.sign(diff) * Math.min(Math.abs(diff), 110 * dt); moving = true; p.direction = Math.sign(diff); }
+        else p.direction = opponent.x >= p.x ? 1 : -1;
+      } else if (duel?.status === 'pending' && opponent) {
+        p.direction = opponent.x >= p.x ? 1 : -1;
+      } else if (!ko) {
+        p.x += p.speed * p.direction * dt;
+        moving = true;
+      }
       const left = Math.min(size / 2, width / 2), right = Math.max(left, width - size / 2);
       if (p.x < left) { p.x = left; p.direction = 1; }
       if (p.x > right) { p.x = right; p.direction = -1; }
       p.vy += 750 * dt; p.y += p.vy * dt;
       if (p.y >= 0) { p.y = 0; p.vy = 0; }
       const y = height - 22 - p.lane + p.y;
-      const sprite = sprites.get(p.renderAvatar || p.avatar);
+      const sprite = sprites.get(p.renderAvatar) || sprites.get(p.avatar);
+      const anim = p.anim && clock < p.anim.until ? p.anim : null;
+      const progress = anim ? (clock - anim.start) / (anim.until - anim.start) : 0;
+      // Lunge for attacks, knockback for hits; both are fallbacks that also run on top of drawn frames.
+      let offset = 0;
+      if (anim?.kind === 'attack' && progress > 0) offset = Math.sin(progress * Math.PI) * size * (anim.heavy ? .45 : .3) * p.direction;
+      if (anim?.kind === 'hit' && progress > 0) offset = -Math.sin(progress * Math.PI) * size * (anim.heavy ? .3 : .16) * p.direction;
       ctx.save();
-      if (p.arenaEffect && clock < p.arenaEffect.until) {
-        ctx.shadowColor = p.arenaEffect.kind === 'heal' ? '#4ade80' : p.arenaEffect.kind === 'hit' ? '#fb7185' : '#60a5fa';
-        ctx.shadowBlur = 16;
-      }
       if (sprite?.loaded) {
-        const frame = sprite.frames[Math.floor((now + p.phase) / 1000 * sprite.fps) % sprite.frames.length];
+        const { frame, drawn } = frameFor(sprite, p, clock, moving);
+        const single = sprite.mode === 'single' || sprite.frames.length === 1;
+        const bob = single && moving ? Math.abs(Math.sin((clock + p.phase) / 140)) * size * .06 : 0;
+        const squash = single && moving ? 1 + Math.sin((clock + p.phase) / 70) * .04 : 1;
         const drawWidth = size * frame.w / frame.h;
-        ctx.translate(p.x, y);
+        ctx.translate(p.x + offset, y - bob);
+        if (ko && !drawn) {
+          const fall = Math.min(1, (clock - (p.koStart || clock - 400)) / 400);
+          ctx.globalAlpha = .55;
+          ctx.rotate(-p.direction * fall * Math.PI / 2);
+        }
+        if (anim?.kind === 'hit' && progress > 0 && progress < .6) ctx.filter = 'brightness(2.2) saturate(0.4)';
+        else if (anim?.kind === 'attack' && !drawn && progress > 0) ctx.filter = 'brightness(1.35)';
         // Sources face right; mirror left walking.
-        ctx.scale(p.direction, 1);
+        ctx.scale(p.direction / squash, squash);
         ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -size, drawWidth, size);
-      } else drawFallback(p, p.x, y, now);
+      } else {
+        if (ko) ctx.globalAlpha = .5;
+        drawFallback(p, p.x + offset, y, now);
+      }
       ctx.restore();
-      drawArenaEffect(p, p.x, y, clock);
-      drawHealthBar(p, p.x, y);
+      drawEffects(p, p.x, y, clock);
+      const health = healthOf(p, duel);
+      if (health) drawHealthBar(p, p.x, y, health);
       ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'center';
       ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.fillStyle = p.color;
-      const rankedLabel = p.arenaProfile && Number.isFinite(Number(p.arenaProfile.elo))
+      const rankedLabel = p.arenaProfile?.registered && Number.isFinite(Number(p.arenaProfile.elo))
         ? p.label + ' · ' + Math.round(Number(p.arenaProfile.elo))
         : p.label;
       ctx.strokeText(rankedLabel, p.x, y + 15); ctx.fillText(rankedLabel, p.x, y + 15);
-      if (p.defaultAbility) {
-        ctx.font = '10px system-ui, sans-serif';
-        ctx.fillStyle = '#bfdbfe';
-        ctx.strokeStyle = 'rgba(0,0,0,.85)';
-        ctx.strokeText(p.defaultAbility, p.x, y - size - 20);
-        ctx.fillText(p.defaultAbility, p.x, y - size - 20);
-      }
-      if (p.text && clock < p.bubbleUntil) {
+      if (p.text && clock < p.bubbleUntil && !health) {
         const text = p.text.length > 38 ? p.text.slice(0, 37) + '…' : p.text;
         const bubbleWidth = Math.min(width, ctx.measureText(text).width + 16);
         const bx = Math.max(bubbleWidth / 2, Math.min(width - bubbleWidth / 2, p.x));
@@ -412,72 +524,71 @@ async function start() {
         ctx.fillStyle = '#ffffff'; ctx.fillText(text, bx, y - size - 15, Math.max(1, bubbleWidth - 8));
       }
     }
+    drawParticles(clock, dt);
     drawAnnouncement();
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
+  // Local-only preview of a duel, shaped like real server snapshots and events. Nothing is saved.
   function setupDemoArena() {
     const demoProfiles = [
-      ['Ness', 'adventurer', '#fb923c', 'Spark', 1220],
-      ['Sunny', 'female', '#60a5fa', 'Guard', 1184],
-      ['Mochi', 'player', '#f472b6', 'Bloom', 1108],
-      ['Cloud', 'soldier', '#a78bfa', 'Pulse', 1060],
-      ['Pixel', 'zombie', '#4ade80', 'Echo', 1012],
-      ['Bean', 'adventurer', '#facc15', 'Dash', 980],
-      ['Luna', 'female', '#e879f9', 'Nova', 940],
-      ['Sprout', 'player', '#34d399', 'Leaf', 900],
+      ['Ness', 'toon-ranger', '#fb923c', 'heavy', 1220],
+      ['Sunny', 'female', '#60a5fa', 'strike', 1184],
+      ['Mochi', 'toon-robot', '#f472b6', 'heal', 1108],
+      ['Cloud', 'soldier', '#a78bfa', 'strike', 1060],
+      ['Pixel', 'alien-green', '#4ade80', 'heavy', 1012],
+      ['Bean', 'adventurer', '#facc15', 'strike', 980],
+      ['Luna', 'toon-scout', '#e879f9', 'heal', 940],
+      ['Sprout', 'player', '#34d399', 'strike', 900],
     ].map(([displayName, avatar, color, defaultAbility, elo], index) => ({
-      userId: 'demo-' + index, username: displayName.toLowerCase(), displayName,
-      avatar, color, defaultAbility, hp: 100, elo, wins: index % 4, losses: index % 3,
-      lastSeen: new Date().toISOString(),
+      userId: 'demo-' + index, username: displayName.toLowerCase(), displayName, registered: true,
+      avatar, color, defaultAbility, hp: 100, elo, wins: index % 4, losses: index % 3, lastSeen: Date.now(), respawnAt: 0,
     }));
     arenaTransport = 'demo';
-    arenaRelay = { connected: true, lastSeen: new Date().toISOString() };
-    acceptArenaSnapshot({ channel, revision: 1, relay: arenaRelay, config: { maxHp: 100 }, players: demoProfiles, duels: [], events: [] }, { revision: 1 });
+    arenaRelay = { connected: true, lastSeen: Date.now() };
+    let revision = 1, round = 0, tick = 0, duel = null;
+    const snapshot = () => acceptArenaSnapshot({ channel, revision: ++revision, paused: false, relay: { connected: true, lastSeen: Date.now() }, config: { maxHp: 100 }, players: demoProfiles, duels: duel ? [duel] : [], events: [] }, { revision });
+    const emit = fields => handleArenaEvent({ id: 'demo-' + revision + '-' + fields.type, at: Date.now(), ...fields });
+    snapshot();
     const badge = document.createElement('div');
     badge.id = 'arena-mode';
     badge.textContent = 'DEMO · local match · not saved';
     Object.assign(badge.style, {
       position: 'fixed', top: '12px', right: '12px', zIndex: '2', padding: '7px 10px',
-      borderRadius: '8px', color: '#fff', background: 'rgba(12,16,25,.82)',
-      font: '600 11px system-ui,sans-serif', letterSpacing: '.04em', pointerEvents: 'none',
+      borderRadius: '4px', color: '#fff', background: 'rgba(12,16,25,.82)',
+      font: '600 11px system-ui,sans-serif', pointerEvents: 'none',
     });
     document.body.appendChild(badge);
-
-    let round = 0, tick = 0, demoRevision = 1;
     function beginRound() {
-      round++;
-      tick = 0;
-      const duel = { id: 'demo-duel-' + round, a: 'demo-0', b: 'demo-1', hp: { 'demo-0': 100, 'demo-1': 100 },
-        status: 'active', config: { maxHp: 100, ability: 'defaultAbility' } };
-      acceptArenaSnapshot({ channel, revision: ++demoRevision, relay: arenaRelay, config: { maxHp: 100 }, players: demoProfiles, duels: [duel], events: [] }, { revision: demoRevision });
+      round++; tick = 0;
+      const a = 'demo-' + ((round * 2) % 8), b = 'demo-' + ((round * 2 + 1) % 8);
+      for (const p of demoProfiles) p.respawnAt = 0;
+      duel = { id: 'demo-duel-' + round, a, b, status: 'active', round, hp: { [a]: 100, [b]: 100 }, rules: { maxHp: 100 } };
+      snapshot();
+      emit({ type: 'duel_started', duelId: duel.id, a, b, round, hp: duel.hp });
     }
     beginRound();
     arenaTimer = setInterval(() => {
-      const duel = arenaDuels[0];
       if (!duel || duel.status !== 'active') { beginRound(); return; }
       tick++;
-      const target = tick % 2 ? 'demo-1' : 'demo-0';
-      const actor = target === 'demo-1' ? 'demo-0' : 'demo-1';
-      const amount = tick % 3 === 0 ? 28 : 36;
-      const nextHp = { ...duel.hp, [target]: Math.max(0, Number(duel.hp[target]) - amount) };
-      const winnerId = nextHp[target] === 0 ? actor : undefined;
-      const nextDuel = { ...duel, hp: nextHp, status: winnerId ? 'complete' : 'active', ...(winnerId ? { winnerId } : {}) };
-      const event = winnerId
-        ? { id: 'demo-result-' + round, type: 'match_result', winnerId, loserId: target }
-        : tick % 3 === 0
-          ? { id: 'demo-ability-' + round + '-' + tick, type: 'ability', actorUserId: actor, ability: demoProfiles[Number(actor.slice(-1))].defaultAbility }
-          : { id: 'demo-hit-' + round + '-' + tick, type: 'hit', actorUserId: actor, targetUserId: target, damage: amount };
-      acceptArenaSnapshot({ channel, revision: ++demoRevision, relay: arenaRelay, config: { maxHp: 100 }, players: demoProfiles, duels: [nextDuel], events: [] }, { revision: demoRevision });
-      handleArenaEvent(event);
+      const actor = tick % 2 ? duel.a : duel.b, target = actor === duel.a ? duel.b : duel.a;
+      const ability = tick % 5 === 0 ? 'heal' : tick % 3 === 0 ? 'heavy' : 'strike';
+      const amount = ability === 'heal' ? Math.min(15, 100 - duel.hp[actor]) : Math.min(duel.hp[target], ability === 'heavy' ? 25 : 18);
+      duel.hp = { ...duel.hp, [ability === 'heal' ? actor : target]: duel.hp[ability === 'heal' ? actor : target] + (ability === 'heal' ? amount : -amount) };
+      snapshot();
+      emit({ type: 'duel_action', duelId: duel.id, userId: actor, targetId: ability === 'heal' ? actor : target, ability, amount, hp: duel.hp });
+      if (duel.hp[target] <= 0) {
+        const loser = demoProfiles.find(p => p.userId === target), winner = demoProfiles.find(p => p.userId === actor);
+        loser.respawnAt = Date.now() + 2500;
+        winner.elo += 12; loser.elo -= 12;
+        duel = { ...duel, status: 'completed', winnerId: actor };
+        snapshot();
+        emit({ type: 'duel_completed', duelId: duel.id, winnerId: actor, loserId: target, round, respawnAt: loser.respawnAt, hp: duel.hp, ratings: { [actor]: { delta: 12 }, [target]: { delta: -12 } } });
+      }
     }, 1300);
   }
   function startArena() {
-    if (!arenaEnabled) return;
-    if (arenaDemo) {
-      setupDemoArena();
-      return;
-    }
+    if (arenaDemo) { setupDemoArena(); return; }
     arenaClient = createArenaClient({
       channel,
       onSnapshot: acceptArenaSnapshot,
@@ -511,10 +622,13 @@ async function start() {
   if (debug && arenaEnabled) {
     window.__arenaDebug = () => ({
       revision: arenaRevision,
+      paused: arenaPaused,
+      relay: arenaRelay,
       profiles: profilesById.size,
       duels: arenaDuels,
-      players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo })),
-      announcement: announcement?.text || '',
+      players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo,
+        x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '' })),
+      announcement: announcement && Date.now() < announcement.until ? announcement.text : '',
     });
   }
   updateStatus();

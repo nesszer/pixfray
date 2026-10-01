@@ -1,13 +1,12 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { configDirectory } from './config.mjs';
 
 const MAX_LOG_LINES = 100;
-const SAFE_COMPONENTS = new Set(['relay', 'runner', 'twitch', 'backend']);
+const SAFE_COMPONENTS = new Set(['relay', 'runner', 'twitch', 'backend', 'obs']);
 
 function defaultDirectory() {
-  const base = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(base, 'MiniChatRelay');
+  return configDirectory();
 }
 
 export function formatStatusRecord(component, event, now = new Date()) {
