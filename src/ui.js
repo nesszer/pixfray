@@ -77,7 +77,7 @@ export function renderWho(container, session, onSignOut) {
   } else if (session && session.configured === false) {
     container.append(h("span", {}, "Twitch sign-in is not configured on this server yet"));
   } else {
-    container.append(h("a", { class: "btn btn-primary", href: loginHref(location.pathname.startsWith("/admin") ? "/admin/" : "/") }, "Sign in with Twitch"));
+    container.append(h("a", { class: "btn", href: loginHref(location.pathname.startsWith("/admin") ? "/admin/" : "/") }, "Sign in with Twitch"));
   }
 }
 export async function signOut() {

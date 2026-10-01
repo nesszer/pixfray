@@ -7,15 +7,6 @@ if (CHANNEL !== "nesszerra") document.querySelector(".page-header .subtitle").te
 const LIMITS = { maxCharacters: 8, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 // Editable config fields (CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
 const GROUPS = [
-  { title: "Abilities", fields: [
-    { key: "abilities.strike.damage", label: "Strike damage", unit: "HP", min: 1, max: 1000 },
-    { key: "abilities.strike.cooldownMs", label: "Strike cooldown", unit: "s", ms: true, min: 250, max: 600000 },
-    { key: "abilities.heavy.damage", label: "Heavy strike damage", unit: "HP", min: 1, max: 1000 },
-    { key: "abilities.heavy.cooldownMs", label: "Heavy strike cooldown", unit: "s", ms: true, min: 250, max: 600000 },
-    { key: "abilities.heal.amount", label: "Heal amount", unit: "HP", min: 1, max: 1000 },
-    { key: "abilities.heal.cooldownMs", label: "Heal cooldown", unit: "s", ms: true, min: 250, max: 600000 },
-    { key: "sharedCooldownMs", label: "Delay between any two actions", unit: "s", ms: true, min: 250, max: 60000 },
-  ] },
   { title: "Health and duels", fields: [
     { key: "maxHp", label: "Max health", unit: "HP", min: 1, max: 1000 },
     { key: "maxDuels", label: "Duels at the same time", unit: "duels", min: 1, max: 5 },
@@ -28,6 +19,15 @@ const GROUPS = [
     { key: "initialElo", label: "Starting Elo", unit: "Elo", min: 0, max: 10000 },
     { key: "eloK", label: "Elo K-factor", unit: "K", min: 1, max: 100 },
   ] },
+  { title: "HP fight abilities (used when quick duels are off)", fields: [
+    { key: "abilities.strike.damage", label: "Strike damage", unit: "HP", min: 1, max: 1000 },
+    { key: "abilities.strike.cooldownMs", label: "Strike cooldown", unit: "s", ms: true, min: 250, max: 600000 },
+    { key: "abilities.heavy.damage", label: "Heavy strike damage", unit: "HP", min: 1, max: 1000 },
+    { key: "abilities.heavy.cooldownMs", label: "Heavy strike cooldown", unit: "s", ms: true, min: 250, max: 600000 },
+    { key: "abilities.heal.amount", label: "Heal amount", unit: "HP", min: 1, max: 1000 },
+    { key: "abilities.heal.cooldownMs", label: "Heal cooldown", unit: "s", ms: true, min: 250, max: 600000 },
+    { key: "sharedCooldownMs", label: "Delay between any two actions", unit: "s", ms: true, min: 250, max: 60000 },
+  ] },
 ];
 const FIELDS = GROUPS.flatMap((g) => g.fields);
 const LABELS = Object.fromEntries([...FIELDS.map((f) => [f.key, f]), ["enabled", { label: "Duels enabled" }]]);
@@ -38,6 +38,31 @@ const show = (key, v) => v === undefined ? "—" : key === "enabled" ? (v ? "on"
 const S = { session: null, access: null, admin: null, leaderboard: [], names: new Map(), socket: null, retry: 0 };
 const actionStatus = $("#action-status"), configStatus = $("#config-status");
 const OPEN = new Set(["pending", "active"]);
+
+// ---------- tabs ----------
+// One panel at a time; the URL hash (#players, #rules, ...) keeps the tab across reloads and links.
+const TABS = [...document.querySelectorAll('[role="tab"]')];
+function selectTab(tab, focus = false) {
+  for (const t of TABS) {
+    const on = t === tab;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+    document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+  }
+  if (focus) tab.focus();
+  const hash = "#" + tab.id.slice(4);
+  if (location.hash !== hash) history.replaceState(null, "", hash === "#live" ? location.pathname + location.search : hash);
+}
+for (const t of TABS) {
+  t.addEventListener("click", () => selectTab(t));
+  t.addEventListener("keydown", (e) => {
+    const i = TABS.indexOf(t), next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TABS.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    selectTab(TABS[(next + TABS.length) % TABS.length], true);
+  });
+}
+selectTab(document.getElementById("tab-" + location.hash.slice(1)) || TABS[0]);
 
 // ---------- loading and access ----------
 function gate(text, actions = []) {
@@ -124,7 +149,7 @@ function renderAll() {
   $("#meta").textContent = "Config version " + a.configVersion + " · state revision " + a.revision + " · signed in as " + (S.access.owner ? "broadcaster" : "moderator");
   $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : !live ? "Duels are paused: Twitch chat isn't connected" : "Duels are live";
   $("#summary-text").textContent = !c.enabled ? "Chat commands are ignored until duels are turned back on." :
-    !live ? "Twitch isn't sending chat to the arena" + (chat.lastRevocationReason ? " (Twitch revoked it: " + chat.lastRevocationReason + ")" : "") + ". Click Connect chat or Use StreamElements below; open duels were cancelled without scoring." :
+    !live ? "Twitch isn't sending chat to the arena" + (chat.lastRevocationReason ? " (Twitch revoked it: " + chat.lastRevocationReason + ")" : "") + ". Use Connect chat or StreamElements on the Chat setup tab; open duels were cancelled without scoring." :
     open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena, round " + a.round + ".";
   const toggle = $("#toggle-duels");
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
@@ -265,6 +290,7 @@ function diff(prev, next) {
 }
 function renderHistory() {
   const tbody = $("#history tbody"), rows = S.admin.history || [];
+  $("#history-title").textContent = "Version history (" + rows.length + (rows.length === 1 ? " version)" : " versions)");
   if (!rows.length) return tbody.replaceChildren(empty(6, "No saved versions yet. The first save is recorded here."));
   tbody.replaceChildren(...rows.map((row, i) => {
     const current = row.version === S.admin.configVersion;

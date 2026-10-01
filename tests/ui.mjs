@@ -174,7 +174,10 @@ try {
     assert.equal(await page.locator('#history tbody tr').count(), 3);
     assert.match(await page.locator('#history tbody tr').nth(1).textContent(), /Heavy strike damage 35 HP → 30 HP/);
     assert.match(await page.locator('#usage-title').textContent(), /1 of 8/);
-    assert.equal(await page.locator('#dev-open').isVisible(), role === 'owner');
+    assert.equal(await page.locator('#dev-open').isVisible(), role === 'owner');   // on the Live tab, shown first
+    assert.equal(await page.locator('#panel-chat').isHidden(), true, 'only the Live tab shows at first');
+    await page.click('#tab-chat');
+    assert.equal(new URL(page.url()).hash, '#chat');
     assert.equal(await page.locator('#owner-chat').isVisible(), role === 'owner');
     assert.match(await page.locator('#chat-text').textContent(), /Last chat message/);
     assert.equal(await page.locator('#connect-chat').textContent(), 'Reconnect chat');
@@ -195,8 +198,18 @@ try {
       await page.waitForFunction(() => !document.querySelector('#upload-root').textContent.includes("isn't available"));
       assert.equal(await page.locator('#upload-root .status.error').count(), 0, await page.locator('#upload-root').textContent());
     }
-    await noOverflow(page, 'admin ' + role + ' ' + s.name);
-    await page.screenshot({ path: shots + '/admin-' + role + '-' + s.name + '.png', fullPage: true });
+    for (const tab of ['live', 'players', 'rules', 'characters', 'chat']) {
+      await page.click('#tab-' + tab);
+      assert.equal(await page.locator('#panel-' + tab).isVisible(), true, tab + ' panel shows');
+      assert.equal(await page.locator('[role=tabpanel]:visible').count(), 1, 'one panel at a time');
+      await noOverflow(page, 'admin ' + role + ' ' + s.name + ' ' + tab);
+      await page.screenshot({ path: shots + '/admin-' + role + '-' + s.name + (tab === 'live' ? '' : '-' + tab) + '.png', fullPage: true });
+    }
+    // arrow keys move between tabs
+    await page.focus('#tab-chat');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator('#tab-live').getAttribute('aria-selected'), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'tab-live');
     if (s.name !== '1280' || role !== 'mod') { await context.close(); continue; }
 
     await page.locator('#toggle-duels').click();
@@ -209,11 +222,14 @@ try {
     assert.deepEqual(posts.at(-1), { action: 'resetHealth' });
     await page.locator('#reset-round').click(); await page.waitForTimeout(150);
     assert.deepEqual(posts.at(-1), { action: 'resetRound' });
+    await page.click('#tab-players');
     await page.locator('#ranks tbody tr').first().getByRole('button', { name: 'Reset rank' }).click(); await page.waitForTimeout(150);
     assert.deepEqual(posts.at(-1), { action: 'resetRank', payload: { userId: '3003' } });
     await page.locator('#reset-all-ranks').click(); await page.waitForTimeout(150);
     assert.deepEqual(posts.at(-1), { action: 'resetAllRanks' });
     // config: invalid value blocks save, valid value saves only the changed field
+    await page.click('#tab-rules');
+    assert.equal(await page.locator('#history').isVisible(), false, 'version history starts collapsed');
     const strike = page.locator('#cfg-abilities-strike-damage');
     await strike.fill('5000');
     assert.equal(await page.locator('#config-save').isDisabled(), true);
@@ -232,6 +248,7 @@ try {
     await page.waitForFunction(() => document.querySelector('#config-status').textContent.includes('someone else saved'));
     assert.match(await page.locator('#config-status').textContent(), /Max health 100 HP → 150 HP/);
     await page.locator('#config-form').screenshot({ path: shots + '/admin-config-conflict-1280.png' });
+    await page.click('#history-title');
     await page.locator('#history tbody tr').nth(1).getByRole('button', { name: /Revert to v2/ }).click();
     await page.waitForTimeout(200);
     assert.deepEqual(posts.at(-1), { action: 'rollbackConfig', payload: { version: 2 } });

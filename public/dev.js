@@ -186,6 +186,7 @@ async function loadConfig() {
   S.config = r.data.config; S.configVersion = r.data.configVersion;
   $('#config').value = JSON.stringify(r.data.config, null, 2);
   $('#config-version').textContent = 'version ' + r.data.configVersion;
+  $('#history-title').textContent = 'Config history (' + (r.data.history || []).length + ' versions)';
   rows('#history', (r.data.history || []).map((x) => h('tr', {}, h('td', { class: 'num' }, 'v' + x.version), h('td', {}, fmtTime(x.at)), h('td', {}, x.actorName || x.actorId || '–'), h('td', { class: 'wrap' }, x.note || '–'),
     h('td', {}, x.version === r.data.configVersion ? h('span', { class: 'muted small' }, 'Current') : h('button', { class: 'btn btn-small', type: 'button', onclick: () => rollbackConfig(x.version) }, 'Restore v' + x.version)))), 'No history yet.', 5);
 }

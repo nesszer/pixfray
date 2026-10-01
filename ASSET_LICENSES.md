@@ -73,3 +73,13 @@ image. Their catalog entries carry `"license": "Uploaded by channel staff"`.
 
 More vetted free characters, ready to import later, are listed in `docs/CHARACTER_RESERVE.md`.
 They are not bundled and need a row here when they are added.
+
+## Heading font
+
+- File: `public/assets/fonts/fraunces-latin.woff2` (Latin subset, variable weight 500-700, unchanged)
+- Font: Fraunces by Undercase Type (Phaedra Charles and Flavia Zimbardi), https://github.com/undercasetype/Fraunces
+- Downloaded 2026-10-01 from Google Fonts (`fonts.gstatic.com/s/fraunces/v38`)
+- License: SIL Open Font License 1.1. Included notice, byte-for-byte: `public/assets/fonts/FRAUNCES_OFL.txt`
+
+The site's look takes cues from Hearthstone's dark tavern pages, but uses no Blizzard artwork, logos
+or fonts.

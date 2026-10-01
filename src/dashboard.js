@@ -66,6 +66,7 @@ function renderCommands() {
     $("#cmd-timeout").textContent = seconds(state.config.challengeTimeoutMs);
     $("#cmd-rematch").textContent = seconds(state.config.rematchDelayMs);
     $("#lb-note").textContent = "Ranked duels need a saved profile. Everyone starts at " + state.config.initialElo + " Elo.";
+    $("#hp-mode-note").hidden = state.config.quickDuel !== false;
   }
 }
 
@@ -89,10 +90,15 @@ function renderSignedIn() {
 function renderLeaderboard() {
   const tbody = $("#leaderboard tbody"), me = state.session?.user?.id, rows = state.leaderboard;
   if (!rows.length) { tbody.replaceChildren(h("tr", {}, h("td", { colspan: 6, class: "muted" }, "No ranked duels yet. Save a profile and challenge someone in chat."))); return; }
-  const label = (id) => state.catalog.find((x) => x.id === id)?.label || id;
-  const row = (p, i) => h("tr", { class: p.userId === me ? "me" : null },
+  const entryOf = (id) => state.catalog.find((x) => x.id === id);
+  const character = (id) => {   // still thumbnail; it never animates in the table
+    const entry = entryOf(id), canvas = h("canvas", { class: "sprite", width: 32, height: 32, "aria-hidden": "true" });
+    if (entry) addSprite(canvas, entry, { active: () => false });
+    return [entry ? canvas : null, entry?.label || id];
+  };
+  const row = (p, i) => h("tr", { class: [p.userId === me ? "me" : "", i < 3 ? "podium" : ""].filter(Boolean).join(" ") || null },
     h("td", { class: "num" }, i + 1), h("td", {}, h("span", { style: { color: p.color }, "aria-hidden": "true" }, "■ "), p.displayName || p.username, p.userId === me ? h("span", { class: "muted" }, " (you)") : null),
-    h("td", {}, label(p.avatar)), h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses));
+    h("td", {}, ...character(p.avatar)), h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses));
   const top = rows.slice(0, 10).map(row);
   const mine = rows.findIndex((p) => p.userId === me);
   if (mine >= 10) top.push(row(rows[mine], mine));

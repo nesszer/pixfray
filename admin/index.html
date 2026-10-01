@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Chat mod controls — nesszerra</title>
 <meta name="robots" content="noindex">
+<link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
@@ -23,126 +24,137 @@
   </section>
 
   <div id="app" hidden>
-    <section class="summary" aria-live="polite">
-      <h2 id="summary-title">Loading arena state…</h2>
-      <p id="summary-text"></p>
-      <div class="toolbar">
-        <button class="btn btn-primary" id="toggle-duels" type="button">Pause duels</button>
-        <button class="btn" id="reset-health" type="button">Reset everyone's health</button>
-        <button class="btn" id="reset-round" type="button">Cancel open duels and restart rounds</button>
-      </div>
-      <p class="status" id="action-status" role="status"></p>
-    </section>
-
-    <section class="section" aria-label="Arena numbers">
-      <div class="stat-strip" id="stats"></div>
-    </section>
-
-    <section class="section" aria-labelledby="duels-title">
-      <h2 id="duels-title">Open duels</h2>
-      <div class="table-wrap"><table class="data" id="duels">
-        <thead><tr><th>Duel</th><th>Status</th><th>Health</th><th class="num">Round</th><th>Time left</th><th><span class="sr-only">Actions</span></th></tr></thead>
-        <tbody></tbody>
-      </table></div>
-    </section>
-
-    <section class="section" aria-labelledby="players-title">
-      <h2 id="players-title">In the arena now</h2>
-      <div class="table-wrap"><table class="data" id="players">
-        <thead><tr><th>Viewer</th><th>Health</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th><th>Last chat</th><th><span class="sr-only">Actions</span></th></tr></thead>
-        <tbody></tbody>
-      </table></div>
-    </section>
-
-    <section class="section" aria-labelledby="ranks-title">
-      <h2 id="ranks-title">Ranks and profiles</h2>
-      <p class="muted small">Resetting a rank sets Elo back to the starting value and clears wins and losses. Removing a viewer also deletes their saved profile.</p>
-      <div class="table-wrap"><table class="data" id="ranks">
-        <thead><tr><th class="num">Rank</th><th>Viewer</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th><th><span class="sr-only">Actions</span></th></tr></thead>
-        <tbody></tbody>
-      </table></div>
-      <div class="toolbar section"><button class="btn btn-danger" id="reset-all-ranks" type="button">Reset all ranks</button><button class="btn btn-danger" id="reset-all" type="button">Clear the arena</button></div>
-    </section>
-
-    <section class="section" aria-labelledby="config-title">
-      <h2 id="config-title">Balance and rules</h2>
-      <p class="muted small">Every save creates a new version. Duels already running keep the rules they started with.</p>
-      <form id="config-form" novalidate>
-        <div id="config-fields"></div>
-        <div class="stack section">
-          <div><label for="config-note">Note for the history (optional)</label><input id="config-note" maxlength="200" placeholder="Why this change"></div>
-          <div class="toolbar"><button class="btn" id="config-save" type="submit" disabled>Save new version</button><button class="btn" id="config-discard" type="button" disabled>Discard changes</button></div>
-          <p class="status" id="config-status" role="status"></p>
+    <div class="tabs" role="tablist" aria-label="Mod controls">
+      <button type="button" role="tab" id="tab-live" aria-controls="panel-live" aria-selected="true">Live</button>
+      <button type="button" role="tab" id="tab-players" aria-controls="panel-players" aria-selected="false" tabindex="-1">Players</button>
+      <button type="button" role="tab" id="tab-rules" aria-controls="panel-rules" aria-selected="false" tabindex="-1">Rules</button>
+      <button type="button" role="tab" id="tab-characters" aria-controls="panel-characters" aria-selected="false" tabindex="-1">Characters</button>
+      <button type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1">Chat setup</button>
+    </div>
+    <div role="tabpanel" id="panel-live" aria-labelledby="tab-live" tabindex="0">
+      <section class="summary" aria-live="polite">
+        <h2 id="summary-title">Loading arena state…</h2>
+        <p id="summary-text"></p>
+        <div class="toolbar">
+          <button class="btn btn-primary" id="toggle-duels" type="button">Pause duels</button>
+          <button class="btn" id="reset-health" type="button">Reset everyone's health</button>
+          <button class="btn" id="reset-round" type="button">Cancel open duels and restart rounds</button>
         </div>
-      </form>
-      <h3>Version history</h3>
-      <div class="table-wrap"><table class="data" id="history">
-        <thead><tr><th class="num">Version</th><th>Saved</th><th>By</th><th>Changes</th><th>Note</th><th><span class="sr-only">Actions</span></th></tr></thead>
-        <tbody></tbody>
-      </table></div>
-    </section>
-
-    <section class="section" aria-labelledby="custom-title">
-      <h2 id="custom-title">Custom characters</h2>
-      <div class="split">
-        <figure class="chart">
-          <div class="title" id="usage-title">Custom character usage</div>
-          <div class="bars" id="usage-bars"></div>
-          <figcaption>Source: /api/admin/nesszerra customUsage. Limits: PNG only, 24 frames, 128 × 128 px per frame, 1.5 MB per atlas, 8 characters per channel.</figcaption>
-        </figure>
-        <div class="small muted" id="custom-list"></div>
-      </div>
-      <!-- MOUNT POINT for Lane D's upload UI. admin.js imports /upload.js (public/upload.js) if it exists and calls
-           mountUpload(root, {channel, usage, limits, refresh}). Until then this box links nothing and says so. -->
-      <div class="mount section" id="upload-root" data-mount="upload"><p class="muted small">Uploading characters isn't available yet.</p></div>
-    </section>
-
-    <section class="section" aria-labelledby="chat-title">
-      <h2 id="chat-title">Twitch chat connection</h2>
-      <p class="muted small" id="chat-text"></p>
-      <div class="toolbar" id="chat-actions"><button class="btn" id="connect-chat" type="button">Connect chat</button><button class="btn" id="disconnect-chat" type="button">Disconnect chat</button></div>
-      <p class="status" id="chat-status" role="status"></p>
-      <div id="owner-chat" hidden class="stack section">
-        <p class="small">Twitch sends chat to this site through one EventSub subscription. It needs nesszerra's permission to read chat and check moderators. If Connect chat reports missing authorization, reconnect Twitch, then click Connect chat again.</p>
-        <div class="toolbar"><a class="btn" href="/auth/login?connect=1">Reconnect Twitch</a></div>
-      </div>
-    </section>
-
-    <section class="section" aria-labelledby="se-title">
-      <h2 id="se-title">StreamElements commands</h2>
-      <p class="muted small" id="se-text">Use this instead of Connect chat to run duels through your StreamElements bot. Each action is a StreamElements custom command; its bot posts the reply.</p>
-      <h3>Set it up in StreamElements</h3>
-      <ol class="small stack">
-        <li><strong>Turn off the built-in Duel game.</strong> At streamelements.com, open the dashboard, go to Chat bot, then Modules, and switch off Duel. Or type <code>!module duel disable</code> in chat. Its <code>!duel</code>, <code>!accept</code> and <code>!deny</code> would answer at the same time as ours, which is why accepting is <code>!fight</code>.</li>
-        <li><strong>Optional: rename commands here first.</strong> Change a name in the table below (for example <code>!duel</code> for Challenge) and click Save names. The bot replies use your names.</li>
-        <li><strong>Add one command per row.</strong> In StreamElements go to Chat bot, then Commands, open the Custom commands tab and click Add new command. Then:
-          <ul>
-            <li>Command name: the name from the table without the <code>!</code>, for example <code>challenge</code>.</li>
-            <li>Reply: click Copy reply in that row and paste it. Paste the whole line; don't change it.</li>
-            <li>Advanced settings: set both cooldowns (user and global) to 0. The game has its own cooldowns, and a bot cooldown silently drops moves.</li>
-            <li>Click Activate command.</li>
-          </ul>
-        </li>
-        <li><strong>If a command with that name already exists</strong> (StreamElements says the name is taken): find it in the Custom commands list, click its edit (pencil) button, select everything in Reply, delete it, paste the copied reply, and click Save. Default commands can't be edited; turn them off or pick another name here.</li>
-        <li><strong>Click Use StreamElements</strong> below once all 3 are added.</li>
-        <li><strong>Test it:</strong> type <code>!decline</code> in your chat. The bot should answer "you have no pending challenge". If it says "wrong key", copy the reply again.</li>
-      </ol>
-      <p class="caveat small">Add commands in the dashboard, not with <code>!command add</code> in chat: the reply contains the key, and chat would show it to every viewer.</p>
-      <div class="toolbar"><button class="btn" id="use-se" type="button">Use StreamElements</button><button class="btn" id="save-se-names" type="button">Save names</button><button class="btn" id="rotate-se" type="button">New key</button></div>
-      <p class="status" id="se-status" role="status"></p>
-      <div class="table-wrap"><table class="data" id="se-table">
-        <thead><tr><th scope="col">Action</th><th scope="col">Command name</th><th scope="col">StreamElements reply</th><th scope="col"><span class="sr-only">Copy</span></th></tr></thead>
-        <tbody></tbody>
-      </table></div>
-      <p class="caveat small">The reply contains this channel's key. Anyone who sees it can send duel moves as any viewer, so keep it to the broadcaster and mods; click New key if it leaks, then paste the commands again. StreamElements only calls the site on commands, so characters appear when a viewer uses one.</p>
-    </section>
-
-    <!-- LINK to Lane E's live-fix space (admin/dev/index.html, owner only). -->
-    <section class="section" aria-labelledby="dev-title">
-      <h2 id="dev-title">Live-fix space</h2>
-      <p class="small muted" id="dev-text">Error logs, diagnostics and code changes live on a separate page that only the nesszerra account can open.</p>
-      <p><a class="btn" href="/admin/dev/" id="dev-open" hidden>Open live-fix space</a></p>
-    </section>
+        <p class="status" id="action-status" role="status"></p>
+      </section>
+      <section class="section" aria-label="Arena numbers">
+        <div class="stat-strip" id="stats"></div>
+      </section>
+      <section class="section" aria-labelledby="duels-title">
+        <h2 id="duels-title">Open duels</h2>
+        <div class="table-wrap"><table class="data" id="duels">
+          <thead><tr><th>Duel</th><th>Status</th><th>Health</th><th class="num">Round</th><th>Time left</th><th><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
+      <section class="section" aria-labelledby="players-title">
+        <h2 id="players-title">In the arena now</h2>
+        <div class="table-wrap"><table class="data" id="players">
+          <thead><tr><th>Viewer</th><th>Health</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th><th>Last chat</th><th><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <div class="toolbar section"><button class="btn btn-danger" id="reset-all" type="button">Clear the arena</button><span class="hint">Removes every character and cancels all duels. Saved profiles and ranks stay.</span></div>
+      </section>
+      <!-- LINK to Lane E's live-fix space (admin/dev/index.html, owner only). -->
+      <section class="section" aria-labelledby="dev-title">
+        <h2 id="dev-title">Live-fix space</h2>
+        <p class="small muted" id="dev-text">Error logs, diagnostics and code changes live on a separate page that only the nesszerra account can open.</p>
+        <p><a class="btn" href="/admin/dev/" id="dev-open" hidden>Open live-fix space</a></p>
+      </section>
+    </div>
+    <div role="tabpanel" id="panel-players" aria-labelledby="tab-players" tabindex="0" hidden>
+      <section class="section" aria-labelledby="ranks-title">
+        <h2 id="ranks-title">Ranks and saved profiles</h2>
+        <p class="muted small">Resetting a rank sets Elo back to the starting value and clears wins and losses. Removing a viewer also deletes their saved profile.</p>
+        <div class="table-wrap"><table class="data" id="ranks">
+          <thead><tr><th class="num">Rank</th><th>Viewer</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th><th><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <div class="toolbar section"><button class="btn btn-danger" id="reset-all-ranks" type="button">Reset all ranks</button></div>
+      </section>
+    </div>
+    <div role="tabpanel" id="panel-rules" aria-labelledby="tab-rules" tabindex="0" hidden>
+      <section class="section" aria-labelledby="config-title">
+        <h2 id="config-title">Rules: every save becomes a new version you can revert</h2>
+        <p class="muted small">Duels already running keep the rules they started with. Quick duels use only max health, timing and ranking; the ability values apply to the HP fight.</p>
+        <form id="config-form" novalidate>
+          <div id="config-fields"></div>
+          <div class="stack section">
+            <div><label for="config-note">Note for the history (optional)</label><input id="config-note" maxlength="200" placeholder="Why this change"></div>
+            <div class="toolbar"><button class="btn" id="config-save" type="submit" disabled>Save new version</button><button class="btn" id="config-discard" type="button" disabled>Discard changes</button></div>
+            <p class="status" id="config-status" role="status"></p>
+          </div>
+        </form>
+        <details class="history" id="history-box">
+          <summary id="history-title">Version history</summary>
+          <div class="table-wrap"><table class="data" id="history">
+          <thead><tr><th class="num">Version</th><th>Saved</th><th>By</th><th>Changes</th><th>Note</th><th><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        </details>
+      </section>
+    </div>
+    <div role="tabpanel" id="panel-characters" aria-labelledby="tab-characters" tabindex="0" hidden>
+      <section class="section" aria-labelledby="custom-title">
+        <h2 id="custom-title">Custom characters</h2>
+        <div class="split">
+          <figure class="chart">
+            <div class="title" id="usage-title">Custom character usage</div>
+            <div class="bars" id="usage-bars"></div>
+            <figcaption>Source: /api/admin/nesszerra customUsage. Limits: PNG only, 24 frames, 128 × 128 px per frame, 1.5 MB per atlas, 8 characters per channel.</figcaption>
+          </figure>
+          <div class="small muted" id="custom-list"></div>
+        </div>
+        <!-- MOUNT POINT for Lane D's upload UI. admin.js imports /upload.js (public/upload.js) if it exists and calls
+             mountUpload(root, {channel, usage, limits, refresh}). Until then this box links nothing and says so. -->
+        <div class="mount section" id="upload-root" data-mount="upload"><p class="muted small">Uploading characters isn't available yet.</p></div>
+      </section>
+    </div>
+    <div role="tabpanel" id="panel-chat" aria-labelledby="tab-chat" tabindex="0" hidden>
+      <section class="section" aria-labelledby="chat-title">
+        <h2 id="chat-title">Twitch chat connection</h2>
+        <p class="muted small" id="chat-text"></p>
+        <div class="toolbar" id="chat-actions"><button class="btn" id="connect-chat" type="button">Connect chat</button><button class="btn" id="disconnect-chat" type="button">Disconnect chat</button></div>
+        <p class="status" id="chat-status" role="status"></p>
+        <div id="owner-chat" hidden class="stack section">
+          <p class="small">Twitch sends chat to this site through one EventSub subscription. It needs nesszerra's permission to read chat and check moderators. If Connect chat reports missing authorization, reconnect Twitch, then click Connect chat again.</p>
+          <div class="toolbar"><a class="btn" href="/auth/login?connect=1">Reconnect Twitch</a></div>
+        </div>
+      </section>
+      <section class="section" aria-labelledby="se-title">
+        <h2 id="se-title">StreamElements commands</h2>
+        <p class="muted small" id="se-text">Use this instead of Connect chat to run duels through your StreamElements bot. Each action is a StreamElements custom command; its bot posts the reply.</p>
+        <h3>Set it up in StreamElements</h3>
+        <ol class="small stack">
+          <li><strong>Turn off the built-in Duel game.</strong> At streamelements.com, open the dashboard, go to Chat bot, then Modules, and switch off Duel. Or type <code>!module duel disable</code> in chat. Its <code>!duel</code>, <code>!accept</code> and <code>!deny</code> would answer at the same time as ours, which is why accepting is <code>!fight</code>.</li>
+          <li><strong>Optional: rename commands here first.</strong> Change a name in the table below (for example <code>!duel</code> for Challenge) and click Save names. The bot replies use your names.</li>
+          <li><strong>Add one command per row.</strong> In StreamElements go to Chat bot, then Commands, open the Custom commands tab and click Add new command. Then:
+            <ul>
+              <li>Command name: the name from the table without the <code>!</code>, for example <code>challenge</code>.</li>
+              <li>Reply: click Copy reply in that row and paste it. Paste the whole line; don't change it.</li>
+              <li>Advanced settings: set both cooldowns (user and global) to 0. The game has its own cooldowns, and a bot cooldown silently drops moves.</li>
+              <li>Click Activate command.</li>
+            </ul>
+          </li>
+          <li><strong>If a command with that name already exists</strong> (StreamElements says the name is taken): find it in the Custom commands list, click its edit (pencil) button, select everything in Reply, delete it, paste the copied reply, and click Save. Default commands can't be edited; turn them off or pick another name here.</li>
+          <li><strong>Click Use StreamElements</strong> below once all 3 are added.</li>
+          <li><strong>Test it:</strong> type <code>!decline</code> in your chat. The bot should answer "you have no pending challenge". If it says "wrong key", copy the reply again.</li>
+        </ol>
+        <p class="caveat small">Add commands in the dashboard, not with <code>!command add</code> in chat: the reply contains the key, and chat would show it to every viewer.</p>
+        <div class="toolbar"><button class="btn" id="use-se" type="button">Use StreamElements</button><button class="btn" id="save-se-names" type="button">Save names</button><button class="btn" id="rotate-se" type="button">New key</button></div>
+        <p class="status" id="se-status" role="status"></p>
+        <div class="table-wrap"><table class="data" id="se-table">
+          <thead><tr><th scope="col">Action</th><th scope="col">Command name</th><th scope="col">StreamElements reply</th><th scope="col"><span class="sr-only">Copy</span></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <p class="caveat small">The reply contains this channel's key. Anyone who sees it can send duel moves as any viewer, so keep it to the broadcaster and mods; click New key if it leaks, then paste the commands again. StreamElements only calls the site on commands, so characters appear when a viewer uses one.</p>
+      </section>
+    </div>
   </div>
 </main>
 <script type="module" src="/src/admin.js"></script>

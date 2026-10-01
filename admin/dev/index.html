@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Chat live-fix space — nesszerra</title>
 <meta name="robots" content="noindex">
+<link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css" data-design>
 <link rel="stylesheet" href="/dev.css"></head>
 <body>
@@ -24,130 +25,145 @@
   </section>
 
   <div id="app" hidden>
-    <section class="summary" aria-live="polite">
-      <h2 id="summary-title">Loading diagnostics…</h2>
-      <p id="summary-text"></p>
-      <div class="toolbar"><button class="btn" id="refresh" type="button">Refresh diagnostics</button></div>
-    </section>
+    <div class="with-index">
+      <nav class="page-index" aria-label="On this page"><ol>
+        <li><a href="#sec-health">Health</a></li>
+        <li><a href="#sec-logs">Error log</a></li>
+        <li><a href="#sec-code">Code editor</a></li>
+        <li><a href="#sec-release">Release</a></li>
+        <li><a href="#sec-settings">Live settings</a></li>
+        <li><a href="#sec-codex">Codex</a></li>
+        <li><a href="#sec-integrations">Integrations</a></li>
+      </ol></nav>
+      <div>
+        <section class="summary" aria-live="polite">
+          <h2 id="summary-title">Loading diagnostics…</h2>
+          <p id="summary-text"></p>
+          <div class="toolbar"><button class="btn" id="refresh" type="button">Refresh diagnostics</button></div>
+        </section>
 
-    <section class="section">
-      <h2>Health right now</h2>
-      <div class="stat-strip">
-        <div class="stat"><div class="label">Twitch chat</div><div class="value" id="s-chat">–</div><div class="delta" id="s-chat-note"></div></div>
-        <div class="stat"><div class="label">Worker requests today (of 100,000)</div><div class="value" id="s-requests">–</div><div class="delta" id="s-requests-note"></div></div>
-        <div class="stat"><div class="label">Errors logged</div><div class="value" id="s-errors">–</div><div class="delta" id="s-errors-note"></div></div>
-        <div class="stat"><div class="label">Overlay sockets</div><div class="value" id="s-sockets">–</div><div class="delta" id="s-sockets-note"></div></div>
-      </div>
-      <p class="caveat" id="health-caveat">Request counts come from Cloudflare analytics for the whole account (the Free limit is per account and resets at 00:00 UTC). They lag by a few minutes.</p>
-    </section>
+        <section class="section" id="sec-health">
+          <h2>Health right now</h2>
+          <div class="stat-strip">
+            <div class="stat"><div class="label">Twitch chat</div><div class="value" id="s-chat">–</div><div class="delta" id="s-chat-note"></div></div>
+            <div class="stat"><div class="label">Worker requests today (of 100,000)</div><div class="value" id="s-requests">–</div><div class="delta" id="s-requests-note"></div></div>
+            <div class="stat"><div class="label">Errors logged</div><div class="value" id="s-errors">–</div><div class="delta" id="s-errors-note"></div></div>
+            <div class="stat"><div class="label">Overlay sockets</div><div class="value" id="s-sockets">–</div><div class="delta" id="s-sockets-note"></div></div>
+          </div>
+          <p class="caveat" id="health-caveat">Request counts come from Cloudflare analytics for the whole account (the Free limit is per account and resets at 00:00 UTC). They lag by a few minutes.</p>
+        </section>
 
-    <section class="section">
-      <h2>Release a fix: branch, test, promote, roll back</h2>
-      <p class="muted">Each step starts the GitHub Actions deploy workflow. Nothing changes on chat.miolaf.xyz until you promote or use a hotfix.</p>
-      <p class="callout warning" id="github-missing" hidden></p>
-      <ol class="steps">
-        <li><strong>Save to a branch</strong> in the code editor below. Branch names start with <code>live-fix/</code> or <code>hotfix/</code>.</li>
-        <li><strong>Deploy to test.</strong>
-          <div class="toolbar"><button class="btn" id="deploy-test" type="button">Deploy branch to test</button><span class="hint">Uses the branch in the code editor.</span></div></li>
-        <li><strong>Check it in OBS</strong> with the test overlay: <a id="test-overlay" href="https://test.chat.miolaf.xyz/overlay.html?channel=nesszerra&amp;arena=1" target="_blank" rel="noopener">test.chat.miolaf.xyz overlay</a>.</li>
-        <li><strong>Promote to production.</strong> Squash-merges the pull request, then deploys the base branch.
+        <section class="section" id="sec-logs">
+          <h2>Error log, newest first</h2>
+          <div class="toolbar">
+            <label class="inline" for="log-source">Source</label>
+            <select id="log-source" class="narrow"><option value="">All</option><option value="room">Durable Object</option><option value="worker">Worker</option><option value="command">Chat commands</option><option value="warn">Warnings</option></select>
+            <button class="btn" id="clear-logs" type="button">Clear log</button>
+          </div>
+          <div class="table-wrap"><table class="data">
+            <thead><tr><th>Time</th><th>Source</th><th>Message</th><th>Context</th></tr></thead>
+            <tbody id="logs"></tbody>
+          </table></div>
+          <p class="caveat">The newest 100 of up to 200 stored rows. Rows are kept in the nesszerra Durable Object.</p>
+        </section>
+
+        <section class="section" id="sec-code">
+          <h2>Code editor: changes go to a branch, never straight to main</h2>
+          <p class="muted">Loads from the branch if it exists, otherwise from main. Secrets, CI files and build output can't be opened here.</p>
+          <div class="controls">
+            <div><label for="branch">Branch</label><input id="branch" autocomplete="off" spellcheck="false" placeholder="live-fix/overlay-text"></div>
+            <div><label for="path">File</label><input id="path" list="files" autocomplete="off" spellcheck="false" placeholder="public/overlay.js"><datalist id="files"></datalist></div>
+            <div class="end toolbar"><button class="btn" id="load-file" type="button">Load file</button><button class="btn" id="load-tree" type="button">List files</button></div>
+          </div>
+          <label class="spaced" for="editor">Contents <span class="muted" id="file-info"></span></label>
+          <textarea id="editor" class="code" rows="18" spellcheck="false" autocomplete="off" wrap="off"></textarea>
           <div class="controls compact">
-            <div><label for="pr-number">Pull request number</label><input id="pr-number" type="number" min="1" inputmode="numeric" placeholder="Leave empty to deploy main as it is"></div>
-            <div><label for="percentage">Traffic for the new version (%)</label><input id="percentage" type="number" min="1" max="100" value="100" inputmode="numeric"></div>
-            <div class="end"><button class="btn" id="promote" type="button">Promote to production</button></div>
-          </div></li>
-        <li><strong>Roll back</strong> if something breaks.
+            <div><label for="commit-msg">Commit message</label><input id="commit-msg" maxlength="200" placeholder="Fix overlay nameplate wrapping"></div>
+            <div class="end toolbar"><button class="btn btn-primary" id="save-file" type="button">Save to branch</button><button class="btn" id="open-pr" type="button">Open pull request</button></div>
+          </div>
+          <p class="status" id="code-status" role="status"></p>
+        </section>
+
+        <section class="section" id="sec-release">
+          <h2>Release a fix: test first, then promote or roll back</h2>
+          <p class="muted">Each step starts the GitHub Actions deploy workflow. Nothing changes on chat.miolaf.xyz until you promote or use a hotfix.</p>
+          <p class="callout warning" id="github-missing" hidden></p>
+          <ol class="steps">
+            <li><strong>Save to a branch</strong> in the code editor above. Branch names start with <code>live-fix/</code> or <code>hotfix/</code>.</li>
+            <li><strong>Deploy to test.</strong>
+              <div class="toolbar"><button class="btn" id="deploy-test" type="button">Deploy branch to test</button><span class="hint">Uses the branch in the code editor.</span></div></li>
+            <li><strong>Check it in OBS</strong> with the test overlay: <a id="test-overlay" href="https://test.chat.miolaf.xyz/overlay.html?channel=nesszerra&amp;arena=1" target="_blank" rel="noopener">test.chat.miolaf.xyz overlay</a>.</li>
+            <li><strong>Promote to production.</strong> Squash-merges the pull request, then deploys the base branch.
+              <div class="controls compact">
+                <div><label for="pr-number">Pull request number</label><input id="pr-number" type="number" min="1" inputmode="numeric" placeholder="Leave empty to deploy main as it is"></div>
+                <div><label for="percentage">Traffic for the new version (%)</label><input id="percentage" type="number" min="1" max="100" value="100" inputmode="numeric"></div>
+                <div class="end"><button class="btn" id="promote" type="button">Promote to production</button></div>
+              </div></li>
+            <li><strong>Roll back</strong> if something breaks.
+              <div class="controls compact">
+                <div><label for="rb-target">Site</label><select id="rb-target"><option value="production">chat.miolaf.xyz (production)</option><option value="test">test.chat.miolaf.xyz (test)</option></select></div>
+                <div><label for="rb-version">Version</label><select id="rb-version"><option value="">Previous deployment</option></select></div>
+                <div class="end"><button class="btn btn-danger" id="rollback" type="button">Roll back</button></div>
+              </div></li>
+          </ol>
+          <div class="callout warning">
+            <p><strong>Hotfix:</strong> deploys a <code>hotfix/</code> branch straight to production, skipping the test site (unit tests still run), and opens a pull request so main keeps the change.</p>
+            <div class="toolbar"><button class="btn btn-danger" id="hotfix" type="button">Deploy hotfix to production</button></div>
+          </div>
+          <p class="status" id="release-status" role="status"></p>
+
+          <h3>Recent deploy runs</h3>
+          <div class="table-wrap"><table class="data">
+            <thead><tr><th>Started</th><th>Run</th><th>Branch</th><th>Result</th></tr></thead>
+            <tbody id="runs"><tr><td colspan="4" class="muted">Not loaded.</td></tr></tbody>
+          </table></div>
+
+          <h3>Worker versions now serving</h3>
+          <div class="table-wrap"><table class="data">
+            <thead><tr><th>Site</th><th>Version</th><th class="num">Traffic (%)</th><th>Deployed</th><th>Note</th></tr></thead>
+            <tbody id="deployments"><tr><td colspan="5" class="muted">Not loaded.</td></tr></tbody>
+          </table></div>
+        </section>
+
+        <section class="section" id="sec-settings">
+          <h2>Live settings share the Mod controls version history</h2>
+          <p class="muted">Edits the versioned game config (the same history as Mod controls). Running duels keep their old rules.</p>
+          <label for="config">Config (JSON) <span class="muted" id="config-version"></span></label>
+          <textarea id="config" class="code" rows="14" spellcheck="false"></textarea>
           <div class="controls compact">
-            <div><label for="rb-target">Site</label><select id="rb-target"><option value="production">chat.miolaf.xyz (production)</option><option value="test">test.chat.miolaf.xyz (test)</option></select></div>
-            <div><label for="rb-version">Version</label><select id="rb-version"><option value="">Previous deployment</option></select></div>
-            <div class="end"><button class="btn btn-danger" id="rollback" type="button">Roll back</button></div>
-          </div></li>
-      </ol>
-      <div class="callout warning">
-        <p><strong>Hotfix:</strong> deploys a <code>hotfix/</code> branch straight to production, skipping the test site (unit tests still run), and opens a pull request so main keeps the change.</p>
-        <div class="toolbar"><button class="btn btn-danger" id="hotfix" type="button">Deploy hotfix to production</button></div>
+            <div><label for="config-note">Change note</label><input id="config-note" maxlength="200" placeholder="Lower heavy strike to 20"></div>
+            <div class="end toolbar"><button class="btn" id="save-config" type="button">Save settings</button><button class="btn" id="reload-config" type="button">Reload</button></div>
+          </div>
+          <p class="status" id="config-status" role="status"></p>
+          <details class="history">
+            <summary id="history-title">Config history</summary>
+          <div class="table-wrap"><table class="data">
+            <thead><tr><th class="num">Version</th><th>Saved</th><th>By</th><th>Note</th><th></th></tr></thead>
+            <tbody id="history"></tbody>
+          </table></div>
+          </details>
+        </section>
+
+        <section class="section" id="sec-codex">
+          <h2>Codex assistance is <span id="codex-state">off</span></h2>
+          <p>Codex may help with fixes only while this is on. Turning it on records your authorization on the server; nothing calls a model from this page.</p>
+          <div class="toggle"><input type="checkbox" id="codex-toggle"><label for="codex-toggle">Authorize Codex to assist with live fixes</label></div>
+          <div class="controls compact">
+            <div><label for="codex-note">Scope note (optional)</label><input id="codex-note" maxlength="200" placeholder="Only the overlay nameplate bug"></div>
+          </div>
+          <p class="status" id="codex-status" role="status"></p>
+        </section>
+
+        <section class="section" id="sec-integrations">
+          <h2>Integrations and what each one needs</h2>
+          <div class="table-wrap"><table class="data">
+            <thead><tr><th>Integration</th><th>Status</th><th>Missing</th><th>Used for</th></tr></thead>
+            <tbody id="integrations"></tbody>
+          </table></div>
+          <p class="caveat">Set missing values as Worker secrets or vars; docs/LIVE_FIX.md lists each one and its minimum permissions.</p>
+        </section>
       </div>
-      <p class="status" id="release-status" role="status"></p>
-
-      <h3>Recent deploy runs</h3>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th>Started</th><th>Run</th><th>Branch</th><th>Result</th></tr></thead>
-        <tbody id="runs"><tr><td colspan="4" class="muted">Not loaded.</td></tr></tbody>
-      </table></div>
-
-      <h3>Worker versions now serving</h3>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th>Site</th><th>Version</th><th class="num">Traffic (%)</th><th>Deployed</th><th>Note</th></tr></thead>
-        <tbody id="deployments"><tr><td colspan="5" class="muted">Not loaded.</td></tr></tbody>
-      </table></div>
-    </section>
-
-    <section class="section">
-      <h2>Code editor (GitHub-backed)</h2>
-      <p class="muted">Loads from the branch if it exists, otherwise from main. Secrets, CI files and build output can't be opened here.</p>
-      <div class="controls">
-        <div><label for="branch">Branch</label><input id="branch" autocomplete="off" spellcheck="false" placeholder="live-fix/overlay-text"></div>
-        <div><label for="path">File</label><input id="path" list="files" autocomplete="off" spellcheck="false" placeholder="public/overlay.js"><datalist id="files"></datalist></div>
-        <div class="end toolbar"><button class="btn" id="load-file" type="button">Load file</button><button class="btn" id="load-tree" type="button">List files</button></div>
-      </div>
-      <label class="spaced" for="editor">Contents <span class="muted" id="file-info"></span></label>
-      <textarea id="editor" class="code" rows="18" spellcheck="false" autocomplete="off" wrap="off"></textarea>
-      <div class="controls compact">
-        <div><label for="commit-msg">Commit message</label><input id="commit-msg" maxlength="200" placeholder="Fix overlay nameplate wrapping"></div>
-        <div class="end toolbar"><button class="btn btn-primary" id="save-file" type="button">Save to branch</button><button class="btn" id="open-pr" type="button">Open pull request</button></div>
-      </div>
-      <p class="status" id="code-status" role="status"></p>
-    </section>
-
-    <section class="section">
-      <h2>Live settings</h2>
-      <p class="muted">Edits the versioned game config (the same history as Mod controls). Running duels keep their old rules.</p>
-      <label for="config">Config (JSON) <span class="muted" id="config-version"></span></label>
-      <textarea id="config" class="code" rows="14" spellcheck="false"></textarea>
-      <div class="controls compact">
-        <div><label for="config-note">Change note</label><input id="config-note" maxlength="200" placeholder="Lower heavy strike to 20"></div>
-        <div class="end toolbar"><button class="btn" id="save-config" type="button">Save settings</button><button class="btn" id="reload-config" type="button">Reload</button></div>
-      </div>
-      <p class="status" id="config-status" role="status"></p>
-      <h3>Config history</h3>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th class="num">Version</th><th>Saved</th><th>By</th><th>Note</th><th></th></tr></thead>
-        <tbody id="history"></tbody>
-      </table></div>
-    </section>
-
-    <section class="section">
-      <h2>Error log</h2>
-      <div class="toolbar">
-        <label class="inline" for="log-source">Source</label>
-        <select id="log-source" class="narrow"><option value="">All</option><option value="room">Durable Object</option><option value="worker">Worker</option><option value="command">Chat commands</option><option value="warn">Warnings</option></select>
-        <button class="btn" id="clear-logs" type="button">Clear log</button>
-      </div>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th>Time</th><th>Source</th><th>Message</th><th>Context</th></tr></thead>
-        <tbody id="logs"></tbody>
-      </table></div>
-      <p class="caveat">The newest 100 of up to 200 stored rows. Rows are kept in the nesszerra Durable Object.</p>
-    </section>
-
-    <section class="section">
-      <h2>Codex assistance is <span id="codex-state">off</span></h2>
-      <p>Codex may help with fixes only while this is on. Turning it on records your authorization on the server; nothing calls a model from this page.</p>
-      <div class="toggle"><input type="checkbox" id="codex-toggle"><label for="codex-toggle">Authorize Codex to assist with live fixes</label></div>
-      <div class="controls compact">
-        <div><label for="codex-note">Scope note (optional)</label><input id="codex-note" maxlength="200" placeholder="Only the overlay nameplate bug"></div>
-      </div>
-      <p class="status" id="codex-status" role="status"></p>
-    </section>
-
-    <section class="section">
-      <h2>Integrations</h2>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th>Integration</th><th>Status</th><th>Missing</th><th>Used for</th></tr></thead>
-        <tbody id="integrations"></tbody>
-      </table></div>
-      <p class="caveat">Set missing values as Worker secrets or vars; docs/LIVE_FIX.md lists each one and its minimum permissions.</p>
-    </section>
+    </div>
   </div>
 </main>
 <script type="module" src="/dev.js"></script>
