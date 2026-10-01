@@ -6,8 +6,10 @@ const T0 = 1_800_000_000_000;
 let seq = 0;
 
 // Small harness: keeps state and clock, applies events through the pure reducer.
-function arena({ chat = true, viewers = ['alice', 'bob', 'cara', 'dan'] } = {}) {
+// HP-fight tests turn quick duels off; quick-duel tests pass { quick: true }.
+function arena({ chat = true, viewers = ['alice', 'bob', 'cara', 'dan'], quick = false } = {}) {
   const w = { state: createInitialState('nesszerra'), now: T0, last: null };
+  w.state.config.quickDuel = quick;
   w.apply = (event) => { const r = reduceGame(w.state, event, w.now); w.state = r.state; w.last = r; return r.result; };
   w.tick = (ms) => { w.now += ms; return w.apply({ type: 'tick' }); };
   // Advance the clock in 10 s ticks (alarms fire at least that often while duels are open).
@@ -522,4 +524,32 @@ test('StreamElements: a bare command sends t=- and reaches the room with no targ
   const url = new URL('https://x/api/se/nesszerra/accept?k=k1&id=2&u=bob&d=bob&t=-&m=1');
   await handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async (c, p, init) => { sent = JSON.parse(init.body); return Response.json({ reply: 'ok' }); } });
   assert.equal(sent.target, '');
+});
+
+test('quick duels: accepting settles the duel with one knockout hit, winner from the roll', () => {
+  for (const [roll, winner, loser] of [[0.2, 'alice', 'bob'], [0.7, 'bob', 'alice']]) {
+    const w = arena({ quick: true });
+    const c = w.say('alice', '!challenge @bob');
+    const r = w.apply({ type: 'command', messageId: 'q' + roll, userId: 'id-bob', username: 'bob', displayName: 'bob', text: '!accept', timestamp: w.now, roll });
+    assert.equal(r.reason, 'quick_duel');
+    assert.equal(r.winnerId, 'id-' + winner);
+    const duel = w.duel(c.duelId);
+    assert.equal(duel.status, 'completed');
+    assert.equal(duel.hp['id-' + loser], 0);
+    assert.equal(w.player(winner).wins, 1);
+    assert.equal(w.player(loser).losses, 1);
+    assert.ok(w.player(loser).respawnAt > w.now);
+    const types = w.state.events.map((e) => e.type).filter((t) => t.startsWith('duel_'));
+    assert.deepEqual(types, ['duel_started', 'duel_action', 'duel_completed']);
+    assert.equal(w.state.events.find((e) => e.type === 'duel_action').finisher, true);
+  }
+});
+
+test('quick duels are the default and work through a mutual challenge too', () => {
+  assert.equal(defaultConfig().quickDuel, true);
+  const w = arena({ quick: true });
+  w.say('alice', '!challenge @bob');
+  assert.equal(w.say('bob', '!challenge @alice').reason, 'quick_duel');
+  assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: 'yes' } } }).reason, 'invalid_config_quickDuel');
+  assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: false } } }).ok, true);
 });

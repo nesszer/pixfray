@@ -1,5 +1,8 @@
 const DEFAULT_CONFIG = {
   enabled: true,
+  // Quick duels: accepting settles the duel at once with one knockout hit, winner picked 50/50.
+  // Off = the HP fight with !attack/!strike/!heavy/!heal.
+  quickDuel: true,
   maxHp: 100,
   maxDuels: 5,
   challengeTimeoutMs: 30_000,
@@ -324,6 +327,26 @@ function beginDuel(state, duel, now) {
   return { ok: true, duelId: duel.id };
 }
 
+// Quick duel: one knockout hit right after the duel starts. roll in [0, 1) comes from the room; < 0.5 means a wins.
+function settleQuickDuel(state, duel, roll, now) {
+  const r = Number.isFinite(roll) && roll >= 0 && roll < 1 ? roll : hashRoll(duel.id + ":" + now);
+  const winnerId = r < 0.5 ? duel.a : duel.b;
+  const loserId = winnerId === duel.a ? duel.b : duel.a;
+  const amount = duel.hp[loserId];
+  duel.hp[loserId] = 0;
+  const loser = player(state, loserId);
+  if (loser) loser.hp = 0;
+  addEvent(state, "duel_action", now, { duelId: duel.id, userId: winnerId, targetId: loserId, ability: "heavy", amount, hp: clone(duel.hp), finisher: true });
+  finishDuel(state, duel, winnerId, now);
+  return { ok: true, reason: "quick_duel", duelId: duel.id, winnerId, loserId };
+}
+
+function hashRoll(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return (h >>> 0) / 4294967296;
+}
+
 function finishDuel(state, duel, winnerId, now) {
   const a = player(state, duel.a);
   const b = player(state, duel.b);
@@ -427,6 +450,7 @@ function applyCommand(state, event, now) {
     const mutual = openDuels(state).find((item) => item.status === "pending" && item.a === target.userId && item.b === actor.userId);
     if (mutual) {
       const started = beginDuel(state, mutual, now);
+      if (started.ok && state.config.quickDuel) return settleQuickDuel(state, mutual, event.roll, now);
       return started.ok ? { ...started, reason: "duel_started" } : started;
     }
     return createChallenge(state, actor, target, now);
@@ -447,7 +471,9 @@ function applyCommand(state, event, now) {
       addEvent(state, "challenge_declined", now, { duelId: duel.id, declinedBy: actor.userId });
       return { ok: true, reason: "challenge_declined", duelId: duel.id };
     }
-    return beginDuel(state, duel, now);
+    const started = beginDuel(state, duel, now);
+    if (started.ok && state.config.quickDuel) return settleQuickDuel(state, duel, event.roll, now);
+    return started;
   }
 
   const abilityName = parsed.action === "attack" ? actor.defaultAbility : parsed.action;
@@ -476,9 +502,9 @@ function validateConfigPatch(patch) {
     eloK: [1, 100],
   };
   for (const key of Object.keys(patch)) {
-    if (key === "enabled") {
-      if (typeof patch.enabled !== "boolean") return { ok: false, reason: "invalid_config_enabled" };
-      out.enabled = patch.enabled;
+    if (key === "enabled" || key === "quickDuel") {
+      if (typeof patch[key] !== "boolean") return { ok: false, reason: "invalid_config_" + key };
+      out[key] = patch[key];
     } else if (key === "relayLeaseMs") {
       continue;   // removed with the relay; old history versions may still carry it, so rollbacks skip it
     } else if (ranges[key]) {

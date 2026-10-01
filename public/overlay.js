@@ -232,13 +232,25 @@ async function start() {
     if (particles.length > 300) particles.splice(0, particles.length - 300);
   }
   function floatText(p, text, color) { if (p) p.floatText = { text, color, until: Date.now() + 1200 }; }
+  // Events of one duel that arrive together (a quick duel sends start, hit and KO at once) play one after another.
+  const DUEL_EVENT_GAP_MS = { duel_started: 700, duel_action: 600 };
+  const duelNextAt = new Map();
+  function queueArenaEvent(event) {
+    const id = event?.duelId;
+    if (!id) return handleArenaEvent(event);
+    const now = Date.now(), at = Math.max(now, duelNextAt.get(id) || 0);
+    duelNextAt.set(id, at + (DUEL_EVENT_GAP_MS[event.type] || 0));
+    if (duelNextAt.size > 50) duelNextAt.delete(duelNextAt.keys().next().value);
+    if (at <= now) handleArenaEvent(event);
+    else setTimeout(() => handleArenaEvent({ ...event, at: Number.isFinite(event.at) ? event.at + (at - now) : event.at }), at - now);
+  }
   function handleArenaEvent(event) {
     if (!event || typeof event !== 'object') return;
     if (Number.isFinite(event.at) && Date.now() - event.at > EVENT_FRESH_MS) return;
     const now = Date.now();
     switch (event.type) {
       case 'challenge_created':
-        announceArena(nameOf(event.a) + ' challenges ' + nameOf(event.b) + ' · !accept to fight');
+        announceArena(nameOf(event.a) + ' challenges ' + nameOf(event.b) + ' to a duel');
         break;
       case 'challenge_declined':
         announceArena(nameOf(event.declinedBy) + ' declined the duel', '#e2e8f0');
@@ -609,7 +621,7 @@ async function start() {
     arenaClient = createArenaClient({
       channel,
       onSnapshot: acceptArenaSnapshot,
-      onEvent: handleArenaEvent,
+      onEvent: queueArenaEvent,
       onStatus(event) {
         arenaTransport = event.state || 'offline';
         if (event.chat) arenaChat = event.chat;

@@ -60,6 +60,10 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
   if (result?.ok) {
     const duel = state.duels.find(d => d.id === result.duelId);
     const other = duel ? (duel.a === actorId ? duel.b : duel.a) : '';
+    if (reason === 'quick_duel') {
+      const w = state.players.find(p => p.userId === result.winnerId), l = state.players.find(p => p.userId === result.loserId);
+      return `${nameOf(state, result.winnerId)} knocks out ${nameOf(state, result.loserId)} in one hit and wins.` + (w && l ? ` Elo: ${nameOf(state, result.winnerId)} ${w.elo}, ${nameOf(state, result.loserId)} ${l.elo}.` : '');
+    }
     if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}. Use ${n('attack')}, ${n('strike')}, ${n('heavy')} or ${n('heal')}.`;
     if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} (or ${n('challenge')} @${me}) or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
     if (reason === 'challenge_declined') return `${me} declined the duel.`;

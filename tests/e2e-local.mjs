@@ -92,14 +92,14 @@ try {
   const admin = await api('/api/admin/' + ch, { cookie: cookies.owner });
   assert.equal(admin.status, 200);
   const baseVersion = admin.data.configVersion;
-  const patch = await api('/api/admin/' + ch, { cookie: cookies.owner, method: 'POST', body: { action: 'config', patch: { maxHp: 60, inactivityMs: 10000 }, baseVersion, note: 'e2e: short duels' } });
+  const patch = await api('/api/admin/' + ch, { cookie: cookies.owner, method: 'POST', body: { action: 'config', patch: { maxHp: 60, inactivityMs: 10000, quickDuel: false }, baseVersion, note: 'e2e: short HP duels' } });
   assert.equal(patch.status, 200, JSON.stringify(patch.data));
   const stale = await api('/api/admin/' + ch, { cookie: cookies.owner, method: 'POST', body: { action: 'config', patch: { maxHp: 70 }, baseVersion, note: 'stale' } });
   assert.equal(stale.status, 409);
   const viewerAdmin = await api('/api/admin/' + ch, { cookie: cookies.alice });
   assert.equal(viewerAdmin.status, 403, 'a viewer without a mod role cannot open admin');
   const hist = (await api('/api/admin/' + ch, { cookie: cookies.owner })).data.history;
-  assert.equal(hist[0].note, 'e2e: short duels'); assert.equal(hist[0].actorName, 'nesszerra');
+  assert.equal(hist[0].note, 'e2e: short HP duels'); assert.equal(hist[0].actorName, 'nesszerra');
   log('config v' + (baseVersion + 1) + ' saved (maxHp 60, inactivity 10 s); stale save 409; viewer 403');
 
   // 3. Overlay in Chrome, connected to the real live socket.
@@ -275,7 +275,7 @@ try {
 
   // Restore the default balance so reruns start from the same rules.
   const v = (await api('/api/admin/' + ch, { cookie: cookies.owner })).data.configVersion;
-  await api('/api/admin/' + ch, { cookie: cookies.owner, method: 'POST', body: { action: 'config', patch: { maxHp: 100, inactivityMs: 60000 }, baseVersion: v, note: 'e2e: restore defaults' } });
+  await api('/api/admin/' + ch, { cookie: cookies.owner, method: 'POST', body: { action: 'config', patch: { maxHp: 100, inactivityMs: 45000, quickDuel: true }, baseVersion: v, note: 'e2e: restore defaults' } });
   assert.deepEqual(errors, []);
   console.log('E2E PASS');
 } finally {

@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { ChannelRoom } from '../server/channel.js';
 import { AuthStore } from '../server/auth.js';
 import { logRoomError } from '../server/developer.js';
+import { createInitialState, defaultConfig } from '../server/game.js';
 
 const SECRET = 'test-only-internal-secret-0123456789';
 
@@ -36,9 +37,11 @@ function fakeSocket(attachment, tag) {
     send(m) { this.sent.push(JSON.parse(m)); }, close(code, reason) { this.closed = [code, reason]; this.readyState = 3; },
     serializeAttachment(a) { this.att = a; }, deserializeAttachment() { return this.att; } };
 }
-function room(env = {}) {
+// HP-fight tests run with quick duels off; pass { quick: true } for the one-hit mode.
+function room(env = {}, { quick = false } = {}) {
   const ctx = fakeCtx();
   const r = new ChannelRoom(ctx, { INTERNAL_SECRET: SECRET, ...env });
+  if (!quick) r.writeState({ ...createInitialState('nesszerra'), config: { ...defaultConfig(), quickDuel: false } });
   r.call = async (path, { method = 'GET', body, userId, secret = SECRET } = {}) => {
     const headers = { 'X-Mini-Internal': secret, 'X-Mini-Channel': 'nesszerra' };
     if (userId) headers['X-Mini-User-Id'] = userId;
@@ -354,4 +357,16 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   // Disconnecting the StreamElements source never calls Twitch and pauses duels.
   await r.call('/chat', { method: 'POST', body: { action: 'disconnected', reason: 'disconnected' } });
   assert.match((await cmd('u1', 'alice', 'strike', '', rotated.secret)).body.reply, /paused/);
+});
+
+test('StreamElements quick duel: !fight settles it in one reply', async () => {
+  const r = room({}, { quick: true });
+  const se = (await r.call('/admin')).body.streamelements;
+  await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  let m = 0;
+  const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 'q' + (++m) } });
+  await cmd('u1', 'alice', 'challenge', 'bob');
+  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^(alice|bob) knocks out (alice|bob) in one hit and wins\. Elo: \w+ 1012, \w+ 988\.$/);
+  assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /not in a duel/);
 });
