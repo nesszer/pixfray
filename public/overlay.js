@@ -63,7 +63,8 @@ async function start() {
   let width = 1, height = 1, connectionState = demo ? 'demo' : 'connecting';
   let arenaChat = null, arenaTransport = arenaDemo ? 'demo' : 'connecting', arenaConfig = { maxHp: 100 };
   let arenaRevision = null, arenaDuels = [], arenaClient = null, arenaTimer = null, arenaPaused = false;
-  let announcement = null, lastCatalogFetch = 0;
+  const announcements = [];   // top banner lines: one per duel (keyed by duel id) and one for the arena
+  let lastCatalogFetch = 0;
   const missingAvatars = new Set();
   let lastFrame = performance.now(), lastCleanup = 0;
   const particles = [];
@@ -230,9 +231,15 @@ async function start() {
     for (const id of meetPoints.keys()) if (!replays.has(id) && !arenaDuels.some(duel => duel.id === id && duel.status === 'active')) meetPoints.delete(id);
     updateStatus();
   }
-  function announceArena(text, color = '#fde68a') {
-    if (text) announcement = { text: String(text).slice(0, 100), color, until: Date.now() + 5500 };
+  // Two duels at once each keep their own line; a newer message for the same duel replaces its line.
+  function announceArena(text, color = '#fde68a', key = 'arena') {
+    if (!text) return;
+    const i = announcements.findIndex(a => a.key === key);
+    if (i >= 0) announcements.splice(i, 1);
+    announcements.push({ key, text: String(text).slice(0, 100), color, until: Date.now() + 5500 });
+    if (announcements.length > 3) announcements.shift();
   }
+  const liveAnnouncements = () => announcements.filter(a => Date.now() < a.until);
   function burst(p, color, count, rise) {
     if (!p) return;
     for (let i = 0; i < count; i++) {
@@ -340,13 +347,13 @@ async function start() {
     const now = Date.now();
     switch (event.type) {
       case 'challenge_created':
-        announceArena(nameOf(event.a) + ' challenges ' + nameOf(event.b) + ' to a duel');
+        announceArena(nameOf(event.a) + ' challenges ' + nameOf(event.b) + ' to a duel', undefined, event.duelId);
         break;
       case 'challenge_declined':
-        announceArena(nameOf(event.declinedBy) + ' declined the duel', '#e2e8f0');
+        announceArena(nameOf(event.declinedBy) + ' declined the duel', '#e2e8f0', event.duelId);
         break;
       case 'challenge_expired':
-        announceArena('Challenge to ' + nameOf(event.b) + ' expired', '#e2e8f0');
+        announceArena('Challenge to ' + nameOf(event.b) + ' expired', '#e2e8f0', event.duelId);
         break;
       case 'duel_started':
         if (event.duelId && event.a && event.b) {
@@ -362,7 +369,7 @@ async function start() {
           for (const id of [event.a, event.b]) { const f = findPlayer(String(id)); if (f && !(f.koHoldUntil > now)) f.koUntil = 0; }   // state may already show the KO
           setTimeout(() => replays.delete(event.duelId), 60000);   // safety net if duel_completed never arrives
         }
-        announceArena('Round ' + event.round + ': ' + nameOf(event.a) + ' vs ' + nameOf(event.b));
+        announceArena('Round ' + event.round + ': ' + nameOf(event.a) + ' vs ' + nameOf(event.b), undefined, event.duelId);
         break;
       case 'duel_action': {
         const replay = replays.get(event.duelId);
@@ -404,7 +411,7 @@ async function start() {
         break;
       }
       case 'duel_cancelled':
-        announceArena('Duel cancelled · ' + (CANCEL_TEXT[event.reason] || 'not scored'), '#e2e8f0');
+        announceArena('Duel cancelled · ' + (CANCEL_TEXT[event.reason] || 'not scored'), '#e2e8f0', event.duelId);
         break;
       case 'player_respawned': {
         const p = findPlayer(event.userId);
@@ -616,18 +623,22 @@ async function start() {
     ctx.globalAlpha = 1;
   }
   function drawAnnouncement() {
-    if (!announcement || Date.now() >= announcement.until) return;
+    const lines = liveAnnouncements();
+    if (!lines.length) return;
     ctx.save();
     ctx.font = '700 24px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    const boxWidth = Math.min(width - 24, Math.max(260, ctx.measureText(announcement.text).width + 40));
-    const left = (width - boxWidth) / 2;
-    ctx.fillStyle = 'rgba(12,16,25,.82)';
-    ctx.fillRect(left, 26, boxWidth, 48);
-    ctx.strokeStyle = 'rgba(255,255,255,.2)';
-    ctx.strokeRect(left, 26, boxWidth, 48);
-    ctx.fillStyle = announcement.color;
-    ctx.fillText(announcement.text, width / 2, 59, boxWidth - 24);
+    lines.forEach((line, i) => {
+      const top = 26 + i * 56;
+      const boxWidth = Math.min(width - 24, Math.max(260, ctx.measureText(line.text).width + 40));
+      const left = (width - boxWidth) / 2;
+      ctx.fillStyle = 'rgba(12,16,25,.82)';
+      ctx.fillRect(left, top, boxWidth, 48);
+      ctx.strokeStyle = 'rgba(255,255,255,.2)';
+      ctx.strokeRect(left, top, boxWidth, 48);
+      ctx.fillStyle = line.color;
+      ctx.fillText(line.text, width / 2, top + 33, boxWidth - 24);
+    });
     ctx.restore();
   }
   // Picks the animation for the current action. Characters without drawn attack/ko frames
@@ -686,6 +697,10 @@ async function start() {
       lastCleanup = clock; updateStatus();
     }
     const gap = duelGap();
+    // Ground taken by running duels: where the two fighters stand, plus room for their nameplates (fixed 20px
+    // text, often wider than the sprite). labelWidth is measured when the nameplate is drawn (last frame).
+    const duelZones = openDuels().filter(d => meetPoints.has(d.id)).map(d => ({ x: meetPoints.get(d.id).x,
+      label: Math.max(findPlayer(String(d.a))?.labelWidth || 0, findPlayer(String(d.b))?.labelWidth || 0) }));
     for (const p of players.values()) {
       const duel = duelFor(p);
       const opponent = duel ? findPlayer(String(duel.a) === p.userId ? duel.b : duel.a) : null;
@@ -711,6 +726,19 @@ async function start() {
         moving = true;
       }
       const left = Math.min(size / 2, width / 2), right = Math.max(left, width - size / 2);
+      if (duel?.status !== 'active' && !ko) {
+        // A bystander who walks into a duel turns back; one already inside walks out the nearer open side.
+        const zone = duelZones.map(z => {
+          const half = gap / 2 + Math.max(size * DUEL_GROW / 2 + size / 2, (z.label + (p.labelWidth || 0)) / 2 + 12);
+          return { lo: z.x - half, hi: z.x + half };
+        }).find(z => p.x > z.lo && p.x < z.hi);
+        if (zone && (zone.lo >= left || zone.hi <= right)) {
+          const out = zone.hi > right || (zone.lo >= left && p.x - zone.lo < zone.hi - p.x) ? -1 : 1;
+          p.direction = out;
+          p.x += out * Math.max(p.speed, 90) * dt;
+          moving = true;
+        }
+      }
       if (p.x < left) { p.x = left; p.direction = 1; }
       if (p.x > right) { p.x = right; p.direction = -1; }
       p.vy += 750 * dt; p.y += p.vy * dt;
@@ -761,6 +789,7 @@ async function start() {
       const rankedLabel = p.arenaProfile?.registered && Number.isFinite(Number(shownElo))
         ? p.label + ' · ' + Math.round(Number(shownElo))
         : p.label;
+      p.labelWidth = ctx.measureText(rankedLabel).width;
       ctx.strokeText(rankedLabel, p.x, y + 23); ctx.fillText(rankedLabel, p.x, y + 23);
       if (p.text && clock < p.bubbleUntil && !health) {
         ctx.font = 'bold 14px system-ui, sans-serif';
@@ -880,7 +909,8 @@ async function start() {
       players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
         x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '',
         grow: Math.round((p.grow || 1) * 100) / 100, die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '' })),
-      announcement: announcement && Date.now() < announcement.until ? announcement.text : '',
+      announcement: liveAnnouncements().map(a => a.text).join(' | '),
+      meets: [...meetPoints.values()].map(m => Math.round(m.x)),
       banners: banners.filter(b => Date.now() < b.until).map(b => b.text),
     });
   }

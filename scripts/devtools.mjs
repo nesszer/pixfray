@@ -71,7 +71,7 @@ async function seCall(who, line) {
     if (!seKey) fail('StreamElements is not set up on the test site for ' + CHANNEL + '; use --via chat');
   }
   const action = { duel: 'challenge', fight: 'accept' }[m[1].toLowerCase()] || m[1].toLowerCase();
-  const q = new URLSearchParams({ k: seKey, id: who.userId, u: who.username, d: who.displayName, t: m[2] || '', m: 'devtools-' + Date.now() });
+  const q = new URLSearchParams({ k: seKey, id: who.userId, u: who.username, d: who.displayName, t: m[2] || '', m: 'devtools-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) });
   const res = await fetch(`${BASE}/api/se/${CHANNEL}/${action}?${q}`);
   return (await res.text()).trim();
 }

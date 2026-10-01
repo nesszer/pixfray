@@ -240,6 +240,39 @@ try {
   assert.equal((await quick.evaluate(() => window.__arenaDebug())).players.find(p => p.userId === '101').shownElo, 1708, 'new Elo after the knockout');
   await quick.close();
 
+  // Two duels at once: each keeps its own line in the top banner, and a bystander standing on the meeting
+  // point walks clear of the fighters so nameplates don't run together.
+  const crowd = await context.newPage();
+  crowd.on('pageerror', error => errors.push(error.message));
+  const cast = [...initial.players,
+    { userId: '303', username: 'cy', displayName: 'Cy', avatar: 'player', color: '#ffaa22', elo: 1000, registered: true },
+    { userId: '404', username: 'dot', displayName: 'Dot', avatar: 'player', color: '#22aaff', elo: 1000, registered: true }];
+  await crowd.route('**/api/state/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...initial, players: cast, duels: [] }) }));
+  await crowd.route('**/api/catalog/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  await crowd.goto(base + '/overlay.html?arena=1&debug=1&cap=8&size=64');
+  await crowd.waitForFunction(() => window.__arenaSockets.length === 1 && window.__arenaDebug?.().players.length === 4);
+  await crowd.evaluate(() => { window.__arenaMove('101', 500); window.__arenaMove('202', 700); window.__arenaMove('303', 600); window.__arenaMove('404', 1100); });
+  await crowd.evaluate(() => {
+    const now = Date.now();
+    window.__sendArena(0, { type: 'event', revision: 20, event: { id: 'c1', type: 'challenge_created', at: now, duelId: 'duel-21', a: '101', b: '202' } });
+    window.__sendArena(0, { type: 'event', revision: 21, event: { id: 'c2', type: 'challenge_created', at: now, duelId: 'duel-22', a: '404', b: '303' } });
+  });
+  const two = (await crowd.evaluate(() => window.__arenaDebug())).announcement;
+  assert.match(two, /Aria Prime challenges Bex Prime/, 'first duel keeps its line');
+  assert.match(two, /Dot challenges Cy/, 'second duel gets its own line');
+  await crowd.evaluate(() => window.__sendArena(0, { type: 'event', revision: 22, event: { id: 's1', type: 'duel_started', at: Date.now(), duelId: 'duel-21', a: '101', b: '202', round: 4, hp: { '101': 100, '202': 100 } } }));
+  await crowd.waitForFunction(() => /Round 4: Aria Prime vs Bex Prime/.test(window.__arenaDebug().announcement));
+  assert.doesNotMatch((await crowd.evaluate(() => window.__arenaDebug())).announcement, /Aria Prime challenges/, 'the round line replaces that duel\'s challenge line');
+  await crowd.evaluate(() => window.__arenaMove('303', 600));   // put the bystander back on the meeting point
+  await crowd.waitForTimeout(3000);
+  const c = await crowd.evaluate(() => window.__arenaDebug());
+  const cy = c.players.find(p => p.userId === '303').x, meet = c.meets[0];
+  // fighters stand 95 px either side of the meeting point; nameplates are 20px bold text, so 'Aria Prime · 1720'
+  // and 'Cy · 1000' need well over 64 px between their centers
+  assert.ok(Math.abs(cy - meet) > 95 + 120, `bystander walked clear of the duel and its nameplates (cy ${cy}, meet ${meet})`);
+  await crowd.screenshot({ path: 'screenshots/overlay-two-duels-1280.png' });
+  await crowd.close();
+
   const demoPage = await context.newPage();
   demoPage.on('pageerror', error => errors.push(error.message));
   const demoApiReads = [];
