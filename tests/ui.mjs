@@ -14,8 +14,8 @@ const now = Date.now();
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const user = { id: '1001', login: 'viewer_one', displayName: 'Viewer_One' };
 const mod = { id: '2002', login: 'mod_two', displayName: 'Mod_Two' };
-const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 60000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24,
-  abilities: { strike: { damage: 10, cooldownMs: 3000 }, heavy: { damage: 25, cooldownMs: 8000 }, heal: { amount: 15, cooldownMs: 10000 } } };
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24,
+  abilities: { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } } };
 const board = [
   { userId: '3003', username: 'top_dog', displayName: 'top_dog', avatar: 'soldier', color: '#34d399', defaultAbility: 'heavy', elo: 1048, wins: 4, losses: 1 },
   { userId: '1001', username: 'viewer_one', displayName: 'Viewer_One', avatar: 'zombie', color: '#f472b6', defaultAbility: 'heal', elo: 1012, wins: 2, losses: 1 },
@@ -134,8 +134,8 @@ try {
     let version = 3, conflictNext = false, reconnectNext = true;
     let chatStatus = { connected: true, status: 'enabled', subscriptionId: 'sub-1', createdAt: now - 86400000, lastNotificationAt: now - 4000, lastRevocationReason: '', checkedAt: now - 600000 };
     const history = () => [
-      { version: 3, config: { ...config, abilities: { ...config.abilities, heavy: { damage: 25, cooldownMs: 8000 } } }, actorId: mod.id, at: now - 600000, note: 'back to preset' },
-      { version: 2, config: { ...config, abilities: { ...config.abilities, heavy: { damage: 30, cooldownMs: 8000 } } }, actorId: '3003', at: now - 3600000, note: 'heavier heavy' },
+      { version: 3, config: { ...config, abilities: { ...config.abilities, heavy: { damage: 35, cooldownMs: 5000 } } }, actorId: mod.id, at: now - 600000, note: 'back to preset' },
+      { version: 2, config: { ...config, abilities: { ...config.abilities, heavy: { damage: 30, cooldownMs: 5000 } } }, actorId: '3003', at: now - 3600000, note: 'heavier heavy' },
       { version: 1, config, actorId: 'system', at: now - 86400000, note: '' },
     ];
     const snapshot = () => ({ type: 'snapshot', channel: 'nesszerra', revision: 40 + posts.length, paused: false, chat: { connected: true, lastSeen: now - 4000, status: 'enabled' }, config, configVersion: version, round: 7,
@@ -173,7 +173,7 @@ try {
     assert.equal(await page.locator('#players tbody tr').count(), 4);
     assert.equal(await page.locator('#ranks tbody tr').count(), 3);
     assert.equal(await page.locator('#history tbody tr').count(), 3);
-    assert.match(await page.locator('#history tbody tr').nth(1).textContent(), /Heavy strike damage 25 HP → 30 HP/);
+    assert.match(await page.locator('#history tbody tr').nth(1).textContent(), /Heavy strike damage 35 HP → 30 HP/);
     assert.match(await page.locator('#usage-title').textContent(), /1 of 8/);
     assert.equal(await page.locator('#dev-open').isVisible(), role === 'owner');
     assert.equal(await page.locator('#owner-chat').isVisible(), role === 'owner');

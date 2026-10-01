@@ -28,7 +28,7 @@ The working tree also holds v2. It adds:
   signs in with `/auth/login?connect=1` and clicks Connect chat on `/admin/` (TWITCH_SETUP.md).
 
 Chat commands for v2 duels:
-- `!challenge @viewer`, then `!accept` or `!decline`.
+- `!challenge @viewer`, then `!accept` or `!decline` (`!fight` when chat goes through StreamElements, whose Duel module owns `!accept`).
 - `!attack`, `!strike`, `!heavy`, `!heal`.
 
 Rules and routes are in CONTRACTS.md. The plan and the open gaps are in HANDOFF.md.

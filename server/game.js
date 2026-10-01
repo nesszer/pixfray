@@ -3,18 +3,21 @@ const DEFAULT_CONFIG = {
   maxHp: 100,
   maxDuels: 5,
   challengeTimeoutMs: 30_000,
-  inactivityMs: 60_000,
+  inactivityMs: 45_000,
   respawnMs: 3_000,
   rematchDelayMs: 30_000,
   sharedCooldownMs: 1_000,
   initialElo: 1_000,
   eloK: 24,
   abilities: {
-    strike: { damage: 10, cooldownMs: 3_000 },
-    heavy: { damage: 25, cooldownMs: 8_000 },
-    heal: { amount: 15, cooldownMs: 10_000 },
+    strike: { damage: 20, cooldownMs: 2_000 },
+    heavy: { damage: 35, cooldownMs: 5_000 },
+    heal: { amount: 15, cooldownMs: 12_000 },
   },
 };
+
+// The first preset (10/25 damage) made duels drag on for 10+ hits. Channels that never edited it move to the current one.
+const LEGACY_CONFIG = { ...DEFAULT_CONFIG, inactivityMs: 60_000, abilities: { strike: { damage: 10, cooldownMs: 3_000 }, heavy: { damage: 25, cooldownMs: 8_000 }, heal: { amount: 15, cooldownMs: 10_000 } } };
 
 const MAX_ACTIVE_PLAYERS = 100;
 const MAX_RECENT_EVENTS = 100;
@@ -764,6 +767,7 @@ function normalizeState(input) {
   state.chat = { ...initial.chat, ...(state.chat && typeof state.chat === "object" ? state.chat : {}) };
   delete state.relay;
   state.config = normalizeConfig(state.config);
+  if (state.configVersion === 1 && JSON.stringify(state.config) === JSON.stringify(normalizeConfig(LEGACY_CONFIG))) state.config = clone(DEFAULT_CONFIG);
   state.players = Array.isArray(state.players) ? state.players.filter((p) => p && typeof p.userId === "string").slice(-MAX_ACTIVE_PLAYERS) : [];
   state.duels = Array.isArray(state.duels) ? state.duels : [];
   state.rematchLocks = Array.isArray(state.rematchLocks) ? state.rematchLocks : [];

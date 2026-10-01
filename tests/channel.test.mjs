@@ -94,7 +94,7 @@ test('chat commands run a full duel; Elo persists to the leaderboard; overlays g
   assert.deepEqual([accepted.status, accepted.body.ok], [200, true]);
   for (let i = 0; i < 4; i++) {
     await r.chat('u1', 'alice', '!heavy');
-    // The first heavy succeeds; later ones hit the 8 s cooldown. Force the cooldown clear for the test.
+    // The first heavy succeeds; later ones hit the 5 s cooldown. Force the cooldown clear for the test.
     const s = r.readState('nesszerra');
     const duel = s.duels.find((d) => d.status === 'active');
     if (!duel) break;
@@ -275,7 +275,7 @@ test('versioned config editor: history, optimistic version check, rollback', asy
   assert.equal(rb.status, 200);
   assert.equal(rb.body.configVersion, 3);
   const after = (await r.call('/admin')).body;
-  assert.equal(after.config.abilities.heavy.damage, 25);
+  assert.equal(after.config.abilities.heavy.damage, 35);
   assert.equal(after.history[0].note, 'rollback to v1');
   assert.equal((await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'rollbackConfig', payload: { version: 99 } } })).status, 404);
 });
@@ -329,7 +329,7 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   const admin = async () => (await r.call('/admin')).body;
   const se = (await admin()).streamelements;
   assert.match(se.secret, /^[0-9a-f]{48}$/);
-  assert.equal(se.names.accept, '!accept');
+  assert.equal(se.names.accept, '!fight');
   let m = 0;
   const cmd = (id, login, action, target = '', key = se.secret) => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key, action, userId: id, username: login, displayName: login, target, messageId: 'se' + (++m) } });
   assert.equal((await cmd('u1', 'alice', 'challenge', 'bob', 'wrong')).status, 403);
@@ -340,9 +340,9 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   await r.save('u1', 'alice'); await r.save('u2', 'bob');
   assert.match((await cmd('u1', 'alice', 'challenge')).body.reply, /who\?/);
   assert.match((await cmd('u1', 'alice', 'challenge', 'alice')).body.reply, /can't duel yourself/);
-  assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /alice challenges @bob.*!accept/);
+  assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /alice challenges @bob.*!fight/);
   assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /Duel on: alice vs bob/);
-  assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /alice hits bob for 25 \(bob 75 HP\)/);
+  assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /alice hits bob for 35 \(bob 65 HP\)/);
   assert.match((await cmd('u1', 'alice', 'strike')).body.reply, /cooldown: 1 s/);
   // Renamed commands show up in replies; duplicates and bad names are refused.
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!yes', decline: 'no' } } })).body.streamelements.names.decline, '!no');

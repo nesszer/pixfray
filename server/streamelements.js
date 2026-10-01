@@ -4,7 +4,7 @@
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
 export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'attack', 'strike', 'heavy', 'heal'];
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!accept', decline: '!decline', attack: '!attack', strike: '!strike', heavy: '!heavy', heal: '!heal' };
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', attack: '!attack', strike: '!strike', heavy: '!heavy', heal: '!heal' };
 const MAX_REPLY = 380;   // StreamElements cuts responses at 400 bytes
 
 const reply = (body, status = 200) => new Response(String(body).slice(0, MAX_REPLY), { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });

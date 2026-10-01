@@ -25,11 +25,11 @@ function arena({ chat = true, viewers = ['alice', 'bob', 'cara', 'dan'] } = {}) 
 test('balance preset matches the approved defaults', () => {
   const c = defaultConfig();
   assert.equal(c.maxHp, 100);
-  assert.deepEqual(c.abilities, { strike: { damage: 10, cooldownMs: 3000 }, heavy: { damage: 25, cooldownMs: 8000 }, heal: { amount: 15, cooldownMs: 10000 } });
+  assert.deepEqual(c.abilities, { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } });
   assert.equal(c.sharedCooldownMs, 1000);
   assert.equal(c.maxDuels, 5);
   assert.equal(c.challengeTimeoutMs, 30000);
-  assert.equal(c.inactivityMs, 60000);
+  assert.equal(c.inactivityMs, 45000);
   assert.equal(c.rematchDelayMs, 30000);
   assert.equal(c.initialElo, 1000);
   assert.equal(c.eloK, 24);
@@ -91,23 +91,22 @@ test('self-challenges and unknown targets are rejected', () => {
 test('strike, heavy and heal by command apply the preset amounts', () => {
   const w = arena();
   const id = w.fight('alice', 'bob');
-  assert.equal(w.say('alice', '!strike').amount, 10);
-  assert.equal(w.duel(id).hp['id-bob'], 90);
+  assert.equal(w.say('alice', '!strike').amount, 20);
+  assert.equal(w.duel(id).hp['id-bob'], 80);
   w.now += 1000;
-  assert.equal(w.say('alice', '!heavy').amount, 25);
-  assert.equal(w.duel(id).hp['id-bob'], 65);
+  assert.equal(w.say('alice', '!heavy').amount, 35);
+  assert.equal(w.duel(id).hp['id-bob'], 45);
   const heal = w.say('bob', '!heal');
   assert.equal(heal.ability, 'heal');
   assert.equal(heal.amount, 15);
-  assert.equal(w.duel(id).hp['id-bob'], 80);
-  assert.equal(w.player('bob').hp, 80, 'player hp mirrors duel hp');
+  assert.equal(w.duel(id).hp['id-bob'], 60);
+  assert.equal(w.player('bob').hp, 60, 'player hp mirrors duel hp');
 });
 
 test('heal never exceeds max HP', () => {
   const w = arena();
   const id = w.fight('alice', 'bob');
-  w.say('alice', '!strike');
-  assert.equal(w.say('bob', '!heal').amount, 10);
+  assert.equal(w.say('bob', '!heal').amount, 0, 'healing at full HP adds nothing');
   assert.equal(w.duel(id).hp['id-bob'], 100);
 });
 
@@ -117,7 +116,7 @@ test('!attack uses the default ability chosen on the website', () => {
   w.fight('alice', 'bob');
   const r = w.say('alice', '!attack @bob');
   assert.equal(r.ability, 'heavy');
-  assert.equal(r.amount, 25);
+  assert.equal(r.amount, 35);
   w.register('bob', { defaultAbility: 'heal' });
   assert.equal(w.say('bob', '!attack').ability, 'heal');
 });
@@ -140,26 +139,26 @@ test('per-ability cooldowns run in real time, plus a 1 s shared delay', () => {
   assert.equal(w.say('alice', '!heavy').reason, 'cooldown');
   w.now += 1;
   assert.equal(w.say('alice', '!heavy').ok, true, 'other abilities are free after the shared delay');
-  // strike was used at T0; its own 3 s cooldown ends at T0+3000.
-  w.now = T0 + 2999;
+  // strike was used at T0; its own 2 s cooldown ends at T0+2000.
+  w.now = T0 + 1999;
   r = w.say('alice', '!strike');
   assert.equal(r.reason, 'cooldown');
-  assert.equal(r.retryAt, T0 + 3000);
-  w.now = T0 + 3000;
+  assert.equal(r.retryAt, T0 + 2000);
+  w.now = T0 + 2000;
   assert.equal(w.say('alice', '!strike').ok, true);
-  // heavy used at T0+1000 -> available at T0+9000.
-  w.now = T0 + 8999;
+  // heavy used at T0+1000 -> available at T0+6000.
+  w.now = T0 + 5999;
   assert.equal(w.say('alice', '!heavy').reason, 'cooldown');
-  w.now = T0 + 9000;
+  w.now = T0 + 6000;
   assert.equal(w.say('alice', '!heavy').ok, true);
 });
 
-test('heal has a 10 s cooldown and cooldowns are per fighter', () => {
+test('heal has a 12 s cooldown and cooldowns are per fighter', () => {
   const w = arena();
   w.fight('alice', 'bob');
   w.say('alice', '!strike');
   assert.equal(w.say('bob', '!heal').ok, true, 'alice using an ability does not block bob');
-  w.now += 9_999;
+  w.now += 11_999;
   assert.equal(w.say('bob', '!heal').reason, 'cooldown');
   w.now += 1;
   assert.equal(w.say('bob', '!heal').ok, true);
@@ -267,11 +266,11 @@ test('rematches between the same pair wait 30 s', () => {
   assert.equal(w.say('bob', '!challenge @alice').ok, true);
 });
 
-test('60 s of inactivity cancels a duel without scoring', () => {
+test('45 s of inactivity cancels a duel without scoring', () => {
   const w = arena();
   const id = w.fight('alice', 'bob');
   w.say('alice', '!heavy');
-  w.advance(59_999);
+  w.advance(44_999);
   assert.equal(w.duel(id).status, 'active');
   w.advance(1);
   const duel = w.duel(id);
@@ -290,8 +289,8 @@ test('60 s of inactivity cancels a duel without scoring', () => {
 test('each action resets the inactivity timer', () => {
   const w = arena();
   const id = w.fight('alice', 'bob');
-  w.advance(50_000); w.say('alice', '!strike');
-  w.advance(50_000);
+  w.advance(40_000); w.say('alice', '!strike');
+  w.advance(40_000);
   assert.equal(w.duel(id).status, 'active');
 });
 
@@ -408,9 +407,9 @@ test('config edits are validated, versioned, and only affect new duels', () => {
   assert.equal(ok.ok, true);
   assert.equal(ok.configVersion, 2);
   assert.equal(w.state.config.abilities.strike.damage, 40);
-  assert.equal(w.state.config.abilities.strike.cooldownMs, 3000, 'partial ability patch keeps other fields');
+  assert.equal(w.state.config.abilities.strike.cooldownMs, 2000, 'partial ability patch keeps other fields');
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { baseVersion: 1, patch: { maxHp: 120 } } }).reason, 'config_version_conflict');
-  assert.equal(w.say('alice', '!strike').amount, 10, 'running duel keeps the rules it started with');
+  assert.equal(w.say('alice', '!strike').amount, 20, 'running duel keeps the rules it started with');
   w.apply({ type: 'admin', actorId: 'mod', action: 'cancelDuel', payload: { duelId: id } });
   w.fight('alice', 'bob');
   assert.equal(w.say('alice', '!strike').amount, 40);
@@ -487,4 +486,20 @@ test('resetAll clears arena players, open duels and rematch locks but keeps prof
   assert.equal(w.state.rematchLocks.length, 0);
   assert.equal(w.duel(id).status, 'cancelled');
   assert.equal(w.last.deletedProfileIds.length, 0);
+});
+
+test('an untouched first-preset config moves to the faster preset; edited configs stay', () => {
+  const old = { strike: { damage: 10, cooldownMs: 3000 }, heavy: { damage: 25, cooldownMs: 8000 }, heal: { amount: 15, cooldownMs: 10000 } };
+  const legacy = { ...createInitialState('x'), config: { ...defaultConfig(), inactivityMs: 60000, abilities: old }, configVersion: 1 };
+  assert.deepEqual(reduceGame(legacy, { type: 'tick' }, T0).state.config, defaultConfig());
+  const edited = { ...legacy, configVersion: 2 };
+  assert.deepEqual(reduceGame(edited, { type: 'tick' }, T0).state.config.abilities, old);
+});
+
+test('a duel ends in a handful of hits', () => {
+  const w = arena();
+  const id = w.fight('alice', 'bob');
+  let hits = 0;
+  while (w.duel(id).status === 'active' && hits < 20) { w.advance(5_000); w.say('alice', hits % 2 ? '!strike' : '!heavy'); hits++; }
+  assert.ok(hits <= 4, `took ${hits} hits`);
 });

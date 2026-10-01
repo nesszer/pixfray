@@ -15,8 +15,8 @@ const sizes = [{ name: '1280', width: 1280, height: 900 }, { name: '390', width:
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const owner = { id: '900001', login: 'nesszerra', displayName: 'nesszerra' };
 const now = Date.now(), errors = [];
-const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 60000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24,
-  abilities: { strike: { damage: 10, cooldownMs: 3000 }, heavy: { damage: 25, cooldownMs: 8000 }, heal: { amount: 15, cooldownMs: 10000 } } };
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24,
+  abilities: { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } } };
 const diag = (configured) => ({
   worker: { version: '0.2.0', twitchConfigured: true, productionEnabled: false, deployedVersion: configured ? { id: '5d1c9a3e-0000-4000-8000-000000000001', tag: 'gh-1a2b3c4-1234', timestamp: '' } : null },
   room: { channel: 'nesszerra', revision: 42, chat: { connected: configured, lastSeen: now - 4000, status: configured ? 'enabled' : 'disconnected' }, chatStatus: { connected: configured, status: configured ? 'enabled' : 'disconnected', subscriptionId: configured ? 'sub-1' : '', createdAt: now - 86400000, lastNotificationAt: now - 4000, lastRevocationReason: '', checkedAt: now - 600000 }, paused: !configured, configVersion: 3, players: 6, openDuels: 1, sockets: { live: 2 }, errors: 2, errorsBySource: { room: 1, worker: 1 }, lastError: { at: now - 600000, source: 'room', message: 'room error' } },

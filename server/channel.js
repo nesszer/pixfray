@@ -498,7 +498,11 @@ export class ChannelRoom extends DurableObject {
 
   seSettings() {
     const row = this.ctx.storage.sql.exec("SELECT secret, names FROM se_settings WHERE id = 1").toArray()[0];
-    if (row) return { secret: row.secret, names: { ...DEFAULT_SE_NAMES, ...safeJsonParse(row.names, {}) } };
+    if (row) {
+      const names = { ...DEFAULT_SE_NAMES, ...safeJsonParse(row.names, {}) };
+      if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;   // StreamElements' Duel module owns !accept
+      return { secret: row.secret, names };
+    }
     const secret = randomHex();
     this.writeSeSettings(secret, DEFAULT_SE_NAMES);
     return { secret, names: { ...DEFAULT_SE_NAMES } };

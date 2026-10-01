@@ -1,7 +1,7 @@
 // Shared helpers for the viewer dashboard and the admin page (Lane B). No framework.
 export const CHANNEL = "nesszerra";
 export const DEFAULT_COLOR = "#a78bfa";
-export const DEFAULT_ABILITIES = { strike: { damage: 10, cooldownMs: 3000 }, heavy: { damage: 25, cooldownMs: 8000 }, heal: { amount: 15, cooldownMs: 10000 } };
+export const DEFAULT_ABILITIES = { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } };
 export const ABILITY_NAMES = { strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 
 // JSON fetch that never throws: {ok, status, data}. Same-origin, so POSTs carry the Origin header the Worker requires.
