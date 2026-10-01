@@ -7,7 +7,7 @@ import { chatStatus } from './game.js';
 //   Cloudflare read-only API (request usage, versions): secret CF_API_TOKEN, text CF_ACCOUNT_ID.
 //   Current version: version_metadata binding CF_VERSION_METADATA.
 // The Worker never holds a token that can deploy; deploys run in GitHub Actions (docs/LIVE_FIX.md).
-const MAX_LOG_ROWS = 200;
+const MAX_LOG_ROWS = 500;
 const VERSION = '0.2.0';
 const DAILY_REQUEST_LIMIT = 100000;
 const SCRIPTS = { production: 'nesszerra-mini-chat', test: 'nesszerra-mini-chat-test' };
@@ -346,7 +346,7 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
   }
   if (path === '/dev/logs' && method === 'GET') {
     const q = url || new URL(request.url), source = q.searchParams.get('source'), limit = Math.min(100, Math.max(1, Number(q.searchParams.get('limit')) || 100));
-    const rows = source === 'room' || source === 'worker'
+    const rows = ['room', 'worker', 'command', 'warn'].includes(source)
       ? sql.exec('SELECT id, at, source, message, context FROM error_log WHERE source = ? ORDER BY id DESC LIMIT ?', source, limit).toArray()
       : sql.exec('SELECT id, at, source, message, context FROM error_log ORDER BY id DESC LIMIT ?', limit).toArray();
     return json(rows.map((r) => ({ ...r, context: safeParse(r.context) })));
@@ -386,6 +386,13 @@ export function ensureDeveloperSchema(sql) {
 // Called by ChannelRoom when one of its handlers throws. Must never throw.
 export function logRoomError(room, error, context = {}) {
   try { insertLog(room.ctx.storage.sql, 'room', error?.message || String(error), context); } catch {}
+}
+
+// One line per chat command (source 'command') or a broken invariant (source 'warn'), so a wrong reply
+// can be traced without a crash. Also printed for `wrangler tail`. Must never throw.
+export function logRoomEvent(room, source, message, context = {}) {
+  try { console.log(JSON.stringify({ log: source, message, ...context })); } catch {}
+  try { insertLog(room.ctx.storage.sql, source, message, context); } catch {}
 }
 
 // Called by the Worker's top-level catch (through ctx.waitUntil). Must never throw.

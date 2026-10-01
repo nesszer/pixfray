@@ -9,7 +9,7 @@ import {
   reduceGame,
 } from "./game.js";
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
-import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError } from "./developer.js";
+import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription } from "./eventsub.js";
 import { SE_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText } from "./streamelements.js";
 
@@ -524,16 +524,36 @@ export class ChannelRoom extends DurableObject {
     const now = Date.now();
     const names = settings.names;
     const state0 = this.readState(channel);
-    if (!action) return json({ reply: "Mini Chat: attack commands are gone. Duels are !challenge @name, then !fight." });
-    if (!userId || !username) return json({ reply: "Mini Chat: this command is missing sender details. Copy it again from the admin page." });
-    if (!state0.chat.connected || state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID) return json({ reply: seReplyText({ result: { ok: false, reason: "chat_offline" }, state: state0, actorId: userId, action, target, names, origin, now }) });
-    if (action === "challenge" && !target) return json({ reply: seReplyText({ result: { ok: false, reason: "target_required" }, state: state0, actorId: userId, action, target, names, origin, now }) });
+    // Every command is logged with what came in, what the game decided and what the bot said.
+    const done = (reply, reason, extra = {}) => {
+      logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });
+      return json({ reply });
+    };
+    if (!action) return done("Mini Chat: attack commands are gone. Duels are !challenge @name, then !fight.", "unknown_action");
+    if (!userId || !username) return done("Mini Chat: this command is missing sender details. Copy it again from the admin page.", "missing_sender");
+    if (!state0.chat.connected || state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID) return done(seReplyText({ result: { ok: false, reason: "chat_offline" }, state: state0, actorId: userId, action, target, names, origin, now }), "chat_offline");
+    if (action === "challenge" && !target) return done(seReplyText({ result: { ok: false, reason: "target_required" }, state: state0, actorId: userId, action, target, names, origin, now }), "target_required");
     const messageId = "se:" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));
     const msg = { messageId, timestamp: now, subscription: { id: SE_SUBSCRIPTION_ID }, event: { chatter_user_id: userId, chatter_user_login: username, chatter_user_name: String(input.displayName || username).slice(0, 48), message_id: messageId, message: { text: seCommandText(action, target) } } };
     const result = this.processChatMessage(channel, msg, now);
     if (result.visible) this.broadcast(result.state);
     if (result.changed) await this.scheduleAlarm(result.state);
-    return json({ reply: seReplyText({ result: result.result, state: result.state, actorId: userId, action, target, names, origin, now }) });
+    const r = result.result || {};
+    if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
+    return done(seReplyText({ result: r, state: result.state, actorId: userId, action, target, names, origin, now }), r.reason || (r.ok ? action : "error"), r.swings ? { duelId: r.duelId, swings: r.swings.map((s) => s.die + s.outcome[0]).join(" ") } : {});
+  }
+
+  // After a finished duel the stored profiles must match the game state, or the next command undoes the result.
+  checkSavedProfiles(state, duelId) {
+    const duel = state.duels.find((d) => d.id === duelId);
+    for (const id of duel ? [duel.a, duel.b] : []) {
+      const p = state.players.find((x) => x.userId === id);
+      if (!p?.registered) continue;
+      const row = this.ctx.storage.sql.exec("SELECT elo, wins, losses FROM profiles WHERE user_id = ?", id).toArray()[0];
+      if (!row || row.elo !== p.elo || row.wins !== p.wins || row.losses !== p.losses) {
+        logRoomEvent(this, "warn", `profile for ${p.username} not saved after ${duelId}`, { userId: id, game: { elo: p.elo, wins: p.wins, losses: p.losses }, saved: row || null });
+      }
+    }
   }
 
   // One channel.chat.message: a presence update, plus a game command when the text parses as one.

@@ -212,8 +212,8 @@ $('#save-config').addEventListener('click', (e) => busy(e.currentTarget, async (
 async function loadLogs() {
   const source = $('#log-source').value, r = await api('/api/dev/logs' + (source ? '?source=' + source : ''));
   if (!r.ok) return rows('#logs', [], errorText(r, 'Logs unavailable'), 4);
-  rows('#logs', r.data.map((x) => h('tr', {}, h('td', {}, fmtTime(x.at)), h('td', {}, x.source === 'room' ? 'Durable Object' : 'Worker'), h('td', { class: 'wrap' }, x.message),
-    h('td', { class: 'wrap ctx' }, h('code', {}, x.context ? JSON.stringify(x.context) : '–')))), 'No errors logged.', 4);
+  rows('#logs', r.data.map((x) => h('tr', {}, h('td', {}, fmtTime(x.at)), h('td', {}, ({ room: 'Durable Object', worker: 'Worker', command: 'Chat command', warn: 'Warning' })[x.source] || x.source), h('td', { class: 'wrap' }, x.message),
+    h('td', { class: 'wrap ctx' }, h('code', {}, x.context ? JSON.stringify(x.context) : '–')))), 'Nothing logged.', 4);
 }
 $('#log-source').addEventListener('change', loadLogs);
 $('#clear-logs').addEventListener('click', (e) => busy(e.currentTarget, async () => {

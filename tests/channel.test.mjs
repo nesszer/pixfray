@@ -372,4 +372,14 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   const saved = Object.fromEntries(r.ctx.storage.sql.exec('SELECT user_id, elo, wins, losses FROM profiles').toArray().map((x) => [x.user_id, x]));
   assert.deepEqual([saved.u1.wins + saved.u2.wins, saved.u1.losses + saved.u2.losses, saved.u1.elo + saved.u2.elo], [1, 1, 2000]);
   assert.notEqual(saved.u1.elo, 1000);
+  // Every command lands in the dev log with what came in, the game's decision and the reply.
+  const log = (await r.call('/dev/logs?source=command')).body;
+  assert.deepEqual(log.map((x) => x.context.reason).reverse(), ['challenge', 'quick_duel', 'challenge_not_found']);
+  assert.match(log[1].context.swings, /^([1-6][hcm] ?)+$/);
+  assert.equal((await r.call('/dev/logs?source=warn')).body.length, 0);
+  // A result that didn't reach the stored profile is flagged.
+  const state = r.readState('nesszerra');
+  state.players.find((p) => p.userId === 'u1').wins += 5;
+  r.checkSavedProfiles(state, log[1].context.duelId);
+  assert.match((await r.call('/dev/logs?source=warn')).body[0].message, /profile for alice not saved/);
 });

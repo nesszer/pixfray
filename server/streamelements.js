@@ -27,6 +27,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
     username: q('u').replace(/^@/, '').toLowerCase().slice(0, 25),
     displayName: q('d').slice(0, 48),
     target: seTarget(q('t')),
+    targetRaw: shown(q('t')),   // for the command log
     messageId: q('m').slice(0, 64),
   };
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -40,6 +41,9 @@ export function seTarget(raw) {
   const m = /^@?([a-z0-9_]{1,25})$/i.exec(String(raw || '').replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ''));
   return m ? m[1].toLowerCase() : '';
 }
+
+// Text with invisible and non-ASCII characters written as \u{...}, for logs.
+export const shown = raw => String(raw || '').slice(0, 40).replace(/[^\x20-\x7e]/gu, c => `\\u{${c.codePointAt(0).toString(16)}}`);
 
 // Paste-ready StreamElements command replies, one per action. $(1|-) not $(1): with no argument, a bare
 // $(queryescape $(1)) makes StreamElements drop the whole command silently (seen with a bare !fight and !strike).
