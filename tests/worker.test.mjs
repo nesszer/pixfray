@@ -346,7 +346,9 @@ test('dev token (test site only): the right token acts as the owner and can seed
   const admin = await worker.fetch(devReq('/api/admin/nesszerra', { action: 'removePlayer', userId: 'testbot:a' }), f.env);
   assert.equal(admin.status, 200, 'no Origin header needed with a token');
   assert.equal(f.forwarded.at(-1).body.actorId, '1');
-  const p = await worker.fetch(devReq('/api/devtools/nesszerra/profile', { userId: 'testbot:a', username: 'TestBot_A', avatar: 'player', color: '#22aa44', defaultAbility: 'heavy' }), f.env);
+  const settings = await worker.fetch(devReq('/api/dev/settings', { action: 'config', payload: { patch: { quickDuel: false } } }), f.env);
+  assert.notEqual(settings.status, 403, 'dev routes skip the Origin check with a token too');
+  const p =await worker.fetch(devReq('/api/devtools/nesszerra/profile', { userId: 'testbot:a', username: 'TestBot_A', avatar: 'player', color: '#22aa44', defaultAbility: 'heavy' }), f.env);
   assert.equal(p.status, 200);
   assert.equal(f.forwarded.at(-1).path, '/profile');
   assert.equal(f.forwarded.at(-1).options.headers['X-Mini-User-Id'] ?? new Headers(f.forwarded.at(-1).options.headers).get('X-Mini-User-Id'), 'testbot:a');

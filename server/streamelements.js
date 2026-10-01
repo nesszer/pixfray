@@ -32,7 +32,8 @@ export async function handleStreamElements(request, env, { url, origin, channels
   };
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
-  return reply(data.reply || 'Mini Chat: something went wrong');   // always 200 so the bot shows the text
+  // always 200 so the bot shows the text; '' (a repeated message id) means post nothing
+  return reply(typeof data.reply === 'string' ? data.reply : 'Mini Chat: something went wrong');
 }
 
 // $(1) as sent by StreamElements -> a Twitch login, or '' for none. '-' means no argument; chat clients

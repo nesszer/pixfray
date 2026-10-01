@@ -526,6 +526,14 @@ test('StreamElements: a bare command sends t=- and reaches the room with no targ
   assert.equal(sent.target, '');
 });
 
+test('StreamElements: an empty room reply (repeated message id) posts nothing; a missing one says something went wrong', async () => {
+  const { handleStreamElements } = await import('../server/streamelements.js');
+  const url = new URL('https://x/api/se/nesszerra/accept?k=k1&id=2&u=bob&d=bob&t=-&m=1');
+  const call = (body) => handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async () => Response.json(body) }).then((r) => r.text());
+  assert.equal(await call({ reply: '' }), '');
+  assert.equal(await call({}), 'Mini Chat: something went wrong');
+});
+
 // roll r gives die 1 + floor(r * 6): 0.9 -> 6 (crit 50), 0.75 -> 5 (hit 34), 0.5 -> 4 (miss), 0.1 -> 1 (counter 34)
 function quick(rolls) {
   const w = arena({ quick: true });

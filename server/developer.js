@@ -22,12 +22,12 @@ const json = (data, status = 200) => Response.json(data, { status, headers: { 'C
 const fail = (status, error, reason, extra = {}) => json({ error, reason, ...extra }, status);
 
 // ---------- Worker side ----------
-// c = { user, owner, url, path, roomFetch(channel, path, init?), chatAction(channel, action, { takeover? }), bodyJson(request, limit), waitUntil(promise) }
+// c = { user, owner, dev (test-site dev token: no Origin check), url, path, roomFetch(channel, path, init?), chatAction(channel, action, { takeover? }), bodyJson(request, limit), waitUntil(promise) }
 export async function handleDeveloper(request, env, c) {
   if (!c.user) return fail(401, 'Sign in with Twitch', 'sign_in_required');
   if (!c.owner) return fail(403, 'Owner only', 'owner_only');
   const method = request.method, op = c.path.slice('/api/dev/'.length).replace(/\/+$/, '');
-  if (!['GET', 'HEAD'].includes(method) && request.headers.get('Origin') !== c.url.origin) return fail(403, 'Same-origin request required', 'cross_origin');
+  if (!c.dev && !['GET', 'HEAD'].includes(method) && request.headers.get('Origin') !== c.url.origin) return fail(403, 'Same-origin request required', 'cross_origin');
   const route = ROUTES[op];
   if (!route) return fail(404, 'Unknown developer route', 'unknown_route', { op });
   const handler = route[method === 'HEAD' ? 'GET' : method];
