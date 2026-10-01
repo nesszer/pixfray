@@ -571,3 +571,13 @@ test('quick duels are the default and work through a mutual challenge too', () =
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: 'yes' } } }).reason, 'invalid_config_quickDuel');
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: false } } }).ok, true);
 });
+
+test('invisible characters that chat clients append to repeated messages are ignored', async () => {
+  assert.deepEqual(parseGameCommand('!fight \u{E0000}'), { action: 'accept', target: '' });
+  assert.deepEqual(parseGameCommand('!challenge @bob \u034F'), { action: 'duel', target: 'bob' });
+  const { seTarget } = await import('../server/streamelements.js');
+  assert.equal(seTarget('\u{E0000}'), '');
+  assert.equal(seTarget('-'), '');
+  assert.equal(seTarget('@Bob\u{E0000}'), 'bob');
+  assert.equal(seTarget('bad name!'), '');
+});

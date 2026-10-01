@@ -26,12 +26,19 @@ export async function handleStreamElements(request, env, { url, origin, channels
     userId: q('id').slice(0, 32),
     username: q('u').replace(/^@/, '').toLowerCase().slice(0, 25),
     displayName: q('d').slice(0, 48),
-    target: q('t') === '-' ? '' : q('t').replace(/^@/, '').toLowerCase().slice(0, 25),   // '-' = no argument
+    target: seTarget(q('t')),
     messageId: q('m').slice(0, 64),
   };
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
   return reply(data.reply || 'Mini Chat: something went wrong');   // always 200 so the bot shows the text
+}
+
+// $(1) as sent by StreamElements -> a Twitch login, or '' for none. '-' means no argument; chat clients
+// append invisible characters (U+E0000, U+034F) to repeated messages; those are stripped first.
+export function seTarget(raw) {
+  const m = /^@?([a-z0-9_]{1,25})$/i.exec(String(raw || '').replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ''));
+  return m ? m[1].toLowerCase() : '';
 }
 
 // Paste-ready StreamElements command replies, one per action. $(1|-) not $(1): with no argument, a bare
@@ -67,6 +74,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
       const end = ` ${nameOf(state, result.winnerId)} knocks out ${nameOf(state, result.loserId)}!` + (w && l ? ` Elo: ${nameOf(state, result.winnerId)} ${w.elo}, ${nameOf(state, result.loserId)} ${l.elo}.` : '');
       return (swings.length > 220 ? swings.slice(0, 217) + '...' : swings) + end;
     }
+    if (!duel) return `Mini Chat: couldn't read that command, try again.`;   // ok but no duel = the text didn't parse as a command
     if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}.`;
     if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} (or ${n('challenge')} @${me}) or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
     if (reason === 'challenge_declined') return `${me} declined the duel.`;

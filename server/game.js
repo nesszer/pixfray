@@ -666,7 +666,9 @@ function applyAdmin(state, event, now) {
 
 export function parseGameCommand(text) {
   if (typeof text !== "string") return null;
-  const match = /^!(duel|challenge|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i.exec(text.trim());
+  // Chat clients append invisible characters (U+E0000 tag chars, U+034F, zero-width spaces) to repeated messages.
+  const clean = text.replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF]/gu, "").trim();
+  const match = /^!(duel|challenge|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i.exec(clean);
   if (!match) return null;
   let action = match[1].toLowerCase();
   if (action === "challenge") action = "duel";
