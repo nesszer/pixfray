@@ -1,0 +1,185 @@
+const MAX_SEEN_EVENTS = 2000;
+const MAX_RETRY_MS = 30_000;
+
+function snapshotFrom(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const state = value.snapshot ?? value.state ?? value;
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
+  return state;
+}
+
+function revisionOf(value) {
+  const revision = Number(value?.revision);
+  return Number.isFinite(revision) && revision >= 0 ? revision : null;
+}
+
+/**
+ * Read-only client for the channel arena stream. The backend owns every player
+ * profile, duel health value, event and rating. This client only renders them.
+ */
+export function createArenaClient({
+  channel,
+  onSnapshot = () => {},
+  onEvent = () => {},
+  onStatus = () => {},
+  fetchImpl = (...args) => fetch(...args),
+  WebSocketImpl = (...args) => new WebSocket(...args),
+}) {
+  const normalizedChannel = String(channel ?? '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 25);
+  if (!normalizedChannel) throw new Error('Invalid arena channel');
+
+  let stopped = false;
+  let socket = null;
+  let retryTimer = null;
+  let retryAttempt = 0;
+  let revision = null;
+  let generation = 0;
+  const seenEventIds = new Set();
+
+  function status(state, detail = {}) {
+    if (!stopped) onStatus({ state, ...detail });
+  }
+
+  function rememberEvent(event) {
+    if (!event || typeof event !== 'object') return false;
+    const id = event.id ?? event.eventId;
+    if (id === undefined || id === null || id === '') return true;
+    const key = String(id);
+    if (seenEventIds.has(key)) return false;
+    seenEventIds.add(key);
+    if (seenEventIds.size > MAX_SEEN_EVENTS) {
+      const oldest = seenEventIds.values().next().value;
+      seenEventIds.delete(oldest);
+    }
+    return true;
+  }
+
+  function dispatchEvents(events) {
+    if (!Array.isArray(events)) return;
+    for (const event of events) {
+      if (rememberEvent(event)) onEvent(event);
+    }
+  }
+
+  function receiveSnapshot(input, source) {
+    const snapshot = snapshotFrom(input);
+    if (!snapshot) return false;
+    const incomingRevision = revisionOf(snapshot);
+    if (incomingRevision !== null && revision !== null && incomingRevision < revision) return false;
+    if (incomingRevision !== null) revision = incomingRevision;
+    onSnapshot(snapshot, { revision, source });
+    dispatchEvents(snapshot.events);
+    return true;
+  }
+
+  async function fetchSnapshot(reason) {
+    const controller = new AbortController();
+    const activeGeneration = generation;
+    try {
+      const response = await fetchImpl('/api/state/' + encodeURIComponent(normalizedChannel), {
+        method: 'GET',
+        cache: 'no-store',
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error('Arena state HTTP ' + response.status);
+      const payload = await response.json();
+      if (!stopped && activeGeneration === generation) receiveSnapshot(payload, 'http:' + reason);
+    } catch (error) {
+      if (stopped || activeGeneration !== generation || error?.name === 'AbortError') return;
+      status('offline', { message: error?.message || 'Arena state unavailable', revision });
+    }
+  }
+
+  function scheduleReconnect(activeSocket, detail = {}) {
+    if (stopped || socket !== activeSocket || retryTimer) return;
+    const base = Math.min(MAX_RETRY_MS, 500 * (2 ** Math.min(retryAttempt++, 6)));
+    const retryInMs = Math.min(MAX_RETRY_MS, base + Math.floor(Math.random() * Math.min(500, base / 3)));
+    status('reconnecting', { retryInMs, revision, ...detail });
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      connect();
+    }, retryInMs);
+  }
+
+  function handleMessage(data, activeSocket) {
+    if (stopped || socket !== activeSocket || typeof data !== 'string') return;
+    let payload;
+    try { payload = JSON.parse(data); } catch { return; }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+
+    const hasSnapshotFields = ['players', 'duels', 'relay', 'config', 'events', 'snapshot', 'state']
+      .some(key => Object.prototype.hasOwnProperty.call(payload, key));
+    if (payload.type === 'event' || payload.event || (!hasSnapshotFields && payload.type && payload.type !== 'snapshot')) {
+      const event = payload.event && typeof payload.event === 'object' ? payload.event : payload;
+      const eventRevision = revisionOf(payload) ?? revisionOf(event);
+      if (eventRevision !== null && revision !== null && eventRevision < revision) return;
+      if (eventRevision !== null) revision = Math.max(revision ?? 0, eventRevision);
+      if (rememberEvent(event)) onEvent(event);
+      status('connected', { revision, relay: payload.relay });
+      return;
+    }
+
+    receiveSnapshot(payload, 'websocket');
+    const snapshot = snapshotFrom(payload);
+    if (snapshot) status(snapshot.relay?.connected === false ? 'degraded' : 'connected', {
+      revision,
+      relay: snapshot.relay,
+      lastSeen: snapshot.relay?.lastSeen,
+    });
+  }
+
+  function connect() {
+    if (stopped) return;
+    const activeGeneration = ++generation;
+    socket = null;
+    status('connecting', { revision });
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = protocol + '//' + location.host + '/api/live/' + encodeURIComponent(normalizedChannel);
+    let activeSocket;
+    try {
+      activeSocket = new WebSocketImpl(url);
+    } catch (error) {
+      status('offline', { message: error?.message || 'Arena websocket unavailable', revision });
+      scheduleReconnect(null, { message: error?.message });
+      return;
+    }
+    socket = activeSocket;
+
+    activeSocket.onopen = () => {
+      if (stopped || socket !== activeSocket || generation !== activeGeneration) {
+        activeSocket.close();
+        return;
+      }
+      retryAttempt = 0;
+      status('connected', { revision, transport: 'websocket' });
+      void fetchSnapshot('connect');
+    };
+    activeSocket.onmessage = ({ data }) => handleMessage(data, activeSocket);
+    activeSocket.onerror = () => {
+      if (!stopped && socket === activeSocket) status('degraded', { message: 'Arena stream interrupted', revision });
+    };
+    activeSocket.onclose = () => {
+      if (stopped || socket !== activeSocket) return;
+      scheduleReconnect(activeSocket);
+    };
+  }
+
+  connect();
+  void fetchSnapshot('initial');
+
+  return {
+    get revision() { return revision; },
+    disconnect() {
+      if (stopped) return;
+      stopped = true;
+      generation++;
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      const activeSocket = socket;
+      socket = null;
+      activeSocket?.close();
+      onStatus({ state: 'offline', message: 'Arena disconnected', revision });
+    },
+  };
+}

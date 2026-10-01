@@ -1,0 +1,292 @@
+[
+  {
+    "id": "adventurer",
+    "label": "Adventurer",
+    "url": "/assets/adventurer.png",
+    "frames": [
+      {
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      },
+      {
+        "x": 80,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      }
+    ],
+    "fps": 8,
+    "animations": {
+      "idle": [
+        {
+          "x": 160,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "jump": [
+        {
+          "x": 240,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "cheer": [
+        {
+          "x": 320,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        },
+        {
+          "x": 400,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ]
+    },
+    "anchor": {
+      "x": 0.5,
+      "y": 1
+    },
+    "license": "CC0-1.0",
+    "source": "https://kenney.nl/assets/platformer-characters"
+  },
+  {
+    "id": "female",
+    "label": "Explorer",
+    "url": "/assets/female.png",
+    "frames": [
+      {
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      },
+      {
+        "x": 80,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      }
+    ],
+    "fps": 8,
+    "animations": {
+      "idle": [
+        {
+          "x": 160,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "jump": [
+        {
+          "x": 240,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "cheer": [
+        {
+          "x": 320,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        },
+        {
+          "x": 400,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ]
+    },
+    "anchor": {
+      "x": 0.5,
+      "y": 1
+    },
+    "license": "CC0-1.0",
+    "source": "https://kenney.nl/assets/platformer-characters"
+  },
+  {
+    "id": "player",
+    "label": "Player",
+    "url": "/assets/player.png",
+    "frames": [
+      {
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      },
+      {
+        "x": 80,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      }
+    ],
+    "fps": 8,
+    "animations": {
+      "idle": [
+        {
+          "x": 160,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "jump": [
+        {
+          "x": 240,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "cheer": [
+        {
+          "x": 320,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        },
+        {
+          "x": 400,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ]
+    },
+    "anchor": {
+      "x": 0.5,
+      "y": 1
+    },
+    "license": "CC0-1.0",
+    "source": "https://kenney.nl/assets/platformer-characters"
+  },
+  {
+    "id": "soldier",
+    "label": "Soldier",
+    "url": "/assets/soldier.png",
+    "frames": [
+      {
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      },
+      {
+        "x": 80,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      }
+    ],
+    "fps": 8,
+    "animations": {
+      "idle": [
+        {
+          "x": 160,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "jump": [
+        {
+          "x": 240,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "cheer": [
+        {
+          "x": 320,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        },
+        {
+          "x": 400,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ]
+    },
+    "anchor": {
+      "x": 0.5,
+      "y": 1
+    },
+    "license": "CC0-1.0",
+    "source": "https://kenney.nl/assets/platformer-characters"
+  },
+  {
+    "id": "zombie",
+    "label": "Zombie",
+    "url": "/assets/zombie.png",
+    "frames": [
+      {
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      },
+      {
+        "x": 80,
+        "y": 0,
+        "w": 80,
+        "h": 110
+      }
+    ],
+    "fps": 8,
+    "animations": {
+      "idle": [
+        {
+          "x": 160,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "jump": [
+        {
+          "x": 240,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ],
+      "cheer": [
+        {
+          "x": 320,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        },
+        {
+          "x": 400,
+          "y": 0,
+          "w": 80,
+          "h": 110
+        }
+      ]
+    },
+    "anchor": {
+      "x": 0.5,
+      "y": 1
+    },
+    "license": "CC0-1.0",
+    "source": "https://kenney.nl/assets/platformer-characters"
+  }
+]

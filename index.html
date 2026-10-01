@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mini Chat — nesszerra</title><link rel="stylesheet" href="/setup.css"></head>
+<body><main><div class="tag">TWITCH · OPEN SOURCE · FREE</div><h1>Your chat.<br><span>A little more alive.</span></h1>
+<p class="intro">Tiny characters that wander, react, and jump with your Twitch chat. One link for OBS.</p>
+<section class="card"><label for="channel">Twitch channel</label><div class="channel-row"><span>#</span><input id="channel" value="nesszerra" maxlength="25" autocomplete="off" spellcheck="false"></div>
+<div class="options"><label for="size">Character size <output id="size-label">64px</output></label><input id="size" type="range" min="32" max="96" value="64">
+<label for="cap">Maximum characters</label><select id="cap"><option>25</option><option selected>50</option><option>100</option></select></div>
+<label for="obs-url">OBS Browser Source URL</label><div class="url-row"><input id="obs-url" readonly aria-label="OBS overlay URL"><button id="copy">Copy link</button></div>
+<p id="copy-status" role="status"></p><div class="actions"><a id="preview" class="primary" target="_blank" rel="noopener">Open live overlay ↗</a><a id="demo" target="_blank" rel="noopener">Try the demo ↗</a></div>
+<p class="hint">In OBS, add a Browser Source, paste the link, and set 1920 × 1080 at 30 FPS. The overlay has a transparent background. Disable “Shutdown source when not visible” to keep chat connected between scenes.</p></section>
+<section class="commands"><h2>Small commands. Big personality.</h2><div class="command-grid"><article><code>!jump</code><p>Take a leap.</p></article><article><code>!avatar soldier</code><p>Pick your character.</p></article><article><code>!color #ff8844</code><p>Color your nameplate.</p></article></div><p class="catalog">Characters: adventurer · female · player · soldier · zombie</p></section>
+<footer>V1 keeps customization in chat. Choices are saved in this OBS browser; a shared viewer editor comes next.<br>Character artwork by Kenney (CC0). No Twitch login or chat-write permissions required.</footer>
+</main><script type="module" src="/src/setup.js"></script></body></html>

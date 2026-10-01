@@ -1,0 +1,11 @@
+node_modules/
+.cloudflare/
+.wrangler/
+dist/
+.env*
+.dev.vars*
+.secrets.local.json
+relay/config*.json
+relay/*.dpapi
+relay/node_modules/
+*.log
