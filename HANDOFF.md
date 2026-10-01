@@ -1,7 +1,7 @@
 # Mini Chat v2 handoff
 
 Project root: `D:\code\2026-10-01\i-ne\outputs\mini-chat`
-Live v1: https://chat.miolaf.xyz (Cloudflare Workers Free, Worker `nesszerra-mini-chat`)
+Live v2: https://chat.miolaf.xyz (Cloudflare Workers Free, Worker `nesszerra-mini-chat`; v1 replaced 2026-10-01)
 Test target: `cf build/deploy --mode test` → Worker `nesszerra-mini-chat-test` on `test.chat.miolaf.xyz`
 
 ## Rules for every agent
@@ -10,8 +10,8 @@ Test target: `cf build/deploy --mode test` → Worker `nesszerra-mini-chat-test`
 - Never put the owner's real name in code, commits or licenses. Use "nesszerra" or "ness truong".
 - Never print or commit secrets: `.dev.vars`, `D:\code\2026-10-01\i-ne\work\mini-chat-secrets.json`,
   the OBS WebSocket password, or the Twitch client secret.
-- Only the `nesszerra` channel is enabled. `miolafff` (production) stays disabled until its owner
-  authorizes it.
+- Enabled channels: `nesszerra` and `miolafff` (its owner agreed 2026-10-01), listed in `CHANNELS` in
+  `server/auth.js`. miolafff is managed by its broadcaster and the site owner, and gets chat through StreamElements only.
 - Stay on Cloudflare Free: 100k Worker requests/day, SQLite-backed Durable Objects only.
   Budget: each chat message in nesszerra's chat is 1 Worker request (the EventSub webhook) plus
   1 Durable Object request, whether or not it is a command. Free allows 100k Worker requests a
@@ -22,6 +22,9 @@ Test target: `cf build/deploy --mode test` → Worker `nesszerra-mini-chat-test`
 - Plain scripted HTTP requests to the domain get Cloudflare error 1010. Test with a browser or Playwright.
 
 ## Current state
+
+2026-10-01: v2 deployed to prod (chat.miolaf.xyz) with nesszerra and miolafff enabled. The notes
+below describe the earlier integration pass.
 
 Updated 2026-10-01 after the integration pass. Nothing is committed, pushed or deployed: the
 working tree sits on top of the baseline commit (`git diff` shows every change). The live site
