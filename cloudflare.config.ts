@@ -27,6 +27,8 @@ return {
       // and set with `wrangler secret put` once the repo exists; declaring them here would make them required (docs/LIVE_FIX.md).
       CF_VERSION_METADATA: bindings.versionMetadata(),
       PUBLIC_ORIGIN: bindings.text(origin),
+      // Test site only: owner access for scripts/devtools.mjs (docs/DEVTOOLS.md). Production never declares it.
+      ...(testing ? { DEV_TOOLS_TOKEN: bindings.secret() } : {}),
       ...(localTest ? { MINI_LOCAL_TEST: bindings.text('1') } : {})
     }
   })

@@ -315,3 +315,55 @@ test('unknown routes and channels that are not enabled', async () => {
   assert.equal((await worker.fetch(req('/api/leaderboard/somechannel'), f.env)).status, 403);
   assert.equal((await worker.fetch(req('/api/state/nesszerra', 'DELETE'), f.env)).status, 405);
 });
+
+const DEV = 'dev-token-for-tests-0123456789abcdefghij';
+function devReq(path, data, token = DEV, extra = {}) {
+  return new Request('https://test.chat.miolaf.xyz' + path, { method: data === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...extra }, ...(data !== undefined ? { body: JSON.stringify(data) } : {}) });
+}
+
+test('dev token (test site only): a missing binding, a wrong token or no token is refused', async () => {
+  const f = environment();
+  f.entries.set('owner:nesszerra', { id: '1' });
+  // production: no DEV_TOOLS_TOKEN binding, so even a well-formed token is refused and devtools do not exist
+  assert.equal((await worker.fetch(devReq('/api/dev/diagnostics'), f.env)).status, 401);
+  assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/chat', { userId: 't1', username: 'testbot_a', text: '!fight' }), f.env)).status, 401);
+  assert.equal((await worker.fetch(req('/api/devtools/nesszerra/chat', 'POST', { userId: 't1', username: 'testbot_a', text: 'hi' }, await signedIn(f, true)), f.env)).status, 404, 'an owner session alone does not open devtools');
+  f.env.DEV_TOOLS_TOKEN = DEV;
+  assert.equal((await worker.fetch(devReq('/api/dev/diagnostics', undefined, DEV.slice(0, -1) + 'x'), f.env)).status, 401);
+  assert.equal((await worker.fetch(devReq('/api/dev/diagnostics', undefined, 'short'), f.env)).status, 401);
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra'), f.env)).status, 401);
+  // a token shorter than 32 characters in the binding never matches
+  f.env.DEV_TOOLS_TOKEN = 'x'.repeat(31);
+  assert.equal((await worker.fetch(devReq('/api/dev/diagnostics', undefined, 'x'.repeat(31)), f.env)).status, 401);
+  assert.equal(f.forwarded.length, 0, 'nothing reached a room');
+});
+
+test('dev token (test site only): the right token acts as the owner and can seed profiles and chat lines', async () => {
+  const f = environment();
+  f.entries.set('owner:nesszerra', { id: '1' });
+  f.env.DEV_TOOLS_TOKEN = DEV;
+  assert.equal((await worker.fetch(devReq('/api/dev/diagnostics'), f.env)).status, 200);
+  const admin = await worker.fetch(devReq('/api/admin/nesszerra', { action: 'removePlayer', userId: 'testbot:a' }), f.env);
+  assert.equal(admin.status, 200, 'no Origin header needed with a token');
+  assert.equal(f.forwarded.at(-1).body.actorId, '1');
+  const p = await worker.fetch(devReq('/api/devtools/nesszerra/profile', { userId: 'testbot:a', username: 'TestBot_A', avatar: 'player', color: '#22aa44', defaultAbility: 'heavy' }), f.env);
+  assert.equal(p.status, 200);
+  assert.equal(f.forwarded.at(-1).path, '/profile');
+  assert.equal(f.forwarded.at(-1).options.headers['X-Mini-User-Id'] ?? new Headers(f.forwarded.at(-1).options.headers).get('X-Mini-User-Id'), 'testbot:a');
+  assert.equal(f.forwarded.at(-1).body.username, 'testbot_a');
+  const c = await worker.fetch(devReq('/api/devtools/miolafff/chat', { userId: 'testbot:a', username: 'testbot_a', text: '!fight' }), f.env);
+  assert.equal(c.status, 200);
+  assert.deepEqual({ channel: f.forwarded.at(-1).channel, path: f.forwarded.at(-1).path, text: f.forwarded.at(-1).body.text }, { channel: 'miolafff', path: '/dev-chat', text: '!fight' });
+  assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/profile', { userId: 'bad id!', username: 'x' }), f.env)).status, 400);
+  assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/profile', { userId: 't', username: 'x', color: 'red' }), f.env)).status, 400);
+  assert.equal((await worker.fetch(devReq('/api/devtools/somechannel/chat', { userId: 't', username: 'x', text: 'hi' }), f.env)).status, 403);
+  assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/nope', {}), f.env)).status, 404);
+});
+
+test('dev token binding: declared for the test deploy only, never for production', async () => {
+  const { default: config } = await import('../cloudflare.config.ts');
+  const env = (mode) => config({ mode }).worker.env;
+  assert.ok('DEV_TOOLS_TOKEN' in env('test'));
+  assert.ok(!('DEV_TOOLS_TOKEN' in env(undefined)));
+  assert.ok(!('DEV_TOOLS_TOKEN' in env('production')));
+});

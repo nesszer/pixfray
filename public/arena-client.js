@@ -36,6 +36,27 @@ export function createArenaClient({
   let revision = null;
   let generation = 0;
   const seenEventIds = new Set();
+  // Server clock minus local clock, from the latest snapshot. Server times are shifted into local time on arrival,
+  // because the overlay compares them with Date.now() and a PC clock can be off by many seconds.
+  let clockOffset = 0;
+  const local = (value) => (Number(value) > 0 ? Number(value) - clockOffset : value);
+  function localEvent(event) {
+    if (!clockOffset || !event || typeof event !== 'object') return event;
+    const out = { ...event };
+    if (Number.isFinite(out.at)) out.at = local(out.at);
+    if (out.respawnAt) out.respawnAt = local(out.respawnAt);
+    return out;
+  }
+  function localSnapshot(snapshot) {
+    if (Number.isFinite(snapshot.serverNow)) clockOffset = snapshot.serverNow - Date.now();
+    if (!clockOffset) return snapshot;
+    return {
+      ...snapshot,
+      chat: snapshot.chat && { ...snapshot.chat, lastSeen: local(snapshot.chat.lastSeen) },
+      players: Array.isArray(snapshot.players) ? snapshot.players.map(p => (p && p.respawnAt ? { ...p, respawnAt: local(p.respawnAt) } : p)) : snapshot.players,
+      events: Array.isArray(snapshot.events) ? snapshot.events.map(localEvent) : snapshot.events,
+    };
+  }
 
   function status(state, detail = {}) {
     if (!stopped) onStatus({ state, ...detail });
@@ -63,8 +84,9 @@ export function createArenaClient({
   }
 
   function receiveSnapshot(input, source) {
-    const snapshot = snapshotFrom(input);
-    if (!snapshot) return false;
+    const raw = snapshotFrom(input);
+    if (!raw) return false;
+    const snapshot = localSnapshot(raw);
     const incomingRevision = revisionOf(snapshot);
     if (incomingRevision !== null && revision !== null && incomingRevision < revision) return false;
     if (incomingRevision !== null) revision = incomingRevision;
@@ -116,13 +138,14 @@ export function createArenaClient({
       const eventRevision = revisionOf(payload) ?? revisionOf(event);
       if (eventRevision !== null && revision !== null && eventRevision < revision) return;
       if (eventRevision !== null) revision = Math.max(revision ?? 0, eventRevision);
-      if (rememberEvent(event)) onEvent(event);
-      status('connected', { revision, chat: payload.chat });
+      if (rememberEvent(event)) onEvent(localEvent(event));
+      status('connected', { revision, chat: payload.chat && { ...payload.chat, lastSeen: local(payload.chat.lastSeen) } });
       return;
     }
 
     receiveSnapshot(payload, 'websocket');
-    const snapshot = snapshotFrom(payload);
+    const raw = snapshotFrom(payload);
+    const snapshot = raw && localSnapshot(raw);
     if (snapshot) status(snapshot.chat?.connected === false ? 'degraded' : 'connected', {
       revision,
       chat: snapshot.chat,

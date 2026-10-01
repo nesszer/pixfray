@@ -232,6 +232,23 @@ export class ChannelRoom extends DurableObject {
       } else return json({ error: "unknown StreamElements action" }, 400);
       return json({ ok: true, streamelements: this.seSettings() });
     }
+    // Test site only (worker dev token): one chat line as if Twitch had delivered it on the current subscription.
+    if (path === "/dev-chat" && request.method === "POST") {
+      if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      const { userId, username, displayName, text: line } = body.value;
+      const now = Date.now(), messageId = "dev:" + randomHex().slice(0, 24);
+      const msg = { messageId, timestamp: now, subscription: { id: this.readState(channel).chat.subscriptionId || "" }, event: { chatter_user_id: userId, chatter_user_login: username, chatter_user_name: displayName, message_id: messageId, message: { text: String(line || "") } } };
+      const result = this.processChatMessage(channel, msg, now);
+      if (result.visible) this.broadcast(result.state);
+      if (result.changed) await this.scheduleAlarm(result.state);
+      const r = result.result || {};
+      if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
+      const parsed = parseGameCommand(String(line || ""));   // the reply is the line a StreamElements bot would post
+      const action = parsed ? ({ duel: "challenge" }[parsed.action] || parsed.action) : "";
+      return json({ ...r, revision: result.state.revision, reply: parsed ? seReplyText({ result: r, state: result.state, actorId: userId, action, target: parsed.target, names: this.seSettings().names, origin: "", now }) : "" });
+    }
     if (path === "/chat" && request.method === "GET") return json(chatStatus(this.readState(channel)));
     if (path === "/chat" && request.method === "POST") {
       const body = await this.readJson(request);
@@ -447,6 +464,7 @@ export class ChannelRoom extends DurableObject {
       players: state.players.map((profile) => ({ ...profile })),
       duels: state.duels.map((duel) => ({ ...duel })),
       events: state.events.slice(-50).map((event) => ({ ...event })),
+      serverNow: Date.now(),   // lets overlays on a PC with a wrong clock convert event times (arena-client.js)
     };
   }
 

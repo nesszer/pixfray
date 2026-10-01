@@ -74,7 +74,8 @@ sends nothing; any client message closes the socket with 1008. Reconnect with ba
 Snapshot = {
   type:"snapshot", channel, revision:int, paused:bool,   // paused = chat not connected or config.enabled false
   chat:{connected:bool, lastSeen:ms, status}, config:Config, configVersion:int, round:int,
-  players:Player[], duels:Duel[], events:Event[]          // events: the last 50, oldest first
+  players:Player[], duels:Duel[], events:Event[],         // events: the last 50, oldest first
+  serverNow:ms                                            // server clock when sent
 }
 Player = {userId, username, displayName, avatar, color, defaultAbility, hp, elo, wins, losses,
           lastSeen, registered:bool, respawnAt:ms}         // respawnAt > now means KO'd
@@ -85,7 +86,12 @@ Duel   = {id, a, b, status:"pending"|"active"|"completed"|"cancelled"|"expired"|
 Event  = {id:string(revision), type, at:ms, ...fields}
 ```
 
-Deduplicate events by `id`. Event types and their fields:
+Deduplicate events by `id`. All `ms` times are server clock. `public/arena-client.js` shifts `event.at`,
+`event.respawnAt`, `player.respawnAt` and `chat.lastSeen` by `serverNow − Date.now()` before the overlay
+sees them, so a streaming PC whose clock is off still plays fresh events (the overlay drops events
+older than 10 s).
+
+Event types and their fields:
 
 | type | fields |
 |---|---|

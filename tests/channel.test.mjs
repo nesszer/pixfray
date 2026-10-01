@@ -383,3 +383,22 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   r.checkSavedProfiles(state, log[1].context.duelId);
   assert.match((await r.call('/dev/logs?source=warn')).body[0].message, /profile for alice not saved/);
 });
+
+test('dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a line plays like real chat and returns the bot reply', async () => {
+  const off = room({}, { quick: true });
+  await off.connectChat();
+  assert.equal((await off.call('/dev-chat', { method: 'POST', body: { userId: 'b1', username: 'testbot_a', displayName: 'testbot_a', text: 'hi' } })).status, 404);
+  const r = room({ DEV_TOOLS_TOKEN: 'x'.repeat(40) }, { quick: true });
+  await r.connectChat();
+  await r.save('b1', 'testbot_a');
+  await r.save('b2', 'testbot_b');
+  const say = (id, login, text) => r.call('/dev-chat', { method: 'POST', body: { userId: id, username: login, displayName: login, text } });
+  assert.equal((await say('b2', 'testbot_b', 'hello')).body.reply, '', 'a plain line only refreshes presence');
+  const ch = await say('b1', 'testbot_a', '!challenge @testbot_b');
+  assert.equal(ch.status, 200);
+  assert.equal(ch.body.ok, true);
+  const fight = await say('b2', 'testbot_b', '!fight');
+  assert.equal(fight.body.reason, 'quick_duel');
+  assert.match(fight.body.reply, /testbot_[ab] beats testbot_[ab]/);
+  assert.equal((await r.call('/leaderboard')).body.filter((p) => p.wins + p.losses === 1).length, 2, 'Elo and records are saved');
+});

@@ -50,6 +50,32 @@ function seView(env,url,channel,se){
   if(!se?.secret)return null;
   return {key:se.secret,names:se.names,commands:seCommandLines(env.PUBLIC_ORIGIN||url.origin,channel,se.secret,se.names)};
 }
+// Test site only: DEV_TOOLS_TOKEN is declared only by `cf deploy --mode test`, so production has no token to match.
+// A matching "Authorization: Bearer" acts as the owner, for scripts/devtools.mjs (docs/DEVTOOLS.md).
+async function devToken(request,env){
+  const m=/^Bearer ([A-Za-z0-9_-]{32,200})$/.exec(request.headers.get('Authorization')||'');
+  if(!env.DEV_TOOLS_TOKEN||env.DEV_TOOLS_TOKEN.length<32||!m)return false;
+  const hash=async v=>new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));
+  const [a,b]=await Promise.all([hash(m[1]),hash(env.DEV_TOOLS_TOKEN)]);let diff=0;for(let i=0;i<a.length;i++)diff|=a[i]^b[i];
+  return diff===0;
+}
+async function devUser(env){const id=env.OWNER_TWITCH_ID||(await record(env,'owner:nesszerra'))?.id||'';return id?{id,login:'nesszerra',displayName:'nesszerra (dev token)'}:null;}
+// Dev-token routes: save a profile for any account (test bots, an alt), or feed one chat line through the room as if
+// Twitch had delivered it. The room repeats the DEV_TOOLS_TOKEN check.
+async function handleDevtools(request,env,channel,action,data){
+  const userId=String(data.userId||''),username=String(data.username||'').toLowerCase(),displayName=String(data.displayName||username).slice(0,48);
+  if(!/^[a-zA-Z0-9_:-]{1,64}$/.test(userId)||!/^[a-z0-9_]{1,25}$/.test(username))return json({error:'userId and username required'},400);
+  if(action==='profile'){
+    const {avatar='player',color='#4FA3FF',defaultAbility='strike'}=data;
+    if(typeof avatar!=='string'||!/^[a-z0-9_-]{1,64}$/.test(avatar)||typeof color!=='string'||!/^#[a-f0-9]{6}$/i.test(color)||!['strike','heavy','heal'].includes(defaultAbility))return json({error:'Invalid profile fields'},400);
+    return internal(request,env,channel,'/profile',{userId,username,displayName,avatar,color,defaultAbility});
+  }
+  if(action==='chat'){
+    const text=String(data.text||'').slice(0,500);if(!text.trim())return json({error:'text required'},400);
+    return roomFetch(null,env,channel,'/dev-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId,username,displayName,text})});
+  }
+  return json({error:'Not found'},404);
+}
 async function staticCatalog(env,url){const r=await env.ASSETS.fetch(new Request(url.origin+'/assets/characters.json'));return r.ok?await r.json():[];}
 export default {async fetch(request,env,ctx){
   let path='';
@@ -65,11 +91,21 @@ export default {async fetch(request,env,ctx){
       if(!env.INTERNAL_SECRET)return new Response('Mini Chat is not configured',{status:503});
       return await handleStreamElements(request,env,{url,origin:env.PUBLIC_ORIGIN||url.origin,channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init)});
     }
-    if(mutating&&request.headers.get('Origin')!==url.origin)return json({error:'Same-origin request required'},403);
+    // A dev token is not a browser credential, so it skips the same-origin check; a wrong one is refused outright.
+    const dev=request.headers.has('Authorization')?await devToken(request,env):false;
+    if(request.headers.has('Authorization')&&!dev&&path.startsWith('/api/'))return json({error:'Invalid dev token'},401);
+    if(mutating&&!dev&&request.headers.get('Origin')!==url.origin)return json({error:'Same-origin request required'},403);
     if(path.startsWith('/auth/'))return handleAuth(request,env);
     if(!path.startsWith('/api/'))return env.ASSETS.fetch(request);
     if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
-    const s=await session(request,env),user=s?.user||null,owner=await isOwner(env,user);
+    const s=dev?null:await session(request,env),user=dev?await devUser(env):s?.user||null,owner=await isOwner(env,user);
+    const devMatch=path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat)$/);
+    if(path.startsWith('/api/devtools/')){
+      if(!dev||!devMatch)return json({error:'Not found'},404);
+      if(!enabledChannel(devMatch[1]))return json({error:'Mini Chat is not enabled for this channel'},403);
+      if(request.method!=='POST')return json({error:'Use POST'},405);
+      return await handleDevtools(request,env,devMatch[1],devMatch[2],await bodyJson(request,4000));
+    }
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
     if(path==='/api/health')return json({ok:true,version:'0.2.0',twitchConfigured:configured(env),productionEnabled:false});
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
