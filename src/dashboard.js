@@ -1,6 +1,7 @@
 // Viewer dashboard ("/"): sign-in state, character picker with live preview, nameplate color,
 // profile save and a compact leaderboard. Talks only to the routes in CONTRACTS.md section 2.
-import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, seconds, CHANNEL, DEFAULT_COLOR } from "./ui.js";
+import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, seconds, CHANNEL, DEFAULT_COLOR, applyChannel } from "./ui.js";
+applyChannel();
 
 const SWATCHES = ["#a78bfa", "#60a5fa", "#34d399", "#fbbf24", "#f87171", "#f472b6", "#e5e7eb", "#22d3ee"];
 const form = $("#profile-form"), saveBtn = $("#save"), saveSignin = $("#save-signin"), status = $("#save-status");

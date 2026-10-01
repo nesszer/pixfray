@@ -51,6 +51,8 @@ export async function unseal(env,value){
   return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:Uint8Array.from(atob(value.iv),x=>x.charCodeAt(0))},key,Uint8Array.from(atob(value.data),x=>x.charCodeAt(0)))));
 }
 // connect=1 (nesszerra only): mod checks plus the chat-read scopes the EventSub channel.chat.message webhook needs.
+// Channels the site serves. nesszerra (the site owner) can use EventSub; every other channel uses StreamElements.
+export const CHANNELS=['nesszerra','miolafff'];
 export const CONNECT_SCOPES=['moderation:read','user:read:chat','user:bot','channel:bot'];
 export function configured(env){return !!(env.TWITCH_CLIENT_ID&&env.TWITCH_CLIENT_SECRET&&env.AUTH_SECRET&&env.INTERNAL_SECRET);}
 export async function session(request,env){
@@ -74,9 +76,11 @@ export async function handleAuth(request,env){
   const callback=(env.PUBLIC_ORIGIN||url.origin)+'/auth/callback';
   if(path==='/auth/login'){
     const channel=url.searchParams.get('channel')||'nesszerra';
-    if(channel!=='nesszerra')return Response.json({error:'Production channel onboarding is not enabled'},{status:403});
+    if(!CHANNELS.includes(channel))return Response.json({error:'Mini Chat is not enabled for this channel'},{status:403});
     const nonce=randomToken(), connect=url.searchParams.get('connect')==='1';
-    await record(env,'oauth:'+nonce,{channel,connect},Date.now()+600000);
+    if(connect&&channel!=='nesszerra')return Response.json({error:'Chat for this channel comes through StreamElements; no Twitch connection needed'},{status:403});
+    const next=url.searchParams.get('next')==='/admin/'?'/admin/':'/';
+    await record(env,'oauth:'+nonce,{channel,connect,next},Date.now()+600000);
     const target=new URL('https://id.twitch.tv/oauth2/authorize');
     Object.entries({client_id:env.TWITCH_CLIENT_ID,redirect_uri:callback,response_type:'code',scope:connect?CONNECT_SCOPES.join(' '):'',state:nonce,force_verify:'true'}).forEach(([k,v])=>target.searchParams.set(k,v));
     return new Response(null,{status:302,headers:{Location:target.href,'Set-Cookie':cookie('mini_oauth',nonce,600)}});
@@ -108,13 +112,16 @@ export async function handleAuth(request,env){
     await record(env,'broadcaster:nesszerra',await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}),Date.now()+90*86400000);
   }
   const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);
-  const response=new Response(null,{status:303,headers:{Location:'/?signed_in=1'}});
+  const back=(pending.next==='/admin/'?'/admin/':'/')+'?'+(pending.channel&&pending.channel!=='nesszerra'?'channel='+pending.channel+'&':'')+'signed_in=1';
+  const response=new Response(null,{status:303,headers:{Location:back}});
   response.headers.append('Set-Cookie',cookie('mini_session',key,21600));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
 }
 export async function access(env,user,channel){
   const owner=await isOwner(env,user);
   if(owner)return {owner:true,moderator:false,canManage:true};
   if(!user)return {owner:false,moderator:false,canManage:false,reason:'Sign in with Twitch'};
+  // The broadcaster manages their own channel; the login comes from Twitch at sign-in, never from a form field.
+  if(String(user.login||'').toLowerCase()===channel)return {owner:false,broadcaster:true,moderator:false,canManage:true};
   const encrypted=await record(env,'broadcaster:'+channel);
   if(!encrypted)return {owner:false,moderator:false,canManage:false,reason:'Broadcaster must connect moderator authorization'};
   let token=await unseal(env,encrypted);

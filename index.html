@@ -1,18 +1,18 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Chat — your fighter on nesszerra</title>
-<meta name="description" content="Pick your Mini Chat character and nameplate color for the nesszerra Twitch channel.">
+<meta data-channel name="description" content="Pick your Mini Chat character and nameplate color for the nesszerra Twitch channel.">
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/">Mini Chat</a>
-  <nav aria-label="Pages"><a href="/" aria-current="page">Your fighter</a><a href="/admin/" id="admin-link" hidden>Mod controls</a><a href="#obs-setup">OBS setup</a></nav>
+  <a class="brand" href="/" data-keep-channel>Mini Chat</a>
+  <nav aria-label="Pages"><a href="/" aria-current="page" data-keep-channel>Your fighter</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a><a href="#obs-setup">OBS setup</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 <main class="page">
   <header class="page-header">
-    <h1>Your fighter in nesszerra's chat</h1>
-    <p class="subtitle">Pick a character and a nameplate color. Your profile is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
+    <h1 data-channel>Your fighter in nesszerra's chat</h1>
+    <p class="subtitle" data-channel>Pick a character and a nameplate color. Your profile is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
   </header>
 
   <p class="callout" id="signin-note" hidden></p>
@@ -38,7 +38,7 @@
       </div>
       <div class="toolbar">
         <button class="btn btn-primary" id="save" type="submit" hidden>Save profile</button>
-        <a class="btn btn-primary" id="save-signin" href="/auth/login">Sign in with Twitch to save</a>
+        <a class="btn btn-primary" id="save-signin" href="/auth/login" data-login="/">Sign in with Twitch to save</a>
       </div>
       <p class="status" id="save-status" role="status"></p>
       <div class="stat-strip" id="my-stats" hidden>
@@ -83,7 +83,7 @@
     <h2 id="obs-title">Add the overlay to OBS</h2>
     <p class="muted">For the streamer. Builds the Browser Source link for the chat overlay.</p>
     <div class="controls">
-      <div><label for="channel">Twitch channel</label><input id="channel" value="nesszerra" maxlength="25" autocomplete="off" spellcheck="false"></div>
+      <div><label for="channel">Twitch channel</label><input id="channel" data-channel value="nesszerra" maxlength="25" autocomplete="off" spellcheck="false"></div>
       <div><label for="size">Character size <output id="size-label">64px</output></label><input id="size" type="range" min="32" max="96" value="64"></div>
       <div><label for="cap">Maximum characters</label><select id="cap"><option>25</option><option selected>50</option><option>100</option></select></div>
     </div>

@@ -1,11 +1,10 @@
 import { ChannelRoom } from './channel.js';
-import { AuthStore,record,session,isOwner,configured,handleAuth,access } from './auth.js';
+import { AuthStore,record,session,isOwner,configured,handleAuth,access,CHANNELS } from './auth.js';
 import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './eventsub.js';
 import { handleStreamElements,seCommandLines,SE_SUBSCRIPTION_ID } from './streamelements.js';
 export {ChannelRoom,AuthStore};
-const CHANNELS=['nesszerra'];
 const enabledChannel=channel=>CHANNELS.includes(channel);
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
 // Raw call into a ChannelRoom. Adds the internal secret and channel binding; the caller owns method/body.
@@ -71,13 +70,13 @@ export default {async fetch(request,env,ctx){
     if(!path.startsWith('/api/'))return env.ASSETS.fetch(request);
     if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
     const s=await session(request,env),user=s?.user||null,owner=await isOwner(env,user);
-    if(path==='/api/session')return json({user,owner,configured:configured(env),channels:['nesszerra'],productionEnabled:false});
+    if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
     if(path==='/api/health')return json({ok:true,version:'0.2.0',twitchConfigured:configured(env),productionEnabled:false});
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
     const match=path.match(/^\/api\/(state|live|profile|leaderboard|catalog|access|admin|assets)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
     if(!match)return json({error:'Not found'},404);
     const [,route,channel,id]=match;
-    if(!enabledChannel(channel))return json({error:'miolafff onboarding awaits its owner authorization'},403);
+    if(!enabledChannel(channel))return json({error:'Mini Chat is not enabled for this channel'},403);
     if(route==='live'&&request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return json({error:'WebSocket upgrade required'},426);
     if(route==='access')return json(await access(env,user,channel));
     if(route==='assets')return await handleUploads(request,env,{user,owner,channel,id:id||'',url,bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
@@ -105,6 +104,7 @@ export default {async fetch(request,env,ctx){
         const out=await r.json();if(!r.ok)return json(out,r.status);
         return json({ok:true,streamelements:seView(env,url,channel,out.streamelements)});
       }
+      if(data.action==='connectChat'&&channel!=='nesszerra')return json({error:'This channel uses StreamElements for chat. Choose Use StreamElements.'},400);
       if(data.action==='connectChat'||data.action==='disconnectChat'||data.action==='useStreamElements')return await chatAction(env,url,channel,data.action,{takeover:data.takeover===true});
       return internal(request,env,channel,'/admin',{...data,actorId:user.id,actorName:user.displayName||user.login});
     }

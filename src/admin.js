@@ -1,6 +1,8 @@
 // Mod controls ("/admin/"): broadcaster and moderators only (GET /api/access/:channel -> canManage).
 // Uses GET/POST /api/admin/:channel (CONTRACTS.md section 2) and the read-only live socket for updates.
-import { api, errorText, h, $, setStatus, renderWho, signOut, seconds, timeAgo, dateTime, formatBytes, CHANNEL } from "./ui.js";
+import { api, errorText, h, $, setStatus, renderWho, signOut, seconds, timeAgo, dateTime, formatBytes, CHANNEL, withChannel, loginHref, applyChannel } from "./ui.js";
+applyChannel();
+if (CHANNEL !== "nesszerra") document.querySelector(".page-header .subtitle").textContent = "For the " + CHANNEL + " broadcaster. Changes apply to every OBS overlay right away.";
 
 const LIMITS = { maxCharacters: 8, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 // Editable config fields (CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
@@ -50,17 +52,18 @@ async function init() {
   if (!S.session) return gate("The server can't check sign-in right now: " + errorText(session) + ". Try again in a minute.", [h("button", { class: "btn", type: "button", onclick: () => location.reload() }, "Reload")]);
   if (!S.session.user) {
     if (S.session.configured === false) return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
-    return gate("Sign in with the nesszerra account or a nesszerra moderator account to open mod controls.", [h("a", { class: "btn btn-primary", href: "/auth/login" }, "Sign in with Twitch")]);
+    return gate(CHANNEL === "nesszerra" ? "Sign in with the nesszerra account or a nesszerra moderator account to open mod controls." : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]);
   }
   const access = await api("/api/access/" + CHANNEL);
   S.access = access.ok ? access.data : null;
   if (!S.access?.canManage) {
     const why = S.access?.reason ? " (" + S.access.reason + ")" : access.ok ? "" : " (" + errorText(access) + ")";
-    return gate("Only nesszerra and current channel moderators can use mod controls" + why + ".", [h("a", { class: "btn", href: "/" }, "Back to your fighter")]);
+    return gate((CHANNEL === "nesszerra" ? "Only nesszerra and current channel moderators can use mod controls" : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) + why + ".", [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")]);
   }
   $("#gate").hidden = true; $("#app").hidden = false;
   $("#dev-link").hidden = $("#dev-open").hidden = !S.access.owner;
-  $("#owner-chat").hidden = !S.access.owner;
+  $("#owner-chat").hidden = !S.access.owner || CHANNEL !== "nesszerra";
+  $("#connect-chat").hidden = CHANNEL !== "nesszerra";   // other channels get chat through StreamElements only
   await Promise.all([load(), loadLeaderboard(), loadCustom()]);
   connectLive();
   mountUploads();
@@ -110,7 +113,7 @@ $("#toggle-duels").addEventListener("click", (e) => {
 });
 $("#reset-health").addEventListener("click", (e) => act("resetHealth", undefined, { button: e.currentTarget, done: "Everyone in the arena is back to full health." }));
 $("#reset-round").addEventListener("click", (e) => act("resetRound", undefined, { button: e.currentTarget, confirmText: "Cancel every open duel without scoring and set the round counter to 0?", done: "Open duels cancelled; rounds restart at 1." }));
-$("#reset-all-ranks").addEventListener("click", (e) => act("resetAllRanks", undefined, { button: e.currentTarget, confirmText: "Reset Elo, wins and losses for every saved profile on nesszerra? This can't be undone.", done: "All ranks reset." }));
+$("#reset-all-ranks").addEventListener("click", (e) => act("resetAllRanks", undefined, { button: e.currentTarget, confirmText: "Reset Elo, wins and losses for every saved profile on " + CHANNEL + "? This can't be undone.", done: "All ranks reset." }));
 $("#reset-all").addEventListener("click", (e) => act("resetAll", undefined, { button: e.currentTarget, confirmText: "Remove every character from the arena and cancel all duels? Saved profiles and ranks stay.", done: "Arena cleared." }));
 
 // ---------- rendering ----------

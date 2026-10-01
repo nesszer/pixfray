@@ -5,13 +5,13 @@
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/">Mini Chat</a>
-  <nav aria-label="Pages"><a href="/">Your fighter</a><a href="/admin/" aria-current="page">Mod controls</a><a href="/admin/dev/" id="dev-link" hidden>Live-fix space</a></nav>
+  <a class="brand" href="/" data-keep-channel>Mini Chat</a>
+  <nav aria-label="Pages"><a href="/" data-keep-channel>Your fighter</a><a href="/admin/" aria-current="page" data-keep-channel>Mod controls</a><a href="/admin/dev/" id="dev-link" hidden>Live-fix space</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 <main class="page">
   <header class="page-header">
-    <h1>Duel controls for nesszerra</h1>
+    <h1 data-channel>Duel controls for nesszerra</h1>
     <p class="subtitle">For the broadcaster and channel moderators. Changes apply to every OBS overlay right away.</p>
     <p class="meta" id="meta"></p>
   </header>
@@ -124,7 +124,7 @@
           </ul>
         </li>
         <li><strong>If a command with that name already exists</strong> (StreamElements says the name is taken): find it in the Custom commands list, click its edit (pencil) button, select everything in Reply, delete it, paste the copied reply, and click Save. Default commands can't be edited; turn them off or pick another name here.</li>
-        <li><strong>Click Use StreamElements</strong> below once all 7 are added.</li>
+        <li><strong>Click Use StreamElements</strong> below once all 3 are added.</li>
         <li><strong>Test it:</strong> type <code>!decline</code> in your chat. The bot should answer "you have no pending challenge". If it says "wrong key", copy the reply again.</li>
       </ol>
       <p class="caveat small">Add commands in the dashboard, not with <code>!command add</code> in chat: the reply contains the key, and chat would show it to every viewer.</p>

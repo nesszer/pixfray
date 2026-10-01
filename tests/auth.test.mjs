@@ -47,10 +47,31 @@ test('profile identity is derived from session, ignoring forged user IDs', async
   const saved = await r.json(); assert.equal(saved.userId, '2'); assert.equal(saved.username, 'viewer');
   assert.equal(f.forwarded.at(-1).options.headers.get('X-Mini-Internal'), f.env.INTERNAL_SECRET);
 });
-test('production is inaccessible before broadcaster onboarding', async () => {
+test('channels that are not enabled stay inaccessible', async () => {
   const f = environment(), cookie = await signedIn(f, true);
-  const r = await worker.fetch(req('/api/state/miolafff', 'GET', undefined, cookie), f.env);
+  const r = await worker.fetch(req('/api/state/somechannel', 'GET', undefined, cookie), f.env);
   assert.equal(r.status, 403); assert.equal(f.forwarded.length, 0);
+  assert.equal((await worker.fetch(req('/auth/login?channel=somechannel'), f.env)).status, 403);
+});
+test('miolafff: the broadcaster manages their own channel, through StreamElements only', async () => {
+  const f = environment(), cookie = '3'.repeat(64);
+  f.entries.set('owner:nesszerra', { id: '1' });
+  f.entries.set('session:' + await digest(cookie), { user: { id: '7', login: 'miolafff', displayName: 'miolafff' } });
+  const s = 'mini_session=' + cookie;
+  assert.deepEqual(await (await worker.fetch(req('/api/access/miolafff', 'GET', undefined, s), f.env)).json(), { owner: false, broadcaster: true, moderator: false, canManage: true });
+  assert.equal((await worker.fetch(req('/api/state/miolafff'), f.env)).status, 200);
+  assert.equal((await worker.fetch(req('/api/admin/miolafff', 'POST', { action: 'resetAllRanks' }, s), f.env)).status, 200);
+  assert.equal((await worker.fetch(req('/api/admin/miolafff', 'POST', { action: 'connectChat' }, s), f.env)).status, 400, 'no EventSub for other channels');
+  // miolafff's account has no say over nesszerra, and a viewer has none over miolafff
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'resetAllRanks' }, s), f.env)).status, 403);
+  const viewer = await signedIn(f);
+  assert.equal((await worker.fetch(req('/api/admin/miolafff', 'POST', { action: 'resetAllRanks' }, viewer), f.env)).status, 403);
+  // sign-in comes back to the channel's page; broadcaster chat authorization stays nesszerra-only
+  const login = await worker.fetch(req('/auth/login?channel=miolafff&next=/admin/'), f.env);
+  assert.equal(login.status, 302);
+  const nonce = new URL(login.headers.get('Location')).searchParams.get('state');
+  assert.deepEqual(f.entries.get('oauth:' + nonce), { channel: 'miolafff', connect: false, next: '/admin/' });
+  assert.equal((await worker.fetch(req('/auth/login?channel=miolafff&connect=1'), f.env)).status, 403);
 });
 test('a viewer cannot grant themselves mod or developer permissions', async () => {
   const f = environment(), cookie = await signedIn(f);

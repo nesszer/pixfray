@@ -128,7 +128,7 @@ test('eventsub: the secret is derived from AUTH_SECRET; signed notifications rea
   assert.equal(sent.body.event.message.text, '!strike');
   // a disabled channel is accepted (204) but never routed
   const before = f.forwarded.length;
-  assert.equal((await eventsub(f, chatBody('miolafff'))).status, 204);
+  assert.equal((await eventsub(f, chatBody('somechannel'))).status, 204);
   assert.equal(f.forwarded.length, before);
 });
 
@@ -309,9 +309,9 @@ test('local test mode marks chat connected without Twitch only for a loopback cf
   assert.equal((await worker.fetch(local('/api/admin/nesszerra', { action: 'connectChat' }), f.env)).status, 400);
 });
 
-test('unknown routes and the disabled production channel', async () => {
+test('unknown routes and channels that are not enabled', async () => {
   const f = environment();
   assert.equal((await worker.fetch(req('/api/nope'), f.env)).status, 404);
-  assert.equal((await worker.fetch(req('/api/leaderboard/miolafff'), f.env)).status, 403);
+  assert.equal((await worker.fetch(req('/api/leaderboard/somechannel'), f.env)).status, 403);
   assert.equal((await worker.fetch(req('/api/state/nesszerra', 'DELETE'), f.env)).status, 405);
 });

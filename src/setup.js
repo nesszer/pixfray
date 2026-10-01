@@ -1,4 +1,6 @@
 const channel = document.querySelector("#channel");
+import { CHANNEL } from "./ui.js";
+channel.value = CHANNEL;   // ?channel= from the page URL
 const size = document.querySelector("#size");
 const cap = document.querySelector("#cap");
 function update() {

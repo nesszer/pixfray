@@ -1,5 +1,22 @@
 // Shared helpers for the viewer dashboard and the admin page (Lane B). No framework.
-export const CHANNEL = "nesszerra";
+// ?channel=<login> picks the channel; nesszerra by default. The Worker rejects channels that are not enabled.
+export const CHANNEL = (() => { const c = (new URLSearchParams(location.search).get("channel") || "").toLowerCase(); return /^[a-z0-9_]{1,25}$/.test(c) ? c : "nesszerra"; })();
+// A same-site link that keeps the current channel.
+export const withChannel = (path) => CHANNEL === "nesszerra" ? path : path + (path.includes("?") ? "&" : "?") + "channel=" + CHANNEL;
+// Twitch sign-in that comes back to this channel (next is "/" or "/admin/").
+export const loginHref = (next = "/") => CHANNEL === "nesszerra" && next === "/" ? "/auth/login" : "/auth/login?" + new URLSearchParams({ channel: CHANNEL, next });
+// Put the channel name into the page: elements marked data-channel get "nesszerra" replaced, and links in nav keep the channel.
+export function applyChannel() {
+  if (CHANNEL === "nesszerra") return;
+  document.title = document.title.replace(/nesszerra/g, CHANNEL);
+  for (const el of document.querySelectorAll("[data-channel]")) {
+    if (el.tagName === "INPUT") el.value = CHANNEL;
+    else if (el.tagName === "META") el.content = el.content.replace(/nesszerra/g, CHANNEL);
+    else el.textContent = el.textContent.replace(/nesszerra/g, CHANNEL);
+  }
+  for (const a of document.querySelectorAll("a[data-keep-channel]")) a.setAttribute("href", withChannel(a.getAttribute("href")));
+  for (const a of document.querySelectorAll("a[data-login]")) a.setAttribute("href", loginHref(a.dataset.login));
+}
 export const DEFAULT_COLOR = "#a78bfa";
 export const DEFAULT_ABILITIES = { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } };
 export const ABILITY_NAMES = { strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
@@ -60,7 +77,7 @@ export function renderWho(container, session, onSignOut) {
   } else if (session && session.configured === false) {
     container.append(h("span", {}, "Twitch sign-in is not configured on this server yet"));
   } else {
-    container.append(h("a", { class: "btn btn-primary", href: "/auth/login" }, "Sign in with Twitch"));
+    container.append(h("a", { class: "btn btn-primary", href: loginHref(location.pathname.startsWith("/admin") ? "/admin/" : "/") }, "Sign in with Twitch"));
   }
 }
 export async function signOut() {
