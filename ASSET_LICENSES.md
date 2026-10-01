@@ -83,3 +83,8 @@ They are not bundled and need a row here when they are added.
 
 The site's look takes cues from Hearthstone's dark tavern pages, but uses no Blizzard artwork, logos
 or fonts.
+
+## Site icon
+
+- Files: `public/favicon.svg`, `public/favicon.ico`, `public/apple-touch-icon.png`
+- A five-pip die face drawn for this project (no third-party artwork), same license as the code.
