@@ -51,6 +51,10 @@ async function start() {
   const sprites = new Map();
   const profilesById = new Map();
   const meetPoints = new Map();
+  // A quick duel is over on the server before the overlay sees it, so the overlay replays it from its events:
+  // duel id -> an active duel whose hp follows the duel_action events until duel_completed.
+  const replays = new Map();
+  const KO_HOLD_MS = 2500;   // how long the loser stays down after a replayed knockout
   let width = 1, height = 1, connectionState = demo ? 'demo' : 'connecting';
   let arenaChat = null, arenaTransport = arenaDemo ? 'demo' : 'connecting', arenaConfig = { maxHp: 100 };
   let arenaRevision = null, arenaDuels = [], arenaClient = null, arenaTimer = null, arenaPaused = false;
@@ -151,7 +155,8 @@ async function start() {
     const profile = profilesById.get(String(id));
     return String(profile?.displayName || profile?.username || 'Player').slice(0, 24);
   };
-  function openDuels() { return arenaDuels.filter(duel => OPEN.has(duel?.status)); }
+  function openDuels() { return [...replays.values(), ...arenaDuels.filter(duel => OPEN.has(duel?.status) && !replays.has(duel.id))]; }
+  const inReplay = p => [...replays.values()].some(d => String(d.a) === p.userId || String(d.b) === p.userId);
   function findPlayer(userId) {
     if (userId === null || userId === undefined || userId === '') return null;
     for (const p of players.values()) if (p.userId === String(userId)) return p;
@@ -214,10 +219,11 @@ async function start() {
     for (const p of players.values()) {
       applyArenaProfile(p);
       const respawnAt = Number(p.arenaProfile?.respawnAt) || 0;
+      if (inReplay(p) || p.koHoldUntil > now) continue;
       if (respawnAt > now && !(p.koUntil > now)) p.koStart = now;
       p.koUntil = respawnAt > now ? respawnAt : 0;
     }
-    for (const id of meetPoints.keys()) if (!arenaDuels.some(duel => duel.id === id && duel.status === 'active')) meetPoints.delete(id);
+    for (const id of meetPoints.keys()) if (!replays.has(id) && !arenaDuels.some(duel => duel.id === id && duel.status === 'active')) meetPoints.delete(id);
     updateStatus();
   }
   function announceArena(text, color = '#fde68a') {
@@ -259,9 +265,16 @@ async function start() {
         announceArena('Challenge to ' + nameOf(event.b) + ' expired', '#e2e8f0');
         break;
       case 'duel_started':
+        if (event.duelId && event.a && event.b) {
+          replays.set(event.duelId, { id: event.duelId, a: String(event.a), b: String(event.b), status: 'active', hp: { ...(event.hp || {}) }, rules: { maxHp: Number(arenaConfig?.maxHp) || 100 } });
+          for (const id of [event.a, event.b]) { const f = findPlayer(String(id)); if (f && !(f.koHoldUntil > now)) f.koUntil = 0; }   // state may already show the KO
+          setTimeout(() => replays.delete(event.duelId), 15000);   // safety net if duel_completed never arrives
+        }
         announceArena('Round ' + event.round + ': ' + nameOf(event.a) + ' vs ' + nameOf(event.b));
         break;
       case 'duel_action': {
+        const replay = replays.get(event.duelId);
+        if (replay && event.hp && typeof event.hp === 'object') replay.hp = { ...event.hp };
         const actor = findPlayer(event.userId), target = findPlayer(event.targetId);
         if (event.ability === 'heal') {
           if (actor) actor.anim = { kind: 'heal', start: now, until: now + 900 };
@@ -278,7 +291,8 @@ async function start() {
       }
       case 'duel_completed': {
         const winner = findPlayer(event.winnerId), loser = findPlayer(event.loserId);
-        if (loser) { loser.koUntil = Number(event.respawnAt) || now + 3000; loser.koStart = now; }
+        replays.delete(event.duelId); meetPoints.delete(event.duelId);
+        if (loser) { loser.koUntil = Math.max(Number(event.respawnAt) || 0, now + KO_HOLD_MS); loser.koHoldUntil = loser.koUntil; loser.koStart = now; }
         if (winner) { winner.anim = { kind: 'cheer', start: now, until: now + 1400 }; hop(winner, 220); }
         burst(loser, '#fbbf24', 18, false);
         const delta = event.ratings?.[event.winnerId]?.delta;
@@ -290,7 +304,8 @@ async function start() {
         break;
       case 'player_respawned': {
         const p = findPlayer(event.userId);
-        if (p) { p.koUntil = 0; p.anim = { kind: 'respawn', start: now, until: now + 700 }; burst(p, '#bfdbfe', 10, true); }
+        if (p && p.koHoldUntil > now) setTimeout(() => handleArenaEvent({ ...event, at: undefined }), p.koHoldUntil - now + 20);   // stand up after the replayed KO
+        else if (p) { p.koUntil = 0; p.anim = { kind: 'respawn', start: now, until: now + 700 }; burst(p, '#bfdbfe', 10, true); }
         break;
       }
       case 'chat_disconnected':
@@ -656,6 +671,7 @@ async function start() {
       chat: arenaChat,
       profiles: profilesById.size,
       duels: arenaDuels,
+      replays: [...replays.values()],
       players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo,
         x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '' })),
       announcement: announcement && Date.now() < announcement.until ? announcement.text : '',

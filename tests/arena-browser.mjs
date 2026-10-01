@@ -179,6 +179,44 @@ try {
   assert.deepEqual(errors, []);
   await page.close();
 
+  // A quick duel is finished on the server before the overlay hears of it: the overlay replays it with HP bars
+  // and knocks the loser out only after the finisher.
+  const quick = await context.newPage();
+  quick.on('pageerror', error => errors.push(error.message));
+  await quick.route('**/api/state/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...initial, duels: [] }) }));
+  await quick.route('**/api/catalog/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  await quick.goto(base + '/overlay.html?arena=1&debug=1&cap=8&size=64');
+  await quick.waitForFunction(() => window.__arenaSockets.length === 1 && window.__arenaDebug?.().profiles === 2);
+  await quick.evaluate(() => {
+    const now = Date.now(), full = { '101': 100, '202': 100 };
+    window.__sendArena(0, {
+      type: 'snapshot', channel: 'nesszerra', revision: 5, paused: false,
+      chat: { connected: true, lastSeen: now, status: 'enabled' }, config: { maxHp: 100 },
+      players: [
+        { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', hp: 0, respawnAt: now + 3000, elo: 1708, wins: 8, losses: 3, registered: true },
+        { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', hp: 100, respawnAt: 0, elo: 1702, wins: 8, losses: 3, registered: true },
+      ],
+      duels: [{ id: 'duel-9', a: '101', b: '202', hp: { '101': 0, '202': 100 }, status: 'completed', winnerId: '202', round: 1, rules: { maxHp: 100 } }],
+      events: [
+        { id: 'q1', type: 'duel_started', at: now, duelId: 'duel-9', a: '101', b: '202', round: 1, hp: full },
+        { id: 'q2', type: 'duel_action', at: now, duelId: 'duel-9', userId: '101', targetId: '202', ability: 'strike', amount: 0, hp: full, miss: true, die: 3 },
+        { id: 'q3', type: 'duel_action', at: now, duelId: 'duel-9', userId: '202', targetId: '101', ability: 'heavy', amount: 100, hp: { '101': 0, '202': 100 }, finisher: true, counter: true, die: 2 },
+        { id: 'q4', type: 'duel_completed', at: now, duelId: 'duel-9', winnerId: '202', loserId: '101', round: 1, respawnAt: now + 3000, ratings: { '202': { delta: 12 }, '101': { delta: -12 } } },
+      ],
+    });
+  });
+  let q = await quick.evaluate(() => window.__arenaDebug());
+  assert.equal(q.replays[0]?.hp['101'], 100, 'replay starts at full health');
+  assert.equal(q.players.find(p => p.userId === '101').ko, false, 'loser stands until the finisher');
+  await quick.waitForTimeout(500);
+  await quick.screenshot({ path: 'screenshots/overlay-quick-duel-1280.png' });
+  await quick.waitForFunction(() => window.__arenaDebug().replays[0]?.hp['101'] === 0, null, { timeout: 4000 });
+  await quick.waitForFunction(() => window.__arenaDebug().replays.length === 0 && window.__arenaDebug().players.find(p => p.userId === '101').ko, null, { timeout: 4000 });
+  await quick.screenshot({ path: 'screenshots/overlay-quick-ko-1280.png' });
+  await quick.waitForTimeout(1500);
+  assert.equal((await quick.evaluate(() => window.__arenaDebug())).players.find(p => p.userId === '101').ko, true, 'KO is held after the replay');
+  await quick.close();
+
   const demoPage = await context.newPage();
   demoPage.on('pageerror', error => errors.push(error.message));
   const demoApiReads = [];
