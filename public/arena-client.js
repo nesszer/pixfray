@@ -109,7 +109,7 @@ export function createArenaClient({
     try { payload = JSON.parse(data); } catch { return; }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
 
-    const hasSnapshotFields = ['players', 'duels', 'relay', 'config', 'events', 'snapshot', 'state']
+    const hasSnapshotFields = ['players', 'duels', 'chat', 'config', 'events', 'snapshot', 'state']
       .some(key => Object.prototype.hasOwnProperty.call(payload, key));
     if (payload.type === 'event' || payload.event || (!hasSnapshotFields && payload.type && payload.type !== 'snapshot')) {
       const event = payload.event && typeof payload.event === 'object' ? payload.event : payload;
@@ -117,16 +117,16 @@ export function createArenaClient({
       if (eventRevision !== null && revision !== null && eventRevision < revision) return;
       if (eventRevision !== null) revision = Math.max(revision ?? 0, eventRevision);
       if (rememberEvent(event)) onEvent(event);
-      status('connected', { revision, relay: payload.relay });
+      status('connected', { revision, chat: payload.chat });
       return;
     }
 
     receiveSnapshot(payload, 'websocket');
     const snapshot = snapshotFrom(payload);
-    if (snapshot) status(snapshot.relay?.connected === false ? 'degraded' : 'connected', {
+    if (snapshot) status(snapshot.chat?.connected === false ? 'degraded' : 'connected', {
       revision,
-      relay: snapshot.relay,
-      lastSeen: snapshot.relay?.lastSeen,
+      chat: snapshot.chat,
+      lastSeen: snapshot.chat?.lastSeen,
     });
   }
 

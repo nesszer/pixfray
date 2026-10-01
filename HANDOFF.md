@@ -13,6 +13,10 @@ Test target: `cf build/deploy --mode test` → Worker `nesszerra-mini-chat-test`
 - Only the `nesszerra` channel is enabled. `miolafff` (production) stays disabled until its owner
   authorizes it.
 - Stay on Cloudflare Free: 100k Worker requests/day, SQLite-backed Durable Objects only.
+  Budget: each chat message in nesszerra's chat is 1 Worker request (the EventSub webhook) plus
+  1 Durable Object request, whether or not it is a command. Free allows 100k Worker requests a
+  day, shared with page loads, overlay polling and API calls, so heavy chat days need watching on
+  `/admin/dev` (request usage).
 - Use free, licensed assets only (CC0 preferred). Record each source in `ASSET_LICENSES.md`.
 - Ignore the `cf build` Docker error ("failed to connect to the docker API"); it's harmless.
 - Plain scripted HTTP requests to the domain get Cloudflare error 1010. Test with a browser or Playwright.
@@ -32,43 +36,48 @@ the setup section of `index.html`, and `tests/smoke.mjs`. The v1 smoke test stil
 
 | Area | Files | Local status |
 |---|---|---|
-| Backend core | `server/worker.js`, `channel.js`, `auth.js`, `game.js`, `cloudflare.config.ts` | `npx cf build` passes; 123 unit tests pass |
+| Backend core | `server/worker.js`, `channel.js`, `auth.js`, `game.js`, `eventsub.js`, `cloudflare.config.ts` | `npx cf build` and `npx cf build --mode test` pass; 122 unit tests pass |
 | Viewer + admin UI | `index.html`, `admin/index.html`, `src/`, `public/dashboard.css` | `tests/ui.mjs` passes at 1280/390; design check has 0 FAIL |
 | Overlay arena | `public/overlay.js` (`arena=1`), `public/arena-client.js` | `tests/arena-browser.mjs` and the live E2E pass |
-| Relay | `relay/index.mjs`, `relay/lib/*`, `relay/obs/mini-chat-relay.lua` | Relay unit and integration tests pass against local fakes |
+| Chat (EventSub webhook) | `server/eventsub.js`, the chat steps in `server/channel.js` | Signed-webhook unit tests and the local E2E pass; not yet run against real Twitch |
 | Content + uploads | 15 characters, `server/uploads.js`, `public/upload.js`, `docs/CHARACTER_RESERVE.md` | Upload tests and `tests/upload-workerd.mjs` pass |
 | Live-fix | `server/developer.js`, `admin/dev/`, `public/dev.js`, `scripts/release.mjs`, `.github/` | `tests/dev-ui.mjs` and dev API tests pass with mocked GitHub/Cloudflare |
 
 Run it all with `npm run test:all` (see `VALIDATION_V2.md` for the exact commands and the spec
-audit). The local E2E (`tests/e2e-local.mjs`) runs against `npx cf dev`. It pairs a real relay
-socket and plays out these steps:
+audit). The local E2E (`tests/e2e-local.mjs`) runs against `npx cf dev` started with
+`MINI_LOCAL_TEST=1`. It connects chat (a local subscription, no Twitch call), sends chat as signed
+EventSub webhooks, and plays out these steps:
 
 1. Two viewers appear in the arena.
 2. `!challenge` / `!accept`, then attacks with cooldowns, until a KO.
 3. Elo 1012/988 and the leaderboard update.
 4. The rematch delay, the sign-in requirement, the busy player check and the inactivity cancel.
-5. A relay drop pauses combat and cancels the duel unscored.
+5. Replayed, badly signed and stale webhooks change nothing.
+6. Disconnect chat pauses combat and cancels the duel unscored; a revocation pauses it again.
 
 Screenshots are in `screenshots/e2e-*.png`.
 
 ### Known bugs and gaps
 
-1. Not verified with real Twitch: sign-in (OAuth), the Helix moderator check, and the relay's
-   EventSub chat. There is no Twitch app yet, and local `.dev.vars` has no Twitch client, so
-   `/api/session` reports `configured:false`. Local runs use seeded test sessions
-   (`tests/seed-local.mjs`).
+1. Not verified with real Twitch: sign-in (OAuth), the Helix moderator check, the app token, and
+   the EventSub webhook (subscription create, callback verification, real chat delivery). There is
+   no Twitch app yet, and local `.dev.vars` has no Twitch client, so `/api/session` reports
+   `configured:false`. Local runs use seeded test sessions (`tests/seed-local.mjs`). A real
+   subscription needs the deployed https site; Twitch cannot call localhost.
 2. Live-fix GitHub/Cloudflare flow (save → test deploy → promote → hotfix → rollback) is only
    tested against mocked APIs. It needs the GitHub repo plus `GITHUB_TOKEN`, `GITHUB_REPO`,
    `CF_API_TOKEN` and `CF_ACCOUNT_ID` set as Worker secrets (docs/LIVE_FIX.md).
-3. The OBS start/stop hook (`relay/obs/mini-chat-relay.lua`) was not run in OBS. The relay's
-   "stop when the watched process exits" path is tested with a stand-in process.
+3. Twitch sends chat to the webhook only after nesszerra grants `user:read:chat`, `user:bot` and
+   `channel:bot` (sign in at `/auth/login?connect=1`). Until then Connect chat answers 403 with a
+   Reconnect Twitch link.
 4. Acceptance stages 1–4 below (OBS scene, real chat, restarts and rollback, rehearsal) have not
    been run.
 5. No GitHub repo exists yet and nothing is committed.
 6. `tests/smoke.mjs` joins the real #nesszerra IRC anonymously and rewrites the tracked
    `setup-preview.png` and `overlay-preview.png`.
-7. The bundled relay throttles `presence` to one per viewer per 30 s. A viewer who only chats
-   (no commands) can take up to 30 s to reappear after the 10 min idle timeout.
+7. The room refreshes a chat-only viewer's presence at most once per 30 s, so such a viewer can
+   take up to 30 s to reappear after the 10 min idle timeout. Every message still costs a Worker
+   and a DO request (see the budget note above).
 8. With `debug=1` at 390 px, the overlay's debug status line covers the top announcement. This
    only affects debug mode.
 9. During this pass, another `npx vite` dev server of this project (pid 6560) was holding port
@@ -80,7 +89,9 @@ Fixed in this pass:
   overlay never connected (it fell back to polling).
 - `resetAll` didn't clear players or rematch locks, even though the contract and the admin UI
   say it does.
-- The relay ack now carries `retryAt` for cooldowns.
+- The local relay was replaced by a Twitch EventSub webhook to the Worker, so chat runs only on
+  Cloudflare. Rejected commands are logged as `command_rejected` events (with `retryAt` for
+  cooldowns), since Twitch gets no reply.
 - Config history records `actorName` (admin and live-fix).
 - The uploader's layout was squeezed inside the admin `.controls` grid.
 - A gradient checkerboard failed the design check.
@@ -114,7 +125,8 @@ Fixed in this pass:
 - Completed duels update wins/losses and Elo (start 1000, K=24). Rematches between the same pair wait 30 s.
 - 60 s of inactivity cancels a duel with no scoring.
 - Ranked duels require a signed-in profile.
-- If the relay drops, combat pauses and unfinished duels are cancelled without scoring.
+- If chat is disconnected or Twitch revokes the subscription, combat pauses and unfinished duels
+  are cancelled without scoring.
 
 ### Balance preset (approved, editable by mods)
 
@@ -146,20 +158,27 @@ Fixed in this pass:
 - Validate the limits on the server as well as in the browser.
 
 ### Live-fix space (`/admin/dev`)
-- Live settings editor, error logs and diagnostics (relay status, request usage, DO errors).
+- Live settings editor, error logs and diagnostics (chat status, request usage, DO errors).
 - Code editor, restricted to the `nesszerra` account (`isOwner`):
   - GitHub-backed flow: save → deploy test version (`test.chat.miolaf.xyz`) → check in OBS → promote.
   - Immediate hotfix path.
   - Rollback to the previous version.
   - Codex assists only when the owner explicitly authorizes it.
 
-### Local relay (`relay/`)
-- Windows Node app on the OBS PC that starts and stops with OBS.
-- Reads chat through Twitch EventSub WebSocket (`user:read:chat`) and forwards game commands to
-  the Worker over one WebSocket. This keeps request usage within Cloudflare Free.
-- Twitch tokens stay local, encrypted with DPAPI (`dpapi.ps1`).
-- Pairing: the owner generates a one-time code on the site (`/api/relay/code`), and the relay
-  exchanges it (`/api/relay/pair`) for a 90-day credential that can be revoked (`/api/relay/revoke`).
+### Chat source (Cloudflare only)
+- Twitch EventSub `channel.chat.message` delivered by webhook to `POST /api/eventsub`. Nothing
+  runs on the OBS PC.
+- The owner or a mod clicks Connect chat on `/admin/`. The Worker keeps exactly one subscription
+  (app token, cached sealed) and deletes stale ones. The room re-checks it hourly (every 3 min
+  while Twitch is still verifying the webhook, so a failed verification shows up on `/admin/`).
+- One site at a time: both sites share one Twitch app and Twitch allows one chat subscription per
+  channel, so Connect chat on the second site answers 409 "Chat is connected to <origin>" and
+  offers to move it (`takeover:true` deletes the other site's subscription). Use a second Twitch
+  app for the test site if both must receive chat at once.
+- The Worker forwards only the event fields the room reads, so emote-heavy messages stay small;
+  a room 4xx is acknowledged (204) so one bad message can't trigger Twitch retries and revocation.
+- Requests are HMAC-verified with a secret derived from `AUTH_SECRET`, limited to 64 KB, must be
+  at most 10 min old, and are deduplicated (CONTRACTS.md section 4).
 
 ## Prerequisites (owner does these)
 
@@ -168,7 +187,8 @@ Fixed in this pass:
 2. Set Worker secrets `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET` and `INTERNAL_SECRET`
    (`scripts/configure-twitch.ps1`).
 3. Create the GitHub repo under `Finesssee`.
-4. Sign in once as nesszerra with `connect=1` to store the broadcaster token for mod checks.
+4. Deploy, sign in once as nesszerra at `/auth/login?connect=1` (stores the broadcaster token for
+   mod checks and grants the chat scopes), then click Connect chat on `/admin/` (TWITCH_SETUP.md).
 
 ## Suggested workstreams
 
@@ -177,9 +197,9 @@ Lock those two first, then run the lanes in parallel.
 
 | Lane | Scope | Done when |
 |---|---|---|
-| A. Backend core | Add `developer.js`, Twitch bindings, atomic pairing; unit-test `game.js` against the spec above; get `cf build` and `cf dev` running | Build is green, reducer tests cover every combat rule, auth tests pass |
+| A. Backend core | Add `developer.js`, Twitch bindings, the EventSub webhook; unit-test `game.js` against the spec above; get `cf build` and `cf dev` running | Build is green, reducer tests cover every combat rule, auth tests pass |
 | B. Viewer + admin UI | `/` dashboard, `/admin` controls and versioned editor, following `~/.claude/design/design.md` | Pages work at 1280 px and 390 px, `design.py check` has no FAILs |
-| C. Relay | Entry script, EventSub client, pairing CLI, OBS start/stop hook, reconnect with backoff | Relay pairs, forwards commands, and combat pauses when it's killed |
+| C. Chat | EventSub webhook, Connect/Disconnect chat, hourly Helix check | Signed chat drives duels; disconnect and revocation pause combat |
 | D. Content + uploads | Source 5–10 launch characters and a 30+ reserve, update `characters.json` and `ASSET_LICENSES.md`, browser atlas packer + server validation | 10–15 characters render, uploads enforce every limit |
 | E. Live-fix + deploy | `/admin/dev` logs/diagnostics, GitHub save → test deploy → promote → rollback, owner-only gate | A change goes test → promote → rollback end to end |
 | F. Acceptance | Runs after A–E | All four stages below pass |
@@ -188,5 +208,5 @@ Acceptance order:
 1. Simulated fights and uploads in the local OBS scene (OBS WebSocket 5.x on port 4455;
    helper scripts in `D:\code\2026-10-01\i-ne\work\obs-*.mjs`). Restore the user's "Scene 2" afterwards.
 2. Real chat commands on the nesszerra channel.
-3. Relay reconnects, rank persistence across restarts, and rollback.
+3. Chat reconnects after a revocation, rank persistence across restarts, and rollback.
 4. Private rehearsal with the owner and mods.

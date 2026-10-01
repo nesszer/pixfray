@@ -1,9 +1,12 @@
 import { ChannelRoom } from './channel.js';
-import { AuthStore,randomToken,digest,record,consume,session,isOwner,configured,handleAuth,access } from './auth.js';
+import { AuthStore,record,session,isOwner,configured,handleAuth,access } from './auth.js';
 import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
+import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './eventsub.js';
+import { handleStreamElements,seCommandLines,SE_SUBSCRIPTION_ID } from './streamelements.js';
 export {ChannelRoom,AuthStore};
-const enabledChannel=channel=>channel==='nesszerra';
+const CHANNELS=['nesszerra'];
+const enabledChannel=channel=>CHANNELS.includes(channel);
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
 // Raw call into a ChannelRoom. Adds the internal secret and channel binding; the caller owns method/body.
 function roomFetch(request,env,channel,path,init={}){
@@ -27,54 +30,54 @@ async function bodyJson(request,limit=2200000){
   if(!value||typeof value!=='object'||Array.isArray(value))throw Object.assign(new Error('JSON object required'),{status:400});
   return value;
 }
+// Chat source lifecycle (owner or mod via /api/admin, owner via /api/dev). The room only records the outcome.
+async function chatAction(env,url,channel,action,{takeover=false}={}){
+  const room=(path,body)=>roomFetch(null,env,channel,path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
+  const current=await (await room('/chat')).json();
+  if(action==='useStreamElements'){
+    if(current.subscriptionId&&current.subscriptionId!==SE_SUBSCRIPTION_ID)await disconnectChat(env,{subscriptionId:current.subscriptionId,url});
+    return room('/chat',{action:'connected',subscriptionId:SE_SUBSCRIPTION_ID,status:'enabled',createdAt:Date.now()});
+  }
+  if(action==='disconnectChat'){
+    await disconnectChat(env,{subscriptionId:current.subscriptionId,url});
+    return room('/chat',{action:'disconnected',reason:'disconnected'});
+  }
+  const broadcasterId=env.OWNER_TWITCH_ID||(await record(env,'owner:'+channel))?.id||'';
+  const sub=await connectChat(env,{broadcasterId,origin:env.PUBLIC_ORIGIN||url.origin,url,takeover});
+  return room('/chat',{action:'connected',...sub});
+}
+// Admin-only view of the StreamElements setup: the key and the paste-ready command replies.
+function seView(env,url,channel,se){
+  if(!se?.secret)return null;
+  return {key:se.secret,names:se.names,commands:seCommandLines(env.PUBLIC_ORIGIN||url.origin,channel,se.secret,se.names)};
+}
 async function staticCatalog(env,url){const r=await env.ASSETS.fetch(new Request(url.origin+'/assets/characters.json'));return r.ok?await r.json():[];}
 export default {async fetch(request,env,ctx){
   let path='';
   try{
     const url=new URL(request.url), mutating=!['GET','HEAD','OPTIONS'].includes(request.method);path=url.pathname;
-    if(mutating&&path!=='/api/relay/pair'&&request.headers.get('Origin')!==url.origin)return json({error:'Same-origin request required'},403);
+    // Twitch EventSub posts here: no session and no Origin header; the HMAC signature authenticates it.
+    if(path===EVENTSUB_PATH){
+      if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
+      return await handleEventsub(request,env,{channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init)});
+    }
+    // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
+    if(path.startsWith('/api/se/')){
+      if(!env.INTERNAL_SECRET)return new Response('Mini Chat is not configured',{status:503});
+      return await handleStreamElements(request,env,{url,origin:env.PUBLIC_ORIGIN||url.origin,channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init)});
+    }
+    if(mutating&&request.headers.get('Origin')!==url.origin)return json({error:'Same-origin request required'},403);
     if(path.startsWith('/auth/'))return handleAuth(request,env);
     if(!path.startsWith('/api/'))return env.ASSETS.fetch(request);
     if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
     const s=await session(request,env),user=s?.user||null,owner=await isOwner(env,user);
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:['nesszerra'],productionEnabled:false});
     if(path==='/api/health')return json({ok:true,version:'0.2.0',twitchConfigured:configured(env),productionEnabled:false});
-    if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),waitUntil:p=>ctx?.waitUntil?.(p)});
-    if(path==='/api/relay/code'){
-      if(!owner)return json({error:'Owner only'},403);
-      if(request.method!=='POST')return json({error:'Use POST'},405);
-      const code=randomToken();await record(env,'pair:'+await digest(code),{channel:'nesszerra'},Date.now()+300000);
-      return json({code,channel:'nesszerra',expiresIn:300});
-    }
-    if(path==='/api/relay/pair'){
-      if(request.method!=='POST')return json({error:'Use POST'},405);
-      const {code}=await bodyJson(request,2000);
-      if(typeof code!=='string'||!/^[a-f0-9]{64}$/.test(code))return json({error:'Invalid pairing code'},400);
-      const hash=await digest(code),pair=await consume(env,'pair:'+hash);
-      if(!pair)return json({error:'Pairing code expired'},403);
-      const credential=randomToken(),credentialHash=await digest(credential),generation=randomToken();
-      await record(env,'relay:'+credentialHash,{channel:pair.channel,generation},Date.now()+90*86400000);
-      await record(env,'relay-generation:'+pair.channel,{generation},Date.now()+90*86400000);
-      return json({credential,channel:pair.channel,expiresIn:90*86400});
-    }
-    if(path==='/api/relay/revoke'){
-      if(!owner)return json({error:'Owner only'},403);
-      if(request.method!=='POST')return json({error:'Use POST'},405);
-      await record(env,'relay-generation:nesszerra',{generation:randomToken()},Date.now()+90*86400000);
-      return internal(request,env,'nesszerra','/admin',{actorId:user.id,action:'disconnectRelay'});
-    }
-    const match=path.match(/^\/api\/(state|live|profile|leaderboard|catalog|access|admin|assets|relay)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
+    if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
+    const match=path.match(/^\/api\/(state|live|profile|leaderboard|catalog|access|admin|assets)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
     if(!match)return json({error:'Not found'},404);
     const [,route,channel,id]=match;
     if(!enabledChannel(channel))return json({error:'miolafff onboarding awaits its owner authorization'},403);
-    if(route==='relay'){
-      if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return json({error:'WebSocket upgrade required'},426);
-      const credential=request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
-      if(!credential)return json({error:'Relay credential required'},401);
-      const r=await record(env,'relay:'+await digest(credential)),g=await record(env,'relay-generation:'+channel);
-      if(!r||r.channel!==channel||r.generation!==g?.generation)return json({error:'Relay credential invalid or revoked'},403);
-      return internal(request,env,channel,'/relay');
-    }
     if(route==='live'&&request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return json({error:'WebSocket upgrade required'},426);
     if(route==='access')return json(await access(env,user,channel));
     if(route==='assets')return await handleUploads(request,env,{user,owner,channel,id:id||'',url,bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
@@ -93,9 +96,16 @@ export default {async fetch(request,env,ctx){
       const roles=await access(env,user,channel);if(!roles.canManage)return json({error:roles.reason||'Moderator role required'},user?403:401);
       if(request.method==='GET'){
         const r=await internal(request,env,channel,'/admin');if(!r.ok)return r;
-        return json({...await r.json(),access:roles});
+        const data=await r.json();
+        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles});
       }
       const data=await bodyJson(request,12000);
+      if(data.action==='rotateSeKey'||data.action==='setSeNames'){
+        const r=await roomFetch(null,env,channel,'/se-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:data.action,names:data.names})});
+        const out=await r.json();if(!r.ok)return json(out,r.status);
+        return json({ok:true,streamelements:seView(env,url,channel,out.streamelements)});
+      }
+      if(data.action==='connectChat'||data.action==='disconnectChat'||data.action==='useStreamElements')return await chatAction(env,url,channel,data.action,{takeover:data.takeover===true});
       return internal(request,env,channel,'/admin',{...data,actorId:user.id,actorName:user.displayName||user.login});
     }
     if(request.method!=='GET')return json({error:'Method not allowed'},405);
@@ -106,6 +116,6 @@ export default {async fetch(request,env,ctx){
     return internal(request,env,channel,'/'+route);
   }catch(error){
     if(!error.status)ctx?.waitUntil?.(logWorkerError(env,error,{path}));
-    return json({error:error.status?error.message:'Service unavailable; check owner diagnostics'},error.status||503);
+    return json({error:error.status?error.message:'Service unavailable; check owner diagnostics',...(error.reconnect?{reconnect:error.reconnect}:{}),...(error.connectedElsewhere?{connectedElsewhere:error.connectedElsewhere}:{})},error.status||503);
   }
 }};

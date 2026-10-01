@@ -7,7 +7,6 @@ const DEFAULT_CONFIG = {
   respawnMs: 3_000,
   rematchDelayMs: 30_000,
   sharedCooldownMs: 1_000,
-  relayLeaseMs: 30_000,
   initialElo: 1_000,
   eloK: 24,
   abilities: {
@@ -84,6 +83,7 @@ function normalizeConfig(config) {
       merged.abilities[name][key] = Number.isInteger(candidate[key]) ? candidate[key] : value;
     }
   }
+  delete merged.relayLeaseMs;
   return merged;
 }
 
@@ -91,7 +91,8 @@ export function createInitialState(channel = "nesszerra") {
   return {
     channel: safeString(channel, 25).toLowerCase() || "nesszerra",
     revision: 0,
-    relay: { connected: false, socketConnected: false, lastSeen: 0, sessionId: "" },
+    // Chat source: one Twitch EventSub webhook subscription (channel.chat.message). lastSeen = last notification.
+    chat: { connected: false, lastSeen: 0, subscriptionId: "", status: "disconnected", createdAt: 0, revokedReason: "", checkedAt: 0, verifiedId: "" },
     config: clone(DEFAULT_CONFIG),
     configVersion: 1,
     round: 0,
@@ -201,14 +202,6 @@ function isTerminal(duel) {
 function expireState(state, now) {
   let changed = false;
   state.config = normalizeConfig(state.config);
-
-  if (state.relay.connected && now - state.relay.lastSeen > state.config.relayLeaseMs) {
-    state.relay.connected = false;
-    state.relay.socketConnected = false;
-    addEvent(state, "relay_stale", now);
-    for (const duel of openDuels(state)) cancelDuel(state, duel, now, "relay_disconnected");
-    changed = true;
-  }
 
   for (const duel of state.duels) {
     if (duel.status === "pending" && now >= duel.expiresAt) {
@@ -470,7 +463,6 @@ function validateConfigPatch(patch) {
     respawnMs: [0, 60_000],
     rematchDelayMs: [0, 600_000],
     sharedCooldownMs: [250, 60_000],
-    relayLeaseMs: [10_000, 120_000],
     initialElo: [0, 10_000],
     eloK: [1, 100],
   };
@@ -478,6 +470,8 @@ function validateConfigPatch(patch) {
     if (key === "enabled") {
       if (typeof patch.enabled !== "boolean") return { ok: false, reason: "invalid_config_enabled" };
       out.enabled = patch.enabled;
+    } else if (key === "relayLeaseMs") {
+      continue;   // removed with the relay; old history versions may still carry it, so rollbacks skip it
     } else if (ranges[key]) {
       const value = boundedInt(patch[key], ranges[key][0], ranges[key][1]);
       if (value === null) return { ok: false, reason: "invalid_config_" + key };
@@ -672,45 +666,42 @@ export function reduceGame(inputState, event, now = Date.now()) {
   const beforeRevision = state.revision;
   const didExpire = expireState(state, now);
 
-  if (event?.type === "relay_connected") {
-    const sessionId = safeString(event.sessionId, 100);
-    // A (re)connecting relay means the previous link dropped: unfinished duels are cancelled unscored.
-    for (const duel of openDuels(state)) cancelDuel(state, duel, now, "relay_disconnected");
-    state.relay.socketConnected = true;
-    state.relay.connected = false;
-    state.relay.sessionId = sessionId;
-    addEvent(state, "relay_connected", now);
-    result = { ok: true, reason: "relay_connected" };
-  } else if (event?.type === "relay_heartbeat") {
-    if (event.sessionId && state.relay.sessionId && event.sessionId !== state.relay.sessionId) {
-      result = { ok: false, reason: "stale_relay_session" };
-    } else if (event.twitchConnected !== true) {
-      state.relay.connected = false;
-      state.relay.lastSeen = now;
-      for (const duel of openDuels(state)) cancelDuel(state, duel, now, "twitch_disconnected");
-      addEvent(state, "twitch_disconnected", now);
-      result = { ok: true, reason: "twitch_disconnected" };
-    } else {
-      const wasConnected = state.relay.connected;
-      state.relay.connected = true;
-      state.relay.socketConnected = true;
-      state.relay.lastSeen = now;
-      // Routine heartbeats only refresh the lease; they persist state but add no event.
-      if (!wasConnected) addEvent(state, "twitch_connected", now);
-      else touched = true;
-      result = { ok: true, reason: wasConnected ? "heartbeat" : "twitch_connected" };
-    }
-  } else if (event?.type === "relay_offline") {
-    if (event.sessionId && state.relay.sessionId && event.sessionId !== state.relay.sessionId) {
-      result = { ok: false, reason: "stale_relay_session" };
-    } else {
-      state.relay.connected = false;
-      state.relay.socketConnected = false;
-      state.relay.lastSeen = now;
-      for (const duel of openDuels(state)) cancelDuel(state, duel, now, "relay_disconnected");
-      addEvent(state, "relay_disconnected", now);
-      result = { ok: true, reason: "relay_disconnected" };
-    }
+  if (event?.type === "chat_subscription") {
+    // A subscription was created or found. Chat counts as connected once Twitch reports it enabled
+    // (or once its webhook verification has already arrived; the two can race).
+    const subscriptionId = safeString(event.subscriptionId, 100);
+    const wasConnected = state.chat.connected;
+    let status = safeString(event.status, 64) || "pending";
+    if (subscriptionId && subscriptionId === state.chat.verifiedId) status = "enabled";
+    state.chat = { ...state.chat, subscriptionId, status, connected: status === "enabled", createdAt: Number.isFinite(event.createdAt) ? event.createdAt : now, revokedReason: "", checkedAt: now, verifiedId: "" };
+    if (state.chat.connected && !wasConnected) addEvent(state, "chat_connected", now);
+    else touched = true;
+    result = { ok: true, reason: state.chat.connected ? "chat_connected" : "chat_pending", status };
+  } else if (event?.type === "chat_verified") {
+    const subscriptionId = safeString(event.subscriptionId, 100);
+    if (!subscriptionId) result = { ok: false, reason: "invalid_event" };
+    else if (subscriptionId !== state.chat.subscriptionId) {
+      state.chat.verifiedId = subscriptionId;   // verification beat the create response
+      touched = true;
+      result = { ok: true, reason: "chat_verified_early" };
+    } else if (!state.chat.connected) {
+      state.chat = { ...state.chat, status: "enabled", connected: true, revokedReason: "" };
+      addEvent(state, "chat_connected", now);
+      result = { ok: true, reason: "chat_connected" };
+    } else result = { ok: true, reason: "no_change" };
+  } else if (event?.type === "chat_checked") {
+    state.chat.checkedAt = now;
+    touched = true;
+    result = { ok: true, reason: "chat_checked" };
+  } else if (event?.type === "chat_disconnected") {
+    const reason = safeString(event.reason, 64) || "disconnected";
+    for (const duel of openDuels(state)) cancelDuel(state, duel, now, "chat_disconnected");
+    state.chat = { ...state.chat, connected: false, status: reason === "disconnected" ? "disconnected" : reason, subscriptionId: "", revokedReason: reason === "disconnected" ? "" : reason, checkedAt: now, verifiedId: "" };
+    addEvent(state, "chat_disconnected", now, { reason });
+    result = { ok: true, reason: "chat_disconnected" };
+  } else if (event?.type === "command_rejected") {
+    addEvent(state, "command_rejected", now, { userId: normalizeUserId(event.userId), command: safeString(event.command, 16) || "other", reason: safeString(event.reason, 64), ...(Number(event.retryAt) > 0 ? { retryAt: Number(event.retryAt) } : {}) });
+    result = { ok: true, reason: "logged" };
   } else if (event?.type === "presence") {
     const userId = normalizeUserId(event.userId);
     const p = recentProfile(state, event.profile ? { ...event.profile, userId, username: event.username || event.profile.username, displayName: event.displayName || event.profile.displayName } : {
@@ -723,7 +714,7 @@ export function reduceGame(inputState, event, now = Date.now()) {
   } else if (event?.type === "command") {
     const dedupe = addRecent(state, event, now);
     if (!dedupe.ok) result = { ok: false, reason: dedupe.reason };
-    else if (!state.relay.connected || now - state.relay.lastSeen > state.config.relayLeaseMs) result = { ok: false, reason: "relay_offline" };
+    else if (!state.chat.connected) result = { ok: false, reason: "chat_offline" };
     else if (!Number.isFinite(event.timestamp) || now - event.timestamp > 60_000 || event.timestamp - now > 10_000) result = { ok: false, reason: "stale_command" };
     else {
       const userId = normalizeUserId(event.userId);
@@ -770,7 +761,8 @@ function normalizeState(input) {
   const state = { ...initial, ...(input && typeof input === "object" ? clone(input) : {}) };
   state.channel = safeString(state.channel, 25).toLowerCase() || "nesszerra";
   state.revision = Number.isInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
-  state.relay = { ...initial.relay, ...(state.relay && typeof state.relay === "object" ? state.relay : {}) };
+  state.chat = { ...initial.chat, ...(state.chat && typeof state.chat === "object" ? state.chat : {}) };
+  delete state.relay;
   state.config = normalizeConfig(state.config);
   state.players = Array.isArray(state.players) ? state.players.filter((p) => p && typeof p.userId === "string").slice(-MAX_ACTIVE_PLAYERS) : [];
   state.duels = Array.isArray(state.duels) ? state.duels : [];
@@ -785,4 +777,19 @@ function normalizeState(input) {
 
 export function defaultConfig() {
   return clone(DEFAULT_CONFIG);
+}
+
+// Admin and diagnostics view of the chat source (see CONTRACTS.md, chatStatus).
+export function chatStatus(state) {
+  const chat = state.chat || {};
+  return {
+    connected: Boolean(chat.connected),
+    source: String(chat.subscriptionId || "").startsWith("se-") ? "streamelements" : chat.subscriptionId ? "twitch" : "",
+    status: String(chat.status || "disconnected"),
+    subscriptionId: String(chat.subscriptionId || ""),
+    createdAt: Number(chat.createdAt) || 0,
+    lastNotificationAt: Number(chat.lastSeen) || 0,
+    lastRevocationReason: String(chat.revokedReason || ""),
+    checkedAt: Number(chat.checkedAt) || 0,
+  };
 }

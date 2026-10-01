@@ -214,7 +214,6 @@ tr.me td { background: var(--accent-soft); }
 .config-grid .changed input { border-color: var(--accent); }
 .config-group + .config-group { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--border); }
 .mount { border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: var(--space-4); }
-.code-box { font-family: var(--font-mono); word-break: break-all; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-3); font-size: var(--text-sm); }
 .gate { max-width: var(--measure); }
 @media (max-width: 760px) {
   .topbar-inner { padding: var(--space-3) var(--space-4); }
@@ -224,3 +223,7 @@ tr.me td { background: var(--accent-soft); }
 }
 /* rank columns are short numbers; skip design.css's 160px first-column minimum on phones */
 @media (max-width: 760px) { .table-wrap > table.data td.num:first-child { min-width: 0; } }
+
+/* StreamElements replies are long URLs: let them wrap inside their cell */
+.wrap-anywhere { overflow-wrap: anywhere; word-break: break-all; font-size: var(--text-xs); }
+#se-table input { width: 9rem; }

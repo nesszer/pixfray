@@ -65,7 +65,7 @@ function stubFetch(t, routes) {
   const calls = [], original = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input), method = init.method || 'GET';
-    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : undefined, headers: init.headers });
+    calls.push({ url, method, body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body, headers: init.headers });
     for (const [pattern, reply] of routes) {
       const [m, re] = pattern;
       if (m === method && re.test(url)) { const [status, body] = typeof reply === 'function' ? reply(url, init) : reply; return new Response(body === null ? null : JSON.stringify(body), { status }); }
@@ -130,9 +130,10 @@ test('diagnostics keeps the contract shape and reports integrations, usage and c
   assert.equal(r.body.worker.productionEnabled, false);
   assert.equal(r.body.worker.deployedVersion.id, 'v-1');
   assert.equal(r.body.room.channel, 'nesszerra');
-  assert.equal(r.body.room.relay.connected, false);
+  assert.equal(r.body.room.chat.connected, false);
+  assert.equal(r.body.room.chatStatus.status, 'disconnected');
   assert.equal(r.body.room.paused, true);
-  assert.deepEqual(r.body.room.sockets, { live: 0, relay: 0 });
+  assert.deepEqual(r.body.room.sockets, { live: 0 });
   assert.equal(r.body.integrations.github.configured, false);
   assert.equal(r.body.integrations.cloudflare.configured, false);
   assert.equal(r.body.usage.configured, false);
@@ -195,9 +196,29 @@ test('live settings passthrough edits the versioned config as the session user',
   assert.equal((await call(f, '/api/dev/settings', 'GET', undefined, owner)).body.config.maxHp, 100);
 });
 
+test('owner can connect and disconnect Twitch chat from the dev settings; diagnostics report it', async (t) => {
+  const f = environment(), owner = await cookieFor(f, true);
+  const calls = stubFetch(t, [
+    [['POST', /id\.twitch\.tv\/oauth2\/token/], [200, { access_token: 'app-token', expires_in: 3600 }]],
+    [['GET', /helix\/eventsub\/subscriptions/], [200, { data: [], pagination: {} }]],
+    [['POST', /helix\/eventsub\/subscriptions/], [202, { data: [{ id: 'sub-dev', status: 'enabled', created_at: '2026-10-01T00:00:00Z' }] }]],
+    [['DELETE', /helix\/eventsub\/subscriptions\?id=sub-dev/], [204, null]],
+  ]);
+  const on = await call(f, '/api/dev/settings', 'POST', { action: 'connectChat' }, owner);
+  assert.equal(on.status, 200);
+  assert.deepEqual([on.body.chatStatus.connected, on.body.chatStatus.subscriptionId], [true, 'sub-dev']);
+  const diag = (await call(f, '/api/dev/diagnostics', 'GET', undefined, owner)).body;
+  assert.deepEqual([diag.room.chat.connected, diag.room.paused, diag.room.chatStatus.status], [true, false, 'enabled']);
+  const off = await call(f, '/api/dev/settings', 'POST', { action: 'disconnectChat' }, owner);
+  assert.equal(off.body.chatStatus.connected, false);
+  assert.ok(calls.some((c) => c.method === 'DELETE'));
+  const viewer = await cookieFor(f, false);
+  assert.equal((await call(f, '/api/dev/settings', 'POST', { action: 'connectChat' }, viewer)).status, 403);
+});
+
 test('editor paths reject traversal and protected files', () => {
   for (const p of ['server/worker.js', 'public/dev.js', 'README.md', 'docs/LIVE_FIX.md']) assert.equal(validPath(p), true, p);
-  for (const p of ['', '/etc/passwd', '../x', 'a/../b', 'a//b', './a', '.dev.vars', '.dev.vars.test', '.secrets.local.json', '.env', 'x/.env.local', 'node_modules/a.js', '.git/config', '.github/workflows/deploy.yml', 'relay/config.json', 'relay/token.dpapi', 'dist/index.js', 'a b.js', 'a\\b.js', 'x'.repeat(201), 5, null])
+  for (const p of ['', '/etc/passwd', '../x', 'a/../b', 'a//b', './a', '.dev.vars', '.dev.vars.test', '.secrets.local.json', '.env', 'x/.env.local', 'node_modules/a.js', '.git/config', '.github/workflows/deploy.yml', 'old/token.dpapi', 'dist/index.js', 'a b.js', 'a\\b.js', 'x'.repeat(201), 5, null])
     assert.equal(validPath(p), false, String(p));
 });
 

@@ -50,6 +50,8 @@ export async function unseal(env,value){
   const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode(env.AUTH_SECRET)),{name:'AES-GCM'},false,['decrypt']);
   return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:Uint8Array.from(atob(value.iv),x=>x.charCodeAt(0))},key,Uint8Array.from(atob(value.data),x=>x.charCodeAt(0)))));
 }
+// connect=1 (nesszerra only): mod checks plus the chat-read scopes the EventSub channel.chat.message webhook needs.
+export const CONNECT_SCOPES=['moderation:read','user:read:chat','user:bot','channel:bot'];
 export function configured(env){return !!(env.TWITCH_CLIENT_ID&&env.TWITCH_CLIENT_SECRET&&env.AUTH_SECRET&&env.INTERNAL_SECRET);}
 export async function session(request,env){
   const raw=request.headers.get('Cookie')?.match(/(?:^|;\s*)mini_session=([a-f0-9]{64})(?:;|$)/)?.[1];
@@ -76,7 +78,7 @@ export async function handleAuth(request,env){
     const nonce=randomToken(), connect=url.searchParams.get('connect')==='1';
     await record(env,'oauth:'+nonce,{channel,connect},Date.now()+600000);
     const target=new URL('https://id.twitch.tv/oauth2/authorize');
-    Object.entries({client_id:env.TWITCH_CLIENT_ID,redirect_uri:callback,response_type:'code',scope:connect?'moderation:read':'',state:nonce,force_verify:'true'}).forEach(([k,v])=>target.searchParams.set(k,v));
+    Object.entries({client_id:env.TWITCH_CLIENT_ID,redirect_uri:callback,response_type:'code',scope:connect?CONNECT_SCOPES.join(' '):'',state:nonce,force_verify:'true'}).forEach(([k,v])=>target.searchParams.set(k,v));
     return new Response(null,{status:302,headers:{Location:target.href,'Set-Cookie':cookie('mini_oauth',nonce,600)}});
   }
   if(path!=='/auth/callback')return new Response('Not found',{status:404});
@@ -101,7 +103,8 @@ export async function handleAuth(request,env){
   await record(env,'owner:nesszerra',{id:owner.id},Date.now()+90*86400000);
   if(pending.connect){
     if(user.id!==owner.id)return Response.json({error:'Only nesszerra can connect broadcaster authorization'},{status:403});
-    if(!validation.scopes?.includes('moderation:read'))return Response.json({error:'Moderator permission was not granted'},{status:403});
+    const missing=CONNECT_SCOPES.filter(x=>!validation.scopes?.includes(x));
+    if(missing.length)return Response.json({error:'Twitch permissions were not granted: '+missing.join(', ')+'. Restart at /auth/login?connect=1.'},{status:403});
     await record(env,'broadcaster:nesszerra',await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}),Date.now()+90*86400000);
   }
   const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);

@@ -15,11 +15,11 @@ const sizes = [{ name: '1280', width: 1280, height: 900 }, { name: '390', width:
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const owner = { id: '900001', login: 'nesszerra', displayName: 'nesszerra' };
 const now = Date.now(), errors = [];
-const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 60000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, relayLeaseMs: 30000, initialElo: 1000, eloK: 24,
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 60000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24,
   abilities: { strike: { damage: 10, cooldownMs: 3000 }, heavy: { damage: 25, cooldownMs: 8000 }, heal: { amount: 15, cooldownMs: 10000 } } };
 const diag = (configured) => ({
   worker: { version: '0.2.0', twitchConfigured: true, productionEnabled: false, deployedVersion: configured ? { id: '5d1c9a3e-0000-4000-8000-000000000001', tag: 'gh-1a2b3c4-1234', timestamp: '' } : null },
-  room: { channel: 'nesszerra', revision: 42, relay: { connected: configured, lastSeen: now - 4000 }, paused: !configured, configVersion: 3, players: 6, openDuels: 1, sockets: { live: 2, relay: configured ? 1 : 0 }, errors: 2, errorsBySource: { room: 1, worker: 1 }, lastError: { at: now - 600000, source: 'room', message: 'room error' } },
+  room: { channel: 'nesszerra', revision: 42, chat: { connected: configured, lastSeen: now - 4000, status: configured ? 'enabled' : 'disconnected' }, chatStatus: { connected: configured, status: configured ? 'enabled' : 'disconnected', subscriptionId: configured ? 'sub-1' : '', createdAt: now - 86400000, lastNotificationAt: now - 4000, lastRevocationReason: '', checkedAt: now - 600000 }, paused: !configured, configVersion: 3, players: 6, openDuels: 1, sockets: { live: 2 }, errors: 2, errorsBySource: { room: 1, worker: 1 }, lastError: { at: now - 600000, source: 'room', message: 'room error' } },
   integrations: { github: configured ? { configured: true, missing: [], repo: 'Finesssee/mini-chat', base: 'main', workflow: 'deploy.yml' } : { configured: false, missing: ['GITHUB_TOKEN', 'GITHUB_REPO'], repo: '', base: 'main', workflow: 'deploy.yml' },
     cloudflare: { configured, missing: configured ? [] : ['CF_API_TOKEN', 'CF_ACCOUNT_ID'], versionMetadata: configured } },
   usage: configured ? { configured: true, limit: 100000, requests: 18234, percent: 18.2, resetsAt: new Date(Date.UTC(2026, 9, 2)).toISOString() } : { configured: false, limit: 100000, error: 'Set CF_API_TOKEN and CF_ACCOUNT_ID to read request usage' },
@@ -33,7 +33,7 @@ async function stub(page, { configured }) {
     if (op === 'diagnostics') return json(r, { ...diag(configured), codex });
     if (op === 'settings' && method === 'GET') return json(r, { config, configVersion: 3, history: [{ version: 3, actorId: '900001', at: now - 3600000, note: 'Lower heavy to 25' }, { version: 2, actorId: '900001', at: now - 7200000, note: '' }, { version: 1, actorId: 'system', at: now - 86400000, note: 'initial' }] });
     if (op === 'settings') return json(r, { ok: true });
-    if (op === 'logs') return json(r, [{ id: 2, at: now - 600000, source: 'room', message: 'room error', context: { path: '/relay', method: 'GET' } }, { id: 1, at: now - 900000, source: 'worker', message: 'Unexpected token in JSON at position 0', context: { path: '/api/profile/nesszerra' } }]);
+    if (op === 'logs') return json(r, [{ id: 2, at: now - 600000, source: 'room', message: 'room error', context: { path: '/eventsub', method: 'POST' } }, { id: 1, at: now - 900000, source: 'worker', message: 'Unexpected token in JSON at position 0', context: { path: '/api/profile/nesszerra' } }]);
     if (op === 'codex' && method === 'POST') { const b = JSON.parse(r.request().postData()); codex = { authorized: b.authorized, note: b.note, updatedBy: 'nesszerra', updatedAt: Date.now() }; return json(r, codex); }
     if (op === 'codex') return json(r, codex);
     if (!configured) return json(r, { error: 'GitHub is not configured: set the GITHUB_TOKEN secret and GITHUB_REPO (see docs/LIVE_FIX.md)', reason: 'github_not_configured' }, 501);
@@ -71,7 +71,7 @@ for (const size of sizes) {
   // 2. Owner, integrations not configured: actions are disabled and the page says why.
   ({ ctx, page } = await open(size, { stub: { configured: false } }));
   assert.equal(await page.isVisible('#app'), true);
-  assert.match(await page.textContent('#summary-title'), /relay offline/);
+  assert.match(await page.textContent('#summary-title'), /chat offline/);
   assert.match(await page.textContent('#github-missing'), /GITHUB_TOKEN, GITHUB_REPO/);
   assert.equal(await page.isDisabled('#deploy-test'), true);
   assert.equal(await page.isDisabled('#save-file'), true);

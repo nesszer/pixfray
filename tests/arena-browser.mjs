@@ -48,7 +48,7 @@ try {
     channel: 'nesszerra',
     revision: 1,
     paused: false,
-    relay: { connected: true, lastSeen: Date.now() },
+    chat: { connected: true, lastSeen: Date.now(), status: 'enabled' },
     config: { maxHp: 100 },
     players: [
       { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'strike', hp: 100, elo: 1720, wins: 8, losses: 2, registered: true },
@@ -83,7 +83,7 @@ try {
     channel: 'nesszerra',
     revision: 3,
     paused: false,
-    relay: { connected: true, lastSeen: Date.now() },
+    chat: { connected: true, lastSeen: Date.now(), status: 'enabled' },
     config: { maxHp: 100 },
     players: [
       { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'strike', hp: 100, elo: 1720, wins: 8, losses: 2, registered: true },
@@ -122,7 +122,7 @@ try {
     type: 'snapshot',
     channel: 'nesszerra',
     revision: 2,
-    relay: { connected: true },
+    chat: { connected: true, lastSeen: 0, status: 'enabled' },
     players: [{ userId: '101', displayName: 'Stale Name', avatar: 'player', color: '#000000', elo: 1 }],
     duels: [{ id: 'duel-1', a: '101', b: '202', hp: { '101': 1, '202': 1 }, status: 'active', rules: { maxHp: 100 } }],
   }));
@@ -131,6 +131,13 @@ try {
   assert.equal(ranked.players.find((p) => p.userId === '101').label, 'Aria Prime');
   assert.notEqual(ranked.duels[0]?.hp?.['101'], 1, 'stale snapshot health is not applied');
 
+  // Sprites load and frames render asynchronously: wait for paint instead of sampling once.
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#stage'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let painted = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0 && ++painted > 500) return true;
+    return false;
+  }, null, { timeout: 6000 }).catch(() => {});
   const canvas = await page.evaluate(() => {
     const canvas = document.querySelector('#stage');
     const ctx = canvas.getContext('2d');
@@ -156,7 +163,7 @@ try {
     channel: 'nesszerra',
     revision: 9,
     paused: false,
-    relay: { connected: true, lastSeen: Date.now() },
+    chat: { connected: true, lastSeen: Date.now(), status: 'enabled' },
     config: { maxHp: 100 },
     players: [
       { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'strike', elo: 1731, registered: true },

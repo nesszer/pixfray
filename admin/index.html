@@ -97,16 +97,32 @@
       <div class="mount section" id="upload-root" data-mount="upload"><p class="muted small">Uploading characters isn't available yet.</p></div>
     </section>
 
-    <section class="section" aria-labelledby="relay-title">
-      <h2 id="relay-title">Chat relay</h2>
-      <p class="muted small" id="relay-text"></p>
-      <div class="toolbar" id="relay-actions"><button class="btn" id="disconnect-relay" type="button">Disconnect relay</button></div>
-      <div id="owner-relay" hidden class="stack section">
-        <p class="small">Pair the relay on the OBS PC with a one-time code. The code works once and expires after 5 minutes.</p>
-        <div class="toolbar"><button class="btn" id="pair-code" type="button">Create pairing code</button><button class="btn btn-danger" id="revoke-relay" type="button">Revoke all relay credentials</button><a class="btn" href="/auth/login?connect=1">Reconnect moderator checks</a></div>
-        <div id="pair-output" hidden><div class="code-box" id="pair-value"></div><p class="hint" id="pair-expiry"></p><button class="btn btn-small" id="pair-copy" type="button">Copy code</button></div>
-        <p class="status" id="relay-status" role="status"></p>
+    <section class="section" aria-labelledby="chat-title">
+      <h2 id="chat-title">Twitch chat connection</h2>
+      <p class="muted small" id="chat-text"></p>
+      <div class="toolbar" id="chat-actions"><button class="btn" id="connect-chat" type="button">Connect chat</button><button class="btn" id="disconnect-chat" type="button">Disconnect chat</button></div>
+      <p class="status" id="chat-status" role="status"></p>
+      <div id="owner-chat" hidden class="stack section">
+        <p class="small">Twitch sends chat to this site through one EventSub subscription. It needs nesszerra's permission to read chat and check moderators. If Connect chat reports missing authorization, reconnect Twitch, then click Connect chat again.</p>
+        <div class="toolbar"><a class="btn" href="/auth/login?connect=1">Reconnect Twitch</a></div>
       </div>
+    </section>
+
+    <section class="section" aria-labelledby="se-title">
+      <h2 id="se-title">StreamElements commands</h2>
+      <p class="muted small" id="se-text">Use this instead of Connect chat to run duels through your StreamElements bot. Each action is a StreamElements custom command; its bot posts the reply.</p>
+      <ol class="small stack">
+        <li>If you use the StreamElements Duel module, turn it off (Chat bot, Modules), because it owns <code>!duel</code>, <code>!accept</code> and <code>!deny</code>.</li>
+        <li>Pick a command name for each action below and click Save names.</li>
+        <li>In StreamElements (Chat bot, Custom commands), add each command with the reply shown. Then click Use StreamElements.</li>
+      </ol>
+      <div class="toolbar"><button class="btn" id="use-se" type="button">Use StreamElements</button><button class="btn" id="save-se-names" type="button">Save names</button><button class="btn" id="rotate-se" type="button">New key</button></div>
+      <p class="status" id="se-status" role="status"></p>
+      <div class="table-wrap"><table class="data" id="se-table">
+        <thead><tr><th scope="col">Action</th><th scope="col">Command name</th><th scope="col">StreamElements reply</th><th scope="col"><span class="sr-only">Copy</span></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <p class="caveat small">The reply contains this channel's key. Anyone who sees it can send duel moves as any viewer, so keep it to the broadcaster and mods; click New key if it leaks, then paste the commands again. StreamElements only calls the site on commands, so characters appear when a viewer uses one.</p>
     </section>
 
     <!-- LINK to Lane E's live-fix space (admin/dev/index.html, owner only). -->

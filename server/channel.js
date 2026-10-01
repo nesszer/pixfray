@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   applyProfile,
+  chatStatus,
   createInitialState,
   defaultConfig,
   parseGameCommand,
@@ -8,15 +9,21 @@ import {
 } from "./game.js";
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError } from "./developer.js";
+import { checkChatSubscription } from "./eventsub.js";
+import { SE_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
 const USER_HEADER = "X-Mini-User-Id";
-const MAX_RELAY_MESSAGE_BYTES = 4 * 1024;
 const MAX_PROFILE_ID_LENGTH = 64;
 const MAX_LIVE_SOCKETS = 64;
 const MAX_CONFIG_HISTORY = 50;
-const RELAY_HEARTBEAT_MS = 10_000;
+const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
+const MAX_EVENTSUB_IDS = 5_000;
+const PRESENCE_REFRESH_MS = 30_000;        // chat-only viewers refresh their arena presence at most this often
+const LAST_SEEN_WRITE_MS = 60_000;         // chat.lastSeen alone is persisted at most once a minute
+const CHAT_CHECK_MS = 60 * 60_000;         // the alarm re-checks the Helix subscription at most hourly
+const CHAT_PENDING_CHECK_MS = 3 * 60_000;  // a subscription still awaiting webhook verification is re-checked sooner
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -71,6 +78,10 @@ function safeJsonParse(value, fallback) {
   }
 }
 
+function randomHex() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(24)), (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
 function timingSafeEqual(a, b) {
   if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
   let difference = 0;
@@ -92,6 +103,8 @@ export class ChannelRoom extends DurableObject {
     if (!sql.exec("PRAGMA table_info(config_history)").toArray().some((c) => c.name === "actor_name")) sql.exec("ALTER TABLE config_history ADD COLUMN actor_name TEXT NOT NULL DEFAULT ''");
     ensureUploadSchema(sql);
     ensureDeveloperSchema(sql);
+    sql.exec("CREATE TABLE IF NOT EXISTS se_settings (id INTEGER PRIMARY KEY CHECK (id = 1), secret TEXT NOT NULL, names TEXT NOT NULL)");
+    this.seenMessages = new Map();   // EventSub Message-Id -> receivedAt; commands are also deduped durably by message_id
   }
 
   async fetch(request) {
@@ -130,7 +143,7 @@ export class ChannelRoom extends DurableObject {
       this.seedConfigHistory(state);
       const history = this.ctx.storage.sql.exec("SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?", MAX_CONFIG_HISTORY).toArray()
         .map((row) => ({ version: row.version, config: safeJsonParse(row.config, {}), actorId: row.actor_id, actorName: row.actor_name, at: row.at, note: row.note }));
-      return json({ ...this.publicState(state), history, customUsage: customUsage(this) });
+      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings() });
     }
 
     if (path === "/leaderboard" && request.method === "GET") {
@@ -168,16 +181,6 @@ export class ChannelRoom extends DurableObject {
       const action = String(body.value.action || "");
       let payload = body.value.payload && typeof body.value.payload === "object" && !Array.isArray(body.value.payload) ? body.value.payload : body.value;
       let note = "";
-      if (action === "disconnectRelay") {
-        for (const ws of this.ctx.getWebSockets("relay")) {
-          try { ws.close(4003, "Relay revoked"); } catch {}
-        }
-        const state = this.readState(channel);
-        const result = this.advance(channel, { type: "relay_offline", sessionId: state.relay.sessionId }, Date.now());
-        this.broadcast(result.state);
-        await this.scheduleAlarm(result.state);
-        return json({ ok: true, reason: "relay_disconnected", revision: result.state.revision });
-      }
       if (action === "rollbackConfig") {
         const version = Number(payload.version);
         const row = Number.isInteger(version) ? this.ctx.storage.sql.exec("SELECT config FROM config_history WHERE version = ?", version).toArray()[0] : null;
@@ -197,7 +200,50 @@ export class ChannelRoom extends DurableObject {
     }
 
     if (path === "/live" && request.method === "GET") return this.upgrade(request, "live", channel);
-    if (path === "/relay" && request.method === "GET") return this.upgrade(request, "relay", channel);
+
+    // Worker-only routes (never reachable from /api/admin): verified EventSub messages and subscription bookkeeping.
+    if (path === "/eventsub" && request.method === "POST") {
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      return this.eventsub(channel, body.value);
+    }
+    // StreamElements custom commands, forwarded by the Worker from GET /api/se/<channel>/<action>.
+    if (path === "/se" && request.method === "POST") {
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      return this.streamElements(channel, body.value, url.searchParams.get("origin") || "");
+    }
+    if (path === "/se-admin" && request.method === "POST") {
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      const current = this.seSettings();
+      if (body.value.action === "rotateSeKey") this.writeSeSettings(randomHex(), current.names);
+      else if (body.value.action === "setSeNames") {
+        const input = body.value.names && typeof body.value.names === "object" ? body.value.names : {};
+        const names = {};
+        for (const action of SE_ACTIONS) {
+          const name = String(input[action] ?? current.names[action] ?? DEFAULT_SE_NAMES[action]).trim();
+          if (!/^!?[a-z0-9_]{1,24}$/i.test(name)) return json({ error: `Invalid command name for ${action}` }, 400);
+          names[action] = (name.startsWith("!") ? name : "!" + name).toLowerCase();
+        }
+        if (new Set(Object.values(names)).size !== SE_ACTIONS.length) return json({ error: "Each action needs its own command name" }, 400);
+        this.writeSeSettings(current.secret, names);
+      } else return json({ error: "unknown StreamElements action" }, 400);
+      return json({ ok: true, streamelements: this.seSettings() });
+    }
+    if (path === "/chat" && request.method === "GET") return json(chatStatus(this.readState(channel)));
+    if (path === "/chat" && request.method === "POST") {
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      const event = body.value.action === "connected"
+        ? { type: "chat_subscription", subscriptionId: body.value.subscriptionId, status: body.value.status, createdAt: body.value.createdAt }
+        : body.value.action === "disconnected" ? { type: "chat_disconnected", reason: body.value.reason } : null;
+      if (!event) return json({ error: "unknown chat action" }, 400);
+      const result = this.advance(channel, event, Date.now());
+      if (result.visible) this.broadcast(result.state);
+      await this.scheduleAlarm(result.state);
+      return json({ ...result.result, revision: result.state.revision, chatStatus: chatStatus(result.state) });
+    }
 
     return text("Not found", 404);
   }
@@ -392,8 +438,8 @@ export class ChannelRoom extends DurableObject {
       type: "snapshot",
       channel: state.channel,
       revision: state.revision,
-      paused: !state.relay.connected || !state.config.enabled,
-      relay: { connected: Boolean(state.relay.connected), lastSeen: Number(state.relay.lastSeen) || 0 },
+      paused: !state.chat.connected || !state.config.enabled,
+      chat: { connected: Boolean(state.chat.connected), lastSeen: Number(state.chat.lastSeen) || 0, status: String(state.chat.status || "disconnected") },
       config: state.config,
       configVersion: state.configVersion,
       round: state.round,
@@ -405,159 +451,137 @@ export class ChannelRoom extends DurableObject {
 
   async upgrade(request, kind, channel) {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "websocket upgrade required" }, 426);
-    if (kind === "relay") {
-      for (const ws of this.ctx.getWebSockets("relay")) {
-        try { ws.close(4001, "Relay replaced"); } catch {}
-      }
-    } else if (this.ctx.getWebSockets("live").length >= MAX_LIVE_SOCKETS) {
+    if (this.ctx.getWebSockets("live").length >= MAX_LIVE_SOCKETS) {
       return json({ error: "too many overlay connections" }, 429);
     }
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    const sessionId = kind === "relay" ? crypto.randomUUID() : "";
     this.ctx.acceptWebSocket(server, [kind]);
-    server.serializeAttachment({ kind, sessionId, channel });
-    if (kind === "relay") {
-      const result = this.advance(channel, { type: "relay_connected", sessionId }, Date.now());
-      server.send(JSON.stringify({ type: "hello", sessionId, channel, heartbeatMs: RELAY_HEARTBEAT_MS, leaseMs: result.state.config.relayLeaseMs }));
-      this.broadcast(result.state);
-      await this.scheduleAlarm(result.state);
-    } else {
-      const result = this.advance(channel, { type: "tick" }, Date.now());
-      server.send(JSON.stringify(this.publicState(result.state)));
-      if (result.changed) this.broadcast(result.state);
-    }
+    server.serializeAttachment({ kind, channel });
+    const result = this.advance(channel, { type: "tick" }, Date.now());
+    server.send(JSON.stringify(this.publicState(result.state)));
+    if (result.changed) this.broadcast(result.state);
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  async webSocketMessage(ws, message) {
-    const attachment = ws.deserializeAttachment() || {};
-    if (attachment.kind === "live") {
-      try { ws.close(1008, "Read-only socket"); } catch {}
-      return;
-    }
-    if (attachment.kind !== "relay") {
-      try { ws.close(1008, "Unknown socket"); } catch {}
-      return;
-    }
-    const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
-    if (new TextEncoder().encode(raw).byteLength > MAX_RELAY_MESSAGE_BYTES) {
-      try { ws.close(1009, "Message too large"); } catch {}
-      return;
-    }
-    let payload;
-    try { payload = JSON.parse(raw); } catch {
-      try { ws.close(1007, "Invalid JSON"); } catch {}
-      return;
-    }
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      try { ws.close(1007, "Invalid message"); } catch {}
-      return;
-    }
-
-    const channel = normalizeChannel(attachment.channel);
-    const sessionId = String(attachment.sessionId || "");
-    if (!channel || !sessionId) {
-      try { ws.close(1008, "Invalid relay session"); } catch {}
-      return;
-    }
-
-    let result;
-    if (payload.type === "heartbeat") {
-      result = this.advance(channel, {
-        type: "relay_heartbeat",
-        sessionId,
-        twitchConnected: payload.twitchConnected === true,
-      }, Date.now());
-      if (payload.twitchConnected !== true) {
-        try { ws.close(1012, "Twitch disconnected"); } catch {}
-      }
-    } else if (payload.type === "offline") {
-      result = this.advance(channel, { type: "relay_offline", sessionId }, Date.now());
-      try { ws.close(1000, "Relay offline"); } catch {}
-    } else if (payload.type === "presence" || payload.type === "command") {
-      result = this.processRelayEvent(channel, sessionId, payload);
-      if (payload.type === "command") {
-        try { ws.send(JSON.stringify({ type: "ack", messageId: String(payload.messageId || "").slice(0, 64), ok: Boolean(result?.result?.ok), reason: String(result?.result?.reason || ""), ...(Number.isFinite(result?.result?.retryAt) ? { retryAt: result.result.retryAt } : {}) })); } catch {}
-      }
-    } else {
-      try { ws.close(1008, "Unknown relay message"); } catch {}
-      return;
-    }
-
-    if (result?.visible ?? result?.changed) this.broadcast(result.state);
-    if (result?.changed || payload.type === "heartbeat" || payload.type === "offline") {
-      await this.scheduleAlarm(result.state);
-    }
+  async webSocketMessage(ws) {
+    // Overlay sockets are read-only snapshots.
+    try { ws.close(1008, "Read-only socket"); } catch {}
   }
 
-  processRelayEvent(channel, sessionId, payload) {
-    const userId = validUserId(payload.userId);
-    const username = normalizeUsername(payload.username);
-    const displayName = String(payload.displayName || username).trim().slice(0, 48);
-    const timestamp = Number(payload.timestamp);
-    if (!userId || !username || !Number.isFinite(timestamp) || !displayName) {
-      return { ...this.advance(channel, { type: "tick" }, Date.now()), result: { ok: false, reason: "invalid_event" } };
-    }
-
+  async eventsub(channel, msg) {
     const now = Date.now();
+    const id = String(msg.messageId || "").slice(0, 100);
+    if (!id) return json({ error: "messageId required" }, 400);
+    for (const [key, at] of this.seenMessages) {   // insertion order is arrival order
+      if (now - at <= EVENTSUB_DEDUPE_MS && this.seenMessages.size <= MAX_EVENTSUB_IDS) break;
+      this.seenMessages.delete(key);
+    }
+    const kind = String(msg.messageType || "");
+    if (kind !== "webhook_callback_verification") {
+      if (this.seenMessages.has(id)) return json({ ok: true, duplicate: true });
+      this.seenMessages.set(id, now);
+    }
+    const subscriptionId = String(msg.subscription?.id || "");
+    let result;
+    if (kind === "webhook_callback_verification") result = this.advance(channel, { type: "chat_verified", subscriptionId }, now);
+    else if (kind === "revocation") {
+      if (!subscriptionId || subscriptionId !== this.readState(channel).chat.subscriptionId) return json({ ok: true, ignored: true });
+      result = this.advance(channel, { type: "chat_disconnected", reason: String(msg.subscription?.status || "revoked") }, now);
+    } else if (kind === "notification") result = this.processChatMessage(channel, msg, now);
+    else return json({ ok: true, ignored: true });
+    if (result.visible) this.broadcast(result.state);
+    if (result.changed) await this.scheduleAlarm(result.state);
+    return json({ ok: Boolean(result.result?.ok), reason: String(result.result?.reason || "") });
+  }
+
+  seSettings() {
+    const row = this.ctx.storage.sql.exec("SELECT secret, names FROM se_settings WHERE id = 1").toArray()[0];
+    if (row) return { secret: row.secret, names: { ...DEFAULT_SE_NAMES, ...safeJsonParse(row.names, {}) } };
+    const secret = randomHex();
+    this.writeSeSettings(secret, DEFAULT_SE_NAMES);
+    return { secret, names: { ...DEFAULT_SE_NAMES } };
+  }
+
+  writeSeSettings(secret, names) {
+    this.ctx.storage.sql.exec("INSERT INTO se_settings (id, secret, names) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET secret = excluded.secret, names = excluded.names", secret, JSON.stringify(names));
+  }
+
+  // One StreamElements command. It goes through the same path as a Twitch chat message, then gets a one-line reply.
+  async streamElements(channel, input, origin) {
+    const settings = this.seSettings();
+    if (!timingSafeEqual(String(input.key || ""), settings.secret)) return json({ reply: "Mini Chat: wrong key. Copy the commands again from the admin page." }, 403);
+    const action = SE_ACTIONS.includes(input.action) ? input.action : "";
+    const userId = validUserId(input.userId);
+    const username = normalizeUsername(input.username);
+    const target = normalizeUsername(input.target);
+    const now = Date.now();
+    const names = settings.names;
+    const state0 = this.readState(channel);
+    if (!action || !userId || !username) return json({ reply: "Mini Chat: this command is missing sender details. Copy it again from the admin page." });
+    if (!state0.chat.connected || state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID) return json({ reply: seReplyText({ result: { ok: false, reason: "chat_offline" }, state: state0, actorId: userId, action, target, names, origin, now }) });
+    if (action === "challenge" && !target) return json({ reply: seReplyText({ result: { ok: false, reason: "target_required" }, state: state0, actorId: userId, action, target, names, origin, now }) });
+    const messageId = "se:" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));
+    const msg = { messageId, timestamp: now, subscription: { id: SE_SUBSCRIPTION_ID }, event: { chatter_user_id: userId, chatter_user_login: username, chatter_user_name: String(input.displayName || username).slice(0, 48), message_id: messageId, message: { text: seCommandText(action, target) } } };
+    const result = this.processChatMessage(channel, msg, now);
+    if (result.visible) this.broadcast(result.state);
+    if (result.changed) await this.scheduleAlarm(result.state);
+    return json({ reply: seReplyText({ result: result.result, state: result.state, actorId: userId, action, target, names, origin, now }) });
+  }
+
+  // One channel.chat.message: a presence update, plus a game command when the text parses as one.
+  // No chat replies; rejected commands are logged to the room event list.
+  processChatMessage(channel, msg, now) {
+    const ev = msg.event && typeof msg.event === "object" ? msg.event : {};
+    const userId = validUserId(ev.chatter_user_id);
+    const username = normalizeUsername(ev.chatter_user_login);
+    const displayName = String(ev.chatter_user_name || username).trim().slice(0, 48);
+    const textValue = String(ev.message?.text || "").slice(0, 512);
+    const color = /^#[0-9a-f]{6}$/i.test(ev.color || "") ? ev.color.toUpperCase() : "";
+    const subscriptionId = String(msg.subscription?.id || "");
     return this.ctx.storage.transactionSync(() => {
-      const state = this.readState(channel);
-      if (!state.relay.connected || state.relay.sessionId !== sessionId || now - state.relay.lastSeen > state.config.relayLeaseMs) {
-        const ticked = reduceGame(state, { type: "tick" }, now);
-        if (ticked.changed) this.writeState(ticked.state);
-        return { ...ticked, result: { ok: false, reason: "relay_offline" } };
-      }
-
-      const userProfile = this.getProfile(userId, state.config);
-      const profile = userProfile ? { ...userProfile, username, displayName } : null;
-      let targetProfile = null;
-      if (payload.type === "command") {
-        const parsed = parseGameCommand(payload.text);
-        if (parsed?.target) targetProfile = this.getProfileByUsername(parsed.target, state.config);
-      }
-
-      const event = {
-        type: payload.type,
-        messageId: payload.messageId,
-        userId,
-        username,
-        displayName,
-        text: String(payload.text || "").slice(0, 512),
-        timestamp,
-        profile,
-        targetProfile,
-      };
-      const result = reduceGame(state, event, now);
-      if (result.changed) this.writeState(result.state);
-
-      const updated = result.state.players.find((item) => item.userId === userId);
-      if (updated?.registered && userProfile && (updated.username !== userProfile.username || updated.displayName !== userProfile.displayName)) {
-        this.upsertProfile(updated);
-      }
-      if (result.result?.reason === "duel_completed") {
-        const duel = result.state.duels.find((item) => item.id === result.result.duelId);
-        if (duel) {
-          for (const id of [duel.a, duel.b]) {
-            const participant = result.state.players.find((item) => item.userId === id);
+      let state = this.readState(channel);
+      const none = (reason) => ({ state, result: { ok: false, reason }, changed: false, visible: false });
+      if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) return none("unknown_subscription");
+      const steps = [];
+      const step = (event) => { const r = reduceGame(state, event, now); state = r.state; steps.push(r); return r; };
+      // Twitch only notifies enabled subscriptions, so a notification also confirms a pending one.
+      if (!state.chat.connected) step({ type: "chat_verified", subscriptionId });
+      let main = null;
+      if (!userId || !/^[a-z0-9_]{1,25}$/.test(username) || !displayName) main = { result: { ok: false, reason: "invalid_event" } };
+      else {
+        const userProfile = this.getProfile(userId, state.config);
+        // Registered players keep their saved look; other chatters take their Twitch name color.
+        const profile = userProfile ? { ...userProfile, username, displayName } : { userId, username, displayName, ...(color ? { color } : {}) };
+        const parsed = parseGameCommand(textValue);
+        if (parsed) {
+          const targetProfile = parsed.target ? this.getProfileByUsername(parsed.target, state.config) : null;
+          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile });
+          if (!main.result.ok && main.result.reason !== "duplicate") step({ type: "command_rejected", userId, command: parsed.action, reason: main.result.reason, retryAt: main.result.retryAt });
+        } else {
+          const active = state.players.find((item) => item.userId === userId);
+          const fresh = active && now - active.lastSeen < PRESENCE_REFRESH_MS && active.displayName === displayName && (userProfile || !color || active.color === color);
+          if (!fresh) main = step({ type: "presence", userId, username, displayName, profile });
+        }
+        const updated = state.players.find((item) => item.userId === userId);
+        if (updated?.registered && userProfile && (updated.username !== userProfile.username || updated.displayName !== userProfile.displayName)) this.upsertProfile(updated);
+        if (main?.result?.reason === "duel_completed") {
+          const duel = state.duels.find((item) => item.id === main.result.duelId);
+          for (const id of duel ? [duel.a, duel.b] : []) {
+            const participant = state.players.find((item) => item.userId === id);
             if (participant?.registered) this.upsertProfile(participant);
           }
         }
       }
-      return result;
+      let changed = steps.some((r) => r.changed);
+      if (changed || now - (Number(state.chat.lastSeen) || 0) >= LAST_SEEN_WRITE_MS) {
+        state.chat.lastSeen = now;
+        this.writeState(state);
+        changed = true;
+      }
+      return { state, result: main?.result || { ok: true, reason: "presence_fresh" }, changed, visible: steps.some((r) => r.visible) };
     });
-  }
-
-  async webSocketClose(ws) {
-    const attachment = ws.deserializeAttachment() || {};
-    if (attachment.kind !== "relay") return;
-    const channel = normalizeChannel(attachment.channel);
-    const sessionId = String(attachment.sessionId || "");
-    if (!channel || !sessionId) return;
-    const result = this.advance(channel, { type: "relay_offline", sessionId }, Date.now());
-    if (result.changed) this.broadcast(result.state);
-    await this.scheduleAlarm(result.state);
   }
 
   async webSocketError(ws) {
@@ -574,7 +598,8 @@ export class ChannelRoom extends DurableObject {
 
   async scheduleAlarm(state) {
     const due = [];
-    if (state.relay.connected) due.push(state.relay.lastSeen + state.config.relayLeaseMs + 1);
+    const chatDue = chatCheckDue(state);
+    if (chatDue !== null) due.push(chatDue);
     for (const duel of state.duels) {
       if (duel.status === "pending") due.push(duel.expiresAt + 1);
       else if (duel.status === "active") due.push(duel.lastActionAt + (duel.rules?.inactivityMs || state.config.inactivityMs) + 1);
@@ -590,8 +615,32 @@ export class ChannelRoom extends DurableObject {
     if (!row) return;
     const channel = normalizeChannel(row.channel);
     if (!channel) return;
-    const result = this.advance(channel, { type: "tick" }, Date.now());
+    let result = this.advance(channel, { type: "tick" }, Date.now());
     if (result.changed) this.broadcast(result.state);
+    const state = result.state;
+    const chatDue = chatCheckDue(state);
+    if (chatDue !== null && Date.now() >= chatDue) {
+      // Only a definite answer disconnects (missing, failed or revoked); a failed Helix call just waits for the next check.
+      // A subscription still pending verification stays pending; one that failed verification is recorded as such.
+      const status = await checkChatSubscription(this.env, state.chat.subscriptionId);
+      if (this.readState(channel).chat.subscriptionId === state.chat.subscriptionId) {
+        const subscriptionId = state.chat.subscriptionId;
+        const event = !status || status === "webhook_callback_verification_pending" ? { type: "chat_checked" }
+          : status === "enabled" ? (state.chat.connected ? { type: "chat_checked" } : { type: "chat_verified", subscriptionId })
+          : { type: "chat_disconnected", reason: status === "missing" ? "subscription_missing" : status };
+        result = this.advance(channel, event, Date.now());
+        let visible = result.visible;
+        if (event.type === "chat_verified") { result = this.advance(channel, { type: "chat_checked" }, Date.now()); visible ||= result.visible; }
+        if (visible) this.broadcast(result.state);
+      }
+    }
     await this.scheduleAlarm(result.state);
   }
+}
+
+// Next Helix check time, or null: hourly while connected, every few minutes while a subscription awaits verification.
+function chatCheckDue(state) {
+  const id = state.chat?.subscriptionId;
+  if (!id || id.startsWith("local-") || id === SE_SUBSCRIPTION_ID) return null;
+  return (Number(state.chat.checkedAt) || 0) + (state.chat.connected ? CHAT_CHECK_MS : CHAT_PENDING_CHECK_MS);
 }

@@ -1,3 +1,4 @@
+import { chatStatus } from './game.js';
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // nesszerra Twitch account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -16,12 +17,12 @@ const SHA = /^[a-f0-9]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 // Paths the web editor may never read or write: local secrets, generated output, CI definitions.
-const DENIED_PATH = /(^|\/)(\.dev\.vars[^/]*|\.secrets[^/]*|\.env[^/]*|node_modules|\.git|\.wrangler|\.cloudflare|dist)(\/|$)|^\.github\/|^relay\/config[^/]*\.json$|\.dpapi$/i;
+const DENIED_PATH = /(^|\/)(\.dev\.vars[^/]*|\.secrets[^/]*|\.env[^/]*|node_modules|\.git|\.wrangler|\.cloudflare|dist)(\/|$)|^\.github\/|\.dpapi$/i;
 const json = (data, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 const fail = (status, error, reason, extra = {}) => json({ error, reason, ...extra }, status);
 
 // ---------- Worker side ----------
-// c = { user, owner, url, path, roomFetch(channel, path, init?), bodyJson(request, limit), waitUntil(promise) }
+// c = { user, owner, url, path, roomFetch(channel, path, init?), chatAction(channel, action, { takeover? }), bodyJson(request, limit), waitUntil(promise) }
 export async function handleDeveloper(request, env, c) {
   if (!c.user) return fail(401, 'Sign in with Twitch', 'sign_in_required');
   if (!c.owner) return fail(403, 'Owner only', 'owner_only');
@@ -76,10 +77,15 @@ function logQuery(query) {
   return out.toString();
 }
 
-// Live settings editor: a thin passthrough to the room's versioned config (CONTRACTS.md section 7).
+// Live settings editor: a thin passthrough to the room's versioned config (CONTRACTS.md section 7),
+// plus the chat source lifecycle (connectChat / disconnectChat, handled by the Worker's EventSub helpers).
 async function settings({ body, c, room }) {
   const action = body.action;
-  if (action !== 'config' && action !== 'rollbackConfig') return fail(400, 'action must be config or rollbackConfig', 'invalid_action');
+  if (action === 'connectChat' || action === 'disconnectChat') {
+    try { return await c.chatAction('nesszerra', action, { takeover: body.takeover === true }); }
+    catch (e) { if (e.status) return fail(e.status, e.message, 'chat_error', { ...(e.reconnect ? { reconnect: e.reconnect } : {}), ...(e.connectedElsewhere ? { connectedElsewhere: e.connectedElsewhere } : {}) }); throw e; }
+  }
+  if (action !== 'config' && action !== 'rollbackConfig') return fail(400, 'action must be config, rollbackConfig, connectChat or disconnectChat', 'invalid_action');
   const payload = body.payload;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return fail(400, 'payload object required', 'invalid_payload');
   return room('/admin', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Mini-User-Id': c.user.id }, body: JSON.stringify({ action, payload, actorId: c.user.id, actorName: c.user.displayName || c.user.login }) });
@@ -326,12 +332,13 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
     return json({
       channel,
       revision: state.revision,
-      relay: state.relay,
-      paused: !state.relay?.connected || !state.config?.enabled,
+      chat: { connected: Boolean(state.chat?.connected), lastSeen: Number(state.chat?.lastSeen) || 0, status: String(state.chat?.status || 'disconnected') },
+      chatStatus: chatStatus(state),
+      paused: !state.chat?.connected || !state.config?.enabled,
       configVersion: state.configVersion,
       players: state.players.length,
       openDuels: state.duels.filter((d) => d.status === 'pending' || d.status === 'active').length,
-      sockets: { live: room.ctx.getWebSockets('live').length, relay: room.ctx.getWebSockets('relay').length },
+      sockets: { live: room.ctx.getWebSockets('live').length },
       errors: Object.values(counts).reduce((a, b) => a + b, 0),
       errorsBySource: counts,
       lastError: last,

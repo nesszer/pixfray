@@ -52,10 +52,10 @@ async function signOut() { await api('/auth/logout', { method: 'POST', body: {} 
 async function loadDiagnostics() {
   const r = await api('/api/dev/diagnostics');
   if (!r.ok) { $('#summary-title').textContent = 'Diagnostics unavailable'; $('#summary-text').textContent = errorText(r); return; }
-  const d = S.diag = r.data, room = d.room || {}, use = d.usage || {}, relayOn = !!room.relay?.connected;
-  $('#s-relay').textContent = relayOn ? 'Online' : 'Offline';
-  $('#s-relay').className = 'value ' + (relayOn ? 'up' : 'down');
-  $('#s-relay-note').textContent = room.relay?.lastSeen ? 'Last heartbeat ' + fmtTime(room.relay.lastSeen) : 'No heartbeat yet';
+  const d = S.diag = r.data, room = d.room || {}, use = d.usage || {}, chat = room.chatStatus || {}, chatOn = !!chat.connected;
+  $('#s-chat').textContent = chatOn ? 'Connected' : 'Offline';
+  $('#s-chat').className = 'value ' + (chatOn ? 'up' : 'down');
+  $('#s-chat-note').textContent = chat.lastRevocationReason ? 'Revoked: ' + chat.lastRevocationReason : chat.lastNotificationAt ? 'Last message ' + fmtTime(chat.lastNotificationAt) : chatOn ? 'No chat message yet' : 'Connect chat in admin';
   if (use.configured && Number.isFinite(use.requests)) {
     $('#s-requests').textContent = fmtNum(use.requests);
     $('#s-requests-note').textContent = use.percent + '% used, resets ' + fmtTime(use.resetsAt);
@@ -68,9 +68,9 @@ async function loadDiagnostics() {
   $('#s-sockets-note').textContent = `${room.players ?? 0} players, ${room.openDuels ?? 0} open duels`;
   const ver = d.worker?.deployedVersion;
   $('#meta').textContent = `Worker ${d.worker?.version || ''}` + (ver ? ` · version ${short(ver.id)}${ver.tag ? ' (' + ver.tag + ')' : ''}` : ' · version id unavailable') + ` · checked ${fmtTime(Date.now())}`;
-  const parts = [relayOn ? 'The relay is online' : 'The relay is offline, so combat is paused', room.errors ? `${room.errors} errors are logged` : 'no errors are logged'];
+  const parts = [chatOn ? 'Twitch chat is connected' : 'Twitch chat is not connected, so combat is paused', room.errors ? `${room.errors} errors are logged` : 'no errors are logged'];
   if (use.configured && Number.isFinite(use.requests)) parts.push(`${fmtNum(use.requests)} of 100,000 daily requests are used (${use.percent}%)`);
-  $('#summary-title').textContent = !relayOn ? 'Combat is paused: relay offline' : room.errors ? `Running, with ${room.errors} logged errors` : 'Running normally';
+  $('#summary-title').textContent = !chatOn ? 'Combat is paused: chat offline' : room.errors ? `Running, with ${room.errors} logged errors` : 'Running normally';
   $('#summary-text').textContent = parts.join('; ') + '.';
   renderIntegrations(d.integrations || {});
   renderCodex(d.codex || { authorized: false });

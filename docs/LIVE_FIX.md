@@ -77,8 +77,7 @@ to `production` for a second confirmation. The jobs already use `environment: <t
 
 - The owner session effectively has push access to the repo. Anyone holding that session can
   change code on a branch and, with a promote, in production. Sign out on shared machines.
-- The editor refuses `.dev.vars*`, `.env*`, `.secrets*`, `*.dpapi`, `relay/config*.json`,
-  `.github/`, `.git`, `node_modules`, `dist`, `.wrangler` and `.cloudflare`, and files over 512 KB.
+- The editor refuses `.dev.vars*`, `.env*`, `.secrets*`, `*.dpapi`, `.github/`, `.git`, `node_modules`, `dist`, `.wrangler` and `.cloudflare`, and files over 512 KB.
 - Code on a `live-fix/` branch runs in CI while `CLOUDFLARE_API_TOKEN` is set on the release step.
   A malicious branch could use that token, so the token is scoped to Workers Scripts Edit only.
 - Workflow inputs reach shell steps only through `env`, never through `${{ }}` inside `run:`. The

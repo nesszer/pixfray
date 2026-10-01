@@ -22,7 +22,7 @@ export function parseCommand(text) {
 const EVENT_FRESH_MS = 10_000;
 const OPEN = new Set(['pending', 'active']);
 const CANCEL_TEXT = {
-  inactivity: 'no action for a while', relay_disconnected: 'relay offline', twitch_disconnected: 'Twitch chat offline',
+  inactivity: 'no action for a while', chat_disconnected: 'chat offline',
   duels_disabled: 'duels turned off', moderator_cancelled: 'cancelled by a moderator', moderator_reset: 'reset by a moderator',
   player_removed: 'player removed',
 };
@@ -52,7 +52,7 @@ async function start() {
   const profilesById = new Map();
   const meetPoints = new Map();
   let width = 1, height = 1, connectionState = demo ? 'demo' : 'connecting';
-  let arenaRelay = null, arenaTransport = arenaDemo ? 'demo' : 'connecting', arenaConfig = { maxHp: 100 };
+  let arenaChat = null, arenaTransport = arenaDemo ? 'demo' : 'connecting', arenaConfig = { maxHp: 100 };
   let arenaRevision = null, arenaDuels = [], arenaClient = null, arenaTimer = null, arenaPaused = false;
   let announcement = null, lastCatalogFetch = 0;
   const missingAvatars = new Set();
@@ -61,19 +61,19 @@ async function start() {
   function updateStatus(detail = '') {
     if (!status) return;
     const chatStatus = channel + ' · ' + connectionState + ' · ' + players.size + '/' + cap + ' characters';
-    const relayOnline = arenaDemo || (arenaRelay?.connected === true && ['connected', 'live'].includes(arenaTransport));
-    const relayAge = Number(arenaRelay?.lastSeen) > 0 ? Math.max(0, Math.floor((Date.now() - Number(arenaRelay.lastSeen)) / 1000)) : null;
-    const relayStatus = arenaEnabled
-      ? ' · arena ' + (relayOnline ? 'relay live' : arenaTransport) +
-        (relayAge === null ? '' : ' · relay seen ' + (relayAge < 60 ? relayAge + 's' : Math.floor(relayAge / 60) + 'm') + ' ago') +
+    const chatOnline = arenaDemo || (arenaChat?.connected === true && ['connected', 'live'].includes(arenaTransport));
+    const chatAge = Number(arenaChat?.lastSeen) > 0 ? Math.max(0, Math.floor((Date.now() - Number(arenaChat.lastSeen)) / 1000)) : null;
+    const arenaStatus = arenaEnabled
+      ? ' · arena ' + (chatOnline ? 'chat live' : arenaTransport) +
+        (chatAge === null ? '' : ' · chat seen ' + (chatAge < 60 ? chatAge + 's' : Math.floor(chatAge / 60) + 'm') + ' ago') +
         (arenaRevision !== null ? ' r' + arenaRevision : '') +
         ' · ' + profilesById.size + ' profiles · ' + openDuels().length + ' duels'
       : '';
     if (debug) {
-      status.textContent = chatStatus + relayStatus + (detail ? ' · ' + detail : '');
+      status.textContent = chatStatus + arenaStatus + (detail ? ' · ' + detail : '');
       status.hidden = false;
-    } else if (arenaEnabled && !arenaDemo && (!relayOnline || arenaPaused)) {
-      status.textContent = relayOnline ? 'Duels paused' : 'Duels paused · relay offline';
+    } else if (arenaEnabled && !arenaDemo && (!chatOnline || arenaPaused)) {
+      status.textContent = chatOnline ? 'Duels paused' : 'Duels paused · chat offline';
       status.hidden = false;
     } else {
       status.textContent = '';
@@ -189,7 +189,7 @@ async function start() {
   }
   function acceptArenaSnapshot(snapshot, metadata = {}) {
     if (!snapshot || typeof snapshot !== 'object') return;
-    arenaRelay = snapshot.relay && typeof snapshot.relay === 'object' ? snapshot.relay : null;
+    arenaChat = snapshot.chat && typeof snapshot.chat === 'object' ? snapshot.chat : null;
     if (snapshot.config && typeof snapshot.config === 'object') arenaConfig = snapshot.config;
     arenaPaused = snapshot.paused === true;
     arenaRevision = Number.isFinite(Number(metadata.revision)) ? Number(metadata.revision)
@@ -199,8 +199,8 @@ async function start() {
       if (profile?.userId !== undefined && profile?.userId !== null) profilesById.set(String(profile.userId), profile);
     }
     arenaDuels = Array.isArray(snapshot.duels) ? snapshot.duels : [];
-    if (arenaRelay?.connected === true) arenaTransport = 'live';
-    // Every overlay shows the same arena: the server's player list (fed by the relay) spawns characters even
+    if (arenaChat?.connected === true) arenaTransport = 'live';
+    // Every overlay shows the same arena: the server's player list (fed by Twitch EventSub) spawns characters even
     // when this overlay's own chat connection is down, and players the server dropped leave the stage.
     for (const [key, p] of players) if (p.fromArena && !profilesById.has(p.userId)) players.delete(key);
     for (const [userId, profile] of profilesById) {
@@ -280,11 +280,11 @@ async function start() {
         if (p) { p.koUntil = 0; p.anim = { kind: 'respawn', start: now, until: now + 700 }; burst(p, '#bfdbfe', 10, true); }
         break;
       }
-      case 'relay_disconnected': case 'relay_stale':
-        announceArena('Duels paused · relay offline', '#e2e8f0');
+      case 'chat_disconnected':
+        announceArena('Duels paused · chat offline', '#e2e8f0');
         break;
-      case 'relay_connected':
-        if (arenaRelay?.connected !== false) announceArena('Duels are live', '#a7f3d0');
+      case 'chat_connected':
+        if (arenaChat?.connected !== false) announceArena('Duels are live', '#a7f3d0');
         break;
       default:
     }
@@ -562,9 +562,9 @@ async function start() {
       avatar, color, defaultAbility, hp: 100, elo, wins: index % 4, losses: index % 3, lastSeen: Date.now(), respawnAt: 0,
     }));
     arenaTransport = 'demo';
-    arenaRelay = { connected: true, lastSeen: Date.now() };
+    arenaChat = { connected: true, lastSeen: Date.now(), status: 'enabled' };
     let revision = 1, round = 0, tick = 0, duel = null;
-    const snapshot = () => acceptArenaSnapshot({ channel, revision: ++revision, paused: false, relay: { connected: true, lastSeen: Date.now() }, config: { maxHp: 100 }, players: demoProfiles, duels: duel ? [duel] : [], events: [] }, { revision });
+    const snapshot = () => acceptArenaSnapshot({ channel, revision: ++revision, paused: false, chat: { connected: true, lastSeen: Date.now(), status: 'enabled' }, config: { maxHp: 100 }, players: demoProfiles, duels: duel ? [duel] : [], events: [] }, { revision });
     const emit = fields => handleArenaEvent({ id: 'demo-' + revision + '-' + fields.type, at: Date.now(), ...fields });
     snapshot();
     const badge = document.createElement('div');
@@ -612,7 +612,7 @@ async function start() {
       onEvent: handleArenaEvent,
       onStatus(event) {
         arenaTransport = event.state || 'offline';
-        if (event.relay) arenaRelay = event.relay;
+        if (event.chat) arenaChat = event.chat;
         updateStatus(event.message || '');
       },
     });
@@ -640,7 +640,7 @@ async function start() {
     window.__arenaDebug = () => ({
       revision: arenaRevision,
       paused: arenaPaused,
-      relay: arenaRelay,
+      chat: arenaChat,
       profiles: profilesById.size,
       duels: arenaDuels,
       players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo,

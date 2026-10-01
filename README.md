@@ -24,7 +24,8 @@ The working tree also holds v2. It adds:
 - An owner-only live-fix page (`/admin/dev/`).
 - Shared server-decided duels on the overlay (add `arena=1`).
 - 15 Kenney CC0 characters and custom character uploads.
-- A local relay (`relay/`) that forwards chat commands from the OBS PC.
+- Chat through a Twitch EventSub webhook to the Worker, so nothing runs on the OBS PC. The owner
+  signs in with `/auth/login?connect=1` and clicks Connect chat on `/admin/` (TWITCH_SETUP.md).
 
 Chat commands for v2 duels:
 - `!challenge @viewer`, then `!accept` or `!decline`.
@@ -33,11 +34,13 @@ Chat commands for v2 duels:
 Rules and routes are in CONTRACTS.md. The plan and the open gaps are in HANDOFF.md.
 
 Tests: `npm run test:all` runs these in order:
-1. Unit and relay tests.
+1. Unit tests.
 2. `cf build`.
-3. The workerd upload test.
-4. The browser tests and the local end-to-end duel, against a `cf dev` it starts on port 5199 with
-   its own state folder and seeded test sessions.
+3. `cf build --mode test`.
+4. The workerd upload test.
+5. The browser tests and the local end-to-end duel, against a `cf dev` it starts on port 5199 with
+   its own state folder, seeded test sessions and `MINI_LOCAL_TEST=1`. The end-to-end test sends
+   signed EventSub webhooks, using the `AUTH_SECRET` from `.dev.vars` (or `MINI_AUTH_SECRET`).
 
 VALIDATION_V2.md has the commands and the spec audit. `MINI_PORT` and `MINI_PERSIST` change the dev
 port and the local state folder.

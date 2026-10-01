@@ -22,10 +22,9 @@ const GROUPS = [
     { key: "respawnMs", label: "Respawn after knockout", unit: "s", ms: true, min: 0, max: 60000 },
     { key: "rematchDelayMs", label: "Rematch wait", unit: "s", ms: true, min: 0, max: 600000 },
   ] },
-  { title: "Ranking and relay", fields: [
+  { title: "Ranking", fields: [
     { key: "initialElo", label: "Starting Elo", unit: "Elo", min: 0, max: 10000 },
     { key: "eloK", label: "Elo K-factor", unit: "K", min: 1, max: 100 },
-    { key: "relayLeaseMs", label: "Relay offline after silence", unit: "s", ms: true, min: 10000, max: 120000 },
   ] },
 ];
 const FIELDS = GROUPS.flatMap((g) => g.fields);
@@ -34,7 +33,7 @@ const get = (obj, key) => key.split(".").reduce((o, k) => (o == null ? undefined
 const flatten = (config) => Object.fromEntries([...FIELDS.map((f) => [f.key, get(config, f.key)]), ["enabled", config?.enabled]]);
 const show = (key, v) => v === undefined ? "—" : key === "enabled" ? (v ? "on" : "off") : LABELS[key]?.ms ? seconds(v) : v + (LABELS[key]?.unit && LABELS[key].unit !== "s" ? " " + LABELS[key].unit : "");
 
-const S = { session: null, access: null, admin: null, leaderboard: [], names: new Map(), socket: null, retry: 0, pairTimer: 0 };
+const S = { session: null, access: null, admin: null, leaderboard: [], names: new Map(), socket: null, retry: 0 };
 const actionStatus = $("#action-status"), configStatus = $("#config-status");
 const OPEN = new Set(["pending", "active"]);
 
@@ -61,7 +60,7 @@ async function init() {
   }
   $("#gate").hidden = true; $("#app").hidden = false;
   $("#dev-link").hidden = $("#dev-open").hidden = !S.access.owner;
-  $("#owner-relay").hidden = !S.access.owner;
+  $("#owner-chat").hidden = !S.access.owner;
   await Promise.all([load(), loadLeaderboard(), loadCustom()]);
   connectLive();
   mountUploads();
@@ -113,28 +112,27 @@ $("#reset-health").addEventListener("click", (e) => act("resetHealth", undefined
 $("#reset-round").addEventListener("click", (e) => act("resetRound", undefined, { button: e.currentTarget, confirmText: "Cancel every open duel without scoring and set the round counter to 0?", done: "Open duels cancelled; rounds restart at 1." }));
 $("#reset-all-ranks").addEventListener("click", (e) => act("resetAllRanks", undefined, { button: e.currentTarget, confirmText: "Reset Elo, wins and losses for every saved profile on nesszerra? This can't be undone.", done: "All ranks reset." }));
 $("#reset-all").addEventListener("click", (e) => act("resetAll", undefined, { button: e.currentTarget, confirmText: "Remove every character from the arena and cancel all duels? Saved profiles and ranks stay.", done: "Arena cleared." }));
-$("#disconnect-relay").addEventListener("click", (e) => act("disconnectRelay", undefined, { button: e.currentTarget, confirmText: "Disconnect the chat relay? Duels pause until it reconnects.", done: "Relay disconnected. It reconnects on its own unless its credential was revoked." }));
 
 // ---------- rendering ----------
 function renderAll() {
   collectNames();
   const a = S.admin, c = a.config, open = a.duels.filter((d) => OPEN.has(d.status));
-  const relay = a.relay?.connected;
+  const chat = a.chatStatus || a.chat || {}, live = !!chat.connected;
   $("#meta").textContent = "Config version " + a.configVersion + " · state revision " + a.revision + " · signed in as " + (S.access.owner ? "broadcaster" : "moderator");
-  $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : !relay ? "Duels are paused: the chat relay is offline" : "Duels are live";
+  $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : !live ? "Duels are paused: Twitch chat isn't connected" : "Duels are live";
   $("#summary-text").textContent = !c.enabled ? "Chat commands are ignored until duels are turned back on." :
-    !relay ? "The relay on the OBS PC isn't connected" + (a.relay?.lastSeen ? " (last seen " + timeAgo(a.relay.lastSeen) + ")" : "") + ". Open duels are cancelled without scoring until it's back." :
+    !live ? "Twitch isn't sending chat to the arena" + (chat.lastRevocationReason ? " (Twitch revoked it: " + chat.lastRevocationReason + ")" : "") + ". Click Connect chat or Use StreamElements below; open duels were cancelled without scoring." :
     open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena, round " + a.round + ".";
   const toggle = $("#toggle-duels");
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
   $("#stats").replaceChildren(
     stat("Duels", c.enabled ? "On" : "Paused", c.enabled ? "up" : "down", c.enabled ? "accepting commands" : "commands ignored"),
-    stat("Chat relay", relay ? "Connected" : "Offline", relay ? "up" : "down", a.relay?.lastSeen ? "seen " + timeAgo(a.relay.lastSeen) : "never seen"),
+    stat(chat.source === "streamelements" ? "StreamElements" : "Twitch chat", live ? "Connected" : "Offline", live ? "up" : "down", (chat.lastNotificationAt ?? chat.lastSeen) ? "last message " + timeAgo(chat.lastNotificationAt ?? chat.lastSeen) : "no messages yet"),
     stat("Open duels", open.length + " / " + c.maxDuels),
     stat("Round", a.round),
     stat("In the arena", a.players.length),
     stat("Config version", "v" + a.configVersion));
-  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderRelay();
+  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe();
 }
 function stat(label, value, cls, delta) {
   return h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), delta ? h("div", { class: "delta " + (cls || "") }, delta) : null);
@@ -317,42 +315,87 @@ async function mountUploads() {
   }
 }
 
-// ---------- relay ----------
-function renderRelay() {
-  const r = S.admin.relay || {};
-  $("#relay-text").textContent = r.connected ? "The relay on the OBS PC is connected (last heartbeat " + timeAgo(r.lastSeen) + ")." :
-    "The relay is offline" + (r.lastSeen ? " since " + timeAgo(r.lastSeen) : "") + ". Duels stay paused until it connects.";
-  $("#disconnect-relay").disabled = !r.connected;
+// ---------- chat connection ----------
+const CHAT_STATUS = { enabled: "connected", webhook_callback_verification_pending: "waiting for Twitch to verify the webhook", pending: "waiting for Twitch to verify the webhook",
+  disconnected: "not connected", authorization_revoked: "Twitch permission was revoked", user_removed: "the Twitch account was removed",
+  notification_failures_exceeded: "Twitch stopped after repeated delivery failures", version_removed: "Twitch retired this subscription version", subscription_missing: "the subscription no longer exists on Twitch" };
+function renderChat() {
+  const c = S.admin.chatStatus || {};
+  const parts = ["Status: " + (CHAT_STATUS[c.status] || c.status || "not connected") + "."];
+  if (c.lastNotificationAt) parts.push("Last chat message " + timeAgo(c.lastNotificationAt) + ".");
+  if (c.lastRevocationReason) parts.push("Last revocation: " + (CHAT_STATUS[c.lastRevocationReason] || c.lastRevocationReason) + ".");
+  if (!c.connected) parts.push("Duels stay paused until chat is connected.");
+  $("#chat-text").textContent = parts.join(" ");
+  $("#connect-chat").textContent = c.connected ? "Reconnect chat" : "Connect chat";
+  $("#disconnect-chat").disabled = !c.subscriptionId && !c.connected;
 }
-$("#pair-code").addEventListener("click", async (e) => {
-  const status = $("#relay-status"), button = e.currentTarget;
+async function chatAct(action, button, takeover = false) {
+  if (action === "disconnectChat" && !confirm("Disconnect Twitch chat? Duels pause and open duels are cancelled without scoring.")) return;
   button.disabled = true;
-  const r = await api("/api/relay/code", { method: "POST", body: {} });
+  setStatus($("#chat-status"), action === "connectChat" ? "Asking Twitch for a chat subscription…" : "Disconnecting…");
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: takeover ? { action, takeover: true } : { action } });
   button.disabled = false;
-  if (!r.ok) return setStatus(status, "No code created: " + errorText(r), "error");
-  setStatus(status, "");
-  $("#pair-output").hidden = false;
-  $("#pair-value").textContent = r.data.code;
-  const until = Date.now() + r.data.expiresIn * 1000;
-  clearInterval(S.pairTimer);
-  const tick = () => {
-    const left = Math.max(0, Math.round((until - Date.now()) / 1000));
-    $("#pair-expiry").textContent = left ? "Enter this in the relay on the OBS PC. Expires in " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0") + "." : "This code expired. Create a new one.";
-    if (!left) { clearInterval(S.pairTimer); $("#pair-value").textContent = "expired"; }
-  };
-  tick(); S.pairTimer = setInterval(tick, 1000);
+  // One Twitch app serves both sites, and Twitch allows one chat subscription per channel: offer to move it here.
+  if (r.status === 409 && r.data?.connectedElsewhere && !takeover
+    && confirm("Chat is connected to " + r.data.connectedElsewhere + ". Only one site can receive chat at a time. Move chat to this site? The other site pauses.")) return chatAct(action, button, true);
+  if (!r.ok) {
+    const fix = r.data?.reconnect ? (S.access.owner ? " Use Reconnect Twitch below." : " Ask nesszerra to reconnect Twitch.") : "";
+    return setStatus($("#chat-status"), "That didn't work: " + errorText(r) + fix, "error");
+  }
+  setStatus($("#chat-status"), action === "disconnectChat" ? "Chat disconnected. Duels are paused." : r.data?.chatStatus?.connected ? "Chat connected. Duels are live." : "Subscription created; Twitch is verifying the webhook. This page updates when it's done.", "ok");
+  await load();
+}
+$("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.currentTarget));
+$("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat", e.currentTarget));
+
+// ---------- StreamElements ----------
+const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
+function renderSe() {
+  const se = S.admin.streamelements, c = S.admin.chatStatus || {};
+  const using = c.connected && c.source === "streamelements";
+  $("#use-se").textContent = using ? "StreamElements is the chat source" : "Use StreamElements";
+  $("#use-se").disabled = using || !se;
+  if (!se) return;
+  const tbody = $("#se-table tbody");
+  if (tbody.dataset.key === se.key && tbody.children.length) return;   // keep unsaved name edits
+  tbody.dataset.key = se.key;
+  tbody.replaceChildren(...se.commands.map((cmd) => {
+    const tr = document.createElement("tr");
+    const label = document.createElement("td"); label.textContent = SE_LABELS[cmd.action] || cmd.action;
+    const nameCell = document.createElement("td"), input = document.createElement("input");
+    Object.assign(input, { value: cmd.name, name: "se-" + cmd.action, maxLength: 25, spellcheck: false });
+    input.setAttribute("aria-label", "Command name for " + (SE_LABELS[cmd.action] || cmd.action));
+    input.dataset.action = cmd.action; nameCell.append(input);
+    const reply = document.createElement("td"), code = document.createElement("code"); code.textContent = cmd.response; code.className = "wrap-anywhere"; reply.append(code);
+    const copyCell = document.createElement("td"), copy = document.createElement("button");
+    Object.assign(copy, { type: "button", className: "btn", textContent: "Copy reply" });
+    copy.addEventListener("click", async () => { await navigator.clipboard.writeText(cmd.response); setStatus($("#se-status"), "Copied the reply for " + input.value + ". Paste it as the response of that StreamElements command.", "ok"); });
+    copyCell.append(copy);
+    tr.append(label, nameCell, reply, copyCell);
+    return tr;
+  }));
+}
+async function seAct(body, button, done) {
+  button.disabled = true;
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body });
+  button.disabled = false;
+  if (!r.ok) return setStatus($("#se-status"), "That didn't work: " + errorText(r), "error");
+  setStatus($("#se-status"), done, "ok");
+  $("#se-table tbody").dataset.key = "";
+  await load();
+}
+$("#use-se").addEventListener("click", (e) => {
+  const c = S.admin.chatStatus || {};
+  if (c.connected && c.source === "twitch" && !confirm("Switch from Twitch chat to StreamElements? Open duels are not affected, but chat messages without a command stop reaching the arena.")) return;
+  seAct({ action: "useStreamElements" }, e.currentTarget, "StreamElements is now the chat source. Duels are live.");
 });
-$("#pair-copy").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("#pair-value").textContent); setStatus($("#relay-status"), "Code copied.", "ok"); }
-  catch { setStatus($("#relay-status"), "Select the code and copy it with Ctrl+C.", "error"); }
+$("#save-se-names").addEventListener("click", (e) => {
+  const names = Object.fromEntries([...document.querySelectorAll("#se-table input")].map((i) => [i.dataset.action, i.value.trim()]));
+  seAct({ action: "setSeNames", names }, e.currentTarget, "Names saved. Update the command names in StreamElements to match.");
 });
-$("#revoke-relay").addEventListener("click", async (e) => {
-  if (!confirm("Revoke every relay credential? The relay disconnects and must be paired again with a new code.")) return;
-  e.currentTarget.disabled = true;
-  const r = await api("/api/relay/revoke", { method: "POST", body: {} });
-  e.currentTarget.disabled = false;
-  setStatus($("#relay-status"), r.ok ? "All relay credentials revoked. Pair the relay again to resume duels." : "Not revoked: " + errorText(r), r.ok ? "ok" : "error");
-  if (r.ok) load();
+$("#rotate-se").addEventListener("click", (e) => {
+  if (!confirm("Make a new key? Every StreamElements command stops working until you paste the new replies.")) return;
+  seAct({ action: "rotateSeKey" }, e.currentTarget, "New key made. Copy every reply again into StreamElements.");
 });
 
 // ---------- live updates ----------
@@ -365,8 +408,8 @@ function connectLive() {
     let snap; try { snap = JSON.parse(event.data); } catch { return; }
     if (snap?.type !== "snapshot" || !S.admin || snap.revision <= S.admin.revision) return;
     const versionChanged = snap.configVersion !== S.admin.configVersion;
-    Object.assign(S.admin, { revision: snap.revision, paused: snap.paused, relay: snap.relay, config: snap.config, configVersion: snap.configVersion, round: snap.round, players: snap.players, duels: snap.duels, events: snap.events });
-    if (versionChanged) load(); else renderAll();
+    Object.assign(S.admin, { revision: snap.revision, paused: snap.paused, chat: snap.chat, config: snap.config, configVersion: snap.configVersion, round: snap.round, players: snap.players, duels: snap.duels, events: snap.events });
+    if (versionChanged || Boolean(snap.chat?.connected) !== Boolean(S.admin.chatStatus?.connected)) load(); else renderAll();
   };
   ws.onclose = () => { S.socket = null; const wait = Math.min(30000, 1000 * 2 ** S.retry++); setTimeout(connectLive, wait); };
 }

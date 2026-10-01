@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
-import { digest, seal, unseal } from '../server/auth.js';
+import { digest, seal, unseal, CONNECT_SCOPES } from '../server/auth.js';
 
 function environment() {
   const entries = new Map(), forwarded = [];
@@ -55,16 +55,31 @@ test('production is inaccessible before broadcaster onboarding', async () => {
 test('a viewer cannot grant themselves mod or developer permissions', async () => {
   const f = environment(), cookie = await signedIn(f);
   assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { actorId: '1', owner: true, action: 'resetAllRanks' }, cookie), f.env)).status, 403);
-  assert.equal((await worker.fetch(req('/api/relay/code', 'POST', {}, cookie), f.env)).status, 403);
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, cookie), f.env)).status, 403);
   assert.equal((await worker.fetch(req('/api/dev/save', 'POST', { owner: true }, cookie), f.env)).status, 403);
 });
-test('pairing codes are consumed once under simultaneous redemption', async () => {
-  const f = environment(), code = 'a'.repeat(64);
-  f.entries.set('pair:' + await digest(code), { channel: 'nesszerra' });
-  const results = await Promise.all([worker.fetch(req('/api/relay/pair', 'POST', { code }), f.env), worker.fetch(req('/api/relay/pair', 'POST', { code }), f.env)]);
-  assert.deepEqual(results.map(x => x.status).sort(), [200, 403]);
-  const value = await results.find(x => x.status === 200).json();
-  assert.match(value.credential, /^[a-f0-9]{64}$/); assert.equal(value.channel, 'nesszerra');
+test('connect=1 asks for the chat scopes the EventSub webhook needs', async () => {
+  const f = environment();
+  const r = await worker.fetch(req('/auth/login?connect=1'), f.env);
+  assert.equal(r.status, 302);
+  assert.deepEqual(new URL(r.headers.get('Location')).searchParams.get('scope').split(' '), CONNECT_SCOPES);
+  assert.deepEqual(CONNECT_SCOPES, ['moderation:read', 'user:read:chat', 'user:bot', 'channel:bot']);
+  assert.equal(new URL((await worker.fetch(req('/auth/login'), f.env)).headers.get('Location')).searchParams.get('scope'), '', 'plain sign-in asks for nothing');
+});
+test('a connect=1 callback without every chat scope is refused with a restart hint', async (t) => {
+  const f = environment();
+  const login = await worker.fetch(req('/auth/login?connect=1'), f.env);
+  const state = new URL(login.headers.get('Location')).searchParams.get('state');
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = String(url);
+    if (u.endsWith('/oauth2/token')) return Response.json({ access_token: 'user-token', refresh_token: 'r' });
+    if (u.endsWith('/oauth2/validate')) return Response.json({ client_id: 'test-app', user_id: '1', scopes: ['moderation:read', 'user:read:chat'] });
+    return Response.json({ data: [{ id: '1', login: 'nesszerra', display_name: 'nesszerra' }] });
+  });
+  const r = await worker.fetch(new Request('https://chat.miolaf.xyz/auth/callback?code=c&state=' + state, { headers: { Cookie: 'mini_oauth=' + state } }), f.env);
+  assert.equal(r.status, 403);
+  assert.match((await r.json()).error, /user:bot, channel:bot\. Restart at \/auth\/login\?connect=1/);
+  assert.equal(f.entries.has('broadcaster:nesszerra'), false);
 });
 test('OAuth state mismatch is rejected without a token exchange', async () => {
   const f = environment();

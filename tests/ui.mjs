@@ -14,7 +14,7 @@ const now = Date.now();
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const user = { id: '1001', login: 'viewer_one', displayName: 'Viewer_One' };
 const mod = { id: '2002', login: 'mod_two', displayName: 'Mod_Two' };
-const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 60000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, relayLeaseMs: 30000, initialElo: 1000, eloK: 24,
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 60000, respawnMs: 3000, rematchDelayMs: 30000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24,
   abilities: { strike: { damage: 10, cooldownMs: 3000 }, heavy: { damage: 25, cooldownMs: 8000 }, heal: { amount: 15, cooldownMs: 10000 } } };
 const board = [
   { userId: '3003', username: 'top_dog', displayName: 'top_dog', avatar: 'soldier', color: '#34d399', defaultAbility: 'heavy', elo: 1048, wins: 4, losses: 1 },
@@ -131,13 +131,14 @@ try {
     const { context, page } = await newPage(s);
     page.on('dialog', (d) => d.accept());
     const posts = [];
-    let version = 3, conflictNext = false;
+    let version = 3, conflictNext = false, reconnectNext = true;
+    let chatStatus = { connected: true, status: 'enabled', subscriptionId: 'sub-1', createdAt: now - 86400000, lastNotificationAt: now - 4000, lastRevocationReason: '', checkedAt: now - 600000 };
     const history = () => [
       { version: 3, config: { ...config, abilities: { ...config.abilities, heavy: { damage: 25, cooldownMs: 8000 } } }, actorId: mod.id, at: now - 600000, note: 'back to preset' },
       { version: 2, config: { ...config, abilities: { ...config.abilities, heavy: { damage: 30, cooldownMs: 8000 } } }, actorId: '3003', at: now - 3600000, note: 'heavier heavy' },
       { version: 1, config, actorId: 'system', at: now - 86400000, note: '' },
     ];
-    const snapshot = () => ({ type: 'snapshot', channel: 'nesszerra', revision: 40 + posts.length, paused: false, relay: { connected: true, lastSeen: now - 4000 }, config, configVersion: version, round: 7,
+    const snapshot = () => ({ type: 'snapshot', channel: 'nesszerra', revision: 40 + posts.length, paused: false, chat: { connected: true, lastSeen: now - 4000, status: 'enabled' }, config, configVersion: version, round: 7,
       players: [
         { ...board[0], hp: 62, lastSeen: now - 20000, registered: true, respawnAt: 0 },
         { ...board[1], hp: 85, lastSeen: now - 5000, registered: true, respawnAt: 0 },
@@ -152,12 +153,17 @@ try {
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: role === 'owner', moderator: role === 'mod', canManage: true }));
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
     await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [{ id: 'c-mascot', label: 'Mascot', frames: [{ x: 0, y: 0, w: 128, h: 128 }, { x: 128, y: 0, w: 128, h: 128 }], animations: { attack: [{ x: 256, y: 0, w: 128, h: 128 }] }, bytes: 48213, createdBy: mod.id, createdAt: now - 7200000 }], usage: { count: 1, limit: 8, bytes: 48213 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
-    await page.route('**/api/relay/code', (r) => json(r, { code: 'ab'.repeat(32), channel: 'nesszerra', expiresIn: 300 }));
     await page.route('**/api/admin/nesszerra', async (r) => {
-      if (r.request().method() === 'GET') return json(r, { ...snapshot(), history: history(), customUsage: { count: 1, limit: 8, bytes: 48213 }, access: { owner: role === 'owner', moderator: role === 'mod', canManage: true } });
+      if (r.request().method() === 'GET') return json(r, { ...snapshot(), chatStatus, history: history(), customUsage: { count: 1, limit: 8, bytes: 48213 }, access: { owner: role === 'owner', moderator: role === 'mod', canManage: true } });
       const body = r.request().postDataJSON(); posts.push(body);
       if (conflictNext) { conflictNext = false; version = 4; return json(r, { ok: false, reason: 'config_version_conflict', error: 'config_version_conflict' }, 409); }
       if (body.action === 'config' || body.action === 'rollbackConfig') version += 1;
+      if (body.action === 'connectChat') {
+        if (reconnectNext) { reconnectNext = false; return json(r, { error: 'Twitch rejected the chat subscription: missing authorization. Reconnect Twitch at /auth/login?connect=1, then click Connect chat.', reconnect: '/auth/login?connect=1' }, 403); }
+        chatStatus = { ...chatStatus, connected: true, status: 'enabled', subscriptionId: 'sub-2' };
+        return json(r, { ok: true, reason: 'chat_connected', revision: 51, chatStatus });
+      }
+      if (body.action === 'disconnectChat') { chatStatus = { ...chatStatus, connected: false, status: 'disconnected', subscriptionId: '' }; return json(r, { ok: true, reason: 'chat_disconnected', revision: 52, chatStatus }); }
       return json(r, { ok: true, reason: 'ok', revision: 50 });
     });
     await page.goto(base + '/admin/');
@@ -170,7 +176,21 @@ try {
     assert.match(await page.locator('#history tbody tr').nth(1).textContent(), /Heavy strike damage 25 HP → 30 HP/);
     assert.match(await page.locator('#usage-title').textContent(), /1 of 8/);
     assert.equal(await page.locator('#dev-open').isVisible(), role === 'owner');
-    assert.equal(await page.locator('#owner-relay').isVisible(), role === 'owner');
+    assert.equal(await page.locator('#owner-chat').isVisible(), role === 'owner');
+    assert.match(await page.locator('#chat-text').textContent(), /Last chat message/);
+    assert.equal(await page.locator('#connect-chat').textContent(), 'Reconnect chat');
+    if (s.name === '1280') {
+      // first try: Twitch says the broadcaster authorization is missing, so the page points at the reconnect link
+      await page.click('#connect-chat');
+      await page.waitForFunction(() => /Reconnect Twitch/.test(document.querySelector('#chat-status').textContent));
+      assert.equal(await page.locator('#chat-status a[href="/auth/login?connect=1"]').count() + await page.locator('#owner-chat a[href="/auth/login?connect=1"]').count() >= 1, true);
+      await page.click('#connect-chat');
+      await page.waitForFunction(() => /Chat connected/.test(document.querySelector('#chat-status').textContent));
+      assert.deepEqual(posts.filter((p) => p.action === 'connectChat').length, 2);
+      await page.click('#disconnect-chat');   // dialog auto-accepted
+      await page.waitForFunction(() => /Chat disconnected/.test(document.querySelector('#chat-status').textContent));
+      assert.equal(posts.at(-1).action, 'disconnectChat');
+    }
     assert.ok(await page.evaluate(() => window.__sockets.some((w) => w.url.endsWith('/api/live/nesszerra'))), 'live socket opened');
     if ((await page.request.head(base + '/upload.js')).ok()) {   // Lane D's uploader is mounted into the admin page
       await page.waitForFunction(() => !document.querySelector('#upload-root').textContent.includes("isn't available"));

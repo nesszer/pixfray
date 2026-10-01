@@ -6,19 +6,18 @@ const T0 = 1_800_000_000_000;
 let seq = 0;
 
 // Small harness: keeps state and clock, applies events through the pure reducer.
-function arena({ relay = true, viewers = ['alice', 'bob', 'cara', 'dan'] } = {}) {
+function arena({ chat = true, viewers = ['alice', 'bob', 'cara', 'dan'] } = {}) {
   const w = { state: createInitialState('nesszerra'), now: T0, last: null };
   w.apply = (event) => { const r = reduceGame(w.state, event, w.now); w.state = r.state; w.last = r; return r.result; };
   w.tick = (ms) => { w.now += ms; return w.apply({ type: 'tick' }); };
-  w.heartbeat = () => w.apply({ type: 'relay_heartbeat', sessionId: w.state.relay.sessionId, twitchConnected: true });
-  // Advance the clock while the relay keeps heartbeating every 10 s (the relay lease is 30 s).
-  w.advance = (ms) => { const end = w.now + ms; while (w.now < end) { w.now = Math.min(end, w.now + 10_000); w.heartbeat(); } };
+  // Advance the clock in 10 s ticks (alarms fire at least that often while duels are open).
+  w.advance = (ms) => { const end = w.now + ms; while (w.now < end) { w.now = Math.min(end, w.now + 10_000); w.apply({ type: 'tick' }); } };
   w.say = (login, text) => w.apply({ type: 'command', messageId: 'm' + (++seq), userId: 'id-' + login, username: login, displayName: login, text, timestamp: w.now });
   w.register = (login, extra = {}) => w.apply({ type: 'profile_saved', profile: { userId: 'id-' + login, username: login, displayName: login, avatar: 'player', color: '#112233', defaultAbility: 'strike', ...extra } });
   w.player = (login) => w.state.players.find((p) => p.username === login);
   w.duel = (id) => w.state.duels.find((d) => d.id === id);
   w.fight = (a, b) => { const c = w.say(a, '!challenge @' + b); assert.equal(c.ok, true, c.reason); const r = w.say(b, '!accept'); assert.equal(r.ok, true, r.reason); return c.duelId; };
-  if (relay) { w.apply({ type: 'relay_connected', sessionId: 's1' }); w.heartbeat(); }
+  if (chat) w.apply({ type: 'chat_subscription', subscriptionId: 'sub-1', status: 'enabled', createdAt: T0 });
   for (const v of viewers) w.register(v);
   return w;
 }
@@ -75,9 +74,9 @@ test('the target can decline a challenge', () => {
 test('challenges expire after 30 s', () => {
   const w = arena();
   const c = w.say('alice', '!challenge @bob');
-  w.now += 29_999; w.heartbeat();
+  w.now += 29_999; w.tick(0);
   assert.equal(w.duel(c.duelId).status, 'pending');
-  w.now += 1; w.heartbeat();
+  w.now += 1; w.tick(0);
   assert.equal(w.duel(c.duelId).status, 'expired');
   assert.equal(w.say('bob', '!accept').reason, 'challenge_not_found');
   assert.ok(w.state.events.some((e) => e.type === 'challenge_expired'));
@@ -228,7 +227,7 @@ test('a chat message from a knocked-out viewer does not skip their respawn', () 
   const w = arena();
   w.fight('alice', 'bob');
   knockOut(w, 'alice');
-  // The channel passes the stored profile (hp=max, respawnAt=0) with every relay event.
+  // The channel passes the stored profile (hp=max, respawnAt=0) with every chat message.
   w.apply({ type: 'presence', userId: 'id-bob', username: 'bob', profile: { userId: 'id-bob', username: 'bob', registered: true, hp: 100, respawnAt: 0, elo: 988 } });
   assert.equal(w.player('bob').hp, 0);
   assert.ok(w.player('bob').respawnAt > w.now);
@@ -302,58 +301,82 @@ test('ranked duels require a signed-in profile', () => {
   w.apply({ type: 'presence', userId: 'id-guest', username: 'guest' });
   assert.equal(w.say('guest', '!challenge @alice').reason, 'ranked_sign_in_required');
   assert.equal(w.say('alice', '!challenge @guest').reason, 'ranked_sign_in_required');
-  // a relay cannot forge registration: only profile_saved / stored profiles set it
+  // a chat message cannot forge registration: only profile_saved / stored profiles set it
   w.apply({ type: 'presence', userId: 'id-guest', username: 'guest', profile: { userId: 'id-guest', username: 'guest' } });
   assert.equal(w.player('guest').registered, false);
 });
 
-test('relay drop pauses combat and cancels unfinished duels unscored', () => {
+test('chat disconnect pauses combat and cancels unfinished duels unscored', () => {
   const w = arena();
   const active = w.fight('alice', 'bob');
   w.say('alice', '!heavy');
   const pending = w.say('cara', '!challenge @dan').duelId;
-  w.apply({ type: 'relay_offline', sessionId: 's1' });
+  assert.equal(w.apply({ type: 'chat_disconnected', reason: 'disconnected' }).reason, 'chat_disconnected');
   assert.equal(w.duel(active).status, 'cancelled');
-  assert.equal(w.duel(active).cancelReason, 'relay_disconnected');
+  assert.equal(w.duel(active).cancelReason, 'chat_disconnected');
   assert.equal(w.duel(pending).status, 'cancelled');
   assert.equal(w.player('alice').elo, 1000);
   assert.equal(w.player('bob').hp, 100);
-  assert.equal(w.say('alice', '!challenge @bob').reason, 'relay_offline', 'commands are rejected while paused');
-  w.apply({ type: 'relay_connected', sessionId: 's2' });
-  assert.equal(w.say('alice', '!challenge @bob').reason, 'relay_offline', 'paused until Twitch heartbeat');
-  w.heartbeat();
+  assert.deepEqual([w.state.chat.connected, w.state.chat.status, w.state.chat.subscriptionId], [false, 'disconnected', '']);
+  assert.equal(w.state.events.at(-1).type, 'chat_disconnected');
+  assert.equal(w.say('alice', '!challenge @bob').reason, 'chat_offline', 'commands are rejected while paused');
+  w.apply({ type: 'chat_subscription', subscriptionId: 'sub-2', status: 'webhook_callback_verification_pending', createdAt: w.now });
+  assert.equal(w.say('alice', '!challenge @bob').reason, 'chat_offline', 'paused until Twitch verifies the webhook');
+  assert.equal(w.apply({ type: 'chat_verified', subscriptionId: 'sub-2' }).reason, 'chat_connected');
+  assert.equal(w.state.events.at(-1).type, 'chat_connected');
   assert.equal(w.say('alice', '!challenge @bob').ok, true);
 });
 
-test('a silent relay is treated as dropped after the lease expires', () => {
+test('quiet chat never pauses combat (no heartbeat lease)', () => {
   const w = arena();
-  const id = w.fight('alice', 'bob');
-  w.say('alice', '!strike');
-  w.tick(defaultConfig().relayLeaseMs + 1);
-  assert.equal(w.state.relay.connected, false);
-  assert.equal(w.duel(id).status, 'cancelled');
+  w.tick(6 * 3_600_000);
+  assert.equal(w.state.chat.connected, true);
+  w.register('alice'); w.register('bob');   // idle viewers left the arena meanwhile
+  assert.equal(w.say('alice', '!challenge @bob').ok, true);
 });
 
-test('relay heartbeat reporting Twitch down also cancels duels', () => {
-  const w = arena();
-  const id = w.fight('alice', 'bob');
-  w.apply({ type: 'relay_heartbeat', sessionId: 's1', twitchConnected: false });
-  assert.equal(w.duel(id).status, 'cancelled');
-  assert.equal(w.state.relay.connected, false);
+test('webhook verification may arrive before the subscription is recorded', () => {
+  const w = arena({ chat: false });
+  assert.equal(w.apply({ type: 'chat_verified', subscriptionId: 'sub-9' }).reason, 'chat_verified_early');
+  assert.equal(w.state.chat.connected, false);
+  assert.equal(w.apply({ type: 'chat_subscription', subscriptionId: 'sub-9', status: 'webhook_callback_verification_pending', createdAt: w.now }).reason, 'chat_connected');
+  assert.deepEqual([w.state.chat.connected, w.state.chat.status, w.state.chat.verifiedId], [true, 'enabled', '']);
+  // a verification for some other subscription never connects the current one
+  const v = arena({ chat: false });
+  v.apply({ type: 'chat_subscription', subscriptionId: 'sub-1', status: 'webhook_callback_verification_pending' });
+  v.apply({ type: 'chat_verified', subscriptionId: 'sub-other' });
+  assert.equal(v.state.chat.connected, false);
 });
 
-test('a replacement relay cancels open duels and stale sessions are ignored', () => {
+test('a revocation records the reason and keeps duels paused', () => {
   const w = arena();
   const id = w.fight('alice', 'bob');
-  w.apply({ type: 'relay_connected', sessionId: 's2' });
-  assert.equal(w.duel(id).status, 'cancelled');
-  w.heartbeat();
-  const id2 = w.fight('alice', 'bob');
-  assert.equal(w.apply({ type: 'relay_offline', sessionId: 's1' }).reason, 'stale_relay_session');
-  assert.equal(w.duel(id2).status, 'active');
+  w.apply({ type: 'chat_disconnected', reason: 'authorization_revoked' });
+  assert.equal(w.duel(id).cancelReason, 'chat_disconnected');
+  assert.deepEqual([w.state.chat.connected, w.state.chat.status, w.state.chat.revokedReason], [false, 'authorization_revoked', 'authorization_revoked']);
+  assert.equal(w.state.events.at(-1).reason, 'authorization_revoked');
 });
 
-test('duplicate and stale relay messages are ignored', () => {
+test('rejected chat commands can be logged to the event list', () => {
+  const w = arena();
+  const r = w.apply({ type: 'command_rejected', userId: 'id-alice', command: 'strike', reason: 'not_in_active_duel' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(w.state.events.at(-1), { id: String(w.state.revision), type: 'command_rejected', at: w.now, userId: 'id-alice', command: 'strike', reason: 'not_in_active_duel' });
+});
+
+test('stored relay state and relayLeaseMs are dropped; old configs still roll back', () => {
+  const legacy = { ...createInitialState('nesszerra'), relay: { connected: true, lastSeen: T0 }, config: { ...defaultConfig(), relayLeaseMs: 30000 } };
+  const r = reduceGame(legacy, { type: 'tick' }, T0);
+  assert.equal(r.state.relay, undefined);
+  assert.equal(r.state.config.relayLeaseMs, undefined);
+  assert.equal(r.state.chat.connected, false);
+  const rolled = reduceGame(r.state, { type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { ...defaultConfig(), relayLeaseMs: 30000, maxHp: 120 } } }, T0);
+  assert.equal(rolled.result.ok, true, rolled.result.reason);
+  assert.equal(rolled.state.config.maxHp, 120);
+  assert.equal(rolled.state.config.relayLeaseMs, undefined);
+});
+
+test('duplicate and stale chat commands are ignored', () => {
   const w = arena();
   w.say('alice', '!challenge @bob');
   const msg = { type: 'command', messageId: 'dup-1', userId: 'id-bob', username: 'bob', text: '!accept', timestamp: w.now };
@@ -441,16 +464,16 @@ test('overlay events: final blow emits duel_action before duel_completed, respaw
   assert.deepEqual(w.state.events.at(-1), { id: String(w.state.revision), type: 'player_respawned', at: w.now, userId: 'id-bob' });
 });
 
-test('routine relay heartbeats refresh the lease without adding events', () => {
+test('the hourly subscription check persists without adding events', () => {
   const w = arena();
   const rev = w.state.revision;
   w.now += 5000;
-  const r = reduceGame(w.state, { type: 'relay_heartbeat', sessionId: 's1', twitchConnected: true }, w.now);
-  assert.equal(r.result.reason, 'heartbeat');
+  const r = reduceGame(w.state, { type: 'chat_checked' }, w.now);
+  assert.equal(r.result.reason, 'chat_checked');
   assert.equal(r.state.revision, rev);
-  assert.equal(r.changed, true, 'lastSeen must be persisted');
+  assert.equal(r.changed, true, 'checkedAt must be persisted');
   assert.equal(r.visible, false, 'no overlay broadcast needed');
-  assert.equal(r.state.relay.lastSeen, w.now);
+  assert.equal(r.state.chat.checkedAt, w.now);
 });
 
 test('resetAll clears arena players, open duels and rematch locks but keeps profiles', () => {

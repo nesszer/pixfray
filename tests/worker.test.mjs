@@ -2,7 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
+import { createHmac } from 'node:crypto';
 import { digest } from '../server/auth.js';
+import { eventsubSecret, signEventsub, localTestMode } from '../server/eventsub.js';
 
 function environment() {
   const entries = new Map(), forwarded = [];
@@ -96,25 +98,215 @@ test('malformed and oversized bodies are rejected before reaching a room', async
   assert.equal(f.forwarded.length, 0);
 });
 
-test('live and relay sockets require a WebSocket upgrade; relay requires a valid credential', async () => {
-  const f = environment();
+test('live sockets require a WebSocket upgrade; the relay routes are gone', async () => {
+  const f = environment(), owner = await signedIn(f, true);
   assert.equal((await worker.fetch(req('/api/live/nesszerra'), f.env)).status, 426);
-  assert.equal((await worker.fetch(req('/api/relay/nesszerra', 'GET', undefined, undefined, { Upgrade: 'websocket' }), f.env)).status, 401);
-  assert.equal((await worker.fetch(req('/api/relay/nesszerra', 'GET', undefined, undefined, { Upgrade: 'websocket', Authorization: 'Bearer ' + 'b'.repeat(64) }), f.env)).status, 403);
+  assert.equal((await worker.fetch(req('/api/relay/nesszerra', 'GET', undefined, undefined, { Upgrade: 'websocket' }), f.env)).status, 404);
+  assert.equal((await worker.fetch(req('/api/relay/code', 'POST', {}, owner), f.env)).status, 404);
   assert.equal(f.forwarded.length, 0);
 });
 
-test('paired relay credential opens the relay socket; revoke invalidates it', async () => {
+// ---------- Twitch EventSub webhook ----------
+const NOW = Date.parse('2026-10-01T12:00:00Z');
+async function eventsub(f, body, { type = 'notification', id = 'msg-' + Math.random().toString(16).slice(2), at = NOW, sign = true, signature, headers = {} } = {}) {
+  const raw = typeof body === 'string' ? body : JSON.stringify(body), timestamp = new Date(at).toISOString().replace('Z', '123456Z');
+  const sig = signature ?? (sign ? await signEventsub(await eventsubSecret(f.env), id, timestamp, raw) : 'sha256=' + '0'.repeat(64));
+  // no Origin and no cookie, like Twitch
+  return worker.fetch(new Request('https://chat.miolaf.xyz/api/eventsub', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Twitch-Eventsub-Message-Id': id, 'Twitch-Eventsub-Message-Timestamp': timestamp, 'Twitch-Eventsub-Message-Signature': sig, 'Twitch-Eventsub-Message-Type': type, 'Twitch-Eventsub-Subscription-Type': 'channel.chat.message', 'Twitch-Eventsub-Subscription-Version': '1', ...headers }, body: raw }), f.env);
+}
+const chatBody = (channel = 'nesszerra') => ({ subscription: { id: 'sub-1', status: 'enabled', type: 'channel.chat.message' }, event: { broadcaster_user_login: channel, chatter_user_id: '7', chatter_user_login: 'viewer', chatter_user_name: 'Viewer', message_id: 'chat-1', message: { text: '!strike' }, color: '#FF0000' } });
+
+test('eventsub: the secret is derived from AUTH_SECRET; signed notifications reach the room without Origin or session', async (t) => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = environment();
+  const expected = createHmac('sha256', f.env.AUTH_SECRET).update('mini-chat:eventsub:v1').digest('hex');
+  assert.equal(await eventsubSecret(f.env), expected);
+  const res = await eventsub(f, chatBody(), { id: 'n-1' });
+  assert.equal(res.status, 204);
+  const sent = f.forwarded.at(-1);
+  assert.deepEqual([sent.channel, sent.path, sent.body.messageId, sent.body.messageType, sent.body.subscription.id, sent.body.timestamp], ['nesszerra', '/eventsub', 'n-1', 'notification', 'sub-1', NOW], 'nanosecond fractions are truncated to milliseconds');
+  assert.equal(sent.body.event.message.text, '!strike');
+  // a disabled channel is accepted (204) but never routed
+  const before = f.forwarded.length;
+  assert.equal((await eventsub(f, chatBody('miolafff'))).status, 204);
+  assert.equal(f.forwarded.length, before);
+});
+
+test('eventsub: bad signatures, stale or future timestamps, missing headers and oversized bodies are refused', async (t) => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = environment();
+  assert.equal((await eventsub(f, chatBody(), { sign: false })).status, 403);
+  assert.equal((await eventsub(f, chatBody(), { signature: 'nonsense' })).status, 403);
+  // a valid signature for a different body
+  const other = await signEventsub(await eventsubSecret(f.env), 'x', new Date(NOW).toISOString().replace('Z', '123456Z'), '{}');
+  assert.equal((await eventsub(f, chatBody(), { id: 'x', signature: other })).status, 403);
+  assert.equal((await eventsub(f, chatBody(), { at: NOW - 601_000 })).status, 403, 'older than 10 minutes');
+  assert.equal((await eventsub(f, chatBody(), { at: NOW + 61_000 })).status, 403, 'more than 1 minute in the future');
+  assert.equal((await eventsub(f, chatBody(), { at: NOW - 590_000 })).status, 204);
+  assert.equal((await eventsub(f, chatBody(), { headers: { 'Twitch-Eventsub-Message-Id': '' } })).status, 400);
+  assert.equal((await eventsub(f, 'x'.repeat(64 * 1024 + 1))).status, 413);
+  assert.equal((await eventsub(f, '{not json')).status, 400);
+  assert.equal(f.forwarded.length, 1);
+  assert.equal((await worker.fetch(new Request('https://chat.miolaf.xyz/api/eventsub'), f.env)).status, 405);
+});
+
+test('eventsub: verification answers the challenge as text/plain; revocation is forwarded; unknown types are ignored', async (t) => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = environment();
+  const res = await eventsub(f, { challenge: 'pogchamp-kappa-360noscope', subscription: { id: 'sub-1', status: 'webhook_callback_verification_pending' } }, { type: 'webhook_callback_verification' });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /^text\/plain/);
+  assert.equal(await res.text(), 'pogchamp-kappa-360noscope');
+  assert.equal(f.forwarded.at(-1).body.messageType, 'webhook_callback_verification');
+  const revoked = await eventsub(f, { subscription: { id: 'sub-1', status: 'authorization_revoked' } }, { type: 'revocation' });
+  assert.equal(revoked.status, 204);
+  assert.deepEqual([f.forwarded.at(-1).body.messageType, f.forwarded.at(-1).body.subscription.status], ['revocation', 'authorization_revoked']);
+  const n = f.forwarded.length;
+  assert.equal((await eventsub(f, { subscription: {} }, { type: 'something_new' })).status, 204);
+  assert.equal(f.forwarded.length, n);
+});
+
+test('eventsub: a room failure is not acknowledged, so Twitch retries', async (t) => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = environment();
+  f.env.ROOMS = { idFromName: x => x, get: () => ({ fetch: async () => new Response('boom', { status: 500 }) }) };
+  assert.equal((await eventsub(f, chatBody())).status, 503);
+});
+
+test('eventsub: an emote-heavy message (~30 KB) is forwarded as a few hundred bytes; a room 4xx is acknowledged', async (t) => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = environment();
+  const body = chatBody();
+  const emote = { type: 'emote', text: 'Kappa', cheermote: null, emote: { id: 'emotesv2_' + 'a'.repeat(32), emote_set_id: '0123456789', owner_id: '0123456789', format: ['static', 'animated'] }, mention: null };
+  body.event.message = { text: '!strike ' + 'Kappa '.repeat(80), fragments: Array.from({ length: 120 }, (_, i) => i % 2 ? { type: 'text', text: ' ', cheermote: null, emote: null, mention: null } : emote) };
+  body.event.badges = Array.from({ length: 20 }, () => ({ set_id: 'subscriber', id: '12', info: '12' }));
+  body.event.reply = { parent_message_body: 'x'.repeat(500) };
+  body.event.message.fragments.push(...Array.from({ length: 60 }, () => emote));
+  const raw = JSON.stringify(body);
+  assert.ok(raw.length > 28_000 && raw.length < 64 * 1024, 'body is ' + raw.length + ' bytes');
+  assert.equal((await eventsub(f, body)).status, 204);
+  const sent = f.forwarded.at(-1);
+  assert.ok(sent.options.body.length < 1500, 'room payload is ' + sent.options.body.length + ' bytes');
+  assert.equal(sent.body.event.message.text, body.event.message.text.slice(0, 512));
+  assert.equal(sent.body.event.message.fragments, undefined);
+  assert.deepEqual([sent.body.event.chatter_user_id, sent.body.event.chatter_user_login, sent.body.event.color, sent.body.event.message_id], ['7', 'viewer', '#FF0000', 'chat-1']);
+  // a room refusing a validly signed message must not turn into a Twitch retry loop
+  f.env.ROOMS = { idFromName: x => x, get: () => ({ fetch: async () => Response.json({ error: 'request body too large' }, { status: 400 }) }) };
+  assert.equal((await eventsub(f, chatBody())).status, 204);
+});
+
+// ---------- Connect chat (Helix lifecycle) ----------
+function helixMock(t, { subscriptions = [], create = 202 } = {}) {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    const u = new URL(String(url)), method = init.method || 'GET';
+    calls.push({ method, url: u, body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined, auth: init.headers?.Authorization });
+    if (u.host === 'id.twitch.tv') return Response.json({ access_token: 'app-token-1', expires_in: 5000 });
+    if (method === 'GET') return Response.json({ data: subscriptions, pagination: {} });
+    if (method === 'DELETE') return new Response(null, { status: 204 });
+    if (create !== 202) return Response.json({ message: 'missing authorization' }, { status: create });
+    return Response.json({ data: [{ id: 'sub-new', status: 'webhook_callback_verification_pending', created_at: '2026-10-01T12:00:00Z' }] }, { status: 202 });
+  });
+  return calls;
+}
+const callback = 'https://chat.miolaf.xyz/api/eventsub';
+const sub = (id, extra = {}) => ({ id, status: 'enabled', type: 'channel.chat.message', version: '1', condition: { broadcaster_user_id: '1', user_id: '1' }, transport: { method: 'webhook', callback }, created_at: '2026-09-30T00:00:00Z', ...extra });
+
+test('connectChat creates exactly one webhook with the broadcaster condition and deletes stale ones', async (t) => {
   const f = environment(), owner = await signedIn(f, true);
-  const code = await (await worker.fetch(req('/api/relay/code', 'POST', {}, owner), f.env)).json();
-  assert.match(code.code, /^[a-f0-9]{64}$/);
-  const paired = await (await worker.fetch(new Request('https://chat.miolaf.xyz/api/relay/pair', { method: 'POST', body: JSON.stringify({ code: code.code }) }), f.env)).json();
-  const open = () => worker.fetch(req('/api/relay/nesszerra', 'GET', undefined, undefined, { Upgrade: 'websocket', Authorization: 'Bearer ' + paired.credential }), f.env);
-  assert.equal((await open()).status, 200);
-  assert.equal(f.forwarded.at(-1).path, '/relay');
-  assert.equal((await worker.fetch(req('/api/relay/revoke', 'POST', {}, owner), f.env)).status, 200);
-  assert.equal(f.forwarded.at(-1).body.action, 'disconnectRelay');
-  assert.equal((await open()).status, 403);
+  const calls = helixMock(t, { subscriptions: [sub('old-revoked', { status: 'authorization_revoked' }), sub('wrong-user', { condition: { broadcaster_user_id: '1', user_id: '9' } }), sub('other-channel', { condition: { broadcaster_user_id: '5', user_id: '5' }, transport: { method: 'webhook', callback: 'https://other.example/api/eventsub' } })] });
+  const res = await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, owner), f.env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.url.searchParams.get('id')), ['old-revoked', 'wrong-user']);
+  const created = calls.find((c) => c.method === 'POST' && c.url.host === 'api.twitch.tv');
+  assert.deepEqual(created.body.condition, { broadcaster_user_id: '1', user_id: '1' });
+  assert.deepEqual([created.body.type, created.body.version, created.body.transport.method, created.body.transport.callback], ['channel.chat.message', '1', 'webhook', callback]);
+  assert.equal(created.body.transport.secret, await eventsubSecret(f.env));
+  assert.equal(created.auth, 'Bearer app-token-1');
+  assert.deepEqual(f.forwarded.at(-1).body, { action: 'connected', subscriptionId: 'sub-new', status: 'webhook_callback_verification_pending', createdAt: Date.parse('2026-10-01T12:00:00Z') });
+  // the app token is cached sealed, never stored in plain text
+  assert.ok(f.entries.has('app-token:twitch'));
+  assert.equal(JSON.stringify(f.entries.get('app-token:twitch')).includes('app-token-1'), false);
+});
+
+test('connectChat keeps an existing matching webhook instead of creating another', async (t) => {
+  const f = environment(), owner = await signedIn(f, true);
+  const calls = helixMock(t, { subscriptions: [sub('keep-me'), sub('dupe-pending', { status: 'webhook_callback_verification_pending' })] });
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, owner), f.env)).status, 200);
+  assert.deepEqual(calls.filter((c) => c.method !== 'GET' && c.url.host === 'api.twitch.tv').map((c) => c.method + ' ' + (c.url.searchParams.get('id') || '')), ['DELETE dupe-pending']);
+  assert.equal(f.forwarded.at(-1).body.subscriptionId, 'keep-me');
+});
+
+test('connectChat: a live subscription for the same channel on the other site is a clear 409 unless taken over', async (t) => {
+  const f = environment(), owner = await signedIn(f, true);
+  const other = { method: 'webhook', callback: 'https://test.chat.miolaf.xyz/api/eventsub' };
+  const calls = helixMock(t, { subscriptions: [sub('on-test-site', { transport: other }), sub('dead-elsewhere', { status: 'webhook_callback_verification_failed', transport: { method: 'webhook', callback: 'https://old.example/api/eventsub' } })] });
+  const res = await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, owner), f.env);
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.connectedElsewhere, 'https://test.chat.miolaf.xyz');
+  assert.match(body.error, /Chat is connected to https:\/\/test\.chat\.miolaf\.xyz\. Only one site can receive chat at a time/);
+  assert.equal(calls.some((c) => c.method !== 'GET' && c.url.host === 'api.twitch.tv'), false, 'nothing is deleted or created without takeover');
+  assert.equal(f.forwarded.some((x) => x.path === '/chat' && x.body), false);
+  // takeover deletes the other site's subscription (and dead ones for this channel), then creates ours
+  const taken = await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat', takeover: true }, owner), f.env);
+  assert.equal(taken.status, 200);
+  assert.deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.url.searchParams.get('id')), ['on-test-site', 'dead-elsewhere']);
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url.host === 'api.twitch.tv').length, 1);
+  assert.equal(f.forwarded.at(-1).body.subscriptionId, 'sub-new');
+  // the owner dev settings route takes the same option
+  const dev = await worker.fetch(req('/api/dev/settings', 'POST', { action: 'connectChat' }, owner), f.env);
+  assert.deepEqual([dev.status, (await dev.json()).connectedElsewhere], [409, 'https://test.chat.miolaf.xyz']);
+});
+
+test('connectChat: a Helix 409 on create (raced by another site) is the same clear conflict', async (t) => {
+  const f = environment(), owner = await signedIn(f, true);
+  helixMock(t, { create: 409 });
+  const res = await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, owner), f.env);
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.connectedElsewhere, 'another site');
+  assert.match(body.error, /Only one site can receive chat at a time/);
+});
+
+test('connectChat: a Twitch authorization error tells the owner to reconnect Twitch', async (t) => {
+  const f = environment(), owner = await signedIn(f, true);
+  helixMock(t, { create: 403 });
+  const res = await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, owner), f.env);
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.reconnect, '/auth/login?connect=1');
+  assert.match(body.error, /Reconnect Twitch at \/auth\/login\?connect=1/);
+  assert.equal(f.forwarded.some((x) => x.path === '/chat' && x.body), false, 'the room is not told anything');
+});
+
+test('disconnectChat deletes the subscription and pauses the room; viewers cannot manage chat', async (t) => {
+  const f = environment(), owner = await signedIn(f, true);
+  const rooms = f.env.ROOMS;
+  f.env.ROOMS = { idFromName: x => x, get: (c) => ({ fetch: async (url, o = {}) => new URL(url).pathname === '/chat' && !o.body ? Response.json({ connected: true, subscriptionId: 'sub-9' }) : rooms.get(c).fetch(url, o) }) };
+  const calls = helixMock(t);
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'disconnectChat' }, owner), f.env)).status, 200);
+  assert.deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.url.searchParams.get('id')), ['sub-9']);
+  assert.deepEqual(f.forwarded.at(-1).body, { action: 'disconnected', reason: 'disconnected' });
+  const viewer = await signedIn(f);
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, viewer), f.env)).status, 403);
+});
+
+test('local test mode marks chat connected without Twitch only for a loopback cf dev', async (t) => {
+  const calls = helixMock(t);
+  const f = environment(), owner = await signedIn(f, true);
+  Object.assign(f.env, { MINI_LOCAL_TEST: '1', PUBLIC_ORIGIN: 'http://127.0.0.1:5199' });
+  const local = (path, data) => new Request('http://127.0.0.1:5199' + path, { method: 'POST', headers: { Origin: 'http://127.0.0.1:5199', Cookie: owner, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  assert.equal((await worker.fetch(local('/api/admin/nesszerra', { action: 'connectChat' }), f.env)).status, 200);
+  assert.match(f.forwarded.at(-1).body.subscriptionId, /^local-[a-f0-9]{16}$/);
+  assert.equal(calls.length, 0, 'no Twitch calls in local test mode');
+  // the same flag on a public origin does nothing: production must talk to Twitch
+  assert.equal(localTestMode({ MINI_LOCAL_TEST: '1', PUBLIC_ORIGIN: 'https://chat.miolaf.xyz' }, new URL('https://chat.miolaf.xyz/')), false);
+  assert.equal(localTestMode({ MINI_LOCAL_TEST: '1', PUBLIC_ORIGIN: 'http://127.0.0.1:5199' }, new URL('https://chat.miolaf.xyz/')), false);
+  assert.equal(localTestMode({ MINI_LOCAL_TEST: 'true', PUBLIC_ORIGIN: 'http://127.0.0.1:5199' }, new URL('http://127.0.0.1:5199/')), false);
+  // an http origin without local test mode is refused before calling Twitch
+  delete f.env.MINI_LOCAL_TEST;
+  assert.equal((await worker.fetch(local('/api/admin/nesszerra', { action: 'connectChat' }), f.env)).status, 400);
 });
 
 test('unknown routes and the disabled production channel', async () => {
