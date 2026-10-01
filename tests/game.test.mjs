@@ -503,3 +503,14 @@ test('a duel ends in a handful of hits', () => {
   while (w.duel(id).status === 'active' && hits < 20) { w.advance(5_000); w.say('alice', hits % 2 ? '!strike' : '!heavy'); hits++; }
   assert.ok(hits <= 4, `took ${hits} hits`);
 });
+
+test('challenging your challenger accepts the duel', () => {
+  const w = arena();
+  const c = w.say('alice', '!challenge @bob');
+  const r = w.say('bob', '!challenge @alice');
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.reason, 'duel_started');
+  assert.equal(r.duelId, c.duelId);
+  assert.equal(w.duel(c.duelId).status, 'active');
+  assert.equal(w.state.duels.length, 1);
+});

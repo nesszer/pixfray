@@ -423,6 +423,12 @@ function applyCommand(state, event, now) {
     const target = findTargetProfile(state, event, username, now);
     if (!target) return { ok: false, reason: "target_not_found" };
     if (!target.registered) return { ok: false, reason: "ranked_sign_in_required" };
+    // Challenging someone who already challenged you accepts their challenge.
+    const mutual = openDuels(state).find((item) => item.status === "pending" && item.a === target.userId && item.b === actor.userId);
+    if (mutual) {
+      const started = beginDuel(state, mutual, now);
+      return started.ok ? { ...started, reason: "duel_started" } : started;
+    }
     return createChallenge(state, actor, target, now);
   }
 

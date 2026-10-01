@@ -59,9 +59,9 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
   if (result?.ok) {
     const duel = state.duels.find(d => d.id === result.duelId);
     const other = duel ? (duel.a === actorId ? duel.b : duel.a) : '';
-    if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
+    if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}. Use ${n('attack')}, ${n('strike')}, ${n('heavy')} or ${n('heal')}.`;
+    if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} (or ${n('challenge')} @${me}) or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
     if (reason === 'challenge_declined') return `${me} declined the duel.`;
-    if (action === 'accept') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}. Use ${n('attack')}, ${n('strike')}, ${n('heavy')} or ${n('heal')}.`;
     if (reason === 'duel_completed') {
       const w = state.players.find(p => p.userId === actorId), l = state.players.find(p => p.userId === other);
       return `${me} knocked out ${nameOf(state, other)} and wins.` + (w && l ? ` Elo: ${me} ${w.elo}, ${nameOf(state, other)} ${l.elo}.` : '');
