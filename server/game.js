@@ -1,7 +1,8 @@
 const DEFAULT_CONFIG = {
   enabled: true,
   // Quick duels: accepting settles the duel at once with a d6 exchange (hit, counter or miss).
-  // Off = the HP fight with !attack/!strike/!heavy/!heal.
+  // Off = the HP fight with !attack/!strike/!heavy/!heal. StreamElements has no attack commands, so its duels
+  // always settle quickly (commands marked quick: true).
   quickDuel: true,
   maxHp: 100,
   maxDuels: 5,
@@ -478,6 +479,7 @@ function applyCommand(state, event, now) {
   const userId = normalizeUserId(event.userId);
   const actor = registeredPlayer(state, userId, event, now);
   if (!actor) return { ok: false, reason: "ranked_sign_in_required" };
+  const quick = state.config.quickDuel || event.quick === true;
 
   if (parsed.action === "duel") {
     const username = normalizeUsername(parsed.target);
@@ -489,7 +491,7 @@ function applyCommand(state, event, now) {
     const mutual = openDuels(state).find((item) => item.status === "pending" && item.a === target.userId && item.b === actor.userId);
     if (mutual) {
       const started = beginDuel(state, mutual, now);
-      if (started.ok && state.config.quickDuel) return settleQuickDuel(state, mutual, event.rolls, now);
+      if (started.ok && quick) return settleQuickDuel(state, mutual, event.rolls, now);
       return started.ok ? { ...started, reason: "duel_started" } : started;
     }
     return createChallenge(state, actor, target, now);
@@ -511,7 +513,7 @@ function applyCommand(state, event, now) {
       return { ok: true, reason: "challenge_declined", duelId: duel.id };
     }
     const started = beginDuel(state, duel, now);
-    if (started.ok && state.config.quickDuel) return settleQuickDuel(state, duel, event.rolls, now);
+    if (started.ok && quick) return settleQuickDuel(state, duel, event.rolls, now);
     return started;
   }
 

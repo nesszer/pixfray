@@ -601,7 +601,7 @@ export class ChannelRoom extends DurableObject {
         const parsed = parseGameCommand(textValue);
         if (parsed) {
           const targetProfile = parsed.target ? this.getProfileByUsername(parsed.target, state.config) : null;
-          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, rolls: Array.from({ length: 24 }, () => Math.random()) });
+          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, quick: subscriptionId === SE_SUBSCRIPTION_ID, rolls: Array.from({ length: 24 }, () => Math.random()) });
           if (!main.result.ok && main.result.reason !== "duplicate") step({ type: "command_rejected", userId, command: parsed.action, reason: main.result.reason, retryAt: main.result.retryAt });
         } else {
           const active = state.players.find((item) => item.userId === userId);

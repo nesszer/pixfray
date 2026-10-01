@@ -344,7 +344,9 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.match((await cmd('u1', 'alice', 'challenge')).body.reply, /who\?/);
   assert.match((await cmd('u1', 'alice', 'challenge', 'alice')).body.reply, /can't duel yourself/);
   assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /alice challenges @bob.*!fight/);
-  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /Duel on: alice vs bob/);
+  // Quick duels are off in this room, but StreamElements has no attack commands, so !fight settles the duel at once.
+  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^(alice|bob) beats (alice|bob) /);
+  assert.equal(r.readState('nesszerra').duels.filter((d) => d.status === 'active').length, 0);
   assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /attack commands are gone/);
   // Renamed commands show up in replies; duplicates and bad names are refused.
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!yes', decline: 'no' } } })).body.streamelements.names.decline, '!no');

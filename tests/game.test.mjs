@@ -592,6 +592,20 @@ test('quick duels are the default and work through a mutual challenge too', () =
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: false } } }).ok, true);
 });
 
+test('a command marked quick (StreamElements, no attack commands) settles at once even with quick duels off', () => {
+  const w = arena({ viewers: ['alice', 'bob', 'cara', 'dan', 'eve', 'fin'] });
+  const quickSay = (login, text) => w.apply({ type: 'command', messageId: 'm' + (++seq), userId: 'id-' + login, username: login, displayName: login, text, timestamp: w.now, quick: true });
+  quickSay('alice', '!challenge @bob');
+  assert.equal(quickSay('bob', '!fight').reason, 'quick_duel');
+  quickSay('cara', '!challenge @dan');
+  assert.equal(quickSay('dan', '!challenge @cara').reason, 'quick_duel', 'a mutual challenge settles too');
+  assert.equal(w.state.duels.filter((d) => d.status === 'active').length, 0);
+  // Plain chat still gets the HP fight.
+  const hp = w.say('eve', '!challenge @fin');
+  assert.equal(w.say('fin', '!accept').ok, true);
+  assert.equal(w.duel(hp.duelId).status, 'active');
+});
+
 test('invisible characters that chat clients append to repeated messages are ignored', async () => {
   assert.deepEqual(parseGameCommand('!fight \u{E0000}'), { action: 'accept', target: '' });
   assert.deepEqual(parseGameCommand('!challenge @bob \u034F'), { action: 'duel', target: 'bob' });
