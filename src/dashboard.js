@@ -75,6 +75,7 @@ function renderSignedIn() {
   renderWho($("#who"), s, signOut);
   saveBtn.hidden = !signedIn;
   saveSignin.hidden = signedIn || s?.configured === false;
+  if (!saveSignin.hidden) $("#who").replaceChildren();   // one sign-in button: the fighter card's, next to what it saves
   note.hidden = signedIn;
   if (!s) note.textContent = "Sign-in is unavailable right now, so profiles can't be saved. You can still browse characters and the leaderboard.";
   else if (s.configured === false) note.textContent = "Twitch sign-in isn't set up on this server yet, so profiles can't be saved. You can still browse characters and the leaderboard.";
@@ -89,7 +90,13 @@ function renderSignedIn() {
 
 function renderLeaderboard() {
   const tbody = $("#leaderboard tbody"), me = state.session?.user?.id, rows = state.leaderboard;
-  if (!rows.length) { tbody.replaceChildren(h("tr", {}, h("td", { colspan: 6, class: "muted" }, "No ranked duels yet. Save a profile and challenge someone in chat."))); return; }
+  if (!rows.length) {
+    tbody.replaceChildren(h("tr", { class: "empty" }, h("td", { colspan: 6 },
+      h("strong", {}, "No ranked duels yet, so the top spot is open."), " To get on the board: ",
+      state.session?.user ? "save your fighter above" : "sign in and save your fighter above",
+      ", say something in chat while the stream is live so your character walks in, then type ", h("code", {}, "!challenge @viewer"), ".")));
+    return;
+  }
   const entryOf = (id) => state.catalog.find((x) => x.id === id);
   const character = (id) => {   // still thumbnail; it never animates in the table
     const entry = entryOf(id), canvas = h("canvas", { class: "sprite", width: 32, height: 32, "aria-hidden": "true" });
@@ -98,7 +105,7 @@ function renderLeaderboard() {
   };
   const row = (p, i) => h("tr", { class: [p.userId === me ? "me" : "", i < 3 ? "podium" : ""].filter(Boolean).join(" ") || null },
     h("td", { class: "num" }, i + 1), h("td", {}, h("span", { style: { color: p.color }, "aria-hidden": "true" }, "■ "), p.displayName || p.username, p.userId === me ? h("span", { class: "muted" }, " (you)") : null),
-    h("td", {}, ...character(p.avatar)), h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses));
+    h("td", { class: "col-char" }, ...character(p.avatar)), h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses));
   const top = rows.slice(0, 10).map(row);
   const mine = rows.findIndex((p) => p.userId === me);
   if (mine >= 10) top.push(row(rows[mine], mine));

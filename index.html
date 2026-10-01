@@ -8,7 +8,7 @@
 <body>
 <header class="topbar"><div class="topbar-inner">
   <a class="brand" href="/" data-keep-channel>Mini Chat</a>
-  <nav aria-label="Sections"><a href="#fighter">Fighter</a><a href="#ranks">Ranks</a><a href="#duels">Duels</a><a href="#obs-setup">OBS</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
+  <nav aria-label="Sections"><a href="#fighter">Fighter</a><a href="#ranks">Ranks</a><a href="#duels">Duels</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 
@@ -57,7 +57,7 @@
     <h2 id="lb-title">Leaderboard: the top 10 by Elo</h2>
     <p class="muted small" id="lb-note">Ranked duels need a saved profile. Everyone starts at 1000 Elo.</p>
     <div class="table-wrap"><table class="data" id="leaderboard">
-      <thead><tr><th class="num">Rank</th><th>Viewer</th><th>Character</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th></tr></thead>
+      <thead><tr><th class="num">Rank</th><th>Viewer</th><th class="col-char">Character</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th></tr></thead>
       <tbody><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
     </table></div>
   </section>
@@ -94,24 +94,8 @@
     <p class="caveat">Your character appears on stream after your first chat message. The loser is knocked out for a few seconds, and the same two viewers wait <span id="cmd-rematch">30 s</span> before a rematch.</p>
   </section>
 
-  <section class="section" id="obs-setup" aria-labelledby="obs-title">
-    <h2 id="obs-title">Add the overlay to OBS with one Browser Source link</h2>
-    <p class="muted">For the streamer. Builds the Browser Source link for the chat overlay.</p>
-    <div class="controls">
-      <div><label for="channel">Twitch channel</label><input id="channel" data-channel value="nesszerra" maxlength="25" autocomplete="off" spellcheck="false"></div>
-      <div><label for="size">Character size <output id="size-label">64px</output></label><input id="size" type="range" min="32" max="96" value="64"></div>
-      <div><label for="cap">Maximum characters</label><select id="cap"><option>25</option><option selected>50</option><option>100</option></select></div>
-    </div>
-    <div class="stack">
-      <div><label for="obs-url">OBS Browser Source URL</label><input id="obs-url" readonly></div>
-      <div class="toolbar"><button class="btn" id="copy" type="button">Copy link</button><a class="btn" id="preview-link" target="_blank" rel="noopener">Open live overlay</a><a class="btn" id="demo" target="_blank" rel="noopener">Open demo overlay</a></div>
-      <p class="status" id="copy-status" role="status"></p>
-      <p class="hint">In OBS, add a Browser Source, paste the link, and set 1920 × 1080 at 30 FPS. The background is transparent. Turn off "Shutdown source when not visible" to stay connected between scenes.</p>
-    </div>
-  </section>
 
   <p class="caveat">Character art by <a href="https://kenney.nl" rel="noopener">Kenney</a> (CC0). Headings use <a href="https://github.com/undercasetype/Fraunces" rel="noopener">Fraunces</a> (SIL Open Font License). Signing in asks Twitch only for your public identity; Mini Chat never posts in chat as you.</p>
 </main>
-<script type="module" src="/src/setup.js"></script>
 <script type="module" src="/src/dashboard.js"></script>
 </body></html>

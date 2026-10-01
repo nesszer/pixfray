@@ -10,8 +10,6 @@ try {
  page.on('pageerror',e=>errors.push(e.message));
  await page.goto(base);
  assert.match(await page.title(),/Mini Chat/);
- await page.locator('#channel').fill('nesszerra');
- assert.match(await page.locator('#obs-url').inputValue(),/channel=nesszerra/);
  await page.screenshot({path:out+'/setup-preview.png',fullPage:true});
  await page.goto(base+'/overlay.html?demo=1&debug=1&cap=50&size=64');
  await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('8/50'));

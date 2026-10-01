@@ -30,14 +30,14 @@
       <button type="button" role="tab" id="tab-players" aria-controls="panel-players" aria-selected="false" tabindex="-1">Players</button>
       <button type="button" role="tab" id="tab-rules" aria-controls="panel-rules" aria-selected="false" tabindex="-1">Rules</button>
       <button type="button" role="tab" id="tab-characters" aria-controls="panel-characters" aria-selected="false" tabindex="-1">Characters</button>
-      <button type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1">Chat setup</button>
+      <button type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1">Stream setup</button>
     </div>
     <div role="tabpanel" id="panel-live" aria-labelledby="tab-live" tabindex="0">
       <section class="summary" aria-live="polite">
         <h2 id="summary-title">Loading arena state…</h2>
         <p id="summary-text"></p>
         <div class="toolbar">
-          <button class="btn btn-primary" id="open-chat-setup" type="button" hidden>Open chat setup</button>
+          <button class="btn btn-primary" id="open-chat-setup" type="button" hidden>Open stream setup</button>
           <button class="btn btn-primary" id="toggle-duels" type="button">Pause duels</button>
           <button class="btn" id="reset-health" type="button">Reset everyone's health</button>
           <button class="btn" id="reset-round" type="button">Cancel open duels and restart rounds</button>
@@ -86,8 +86,9 @@
         <p class="muted small">Duels already running keep the rules they started with. Quick duels use only max health, timing and ranking; the ability values apply to the HP fight.</p>
         <form id="config-form" novalidate>
           <div id="config-fields"></div>
-          <div class="stack section">
-            <div><label for="config-note">Note for the history (optional)</label><input id="config-note" maxlength="200" placeholder="Why this change"></div>
+          <div class="section"><label for="config-note">Note for the history (optional)</label><input id="config-note" maxlength="200" placeholder="Why this change"></div>
+          <!-- stays at the bottom of the screen while there are unsaved changes (class "dirty", set by admin.js) -->
+          <div class="config-bar" id="config-bar">
             <div class="toolbar"><button class="btn" id="config-save" type="submit" disabled>Save new version</button><button class="btn" id="config-discard" type="button" disabled>Discard changes</button></div>
             <p class="status" id="config-status" role="status"></p>
           </div>
@@ -128,9 +129,23 @@
           <div class="toolbar"><a class="btn" href="/auth/login?connect=1">Reconnect Twitch</a></div>
         </div>
       </section>
+      <section class="section" id="obs-setup" aria-labelledby="obs-title">
+        <h2 id="obs-title">Add the overlay to OBS with one Browser Source link</h2>
+        <div class="controls">
+          <div><label for="size">Character size <output id="size-label">64px</output></label><input id="size" type="range" min="32" max="96" value="64"></div>
+          <div><label for="cap">Maximum characters</label><select id="cap"><option>25</option><option selected>50</option><option>100</option></select></div>
+        </div>
+        <div class="stack">
+          <div><label for="obs-url">OBS Browser Source URL</label><input id="obs-url" readonly></div>
+          <div class="toolbar"><button class="btn" id="copy" type="button">Copy link</button><a class="btn" id="preview-link" target="_blank" rel="noopener">Open live overlay</a><a class="btn" id="demo" target="_blank" rel="noopener">Open demo overlay</a></div>
+          <p class="status" id="copy-status" role="status"></p>
+          <p class="hint">In OBS, add a Browser Source, paste the link, and set 1920 × 1080 at 30 FPS. The background is transparent. Turn off "Shutdown source when not visible" to stay connected between scenes. The demo plays made-up duels and saves nothing.</p>
+        </div>
+      </section>
       <section class="section" aria-labelledby="se-title">
         <h2 id="se-title">StreamElements commands</h2>
         <p class="muted small" id="se-text">Use this instead of Connect chat to run duels through your StreamElements bot. Each action is a StreamElements custom command; its bot posts the reply.</p>
+        <p id="se-health" role="status" hidden></p>
         <h3>Set it up in StreamElements</h3>
         <ol class="small stack">
           <li><strong>Turn off the built-in Duel game.</strong> At streamelements.com, open the dashboard, go to Chat bot, then Modules, and switch off Duel. Or type <code>!module duel disable</code> in chat. Its <code>!duel</code>, <code>!accept</code> and <code>!deny</code> would answer at the same time as ours, which is why accepting is <code>!fight</code>.</li>
@@ -160,4 +175,5 @@
   </div>
 </main>
 <script type="module" src="/src/admin.js"></script>
+<script type="module" src="/src/setup.js"></script>
 </body></html>

@@ -683,6 +683,39 @@ async function start() {
     }
     return best;
   }
+  // Nameplates and chat bubbles are laid out after every fighter has moved, so none of them overlap or leave the screen.
+  // Nameplates: fighters in a duel first, then the most recent chatters; one that would cover a placed nameplate is
+  // skipped this frame (it shows again once the walkers separate). Bubbles: the oldest keeps its spot, newer ones stack
+  // up to three high above it, clear of duel health bars.
+  const LABEL_ROW = 20, BUBBLE_H = 25;
+  const overlaps = (a, b) => a.lo < b.hi && a.hi > b.lo && a.top < b.bottom && a.bottom > b.top;
+  function drawLabels(labels, bubbles, bars) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px system-ui, sans-serif'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.85)';
+    const placed = [];
+    for (const l of labels.sort((a, b) => b.rank - a.rank)) {
+      const x = Math.max(l.w / 2 + 4, Math.min(width - l.w / 2 - 4, l.x));
+      const box = { lo: x - l.w / 2 - 4, hi: x + l.w / 2 + 4, top: l.y - LABEL_ROW + 2, bottom: l.y + 2 };
+      if (placed.some(o => overlaps(box, o))) continue;
+      placed.push(box);
+      ctx.fillStyle = l.color; ctx.strokeText(l.text, x, l.y); ctx.fillText(l.text, x, l.y);
+    }
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    const stacked = [...bars];
+    for (const b of bubbles.sort((a, c) => a.until - c.until)) {
+      const x = Math.max(b.w / 2, Math.min(width - b.w / 2, b.x));
+      for (let level = 0; level < 3; level++) {
+        const top = b.top - level * (BUBBLE_H + 4), box = { lo: x - b.w / 2 - 2, hi: x + b.w / 2 + 2, top, bottom: top + BUBBLE_H };
+        if (stacked.some(o => overlaps(box, o))) continue;
+        stacked.push(box);
+        ctx.fillStyle = 'rgba(18,18,26,.88)'; ctx.fillRect(x - b.w / 2, top, b.w, BUBBLE_H);
+        ctx.fillStyle = '#ffffff'; ctx.fillText(b.text, x, top + 18, Math.max(1, b.w - 8));
+        break;
+      }
+    }
+    ctx.restore();
+  }
   function draw(now) {
     const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
     const clock = Date.now();
@@ -696,7 +729,7 @@ async function start() {
       for (const [key, p] of players) if (!p.fromArena && clock - p.lastSeen > 600000) players.delete(key);
       lastCleanup = clock; updateStatus();
     }
-    const gap = duelGap();
+    const gap = duelGap(), labels = [], bubbles = [], bars = [];
     // Ground taken by running duels: where the two fighters stand, plus room for their nameplates (fixed 20px
     // text, often wider than the sprite). labelWidth is measured when the nameplate is drawn (last frame).
     const duelZones = openDuels().filter(d => meetPoints.has(d.id)).map(d => ({ x: meetPoints.get(d.id).x,
@@ -722,6 +755,15 @@ async function start() {
       } else if (duel?.status === 'pending' && opponent) {
         p.direction = opponent.x >= p.x ? 1 : -1;
       } else if (!ko && !(p.holdUntil > clock)) {
+        // Personal space: a walker about to run into a neighbour's nameplate turns around (at most every 1.5 s, so
+        // a dense crowd doesn't jitter). Fighters in different lanes have nameplates at different heights and pass.
+        if (clock - (p.turnedAt || 0) > 1500) {
+          for (const q of players.values()) {
+            if (q === p || q.koUntil > clock || Math.abs(q.lane - p.lane) >= LABEL_ROW) continue;
+            const dx = q.x - p.x;
+            if (Math.sign(dx) === p.direction && Math.abs(dx) < ((p.labelWidth || size) + (q.labelWidth || size)) / 2 + 12) { p.direction = -p.direction; p.turnedAt = clock; break; }
+          }
+        }
         p.x += p.speed * p.direction * dt;
         moving = true;
       }
@@ -782,24 +824,25 @@ async function start() {
       ctx.restore();
       drawEffects(p, p.x, y, clock, s, ac);
       const health = healthOf(p, duel);
-      if (health) drawHealthBar(p, p.x, y, health, s);
-      ctx.font = 'bold 20px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.fillStyle = p.color;
+      if (health) {
+        drawHealthBar(p, p.x, y, health, s);
+        const half = Math.max(72, Math.min(116, s * 0.9)) / 2 + 4;   // the bar and its "hp/max" text: bubbles stay clear
+        bars.push({ lo: p.x - half, hi: p.x + half, top: y - s - 40, bottom: y - s - 8 });
+      }
+      ctx.font = 'bold 20px system-ui, sans-serif';
       const shownElo = replayRatings(p.userId)?.before ?? p.arenaProfile?.elo;
       const rankedLabel = p.arenaProfile?.registered && Number.isFinite(Number(shownElo))
         ? p.label + ' · ' + Math.round(Number(shownElo))
         : p.label;
       p.labelWidth = ctx.measureText(rankedLabel).width;
-      ctx.strokeText(rankedLabel, p.x, y + 23); ctx.fillText(rankedLabel, p.x, y + 23);
+      labels.push({ text: rankedLabel, color: p.color, x: p.x, y: y + 23, w: p.labelWidth, rank: duel ? Infinity : p.lastSeen });
       if (p.text && clock < p.bubbleUntil && !health) {
         ctx.font = 'bold 14px system-ui, sans-serif';
         const text = p.text.length > 38 ? p.text.slice(0, 37) + '…' : p.text;
-        const bubbleWidth = Math.min(width, ctx.measureText(text).width + 16);
-        const bx = Math.max(bubbleWidth / 2, Math.min(width - bubbleWidth / 2, p.x));
-        ctx.fillStyle = 'rgba(18,18,26,.88)'; ctx.fillRect(bx - bubbleWidth / 2, y - s - 33, bubbleWidth, 25);
-        ctx.fillStyle = '#ffffff'; ctx.fillText(text, bx, y - s - 15, Math.max(1, bubbleWidth - 8));
+        bubbles.push({ text, x: p.x, top: y - s - 33, w: Math.min(width, ctx.measureText(text).width + 16), until: p.bubbleUntil });
       }
     }
+    drawLabels(labels, bubbles, bars);
     drawParticles(clock, dt);
     drawBanners(clock);
     ctx.restore();
@@ -824,9 +867,9 @@ async function start() {
     }));
     arenaTransport = 'demo';
     arenaChat = { connected: true, lastSeen: Date.now(), status: 'enabled' };
-    let revision = 1, round = 0, tick = 0, duel = null;
+    let revision = 1, round = 0, seq = 0, duel = null, lastPair = '', nextAt = Date.now() + 1500;
     const snapshot = () => acceptArenaSnapshot({ channel, revision: ++revision, paused: false, chat: { connected: true, lastSeen: Date.now(), status: 'enabled' }, config: { maxHp: 100 }, players: demoProfiles, duels: duel ? [duel] : [], events: [] }, { revision });
-    const emit = fields => handleArenaEvent({ id: 'demo-' + revision + '-' + fields.type, at: Date.now(), ...fields });
+    const event = fields => ({ id: 'demo-' + revision + '-' + (++seq), at: Date.now(), ...fields });
     snapshot();
     const badge = document.createElement('div');
     badge.id = 'arena-mode';
@@ -837,33 +880,60 @@ async function start() {
       font: '600 11px system-ui,sans-serif', pointerEvents: 'none',
     });
     document.body.appendChild(badge);
-    function beginRound() {
-      round++; tick = 0;
-      const a = 'demo-' + ((round * 2) % 8), b = 'demo-' + ((round * 2 + 1) % 8);
-      for (const p of demoProfiles) p.respawnAt = 0;
-      duel = { id: 'demo-duel-' + round, a, b, status: 'active', round, hp: { [a]: 100, [b]: 100 }, rules: { maxHp: 100 } };
-      snapshot();
-      emit({ type: 'duel_started', duelId: duel.id, a, b, round, hp: duel.hp });
-    }
-    beginRound();
-    arenaTimer = setInterval(() => {
-      if (!duel || duel.status !== 'active') { beginRound(); return; }
-      tick++;
-      const actor = tick % 2 ? duel.a : duel.b, target = actor === duel.a ? duel.b : duel.a;
-      const ability = tick % 5 === 0 ? 'heal' : tick % 3 === 0 ? 'heavy' : 'strike';
-      const amount = ability === 'heal' ? Math.min(15, 100 - duel.hp[actor]) : Math.min(duel.hp[target], ability === 'heavy' ? 25 : 18);
-      duel.hp = { ...duel.hp, [ability === 'heal' ? actor : target]: duel.hp[ability === 'heal' ? actor : target] + (ability === 'heal' ? amount : -amount) };
-      snapshot();
-      emit({ type: 'duel_action', duelId: duel.id, userId: actor, targetId: ability === 'heal' ? actor : target, ability, amount, hp: duel.hp });
-      if (duel.hp[target] <= 0) {
-        const loser = demoProfiles.find(p => p.userId === target), winner = demoProfiles.find(p => p.userId === actor);
-        loser.respawnAt = Date.now() + 2500;
-        winner.elo += 12; loser.elo -= 12;
-        duel = { ...duel, status: 'completed', winnerId: actor };
-        snapshot();
-        emit({ type: 'duel_completed', duelId: duel.id, winnerId: actor, loserId: target, round, respawnAt: loser.respawnAt, hp: duel.hp, ratings: { [actor]: { delta: 12 }, [target]: { delta: -12 } } });
+    // The same rules as the server's quick duel (settleQuickDuel in server/game.js): one d6 per swing, 6 crits for 50,
+    // 5 hits for 34, 3-4 misses, 1-2 is countered for 34. After 12 rolls more HP wins, a tie goes to sudden death.
+    // Like a real !fight, the whole duel arrives at once (settled snapshot plus events) and the overlay replays it.
+    function quickDuel() {
+      round++;
+      let a, b;
+      do {
+        const pool = [...demoProfiles];
+        a = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+        b = pool[Math.floor(Math.random() * pool.length)];
+      } while ([a.userId, b.userId].sort().join() === lastPair);
+      lastPair = [a.userId, b.userId].sort().join();
+      const id = 'demo-duel-' + round, hp = { [a.userId]: 100, [b.userId]: 100 };
+      const events = [event({ type: 'duel_started', duelId: id, a: a.userId, b: b.userId, round, hp: { ...hp } })];
+      let attacker = a, defender = b, winner = null, loser = null, decision = 'ko';
+      for (let i = 0; !winner && i < 200; i++) {
+        const suddenDeath = i >= 12;
+        if (i === 12) {
+          if (hp[a.userId] !== hp[b.userId]) { decision = 'hp'; [winner, loser] = hp[a.userId] > hp[b.userId] ? [a, b] : [b, a]; break; }
+          decision = 'sudden_death';
+        }
+        const die = 1 + Math.floor(Math.random() * 6);
+        if (die === 3 || die === 4) {
+          events.push(event({ type: 'duel_action', duelId: id, userId: attacker.userId, targetId: defender.userId, ability: attacker.defaultAbility, amount: 0, hp: { ...hp }, miss: true, die }));
+        } else {
+          const counter = die <= 2, dealer = counter ? defender : attacker, target = counter ? attacker : defender;
+          const amount = suddenDeath ? hp[target.userId] : Math.min(hp[target.userId], die === 6 ? 50 : 34);
+          hp[target.userId] -= amount;
+          const finisher = hp[target.userId] <= 0;
+          events.push(event({ type: 'duel_action', duelId: id, userId: dealer.userId, targetId: target.userId, ability: dealer.defaultAbility, amount, hp: { ...hp }, die,
+            ...(counter ? { counter: true } : {}), ...(die === 6 ? { crit: true } : {}), ...(finisher ? { finisher: true } : {}) }));
+          if (finisher) { winner = dealer; loser = target; }
+        }
+        [attacker, defender] = [defender, attacker];
       }
-    }, 1300);
+      const flawless = hp[winner.userId] === 100, expectedA = 1 / (1 + Math.pow(10, (b.elo - a.elo) / 400)), scoreA = winner === a ? 1 : 0;
+      const next = { [a.userId]: Math.round(a.elo + 24 * (scoreA - expectedA)), [b.userId]: Math.round(b.elo + 24 * (expectedA - scoreA)) };
+      if (flawless) next[winner.userId] += 3;
+      const ratings = {};
+      for (const f of [a, b]) { ratings[f.userId] = { before: f.elo, after: next[f.userId], delta: next[f.userId] - f.elo }; f.elo = next[f.userId]; }
+      winner.wins++; loser.losses++;
+      for (const f of demoProfiles) f.respawnAt = 0;
+      loser.respawnAt = Date.now() + 5000;
+      const flags = { ...(flawless ? { flawless: true } : {}), ...(decision !== 'ko' ? { decision } : {}) };
+      duel = { id, a: a.userId, b: b.userId, status: 'completed', round, winnerId: winner.userId, hp, ratings, rules: { maxHp: 100 }, ...flags };
+      events.push(event({ type: 'duel_completed', duelId: id, winnerId: winner.userId, loserId: loser.userId, round, respawnAt: loser.respawnAt, hp: { ...hp }, ratings, ...flags }));
+      snapshot();
+      events.forEach(queueArenaEvent);
+    }
+    // The next duel starts a few seconds after the last replay ends, once the knockout and the result have played.
+    arenaTimer = setInterval(() => {
+      if (duelQueues.size || replays.size) { nextAt = Date.now() + 3500; return; }
+      if (Date.now() >= nextAt) quickDuel();
+    }, 250);
   }
   function startArena() {
     if (arenaDemo) { setupDemoArena(); return; }

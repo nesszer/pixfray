@@ -151,11 +151,11 @@ function renderAll() {
   const waiting = c.enabled && !live;
   $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : waiting ? "Waiting for Twitch chat" : "Duels are live";
   $("#summary-text").textContent = !c.enabled ? "Chat commands are ignored until duels are turned back on." :
-    waiting ? "Duels start once chat reaches the arena" + (chat.lastRevocationReason ? " (Twitch revoked it: " + chat.lastRevocationReason + ")" : "") + ". Connect Twitch chat or StreamElements on the Chat setup tab. Open duels were cancelled without scoring." :
+    waiting ? "Duels start once chat reaches the arena" + (chat.lastRevocationReason ? " (Twitch revoked it: " + chat.lastRevocationReason + ")" : "") + ". Connect Twitch chat or StreamElements on the Stream setup tab. Open duels were cancelled without scoring." :
     open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena, round " + a.round + ".";
   const toggle = $("#toggle-duels");
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
-  // while chat is offline the fix is on the Chat setup tab, so that becomes the main action
+  // while chat is offline the fix is on the Stream setup tab, so that becomes the main action
   $("#open-chat-setup").hidden = !waiting;
   toggle.classList.toggle("btn-primary", !waiting);
   $("#stats").replaceChildren(
@@ -263,8 +263,16 @@ function syncConfigButtons() {
   $("#config-save").disabled = !changed || errors.length > 0;
   $("#config-save").className = "btn" + (changed && !errors.length ? " btn-primary" : "");
   $("#config-discard").disabled = !changed;
+  const bar = $("#config-bar");
+  bar.classList.toggle("dirty", changed);
   if (errors.length) setStatus(configStatus, errors[0], "error");
   else if (editedBase === S.admin.configVersion) setStatus(configStatus, changed ? "Unsaved changes. Saving creates version " + (S.admin.configVersion + 1) + "." : "");
+  // The bar appears with the first edit; if it lands on the field being typed in, scroll that field above it.
+  const field = document.activeElement;
+  if (changed && field && $("#config-fields").contains(field)) {
+    const overlap = field.getBoundingClientRect().bottom + 12 - bar.getBoundingClientRect().top;
+    if (overlap > 0) scrollBy(0, overlap);
+  }
 }
 $("#config-form").addEventListener("input", syncConfigButtons);
 $("#config-discard").addEventListener("click", () => { $("#config-fields").replaceChildren(); renderConfig(); });
@@ -389,6 +397,15 @@ function renderSe() {
   const using = c.connected && c.source === "streamelements";
   $("#use-se").textContent = using ? "StreamElements is the chat source" : "Use StreamElements";
   $("#use-se").disabled = using || !se;
+  // Test and production each have their own key, so commands copied from the other site never arrive here.
+  const health = $("#se-health"), host = se?.origin ? new URL(se.origin).host : location.host;
+  let warn = "", note = "";
+  if (se && using && !se.lastCommandAt) warn = "No StreamElements command has reached " + host + " with this key yet. If the replies in StreamElements were copied from another site, such as the test site, copy every reply again from the table below (they point at " + host + "), paste them into StreamElements, then type " + (se.names?.decline || "!decline") + " in chat to test.";
+  else if (se && se.rejectedAt > se.lastCommandAt) warn = "A StreamElements command arrived " + timeAgo(se.rejectedAt) + " with an old key and was refused. Copy every reply again from the table below and paste it into StreamElements.";
+  else if (se?.lastCommandAt) note = "Last StreamElements command reached " + host + " " + timeAgo(se.lastCommandAt) + ".";
+  health.hidden = !(warn || note);
+  health.className = warn ? "callout warning small" : "small muted";
+  health.textContent = warn || note;
   if (!se) return;
   const tbody = $("#se-table tbody");
   if (tbody.dataset.key === se.key && tbody.children.length) return;   // keep unsaved name edits

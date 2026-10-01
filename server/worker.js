@@ -48,7 +48,8 @@ async function chatAction(env,url,channel,action,{takeover=false}={}){
 // Admin-only view of the StreamElements setup: the key and the paste-ready command replies.
 function seView(env,url,channel,se){
   if(!se?.secret)return null;
-  return {key:se.secret,names:se.names,commands:seCommandLines(env.PUBLIC_ORIGIN||url.origin,channel,se.secret,se.names)};
+  const origin=env.PUBLIC_ORIGIN||url.origin;
+  return {key:se.secret,names:se.names,origin,lastCommandAt:se.lastCommandAt||0,rejectedAt:se.rejectedAt||0,commands:seCommandLines(origin,channel,se.secret,se.names)};
 }
 // Test site only: DEV_TOOLS_TOKEN is declared only by `cf deploy --mode test`, so production has no token to match.
 // A matching "Authorization: Bearer" acts as the owner, for scripts/devtools.mjs (docs/DEVTOOLS.md).

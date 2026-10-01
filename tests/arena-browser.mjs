@@ -283,7 +283,12 @@ try {
   await demoPage.goto(base + '/overlay.html?arena=1&demo=1&debug=1');
   await demoPage.waitForFunction(() => document.querySelector('#arena-mode')?.textContent.includes('not saved'));
   await demoPage.waitForFunction(() => window.__arenaDebug?.().duels.some((duel) => Object.values(duel.hp || {}).some((hp) => hp < 100)));
-  await demoPage.waitForFunction(() => window.__arenaDebug?.().banners.some(b => /wins/.test(b)), null, { timeout: 20000 });
+  // The demo plays quick duels like the channel: dice above the fighters, then the result once the replay ends.
+  await demoPage.waitForFunction(() => window.__arenaDebug?.().players.some(p => p.die >= 1 && p.die <= 6), null, { timeout: 10000 });
+  const demoDuel = await demoPage.evaluate(() => window.__arenaDebug().duels[0]);
+  assert.equal(demoDuel.status, 'completed', 'a demo duel arrives settled, like a real !fight');
+  assert.ok(Object.values(demoDuel.ratings).every(r => r.after - r.before === r.delta), 'demo ratings carry before, after and delta');
+  await demoPage.waitForFunction(() => window.__arenaDebug?.().banners.some(b => /wins/.test(b)), null, { timeout: 45000 });
   assert.equal(await demoPage.evaluate(() => window.__arenaSockets.length + window.__chatSockets.length), 0,
     'arena demo uses no arena or Twitch websocket');
   assert.deepEqual(demoApiReads, [], 'arena demo does not write or read arena APIs');

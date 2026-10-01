@@ -265,6 +265,11 @@ details.history[open] > summary { margin-bottom: var(--space-4); }
 .config-group > legend { float: left; width: 100%; margin-bottom: var(--space-3); }
 .config-group > legend + * { clear: both; }
 .config-group + .config-group { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--border); }
+/* Rules: with unsaved changes the Save bar stays at the bottom of the screen while you scroll the fields */
+.config-bar { margin-top: var(--space-4); }
+.config-bar.dirty { position: sticky; bottom: 0; z-index: 2; margin: var(--space-4) calc(-1 * var(--space-4)) 0; padding: var(--space-3) var(--space-4); background: var(--bg); border-top: 1px solid var(--border-strong); }
+html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused field scrolls clear of the bar */
+.config-bar .status:empty { display: none; }
 .mount { border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: var(--space-4); }
 .gate { max-width: var(--measure); }
 
@@ -311,7 +316,14 @@ details.history[open] > summary { margin-bottom: var(--space-4); }
   .table-wrap > table.data.prose-table { width: 100%; }
   .table-wrap > table.data.prose-table td:first-child { min-width: 0; }
   table.data.prose-table th { white-space: normal; }
+  /* leaderboard: drop the Character column so rank, viewer, Elo, wins and losses fit without sideways scrolling */
+  #leaderboard .col-char { display: none; }
+  .table-wrap > table#leaderboard { width: 100%; }
 }
+
+/* empty leaderboard: a sentence on how to get on it, wrapped to the table width */
+#leaderboard tr.empty td { white-space: normal; color: var(--text-2); padding: var(--space-4) var(--space-3); }
+#leaderboard tr.empty strong { color: var(--text); }
 
 /* StreamElements replies are long URLs: let them wrap inside their cell */
 .wrap-anywhere { overflow-wrap: anywhere; word-break: break-all; font-size: var(--text-xs); }

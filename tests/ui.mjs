@@ -52,11 +52,10 @@ try {
     await page.waitForFunction(() => { const c = document.querySelector('#preview'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return true; return false; });
     const session = await page.evaluate(() => fetch('/api/session').then((r) => r.json()));
     if (session.configured === false) assert.match(await page.locator('#signin-note').textContent(), /isn't set up/);
-    else assert.equal(await page.locator('#who a[href="/auth/login"]').count(), 1);
-    // overlay-URL setup from v1 still works on this page
-    await page.locator('#channel').fill('nesszerra');
-    assert.match(await page.locator('#obs-url').inputValue(), /overlay\.html\?channel=nesszerra/);
-    assert.match(await page.locator('#preview-link').getAttribute('href'), /channel=nesszerra/);
+    else assert.equal(await page.locator('#save-signin').isVisible(), true);
+    assert.equal(await page.locator('#who a[href="/auth/login"]').count(), 0, 'one sign-in button: the fighter card has it');
+    assert.equal(await page.locator('#obs-setup').count(), 0, 'the OBS link lives in mod controls, not on the viewer page');
+    if (await page.locator('#leaderboard tr.empty').count()) assert.match(await page.locator('#leaderboard tr.empty').textContent(), /To get on the board: sign in and save your fighter.*!challenge @viewer/);
     await page.locator('#char-soldier').check({ force: true });
     assert.match(await page.locator('#preview-caption').textContent(), /Soldier/);
     await noOverflow(page, 'viewer signed-out ' + s.name);
@@ -75,8 +74,8 @@ try {
     const { context, page } = await newPage(sizes[0]);
     await page.route('**/api/session', (r) => json(r, { user: null, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.goto(base + '/');
-    await page.waitForSelector('#who a[href="/auth/login"]');
-    assert.equal(await page.locator('#save-signin').isVisible(), true);
+    await page.waitForSelector('#save-signin:visible');
+    assert.equal(await page.locator('#who a[href="/auth/login"]').count(), 0, 'no second sign-in button in the top bar');
     await page.screenshot({ path: shots + '/viewer-signed-out-configured-1280.png', fullPage: false });
     await context.close();
   }
@@ -112,6 +111,9 @@ try {
     if (s.name !== '1280') {
       // phones: explanation tables wrap instead of scrolling sideways, and the fighter bar stays at the bottom while picking
       for (const w of await page.locator('.table-wrap:has(.prose-table)').all()) assert.ok(await w.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), 'duel table fits at ' + s.name);
+      const lb = page.locator('#leaderboard');
+      assert.equal(await lb.locator('th.col-char').isVisible(), false, 'no Character column on phones');
+      assert.ok(await lb.evaluate((t) => t.parentElement.scrollWidth <= t.parentElement.clientWidth + 1), 'leaderboard fits without sideways scrolling at ' + s.name);
       await page.locator('#swatches').scrollIntoViewIfNeeded();
       const bar = await page.locator('.hero-card').boundingBox(), vh = page.viewportSize().height;
       assert.ok(bar.y + bar.height <= vh + 1 && bar.y > vh / 2, 'fighter bar sits at the bottom of the screen at ' + s.name);
@@ -188,6 +190,10 @@ try {
     assert.equal(await page.locator('#panel-chat').isHidden(), true, 'only the Live tab shows at first');
     await page.click('#tab-chat');
     assert.equal(new URL(page.url()).hash, '#chat');
+    // the OBS Browser Source link moved here from the viewer page
+    assert.match(await page.locator('#obs-url').inputValue(), /\/overlay\.html\?channel=nesszerra&size=64&cap=50&arena=1$/);
+    assert.match(await page.locator('#demo').getAttribute('href'), /arena=1&demo=1$/);
+    assert.equal(await page.locator('#se-health').isHidden(), true, 'no StreamElements note before any command');
     assert.equal(await page.locator('#owner-chat').isVisible(), role === 'owner');
     assert.match(await page.locator('#chat-text').textContent(), /Last chat message/);
     assert.equal(await page.locator('#connect-chat').textContent(), 'Reconnect chat');
@@ -227,6 +233,16 @@ try {
     await page.keyboard.press('ArrowRight');
     assert.equal(await page.locator('#tab-live').getAttribute('aria-selected'), 'true');
     assert.equal(await page.evaluate(() => document.activeElement.id), 'tab-live');
+    if (s.name === '390') {
+      // phones: with unsaved rule changes the Save bar stays at the bottom of the screen
+      await page.click('#tab-rules');
+      await page.locator('#cfg-maxHp').fill('120');
+      const field = await page.locator('#cfg-maxHp').boundingBox(), bar = await page.locator('#config-bar').boundingBox(), vh = page.viewportSize().height;
+      assert.ok(bar.y + bar.height <= vh + 1 && bar.y > vh / 2, 'Rules save bar sits at the bottom of the screen at 390');
+      assert.ok(field.y + field.height <= bar.y, 'the field being edited is not hidden behind the bar');
+      assert.equal(await page.locator('#config-save').isEnabled(), true);
+      await page.screenshot({ path: shots + '/admin-' + role + '-390-rules-editing.png' });
+    }
     if (s.name !== '1280' || role !== 'mod') { await context.close(); continue; }
 
     await page.locator('#toggle-duels').click();
@@ -269,6 +285,27 @@ try {
     await page.locator('#history tbody tr').nth(1).getByRole('button', { name: /Revert to v2/ }).click();
     await page.waitForTimeout(200);
     assert.deepEqual(posts.at(-1), { action: 'rollbackConfig', payload: { version: 2 } });
+    await context.close();
+  }
+  // 6. StreamElements is the chat source but no command has reached this site: the Stream setup tab warns.
+  for (const se of [{ lastCommandAt: 0, rejectedAt: 0, expect: /No StreamElements command has reached \S+ with this key yet.*test site.*!no/, warn: true },
+    { lastCommandAt: now - 120000, rejectedAt: 0, expect: /Last StreamElements command reached \S+ 2 min ago/, warn: false },
+    { lastCommandAt: now - 120000, rejectedAt: now - 30000, expect: /old key and was refused/, warn: true }]) {
+    const { context, page } = await newPage(sizes[0]);
+    const chatStatus = { connected: true, source: 'streamelements', status: 'enabled', subscriptionId: 'se-streamelements', createdAt: now - 86400000, lastNotificationAt: se.lastCommandAt, lastRevocationReason: '', checkedAt: 0 };
+    const streamelements = { key: 'k'.repeat(48), names: { challenge: '!challenge', accept: '!fight', decline: '!no' }, origin: base, lastCommandAt: se.lastCommandAt, rejectedAt: se.rejectedAt,
+      commands: ['challenge', 'accept', 'decline'].map((action) => ({ action, name: '!' + action, response: '$(customapi ' + base + '/api/se/nesszerra/' + action + '?k=' + 'k'.repeat(48) + ')' })) };
+    await page.route('**/api/session', (r) => json(r, { user: mod, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+    await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: true, canManage: true }));
+    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
+    await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
+    await page.route('**/api/admin/nesszerra', (r) => json(r, { type: 'snapshot', channel: 'nesszerra', revision: 5, paused: false, chat: { connected: true, lastSeen: se.lastCommandAt, status: 'enabled' }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
+      chatStatus, history: [{ version: 1, config, actorId: 'system', at: now - 86400000, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 }, streamelements, access: { owner: false, moderator: true, canManage: true } }));
+    await page.goto(base + '/admin/#chat');
+    await page.waitForSelector('#se-health:not([hidden])');
+    assert.match(await page.locator('#se-health').textContent(), se.expect);
+    assert.equal(await page.locator('#se-health').evaluate((n) => n.classList.contains('warning')), se.warn);
+    if (se.warn && !se.rejectedAt) { await page.locator('#se-health').scrollIntoViewIfNeeded(); await page.screenshot({ path: shots + '/admin-se-warning-1280.png' }); }
     await context.close();
   }
   assert.deepEqual(errors, []);

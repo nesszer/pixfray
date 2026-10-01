@@ -335,8 +335,11 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.equal(se.names.accept, '!fight');
   let m = 0;
   const cmd = (id, login, action, target = '', key = se.secret) => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key, action, userId: id, username: login, displayName: login, target, messageId: 'se' + (++m) } });
+  assert.deepEqual([se.lastCommandAt, se.rejectedAt], [0, 0], 'no command has reached the room yet');
   assert.equal((await cmd('u1', 'alice', 'challenge', 'bob', 'wrong')).status, 403);
+  assert.deepEqual([(await admin()).streamelements.lastCommandAt, (await admin()).streamelements.rejectedAt > 0], [0, true], 'a wrong key is recorded');
   assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /paused/);   // not the chat source yet
+  assert.ok((await admin()).streamelements.lastCommandAt > 0, 'a command with the right key is recorded');
   await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
   assert.equal((await admin()).chatStatus.source, 'streamelements');
   assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /saved fighter/);
@@ -354,6 +357,7 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: 'bad name' } } })).status, 400);
   const rotated = (await r.call('/se-admin', { method: 'POST', body: { action: 'rotateSeKey' } })).body.streamelements;
   assert.notEqual(rotated.secret, se.secret);
+  assert.deepEqual([rotated.lastCommandAt, rotated.rejectedAt], [0, 0], 'a new key starts unheard');
   assert.equal((await cmd('u1', 'alice', 'decline')).status, 403);
   // Disconnecting the StreamElements source never calls Twitch and pauses duels.
   await r.call('/chat', { method: 'POST', body: { action: 'disconnected', reason: 'disconnected' } });

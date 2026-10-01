@@ -105,6 +105,10 @@ export class ChannelRoom extends DurableObject {
     ensureUploadSchema(sql);
     ensureDeveloperSchema(sql);
     sql.exec("CREATE TABLE IF NOT EXISTS se_settings (id INTEGER PRIMARY KEY CHECK (id = 1), secret TEXT NOT NULL, names TEXT NOT NULL)");
+    // v2.4: when a StreamElements command last reached this room with the right key, and with a wrong one, so the admin
+    // page can tell when the bot's commands were copied from another site (test vs production) or an old key.
+    const seColumns = sql.exec("PRAGMA table_info(se_settings)").toArray().map((c) => c.name);
+    for (const column of ["last_command_at", "rejected_at"]) if (!seColumns.includes(column)) sql.exec(`ALTER TABLE se_settings ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     this.seenMessages = new Map();   // EventSub Message-Id -> receivedAt; commands are also deduped durably by message_id
   }
 
@@ -218,7 +222,10 @@ export class ChannelRoom extends DurableObject {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
       const current = this.seSettings();
-      if (body.value.action === "rotateSeKey") this.writeSeSettings(randomHex(), current.names);
+      if (body.value.action === "rotateSeKey") {
+        this.writeSeSettings(randomHex(), current.names);
+        this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = 0, rejected_at = 0 WHERE id = 1");   // a new key starts unheard
+      }
       else if (body.value.action === "setSeNames") {
         const input = body.value.names && typeof body.value.names === "object" ? body.value.names : {};
         const names = {};
@@ -516,15 +523,15 @@ export class ChannelRoom extends DurableObject {
   }
 
   seSettings() {
-    const row = this.ctx.storage.sql.exec("SELECT secret, names FROM se_settings WHERE id = 1").toArray()[0];
+    const row = this.ctx.storage.sql.exec("SELECT secret, names, last_command_at, rejected_at FROM se_settings WHERE id = 1").toArray()[0];
     if (row) {
       const names = { ...DEFAULT_SE_NAMES, ...safeJsonParse(row.names, {}) };
       if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;   // StreamElements' Duel module owns !accept
-      return { secret: row.secret, names };
+      return { secret: row.secret, names, lastCommandAt: Number(row.last_command_at) || 0, rejectedAt: Number(row.rejected_at) || 0 };
     }
     const secret = randomHex();
     this.writeSeSettings(secret, DEFAULT_SE_NAMES);
-    return { secret, names: { ...DEFAULT_SE_NAMES } };
+    return { secret, names: { ...DEFAULT_SE_NAMES }, lastCommandAt: 0, rejectedAt: 0 };
   }
 
   writeSeSettings(secret, names) {
@@ -534,7 +541,11 @@ export class ChannelRoom extends DurableObject {
   // One StreamElements command. It goes through the same path as a Twitch chat message, then gets a one-line reply.
   async streamElements(channel, input, origin) {
     const settings = this.seSettings();
-    if (!timingSafeEqual(String(input.key || ""), settings.secret)) return json({ reply: "Mini Chat: wrong key. Copy the commands again from the admin page." }, 403);
+    if (!timingSafeEqual(String(input.key || ""), settings.secret)) {
+      this.ctx.storage.sql.exec("UPDATE se_settings SET rejected_at = ? WHERE id = 1", Date.now());
+      return json({ reply: "Mini Chat: wrong key. Copy the commands again from the admin page." }, 403);
+    }
+    this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ? WHERE id = 1", Date.now());
     const action = SE_ACTIONS.includes(input.action) ? input.action : "";
     const userId = validUserId(input.userId);
     const username = normalizeUsername(input.username);
