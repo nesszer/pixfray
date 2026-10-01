@@ -76,10 +76,7 @@ async function start() {
     if (debug) {
       status.textContent = chatStatus + arenaStatus + (detail ? ' · ' + detail : '');
       status.hidden = false;
-    } else if (arenaEnabled && !arenaDemo && (!chatOnline || arenaPaused)) {
-      status.textContent = chatOnline ? 'Duels paused' : 'Duels paused · chat offline';
-      status.hidden = false;
-    } else {
+    } else {   // nothing on stream; the admin page shows whether chat is connected
       status.textContent = '';
       status.hidden = true;
     }
@@ -157,6 +154,8 @@ async function start() {
   };
   function openDuels() { return [...replays.values(), ...arenaDuels.filter(duel => OPEN.has(duel?.status) && !replays.has(duel.id))]; }
   const inReplay = p => [...replays.values()].some(d => String(d.a) === p.userId || String(d.b) === p.userId);
+  // The state already holds the new Elo; during a replay the nameplate shows the Elo from before the duel.
+  const replayRatings = id => { for (const d of replays.values()) if (!d.ratings) d.ratings = arenaDuels.find(x => x.id === d.id)?.ratings || null; for (const d of replays.values()) if (d.ratings?.[id]) return d.ratings[id]; return null; };
   function findPlayer(userId) {
     if (userId === null || userId === undefined || userId === '') return null;
     for (const p of players.values()) if (p.userId === String(userId)) return p;
@@ -479,7 +478,8 @@ async function start() {
       if (hold) return list[Math.min(list.length - 1, Math.floor((now - (p.koStart || now)) / 1000 * sprite.fps))];
       return list[Math.floor((now + p.phase) / 1000 * sprite.fps) % list.length];
     };
-    if (p.koUntil > now && a.ko) return { frame: pick(a.ko, true), drawn: true };
+    // "effects" characters only have an upright hurt frame for ko, so the engine still tips them over.
+    if (p.koUntil > now && a.ko) return { frame: pick(a.ko, true), drawn: sprite.combatFallback !== 'effects' };
     if (anim?.kind === 'attack' && a.attack) return { frame: a.attack[Math.min(a.attack.length - 1, Math.floor((now - anim.start) / (anim.until - anim.start) * a.attack.length))], drawn: true };
     if (anim?.kind === 'cheer' && a.cheer) return { frame: pick(a.cheer), drawn: true };
     if (p.vy < 0 && a.jump) return { frame: a.jump[0], drawn: true };
@@ -575,8 +575,9 @@ async function start() {
       if (health) drawHealthBar(p, p.x, y, health);
       ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'center';
       ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.fillStyle = p.color;
-      const rankedLabel = p.arenaProfile?.registered && Number.isFinite(Number(p.arenaProfile.elo))
-        ? p.label + ' · ' + Math.round(Number(p.arenaProfile.elo))
+      const shownElo = replayRatings(p.userId)?.before ?? p.arenaProfile?.elo;
+      const rankedLabel = p.arenaProfile?.registered && Number.isFinite(Number(shownElo))
+        ? p.label + ' · ' + Math.round(Number(shownElo))
         : p.label;
       ctx.strokeText(rankedLabel, p.x, y + 15); ctx.fillText(rankedLabel, p.x, y + 15);
       if (p.text && clock < p.bubbleUntil && !health) {
@@ -691,7 +692,7 @@ async function start() {
       profiles: profilesById.size,
       duels: arenaDuels,
       replays: [...replays.values()],
-      players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo,
+      players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
         x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '' })),
       announcement: announcement && Date.now() < announcement.until ? announcement.text : '',
     });

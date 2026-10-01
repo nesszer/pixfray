@@ -110,9 +110,11 @@ try {
   await overlay.waitForFunction(() => window.__arenaDebug?.().revision > 0);
   const dbg = () => overlay.evaluate(() => window.__arenaDebug());
   assert.equal((await dbg()).paused, true, 'chat not connected yet: overlay sees a paused game');
-  const plain = await overlayCtx.newPage();   // without debug the overlay shows the viewer-facing paused text
+  const plain = await overlayCtx.newPage();   // without debug the overlay shows no status text on stream
   await plain.goto(base + '/overlay.html?channel=' + ch + '&arena=1&size=64');
-  await plain.waitForFunction(() => /Duels paused/.test(document.querySelector('#status').textContent));
+  await plain.waitForFunction(() => window.__arenaDebug === undefined && document.readyState === 'complete');
+  await plain.waitForTimeout(1500);
+  assert.equal(await plain.locator('#status').isHidden(), true, 'paused status stays off stream');
 
   // 4. Connect chat (owner or mod), then the webhook checks: challenge, bad signature, stale timestamp.
   const viewerConnect = await api('/api/admin/' + ch, { cookie: cookies.alice, method: 'POST', body: { action: 'connectChat' } });
@@ -229,8 +231,8 @@ try {
   assert.equal(s.duels.filter((x) => x.status === 'active' || x.status === 'pending').length, 0);
   assert.deepEqual(await ranks(), before, 'ranks unchanged by the cancelled duel');
   await overlay.waitForFunction(() => window.__arenaDebug().paused === true && !window.__arenaDebug().duels.some((x) => x.status === 'active' || x.status === 'pending'), null, { timeout: 5000 });
-  await plain.waitForFunction(() => /chat offline/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
-  const status = await plain.locator('#status').textContent();
+  assert.equal(await plain.locator('#status').isHidden(), true, 'chat offline status stays off stream');
+  const status = 'hidden';
   const stray = await command(users.alice, '!duel @carol_e2e');
   assert.equal(stray.ok, false, 'messages for a disconnected subscription are ignored');
   log('chat disconnected: paused, duel cancelled (chat_disconnected), ranks unchanged; overlay status "' + status.trim() + '"');

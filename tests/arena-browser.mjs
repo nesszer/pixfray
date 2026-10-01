@@ -198,7 +198,7 @@ try {
         { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', hp: 0, respawnAt: now + 3000, elo: 1708, wins: 8, losses: 3, registered: true },
         { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', hp: 100, respawnAt: 0, elo: 1702, wins: 8, losses: 3, registered: true },
       ],
-      duels: [{ id: 'duel-9', a: '101', b: '202', hp: { '101': 0, '202': 100 }, status: 'completed', winnerId: '202', round: 1, rules: { maxHp: 100 } }],
+      duels: [{ id: 'duel-9', a: '101', b: '202', hp: { '101': 0, '202': 100 }, status: 'completed', winnerId: '202', round: 1, rules: { maxHp: 100 }, ratings: { '101': { before: 1720, after: 1708, delta: -12 }, '202': { before: 1690, after: 1702, delta: 12 } } }],
       events: [
         { id: 'q1', type: 'duel_started', at: now, duelId: 'duel-9', a: '101', b: '202', round: 1, hp: full },
         { id: 'q2', type: 'duel_action', at: now, duelId: 'duel-9', userId: '101', targetId: '202', ability: 'strike', amount: 0, hp: full, miss: true, die: 3 },
@@ -210,6 +210,7 @@ try {
   let q = await quick.evaluate(() => window.__arenaDebug());
   assert.equal(q.replays[0]?.hp['101'], 100, 'replay starts at full health');
   assert.equal(q.players.find(p => p.userId === '101').ko, false, 'loser stands until the finisher');
+  assert.equal(q.players.find(p => p.userId === '101').shownElo, 1720, 'nameplate keeps the pre-duel Elo during the replay');
   await quick.waitForTimeout(500);
   await quick.screenshot({ path: 'screenshots/overlay-quick-duel-1280.png' });
   await quick.waitForFunction(() => window.__arenaDebug().replays[0]?.hp['101'] === 0, null, { timeout: 6000 });
@@ -219,6 +220,7 @@ try {
   await quick.screenshot({ path: 'screenshots/overlay-quick-ko-1280.png' });
   await quick.waitForTimeout(1500);
   assert.equal((await quick.evaluate(() => window.__arenaDebug())).players.find(p => p.userId === '101').ko, true, 'KO is held after the replay');
+  assert.equal((await quick.evaluate(() => window.__arenaDebug())).players.find(p => p.userId === '101').shownElo, 1708, 'new Elo after the knockout');
   await quick.close();
 
   const demoPage = await context.newPage();
