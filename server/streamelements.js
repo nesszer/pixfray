@@ -19,7 +19,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
   if (!SE_ACTIONS.includes(action)) return reply('Unknown command', 404);
   const q = name => (url.searchParams.get(name) || '').trim();
   const key = q('k');
-  if (!key || key.length > 128) return reply('Mini Chat: missing key', 403);
+  if (!key || key.length > 128) return reply('Mini Chat: missing key. Copy the commands again from the admin page.');
   const body = {
     key,
     action,
@@ -31,7 +31,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
   };
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
-  return reply(data.reply || 'Mini Chat: something went wrong', r.status === 403 ? 403 : 200);
+  return reply(data.reply || 'Mini Chat: something went wrong');   // always 200 so the bot shows the text
 }
 
 // Paste-ready StreamElements command replies, one per action.
