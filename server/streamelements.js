@@ -76,7 +76,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
   switch (reason) {
     case 'chat_offline': return 'Mini Chat: duels are paused, StreamElements is not connected in the admin page.';
     case 'duels_disabled': return 'Mini Chat: duels are turned off right now.';
-    case 'ranked_sign_in_required': return `Mini Chat: both players need a saved fighter first.${signUp}`;
+    case 'ranked_sign_in_required': return action === 'challenge' || action === 'accept' ? `Mini Chat: both players need a saved fighter first.${signUp}` : `${me}, save a fighter first.${signUp}`;
     case 'target_required': return `Mini Chat: who? Use ${n('challenge')} @name`;
     case 'target_not_found': return `Mini Chat: @${target} needs to save a fighter first.${signUp}`;
     case 'self_duel': return `${me}, you can't duel yourself.`;
