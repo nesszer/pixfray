@@ -327,36 +327,53 @@ function beginDuel(state, duel, now) {
   return { ok: true, duelId: duel.id };
 }
 
-// Quick duel: a d6 exchange settled at once. The swinging fighter rolls: 5-6 the hit lands (KO),
-// 1-2 the other fighter counters (KO the other way), 3-4 the swing misses and the other fighter swings next.
-// The challenger swings first; hit and counter are equally likely, so who starts doesn't matter.
+// Quick duel: a d6 exchange settled at once. Fighters take turns swinging, the challenger first:
+// 6 is a crit (50% of max HP), 5 a hit (34%), 3-4 a miss, 1-2 the other fighter counters (34%).
+// First to 0 HP loses. After QUICK_MAX_ROLLS rolls the fighter with more HP wins; equal HP goes to
+// sudden death, where the next hit or counter knocks out. A winner who took no damage is flawless (+3 Elo).
 // rolls are numbers in [0, 1) from the room; missing ones come from a hash so the reducer stays pure.
-const QUICK_MAX_SWINGS = 8;
+const QUICK_MAX_ROLLS = 12;
+const QUICK_FLAWLESS_BONUS = 3;
 function settleQuickDuel(state, duel, rolls, now) {
   const list = Array.isArray(rolls) ? rolls : [];
   const rollAt = (i) => (Number.isFinite(list[i]) && list[i] >= 0 && list[i] < 1 ? list[i] : hashRoll(duel.id + ":" + now + ":" + i));
+  const maxHp = duel.rules.maxHp;
+  const blow = { hit: Math.round(maxHp * 0.34), crit: Math.round(maxHp * 0.5), counter: Math.round(maxHp * 0.34) };
+  const look = (id) => player(state, id)?.defaultAbility || "strike";   // cosmetic: picks the attack effect on the overlay
   const swings = [];
-  let attacker = duel.a, defender = duel.b, winnerId = "", loserId = "";
-  for (let i = 0; !winnerId; i++) {
-    let die = 1 + Math.floor(rollAt(i) * 6);
-    if (i === QUICK_MAX_SWINGS - 1 && (die === 3 || die === 4)) die = die === 3 ? 2 : 5;   // the last swing always decides
-    const outcome = die >= 5 ? "hit" : die <= 2 ? "counter" : "miss";
-    swings.push({ attackerId: attacker, defenderId: defender, die, outcome });
-    if (outcome === "miss") {
-      addEvent(state, "duel_action", now, { duelId: duel.id, userId: attacker, targetId: defender, ability: "strike", amount: 0, hp: clone(duel.hp), miss: true, die });
-      [attacker, defender] = [defender, attacker];
-      continue;
+  let attacker = duel.a, defender = duel.b, winnerId = "", loserId = "", decision = "ko";
+  for (let i = 0; !winnerId && i < 200; i++) {
+    const suddenDeath = i >= QUICK_MAX_ROLLS;
+    if (i === QUICK_MAX_ROLLS) {
+      if (duel.hp[duel.a] !== duel.hp[duel.b]) {
+        decision = "hp";
+        winnerId = duel.hp[duel.a] > duel.hp[duel.b] ? duel.a : duel.b;
+        loserId = winnerId === duel.a ? duel.b : duel.a;
+        break;
+      }
+      decision = "sudden_death";
     }
-    winnerId = outcome === "hit" ? attacker : defender;
-    loserId = outcome === "hit" ? defender : attacker;
-    const amount = duel.hp[loserId];
-    duel.hp[loserId] = 0;
-    const loser = player(state, loserId);
-    if (loser) loser.hp = 0;
-    addEvent(state, "duel_action", now, { duelId: duel.id, userId: winnerId, targetId: loserId, ability: "heavy", amount, hp: clone(duel.hp), finisher: true, counter: outcome === "counter", die });
+    const die = 1 + Math.floor(rollAt(i) * 6);
+    const outcome = die === 6 ? "crit" : die === 5 ? "hit" : die <= 2 ? "counter" : "miss";
+    const swing = { attackerId: attacker, defenderId: defender, die, outcome, damage: 0 };
+    swings.push(swing);
+    if (outcome === "miss") {
+      addEvent(state, "duel_action", now, { duelId: duel.id, userId: attacker, targetId: defender, ability: look(attacker), amount: 0, hp: clone(duel.hp), miss: true, die });
+    } else {
+      const dealer = outcome === "counter" ? defender : attacker, target = outcome === "counter" ? attacker : defender;
+      const amount = suddenDeath ? duel.hp[target] : Math.min(duel.hp[target], blow[outcome]);
+      duel.hp[target] -= amount;
+      swing.damage = amount;
+      const finisher = duel.hp[target] <= 0;
+      addEvent(state, "duel_action", now, { duelId: duel.id, userId: dealer, targetId: target, ability: look(dealer), amount, hp: clone(duel.hp), die,
+        ...(outcome === "counter" ? { counter: true } : {}), ...(outcome === "crit" ? { crit: true } : {}), ...(finisher ? { finisher: true } : {}) });
+      if (finisher) { winnerId = dealer; loserId = target; }
+    }
+    [attacker, defender] = [defender, attacker];
   }
-  finishDuel(state, duel, winnerId, now);
-  return { ok: true, reason: "quick_duel", duelId: duel.id, winnerId, loserId, swings };
+  const flawless = duel.hp[winnerId] === maxHp;
+  finishDuel(state, duel, winnerId, now, { decision, bonus: flawless ? QUICK_FLAWLESS_BONUS : 0 });
+  return { ok: true, reason: "quick_duel", duelId: duel.id, winnerId, loserId, swings, winnerHp: duel.hp[winnerId], flawless, decision };
 }
 
 function hashRoll(text) {
@@ -365,7 +382,7 @@ function hashRoll(text) {
   return (h >>> 0) / 4294967296;
 }
 
-function finishDuel(state, duel, winnerId, now) {
+function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } = {}) {
   const a = player(state, duel.a);
   const b = player(state, duel.b);
   if (!a || !b) return;
@@ -373,8 +390,8 @@ function finishDuel(state, duel, winnerId, now) {
   const ratingB = b.elo;
   const expectedA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
   const scoreA = winnerId === duel.a ? 1 : 0;
-  const nextA = Math.round(ratingA + state.config.eloK * (scoreA - expectedA));
-  const nextB = Math.round(ratingB + state.config.eloK * ((1 - scoreA) - (1 - expectedA)));
+  const nextA = Math.round(ratingA + state.config.eloK * (scoreA - expectedA)) + (scoreA === 1 ? bonus : 0);
+  const nextB = Math.round(ratingB + state.config.eloK * ((1 - scoreA) - (1 - expectedA))) + (scoreA === 0 ? bonus : 0);
   a.elo = nextA;
   b.elo = nextB;
   if (winnerId === duel.a) {
@@ -398,6 +415,8 @@ function finishDuel(state, duel, winnerId, now) {
     [duel.a]: { before: ratingA, after: nextA, delta: nextA - ratingA },
     [duel.b]: { before: ratingB, after: nextB, delta: nextB - ratingB },
   };
+  if (bonus) { duel.ratings[winnerId].bonus = bonus; duel.flawless = true; }
+  if (decision !== "ko") duel.decision = decision;
   state.rematchLocks.push({
     pair: pairKey(duel.a, duel.b),
     until: now + duel.rules.rematchDelayMs,
@@ -410,6 +429,8 @@ function finishDuel(state, duel, winnerId, now) {
     respawnAt: loser.respawnAt,
     hp: clone(duel.hp),
     ratings: clone(duel.ratings),
+    ...(bonus ? { flawless: true } : {}),
+    ...(decision !== "ko" ? { decision } : {}),
   });
 }
 

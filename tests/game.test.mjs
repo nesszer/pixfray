@@ -526,41 +526,53 @@ test('StreamElements: a bare command sends t=- and reaches the room with no targ
   assert.equal(sent.target, '');
 });
 
-test('quick duels: d6 swings; 5-6 hit lands, 1-2 counter, 3-4 miss and the other fighter swings', () => {
-  // roll r gives die 1 + floor(r * 6): 0.9 -> 6, 0.1 -> 1, 0.5 -> 4
+// roll r gives die 1 + floor(r * 6): 0.9 -> 6 (crit 50), 0.75 -> 5 (hit 34), 0.5 -> 4 (miss), 0.1 -> 1 (counter 34)
+function quick(rolls) {
+  const w = arena({ quick: true });
+  const ch = w.say('alice', '!challenge @bob');
+  const r = w.apply({ type: 'command', messageId: 'q' + rolls.join(), userId: 'id-bob', username: 'bob', displayName: 'bob', text: '!accept', timestamp: w.now, rolls });
+  return { w, r, duel: w.duel(ch.duelId), actions: w.state.events.filter((e) => e.type === 'duel_action') };
+}
+
+test('quick duels: turns alternate, 6 crits for 50, 5 hits for 34, 1-2 counter for 34, 3-4 miss', () => {
   const cases = [
-    { rolls: [0.9], winner: 'alice', loser: 'bob', dice: [6], outcomes: ['hit'] },
-    { rolls: [0.1], winner: 'bob', loser: 'alice', dice: [1], outcomes: ['counter'] },
-    { rolls: [0.5, 0.9], winner: 'bob', loser: 'alice', dice: [4, 6], outcomes: ['miss', 'hit'] },
-    { rolls: [0.5, 0.5, 0.1], winner: 'bob', loser: 'alice', dice: [4, 4, 1], outcomes: ['miss', 'miss', 'counter'] },
+    { rolls: [0.9, 0.5, 0.9], winner: 'alice', dice: [6, 4, 6], outcomes: ['crit', 'miss', 'crit'], hp: 100, flawless: true },
+    { rolls: [0.75, 0.75, 0.75, 0.75, 0.75], winner: 'alice', dice: [5, 5, 5, 5, 5], outcomes: ['hit', 'hit', 'hit', 'hit', 'hit'], hp: 32, flawless: false },
+    { rolls: [0.1, 0.1, 0.1, 0.1, 0.1], winner: 'bob', dice: [1, 1, 1, 1, 1], outcomes: ['counter', 'counter', 'counter', 'counter', 'counter'], hp: 32, flawless: false },
   ];
   for (const c of cases) {
-    const w = arena({ quick: true });
-    const ch = w.say('alice', '!challenge @bob');
-    const r = w.apply({ type: 'command', messageId: 'q' + c.rolls.join(), userId: 'id-bob', username: 'bob', displayName: 'bob', text: '!accept', timestamp: w.now, rolls: c.rolls });
+    const { w, r, duel, actions } = quick(c.rolls);
+    const loser = c.winner === 'alice' ? 'bob' : 'alice';
     assert.equal(r.reason, 'quick_duel');
     assert.equal(r.winnerId, 'id-' + c.winner, JSON.stringify(c));
     assert.deepEqual(r.swings.map((x) => x.die), c.dice);
     assert.deepEqual(r.swings.map((x) => x.outcome), c.outcomes);
-    const duel = w.duel(ch.duelId);
+    assert.equal(r.winnerHp, c.hp); assert.equal(r.flawless, c.flawless); assert.equal(r.decision, 'ko');
     assert.equal(duel.status, 'completed');
-    assert.equal(duel.hp['id-' + c.loser], 0);
+    assert.equal(duel.hp['id-' + loser], 0);
     assert.equal(w.player(c.winner).wins, 1);
-    assert.equal(w.player(c.loser).losses, 1);
-    assert.ok(w.player(c.loser).respawnAt > w.now);
-    const actions = w.state.events.filter((e) => e.type === 'duel_action');
+    assert.equal(w.player(loser).losses, 1);
+    assert.ok(w.player(loser).respawnAt > w.now);
     assert.equal(actions.length, c.dice.length);
     assert.equal(actions.filter((e) => e.miss).length, c.outcomes.filter((o) => o === 'miss').length);
+    assert.equal(actions.filter((e) => e.crit).length, c.outcomes.filter((o) => o === 'crit').length);
     assert.equal(actions.at(-1).finisher, true);
+    assert.equal(actions.filter((e) => e.finisher).length, 1);
+    assert.equal(w.player(c.winner).elo, c.flawless ? 1015 : 1012, 'flawless wins add 3 Elo');
+    assert.equal(w.player(loser).elo, 988);
   }
 });
 
-test('quick duels always end by the 8th swing', () => {
-  const w = arena({ quick: true });
-  w.say('alice', '!challenge @bob');
-  const r = w.apply({ type: 'command', messageId: 'q-all-miss', userId: 'id-bob', username: 'bob', displayName: 'bob', text: '!accept', timestamp: w.now, rolls: Array(8).fill(0.5) });
-  assert.equal(r.swings.length, 8);
-  assert.notEqual(r.swings.at(-1).outcome, 'miss');
+test('quick duels: after 12 rolls more HP wins; equal HP goes to sudden death', () => {
+  const onHp = quick([0.75, ...Array(11).fill(0.5)]);
+  assert.equal(onHp.r.decision, 'hp'); assert.equal(onHp.r.swings.length, 12); assert.equal(onHp.r.winnerId, 'id-alice');
+  assert.equal(onHp.duel.decision, 'hp');
+  assert.equal(onHp.w.state.events.find((e) => e.type === 'duel_completed').decision, 'hp');
+  const sudden = quick([...Array(12).fill(0.5), 0.5, 0.75]);
+  assert.equal(sudden.r.decision, 'sudden_death'); assert.equal(sudden.r.swings.length, 14);
+  assert.equal(sudden.r.winnerId, 'id-bob', 'roll 14 is the swing of bob');
+  assert.equal(sudden.actions.at(-1).amount, 100, 'a sudden-death blow knocks out');
+  assert.equal(sudden.duel.hp['id-alice'], 0);
 });
 
 test('quick duels are the default and work through a mutual challenge too', () => {

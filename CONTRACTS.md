@@ -93,8 +93,8 @@ Deduplicate events by `id`. Event types and their fields:
 | `challenge_declined` | duelId, declinedBy |
 | `challenge_expired` | duelId, a, b |
 | `duel_started` | duelId, a, b, round, hp |
-| `duel_action` | duelId, userId, targetId (the actor for heal), ability, amount, hp. Also sent for the final blow. |
-| `duel_completed` | duelId, winnerId, loserId, round, respawnAt, hp, ratings |
+| `duel_action` | duelId, userId, targetId (the actor for heal), ability, amount, hp. Also sent for the final blow. A quick-duel roll adds die (1-6) and one of miss, crit or counter (userId is then the defender who counters), and finisher on the last blow. |
+| `duel_completed` | duelId, winnerId, loserId, round, respawnAt, hp, ratings. Quick duels may add flawless (ratings of the winner then include bonus) and decision (`hp` or `sudden_death`). |
 | `duel_cancelled` | duelId, a, b, reason (`inactivity`, `chat_disconnected`, `duels_disabled`, `moderator_cancelled`, `moderator_reset`, `player_removed`), wasActive |
 | `player_respawned` | userId |
 | `player_seen`, `profile_saved` | userId |
@@ -217,6 +217,7 @@ Custom characters:
 - The first player to reach 0 hp loses. The winner returns to maxHp. The loser is KO'd until
   `respawnAt = now + respawnMs`. Elo uses K=`eloK` from `initialElo`. The same pair cannot duel again
   for `rematchDelayMs`.
+- A quick duel (StreamElements `!fight`) is rolled at once: turns alternate, challenger first; a d6 per swing gives a crit of 50% maxHp on 6, a hit of 34% on 5, a miss on 3-4 and a defender counter of 34% on 1-2. After 12 rolls more hp wins; equal hp goes to sudden death (the next blow wins). A winner at full hp gets +3 Elo (flawless).
 - An active duel with no action for `inactivityMs` is cancelled without scoring. Cancelled duels
   return both players to maxHp.
 - Ranked play needs a saved profile (`ranked_sign_in_required`).

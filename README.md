@@ -29,7 +29,13 @@ The working tree also holds v2. It adds:
 
 Chat commands for v2 duels:
 - `!challenge @viewer`, then `!fight` (or `!accept`) or `!decline`. Use `!fight` with StreamElements, whose Duel module owns `!accept`.
-- Accepting rolls the duel at once: each swing is a d6 (5-6 hit lands, 1-2 countered, 3-4 miss and the other fighter swings).
+- Accepting rolls the duel at once. Fighters take turns, challenger first, and each swing is a d6:
+  6 crits for 50, 5 hits for 34, 3-4 misses, and on 1-2 the defender counters for 34. Both start
+  at 100 HP. After 12 rolls the fighter with more HP wins; equal HP goes to sudden death, where
+  the next blow wins. A winner who took no damage gets +3 Elo on top. The bot replies at once, for
+  example "A beats B in 4 rolls (66 HP left). Elo: A 1012, B 988.", and the overlay replays the
+  duel in about 8-12 s. The default ability only changes how blows look.
+- Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).
 
 Rules and routes are in CONTRACTS.md. The plan and the open gaps are in HANDOFF.md.
 

@@ -184,11 +184,11 @@ try {
   s = await state();
   const done = s.events.find((e) => e.type === 'duel_completed' && e.duelId === duel1.id);
   assert.ok(done, 'duel_completed event'); assert.equal(done.winnerId, users.alice.id);
-  await overlay.waitForFunction(() => /win|KO|defeat/i.test(window.__arenaDebug().announcement || ''), null, { timeout: 5000 });
+  await overlay.waitForFunction(() => window.__arenaDebug().banners.some((b) => /wins/.test(b)), null, { timeout: 5000 });
   d = await dbg();
   assert.equal(d.players.find((p) => p.userId === users.bob.id).ko, true, 'loser shows KO');
   await overlay.screenshot({ path: shots + '/e2e-overlay-ko-1280.png' });
-  log('duel KO: alice beat bob; announcement "' + d.announcement + '"');
+  log('duel KO: alice beat bob; banner "' + d.banners.join(' | ') + '"');
 
   // 7. Elo and leaderboard.
   const lb = (await api('/api/leaderboard/' + ch)).data;

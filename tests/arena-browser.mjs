@@ -109,12 +109,12 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem('mini-chat:cosmetics:nesszerra')), null,
     'arena-ranked cosmetics are not persisted locally');
 
-  const completed = { id: 'evt-2', type: 'duel_completed', duelId: 'duel-1', winnerId: '101', loserId: '202', ratings: { '101': { before: 1720, after: 1731, delta: 11 }, '202': { before: 1690, after: 1679, delta: -11 } } };
+  const completed = { id: 'evt-2', type: 'duel_completed', duelId: 'duel-1', winnerId: '101', loserId: '202', flawless: true, ratings: { '101': { before: 1720, after: 1731, delta: 11, bonus: 3 }, '202': { before: 1690, after: 1679, delta: -11 } } };
   await page.evaluate((event) => window.__sendArena(0, { type: 'event', revision: 4, event: { ...event, at: Date.now() } }), completed);
-  await page.waitForFunction(() => /Aria Prime wins · Elo \+11/.test(window.__arenaDebug().announcement || ''));
+  await page.waitForFunction(() => window.__arenaDebug().banners.includes('Aria Prime wins, FLAWLESS! +11 Elo'));
   // The same event id again (here with a different winner) must not be replayed.
   await page.evaluate((event) => window.__sendArena(0, { type: 'event', revision: 4, event: { ...event, winnerId: '202', loserId: '101', at: Date.now() } }), completed);
-  assert.match((await page.evaluate(() => window.__arenaDebug())).announcement, /Aria Prime wins/, 'duplicate event IDs are not replayed');
+  assert.deepEqual((await page.evaluate(() => window.__arenaDebug())).banners, ['Aria Prime wins, FLAWLESS! +11 Elo'], 'duplicate event IDs are not replayed');
   // Events older than 10 s (for example replayed after a reconnect) are not announced.
   await page.evaluate(() => window.__sendArena(0, { type: 'event', revision: 4, event: { id: 'evt-old', type: 'challenge_created', a: '202', b: '101', at: Date.now() - 60000 } }));
   assert.doesNotMatch((await page.evaluate(() => window.__arenaDebug())).announcement, /challenges/, 'stale events are not announced');
@@ -202,7 +202,9 @@ try {
       events: [
         { id: 'q1', type: 'duel_started', at: now, duelId: 'duel-9', a: '101', b: '202', round: 1, hp: full },
         { id: 'q2', type: 'duel_action', at: now, duelId: 'duel-9', userId: '101', targetId: '202', ability: 'strike', amount: 0, hp: full, miss: true, die: 3 },
-        { id: 'q3', type: 'duel_action', at: now, duelId: 'duel-9', userId: '202', targetId: '101', ability: 'heavy', amount: 100, hp: { '101': 0, '202': 100 }, finisher: true, counter: true, die: 2 },
+        { id: 'q3', type: 'duel_action', at: now, duelId: 'duel-9', userId: '202', targetId: '101', ability: 'heavy', amount: 50, hp: { '101': 50, '202': 100 }, crit: true, die: 6 },
+        { id: 'q3b', type: 'duel_action', at: now, duelId: 'duel-9', userId: '202', targetId: '101', ability: 'heavy', amount: 34, hp: { '101': 16, '202': 100 }, counter: true, die: 2 },
+        { id: 'q3c', type: 'duel_action', at: now, duelId: 'duel-9', userId: '202', targetId: '101', ability: 'heavy', amount: 16, hp: { '101': 0, '202': 100 }, finisher: true, die: 5 },
         { id: 'q4', type: 'duel_completed', at: now, duelId: 'duel-9', winnerId: '202', loserId: '101', round: 1, respawnAt: now + 3000, ratings: { '202': { delta: 12 }, '101': { delta: -12 } } },
       ],
     });
@@ -211,12 +213,27 @@ try {
   assert.equal(q.replays[0]?.hp['101'], 100, 'replay starts at full health');
   assert.equal(q.players.find(p => p.userId === '101').ko, false, 'loser stands until the finisher');
   assert.equal(q.players.find(p => p.userId === '101').shownElo, 1720, 'nameplate keeps the pre-duel Elo during the replay');
-  await quick.waitForTimeout(500);
+  // Each roll shows its die above the fighter who rolled: aria's miss (3), then bex's crit (6).
+  await quick.waitForFunction(() => window.__arenaDebug().players.find(p => p.userId === '101').die === 3, null, { timeout: 5000 });
+  await quick.waitForFunction(() => window.__arenaDebug().players.find(p => p.userId === '202').float === 'MISS', null, { timeout: 2000 });
+  q = await quick.evaluate(() => window.__arenaDebug());
+  assert.ok(q.players.filter(p => p.userId === '101' || p.userId === '202').every(p => p.grow > 1.3), 'fighters grow during the duel');
+  await quick.waitForFunction(() => window.__arenaDebug().players.find(p => p.userId === '202').die === 6, null, { timeout: 3000 });
+  await quick.waitForFunction(() => window.__arenaDebug().players.find(p => p.userId === '101').float === 'CRIT! -50', null, { timeout: 2000 });
   await quick.screenshot({ path: 'screenshots/overlay-quick-duel-1280.png' });
-  await quick.waitForFunction(() => window.__arenaDebug().replays[0]?.hp['101'] === 0, null, { timeout: 6000 });
+  // A counter: aria rolls 2, so the die is hers and bex answers.
+  await quick.waitForFunction(() => window.__arenaDebug().players.find(p => p.userId === '101').die === 2, null, { timeout: 3000 });
+  await quick.waitForFunction(() => window.__arenaDebug().players.find(p => p.userId === '202').float === 'COUNTER', null, { timeout: 2000 });
+  await quick.waitForFunction(() => window.__arenaDebug().replays[0]?.hp['101'] === 0, null, { timeout: 5000 });
   const xs = (await quick.evaluate(() => window.__arenaDebug())).players.filter(p => p.userId === '101' || p.userId === '202').map(p => p.x);
-  assert.ok(Math.abs(xs[0] - xs[1]) < 110, 'fighters have met before the deciding roll (' + xs.join(' vs ') + ')');
-  await quick.waitForFunction(() => window.__arenaDebug().replays.length === 0 && window.__arenaDebug().players.find(p => p.userId === '101').ko, null, { timeout: 4000 });
+  assert.ok(Math.abs(xs[0] - xs[1]) < 230, 'fighters have met before the deciding roll (' + xs.join(' vs ') + ')');
+  // The finishing blow knocks aria down before the result arrives.
+  await quick.waitForFunction(() => window.__arenaDebug().players.find(p => p.userId === '101').ko, null, { timeout: 2000 });
+  await quick.waitForFunction(() => window.__arenaDebug().replays.length === 0, null, { timeout: 3000 });
+  q = await quick.evaluate(() => window.__arenaDebug());
+  assert.deepEqual(q.banners, ['Bex Prime wins! +12 Elo'], 'winner banner');
+  assert.equal(q.players.find(p => p.userId === '202').float, '+12 Elo', 'Elo change floats above the winner');
+  assert.equal(q.players.find(p => p.userId === '101').float, '−12 Elo', 'Elo change floats above the loser');
   await quick.screenshot({ path: 'screenshots/overlay-quick-ko-1280.png' });
   await quick.waitForTimeout(1500);
   assert.equal((await quick.evaluate(() => window.__arenaDebug())).players.find(p => p.userId === '101').ko, true, 'KO is held after the replay');
@@ -233,7 +250,7 @@ try {
   await demoPage.goto(base + '/overlay.html?arena=1&demo=1&debug=1');
   await demoPage.waitForFunction(() => document.querySelector('#arena-mode')?.textContent.includes('not saved'));
   await demoPage.waitForFunction(() => window.__arenaDebug?.().duels.some((duel) => Object.values(duel.hp || {}).some((hp) => hp < 100)));
-  await demoPage.waitForFunction(() => /wins/.test(window.__arenaDebug?.().announcement || ''), null, { timeout: 20000 });
+  await demoPage.waitForFunction(() => window.__arenaDebug?.().banners.some(b => /wins/.test(b)), null, { timeout: 20000 });
   assert.equal(await demoPage.evaluate(() => window.__arenaSockets.length + window.__chatSockets.length), 0,
     'arena demo uses no arena or Twitch websocket');
   assert.deepEqual(demoApiReads, [], 'arena demo does not write or read arena APIs');

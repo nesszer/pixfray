@@ -366,16 +366,16 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 'q' + (++m) } });
   await cmd('u1', 'alice', 'challenge', 'bob');
-  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^((alice|bob) rolls [1-6]: (hit lands|countered|miss)\. )+(alice|bob) knocks out (alice|bob)! Elo: \w+ 1012, \w+ 988\.$/);
+  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^(alice|bob) beats (alice|bob) (in \d+ rolls?( \(sudden death\))?|on HP after 12 rolls) \((\d+ HP left|100 HP left, flawless, \+3 bonus)\)\. Elo: \w+ (1012|1015), \w+ 988\.$/);
   assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /no pending challenge/);
   // The result is saved, so the next command (which reloads the stored profile) keeps it.
   const saved = Object.fromEntries(r.ctx.storage.sql.exec('SELECT user_id, elo, wins, losses FROM profiles').toArray().map((x) => [x.user_id, x]));
-  assert.deepEqual([saved.u1.wins + saved.u2.wins, saved.u1.losses + saved.u2.losses, saved.u1.elo + saved.u2.elo], [1, 1, 2000]);
+  assert.deepEqual([saved.u1.wins + saved.u2.wins, saved.u1.losses + saved.u2.losses, [2000, 2003].includes(saved.u1.elo + saved.u2.elo)], [1, 1, true]);   // +3 if flawless
   assert.notEqual(saved.u1.elo, 1000);
   // Every command lands in the dev log with what came in, the game's decision and the reply.
   const log = (await r.call('/dev/logs?source=command')).body;
   assert.deepEqual(log.map((x) => x.context.reason).reverse(), ['challenge', 'quick_duel', 'challenge_not_found']);
-  assert.match(log[1].context.swings, /^([1-6][hcm] ?)+$/);
+  assert.match(log[1].context.swings, /^([1-6][hxcm] ?)+$/);
   assert.equal((await r.call('/dev/logs?source=warn')).body.length, 0);
   // A result that didn't reach the stored profile is flagged.
   const state = r.readState('nesszerra');

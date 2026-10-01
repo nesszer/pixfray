@@ -40,6 +40,7 @@ async function start() {
   const debug = params.get('debug') === '1';
   const cap = Math.max(1, Math.min(100, Number(params.get('cap')) || 100));
   const size = Math.max(24, Math.min(96, Number(params.get('size')) || 60));
+  const sound = params.get('sound') === '1';   // quiet duel sounds, off unless asked for
   const status = document.querySelector('#status');
   const storageKey = 'mini-chat:cosmetics:' + channel;
   let settings = Object.create(null);
@@ -55,6 +56,10 @@ async function start() {
   // duel id -> an active duel whose hp follows the duel_action events until duel_completed.
   const replays = new Map();
   const KO_HOLD_MS = 2500;   // how long the loser stays down after a replayed knockout
+  const DUEL_GROW = 1.5;     // fighters stand this much bigger while they duel
+  const FLOOR = 32;          // room under the feet for the nameplate
+  const banners = [];        // winner banners above finished duels
+  let shake = null;          // screen shake after a finishing blow
   let width = 1, height = 1, connectionState = demo ? 'demo' : 'connecting';
   let arenaChat = null, arenaTransport = arenaDemo ? 'demo' : 'connecting', arenaConfig = { maxHp: 100 };
   let arenaRevision = null, arenaDuels = [], arenaClient = null, arenaTimer = null, arenaPaused = false;
@@ -231,15 +236,85 @@ async function start() {
   function burst(p, color, count, rise) {
     if (!p) return;
     for (let i = 0; i < count; i++) {
-      particles.push({ x: p.x + (Math.random() - .5) * size * .5, y: -size * (.3 + Math.random() * .5), owner: p, color,
+      particles.push({ x: p.x + (Math.random() - .5) * size * .5, y: -size * (p.grow || 1) * (.3 + Math.random() * .5), owner: p, color,
         vx: (Math.random() - .5) * 120, vy: rise ? -40 - Math.random() * 60 : -120 - Math.random() * 120, born: Date.now(), life: 700 });
     }
     if (particles.length > 300) particles.splice(0, particles.length - 300);
   }
-  function floatText(p, text, color) { if (p) p.floatText = { text, color, until: Date.now() + 1200 }; }
+  function floatText(p, text, color, life = 1200) { if (p) p.floatText = { text, color, life, until: Date.now() + life }; }
+  const signed = n => (n > 0 ? '+' : n < 0 ? '\u2212' : '') + Math.abs(n);
+  // &sound=1: short synthesized blips, no audio files. Browsers and OBS allow this without a click.
+  let audio = null;
+  function playSound(kind) {
+    if (!sound) return;
+    try {
+      audio ||= new AudioContext();
+      const t = audio.currentTime, gain = audio.createGain();
+      gain.connect(audio.destination);
+      if (kind === 'miss') {
+        const len = Math.floor(audio.sampleRate * .22), buffer = audio.createBuffer(1, len, audio.sampleRate), data = buffer.getChannelData(0);
+        for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * i / len);
+        const src = audio.createBufferSource(), band = audio.createBiquadFilter();
+        band.type = 'bandpass'; band.frequency.setValueAtTime(700, t); band.frequency.exponentialRampToValueAtTime(2600, t + .22);
+        src.buffer = buffer; src.connect(band); band.connect(gain); gain.gain.value = .12; src.start(t);
+        return;
+      }
+      const [type, from, to, dur, vol] = { hit: ['square', 190, 55, .13, .07], parry: ['triangle', 1100, 1500, .09, .08], ko: ['sawtooth', 240, 50, .6, .06] }[kind] || ['square', 190, 55, .13, .07];
+      const osc = audio.createOscillator();
+      osc.type = type; osc.frequency.setValueAtTime(from, t); osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+      gain.gain.setValueAtTime(vol, t); gain.gain.exponentialRampToValueAtTime(.001, t + dur);
+      osc.connect(gain); osc.start(t); osc.stop(t + dur + .02);
+    } catch { /* No audio is fine. */ }
+  }
+  // A quick-duel roll (CONTRACTS.md section 3, events with a die): the die pops above the fighter who rolled,
+  // then the outcome plays. A counter is the defender answering a bad roll, so the die belongs to its target.
+  const ROLL_REVEAL_MS = 450, IMPACT_MS = 200;
+  function playRoll(event, replay) {
+    const now = Date.now();
+    const dealer = findPlayer(event.userId), target = findPlayer(event.targetId);
+    const roller = event.counter ? target : dealer, other = event.counter ? dealer : target;
+    if (roller) roller.die = { value: Math.max(1, Math.min(6, Math.round(event.die))), start: now, until: now + 1000 };
+    if (replay) {
+      replay.rolls = (replay.rolls || 0) + 1;
+      if (replay.rolls === 13) banners.push({ x: meetPoints.get(replay.id)?.x ?? roller?.x ?? width / 2, text: 'Sudden death!', color: '#fde047', start: now, until: now + 1200 });
+    }
+    const showHp = () => { if (replay && event.hp && typeof event.hp === 'object') replay.hp = { ...event.hp }; };   // the bar moves when the blow lands
+    setTimeout(() => {
+      const t = Date.now(), look = event.ability === 'heavy' ? 'smash' : event.ability === 'heal' ? 'glow' : 'slash';
+      if (event.miss) {
+        if (roller) { roller.anim = { kind: 'attack', start: t, until: t + 450 }; roller.whoosh = { start: t + 80, until: t + 480 }; }
+        if (other) other.anim = { kind: 'dodge', start: t + 60, until: t + 600 };
+        floatText(other, 'MISS', '#e2e8f0');
+        showHp(); playSound('miss');
+        return;
+      }
+      let swing = t;
+      if (event.counter && dealer) { dealer.parry = { start: t, until: t + 380 }; floatText(dealer, 'COUNTER', '#fbbf24'); swing = t + 300; playSound('parry'); }
+      const heavy = look === 'smash' || event.crit === true, impact = swing + IMPACT_MS, stop = event.finisher ? 260 : 80;
+      if (dealer) dealer.anim = { kind: 'attack', heavy, start: swing, until: swing + 450 };
+      if (target) target.anim = { kind: 'hit', heavy, start: impact, until: impact + 400 };
+      if (look === 'glow' && dealer) dealer.fx = { look: 'aura', start: swing, until: swing + 600 };
+      for (const f of [dealer, target]) if (f) { f.stopStart = impact; f.stopUntil = impact + stop; }
+      setTimeout(() => {
+        const at = Date.now(), amount = Number(event.amount) || 0;
+        showHp();
+        if (target) target.fx = { look, start: at, until: at + 450 };
+        burst(target, event.crit ? '#fde047' : look === 'smash' ? '#f97316' : look === 'glow' ? '#4ade80' : '#fb7185', event.crit || event.finisher ? 22 : 10, false);
+        floatText(target, (event.crit ? 'CRIT! ' : '') + '-' + amount, event.crit ? '#fde047' : '#fb7185');
+        if (event.finisher && target) {
+          shake = { start: at, until: at + 450, mag: 9 };
+          if (!(target.koUntil > at)) target.koStart = at;
+          target.koUntil = target.koHoldUntil = Math.max(target.koUntil || 0, at + KO_HOLD_MS + 1500);
+        }
+        playSound(event.finisher ? 'ko' : 'hit');
+      }, Math.max(0, impact - Date.now()));
+    }, ROLL_REVEAL_MS);
+  }
   // Events of one duel that arrive together (a quick duel sends start, hit and KO at once) play one after another.
   // The fighters first walk to meet (duel_started waits for that), then each swing gets its own beat.
-  const DUEL_EVENT_GAP_MS = { duel_started: 700, duel_action: 600 };
+  // A roll takes about 1.8 s; after the finishing blow the result follows once the knockout has landed.
+  const DUEL_EVENT_GAP_MS = { duel_started: 700, duel_action: 1800 };
+  const FINISHER_GAP_MS = 1300;
   const DUEL_WALK_MS = 2000;   // longest walk to the meet point; far-apart fighters walk faster
   const duelQueues = new Map();
   function queueArenaEvent(event) {
@@ -256,7 +331,7 @@ async function start() {
     q.busy = true;
     const { event, received } = item, waited = Date.now() - received;
     handleArenaEvent(waited && Number.isFinite(event.at) ? { ...event, at: event.at + waited } : event);
-    const gap = event.type === 'duel_started' ? Math.max(DUEL_EVENT_GAP_MS.duel_started, (meetPoints.get(id)?.walkMs || 0) + 200) : (DUEL_EVENT_GAP_MS[event.type] || 0);
+    const gap = event.type === 'duel_started' ? Math.max(DUEL_EVENT_GAP_MS.duel_started, (meetPoints.get(id)?.walkMs || 0) + 200) : event.type === 'duel_action' && event.finisher && Number.isFinite(event.die) ? FINISHER_GAP_MS : (DUEL_EVENT_GAP_MS[event.type] || 0);
     if (gap) setTimeout(() => pumpDuel(id, q), gap); else pumpDuel(id, q);
   }
   function handleArenaEvent(event) {
@@ -278,19 +353,20 @@ async function start() {
           replays.set(event.duelId, { id: event.duelId, a: String(event.a), b: String(event.b), status: 'active', hp: { ...(event.hp || {}) }, rules: { maxHp: Number(arenaConfig?.maxHp) || 100 } });
           const fa = findPlayer(String(event.a)), fb = findPlayer(String(event.b));
           if (fa && fb && !meetPoints.has(event.duelId)) {
-            const meet = { x: freeMeetX((fa.x + fb.x) / 2, size * 1.15), aLeft: fa.x <= fb.x };
+            const meet = { x: freeMeetX((fa.x + fb.x) / 2, duelGap()), aLeft: fa.x <= fb.x };
             const far = Math.max(Math.abs(fa.x - meet.x), Math.abs(fb.x - meet.x));
             meet.speed = Math.max(110, far / (DUEL_WALK_MS / 1000));
             meet.walkMs = Math.min(DUEL_WALK_MS, far / meet.speed * 1000);
             meetPoints.set(event.duelId, meet);
           }
           for (const id of [event.a, event.b]) { const f = findPlayer(String(id)); if (f && !(f.koHoldUntil > now)) f.koUntil = 0; }   // state may already show the KO
-          setTimeout(() => replays.delete(event.duelId), 15000);   // safety net if duel_completed never arrives
+          setTimeout(() => replays.delete(event.duelId), 60000);   // safety net if duel_completed never arrives
         }
         announceArena('Round ' + event.round + ': ' + nameOf(event.a) + ' vs ' + nameOf(event.b));
         break;
       case 'duel_action': {
         const replay = replays.get(event.duelId);
+        if (Number.isFinite(event.die)) { playRoll(event, replay); break; }
         if (replay && event.hp && typeof event.hp === 'object') replay.hp = { ...event.hp };
         const actor = findPlayer(event.userId), target = findPlayer(event.targetId);
         if (event.ability === 'heal') {
@@ -308,12 +384,23 @@ async function start() {
       }
       case 'duel_completed': {
         const winner = findPlayer(event.winnerId), loser = findPlayer(event.loserId);
+        const meetX = meetPoints.get(event.duelId)?.x;
         replays.delete(event.duelId); meetPoints.delete(event.duelId);
-        if (loser) { loser.koUntil = Math.max(Number(event.respawnAt) || 0, now + KO_HOLD_MS); loser.koHoldUntil = loser.koUntil; loser.koStart = now; }
+        if (loser) {
+          const down = loser.koUntil > now;   // the finishing blow already knocked them down
+          if (!down) { loser.koStart = now; burst(loser, '#fbbf24', 18, false); shake = { start: now, until: now + 450, mag: 9 }; }
+          loser.koUntil = loser.koHoldUntil = Math.max(Number(event.respawnAt) || 0, now + KO_HOLD_MS);
+        }
+        // Both stay big and in place for the afterglow, then walk off.
+        for (const f of [winner, loser]) if (f) { f.bigUntil = now + KO_HOLD_MS; f.holdUntil = now + KO_HOLD_MS; }
         if (winner) { winner.anim = { kind: 'cheer', start: now, until: now + 1400 }; hop(winner, 220); }
-        burst(loser, '#fbbf24', 18, false);
-        const delta = event.ratings?.[event.winnerId]?.delta;
-        announceArena(nameOf(event.winnerId) + ' wins' + (Number.isFinite(delta) ? ' · Elo +' + delta : '') + ' · ' + nameOf(event.loserId) + ' is knocked out', '#a7f3d0');
+        const rw = event.ratings?.[event.winnerId], rl = event.ratings?.[event.loserId];
+        if (Number.isFinite(rw?.delta)) floatText(winner, signed(rw.delta) + ' Elo', '#4ade80', 2200);
+        if (Number.isFinite(rl?.delta)) floatText(loser, signed(rl.delta) + ' Elo', '#fb7185', 2200);
+        const text = (event.decision === 'hp' ? 'Time! ' : '') + nameOf(event.winnerId) + ' wins' + (event.decision === 'hp' ? ' on HP' : '') +
+          (event.flawless ? ', FLAWLESS!' : '!') + (Number.isFinite(rw?.delta) ? ' ' + signed(rw.delta) + ' Elo' : '');
+        banners.push({ x: meetX ?? winner?.x ?? width / 2, text, color: event.flawless ? '#fde047' : '#a7f3d0', start: now, until: now + 2200 });
+        if (banners.length > 10) banners.shift();
         break;
       }
       case 'duel_cancelled':
@@ -393,54 +480,128 @@ async function start() {
     ctx.beginPath(); ctx.arc(x, y - 39, 13, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#ffffff'; ctx.fillRect(x + p.direction * 3 - 5, y - 42, 3, 4); ctx.fillRect(x + p.direction * 3 + 2, y - 42, 3, 4);
   }
-  function drawHealthBar(p, x, y, health) {
-    const barWidth = Math.max(36, Math.min(58, size * 0.86));
+  function drawHealthBar(p, x, y, health, s) {
+    const barWidth = Math.max(72, Math.min(116, s * 0.9));
     const left = x - barWidth / 2;
-    const top = y - size - 13;
+    const top = y - s - 20;
     const ratio = Math.max(0, Math.min(1, health.current / health.max));
     ctx.fillStyle = 'rgba(9,12,18,.86)';
-    ctx.fillRect(left - 2, top - 2, barWidth + 4, 8);
+    ctx.fillRect(left - 2, top - 2, barWidth + 4, 12);
     ctx.fillStyle = ratio > .55 ? '#4ade80' : ratio > .25 ? '#fbbf24' : '#fb7185';
-    ctx.fillRect(left, top, barWidth * ratio, 4);
+    ctx.fillRect(left, top, barWidth * ratio, 8);
     ctx.strokeStyle = 'rgba(255,255,255,.72)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(left, top, barWidth, 4);
-    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.strokeRect(left, top, barWidth, 8);
+    ctx.font = 'bold 16px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(0,0,0,.9)';
     ctx.fillStyle = '#e2e8f0';
     const text = Math.round(health.current) + '/' + Math.round(health.max);
-    ctx.strokeText(text, x, top - 4);
-    ctx.fillText(text, x, top - 4);
+    ctx.strokeText(text, x, top - 5);
+    ctx.fillText(text, x, top - 5);
   }
-  function drawEffects(p, x, y, now) {
-    const anim = p.anim && now < p.anim.until ? p.anim : null;
+  // Die face above the fighter who rolled: it tumbles for a moment, then settles on the rolled value.
+  const PIPS = { 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]],
+    5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] };
+  function drawDie(p, x, y, s, now) {
+    const d = p.die;
+    if (!d || now >= d.until) return;
+    const age = now - d.start, rolling = age < 350;
+    const value = rolling ? 1 + Math.floor(age / 60 + p.phase) % 6 : d.value;
+    const side = 34 * (rolling ? .85 + .15 * Math.sin(age / 35) : Math.min(1.15, 1 + Math.max(0, (420 - age) / 400) * .15));
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (d.until - now) / 250);
+    ctx.translate(x, y - s - 66);
+    if (rolling) ctx.rotate(Math.sin(age / 40) * .5);
+    ctx.fillStyle = d.value === 6 && !rolling ? '#fde047' : '#ffffff';
+    ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(-side / 2, -side / 2, side, side, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#111827';
+    for (const [px, py] of PIPS[value]) { ctx.beginPath(); ctx.arc(px * side * .27, py * side * .27, side * .09, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+  // Cosmetic look of a blow (the fighter's default ability), a parry flash and a miss whoosh.
+  function drawStrikeFx(p, x, y, s, now) {
+    const fade = fx => Math.max(0, Math.min(1, (now - fx.start) / (fx.until - fx.start)));
+    ctx.save();
+    ctx.lineCap = 'round';
+    if (p.fx && now >= p.fx.start && now < p.fx.until) {
+      const t = fade(p.fx);
+      ctx.globalAlpha = 1 - t;
+      if (p.fx.look === 'slash') {
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(x - s * .35, y - s * .35, s * .55, -Math.PI * .55, -Math.PI * .55 + Math.PI * .7 * Math.min(1, t * 2.5)); ctx.stroke();
+      } else if (p.fx.look === 'smash') {
+        ctx.strokeStyle = '#f97316'; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.ellipse(x, y - 2, s * (.3 + t * .7), s * .1 * (1 + t), 0, 0, Math.PI * 2); ctx.stroke();
+      } else {
+        ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(x, y - s * .5, s * (.35 + t * .35), 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    if (p.parry && now >= p.parry.start && now < p.parry.until) {
+      const t = fade(p.parry), cx = x + p.direction * s * .35, cy = y - s * .6;
+      ctx.globalAlpha = 1 - t; ctx.strokeStyle = '#fde68a'; ctx.lineWidth = 4;
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4, r0 = s * .08, r1 = s * (.2 + t * .25);
+        ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); ctx.stroke();
+      }
+    }
+    if (p.whoosh && now >= p.whoosh.start && now < p.whoosh.until) {
+      const t = fade(p.whoosh);
+      ctx.globalAlpha = .8 * (1 - t); ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 3;
+      for (let i = 0; i < 3; i++) {
+        const cx = x + p.direction * s * (.45 + t * .5), cy = y - s * (.35 + i * .18);
+        ctx.beginPath(); ctx.moveTo(cx - p.direction * s * (.5 - i * .08), cy); ctx.lineTo(cx, cy); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+  function drawBanners(now) {
+    for (let i = banners.length - 1; i >= 0; i--) if (now >= banners[i].until) banners.splice(i, 1);
+    for (const b of banners) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, (now - b.start) / 60, (b.until - now) / 300));
+      ctx.font = '700 28px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      const w = Math.min(width - 16, ctx.measureText(b.text).width + 32), x = Math.max(w / 2 + 8, Math.min(width - w / 2 - 8, b.x));
+      const top = height - FLOOR - 28 - size * DUEL_GROW - 150;
+      ctx.fillStyle = 'rgba(12,16,25,.86)'; ctx.fillRect(x - w / 2, top, w, 44);
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1; ctx.strokeRect(x - w / 2, top, w, 44);
+      ctx.fillStyle = b.color; ctx.fillText(b.text, x, top + 32, w - 16);
+      ctx.restore();
+    }
+  }
+  function drawEffects(p, x, y, now, s, animNow) {
+    const anim = p.anim && animNow < p.anim.until ? p.anim : null;
     if (anim && (anim.kind === 'heal' || anim.kind === 'hit' || anim.kind === 'respawn')) {
-      const t = Math.max(0, Math.min(1, (now - anim.start) / (anim.until - anim.start)));
+      const t = Math.max(0, Math.min(1, (animNow - anim.start) / (anim.until - anim.start)));
       const color = anim.kind === 'heal' ? '#4ade80' : anim.kind === 'hit' ? '#fb7185' : '#bfdbfe';
       ctx.save();
       ctx.globalAlpha = 1 - t;
       ctx.strokeStyle = color;
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(x, y - size * .55, size * (.4 + t * .25), 0, Math.PI * 2);
+      ctx.arc(x, y - s * .55, s * (.4 + t * .25), 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
+    drawStrikeFx(p, x, y, s, now);
     if (p.floatText && now < p.floatText.until) {
-      const t = 1 - (p.floatText.until - now) / 1200;
+      const t = 1 - (p.floatText.until - now) / p.floatText.life;
       ctx.save();
       ctx.globalAlpha = Math.min(1, 2 - t * 2);
-      ctx.font = 'bold 14px system-ui, sans-serif';
+      ctx.font = 'bold 28px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 4;
       ctx.strokeStyle = 'rgba(0,0,0,.85)';
       ctx.fillStyle = p.floatText.color;
-      ctx.strokeText(p.floatText.text, x, y - size - 34 - t * 24);
-      ctx.fillText(p.floatText.text, x, y - size - 34 - t * 24);
+      ctx.strokeText(p.floatText.text, x, y - s - 46 - t * 30);
+      ctx.fillText(p.floatText.text, x, y - s - 46 - t * 30);
       ctx.restore();
     }
+    drawDie(p, x, y, s, now);
   }
   function drawParticles(now, dt) {
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -450,23 +611,23 @@ async function start() {
       s.vy += 380 * dt; s.x += s.vx * dt; s.y += s.vy * dt;
       ctx.globalAlpha = 1 - age / s.life;
       ctx.fillStyle = s.color;
-      ctx.fillRect(s.x - 2, height - 22 - s.owner.lane + s.y - 2, 4, 4);
+      ctx.fillRect(s.x - 3, height - FLOOR - s.owner.lane + s.y - 3, 6, 6);
     }
     ctx.globalAlpha = 1;
   }
   function drawAnnouncement() {
     if (!announcement || Date.now() >= announcement.until) return;
     ctx.save();
-    ctx.font = '700 19px system-ui, sans-serif';
+    ctx.font = '700 24px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    const boxWidth = Math.min(width - 24, Math.max(230, ctx.measureText(announcement.text).width + 38));
+    const boxWidth = Math.min(width - 24, Math.max(260, ctx.measureText(announcement.text).width + 40));
     const left = (width - boxWidth) / 2;
     ctx.fillStyle = 'rgba(12,16,25,.82)';
-    ctx.fillRect(left, 26, boxWidth, 40);
+    ctx.fillRect(left, 26, boxWidth, 48);
     ctx.strokeStyle = 'rgba(255,255,255,.2)';
-    ctx.strokeRect(left, 26, boxWidth, 40);
+    ctx.strokeRect(left, 26, boxWidth, 48);
     ctx.fillStyle = announcement.color;
-    ctx.fillText(announcement.text, width / 2, 52, boxWidth - 24);
+    ctx.fillText(announcement.text, width / 2, 59, boxWidth - 24);
     ctx.restore();
   }
   // Picks the animation for the current action. Characters without drawn attack/ko frames
@@ -475,18 +636,28 @@ async function start() {
     const a = sprite.animations || {};
     const anim = p.anim && now < p.anim.until ? p.anim : null;
     const pick = (list, hold) => {
-      if (hold) return list[Math.min(list.length - 1, Math.floor((now - (p.koStart || now)) / 1000 * sprite.fps))];
+      if (hold) return list[Math.max(0, Math.min(list.length - 1, Math.floor((now - (p.koStart || now)) / 1000 * sprite.fps)))];
       return list[Math.floor((now + p.phase) / 1000 * sprite.fps) % list.length];
     };
     // "effects" characters only have an upright hurt frame for ko, so the engine still tips them over.
     if (p.koUntil > now && a.ko) return { frame: pick(a.ko, true), drawn: sprite.combatFallback !== 'effects' };
-    if (anim?.kind === 'attack' && a.attack) return { frame: a.attack[Math.min(a.attack.length - 1, Math.floor((now - anim.start) / (anim.until - anim.start) * a.attack.length))], drawn: true };
+    if (anim?.kind === 'attack' && a.attack) return { frame: a.attack[Math.max(0, Math.min(a.attack.length - 1, Math.floor((now - anim.start) / (anim.until - anim.start) * a.attack.length)))], drawn: true };
     if (anim?.kind === 'cheer' && a.cheer) return { frame: pick(a.cheer), drawn: true };
     if (p.vy < 0 && a.jump) return { frame: a.jump[0], drawn: true };
     if (moving) return { frame: pick(a.walk || sprite.frames) };
     return { frame: pick(a.idle || sprite.frames) };
   }
-  // Up to 5 duels run at once: keep each duel's meeting point a full slot away from the others so
+  // Distance between the two fighters of a duel: room for two grown fighters and their nameplates.
+  const duelGap = () => Math.max(size * 2, 190);
+  // Hit stop: a fighter's animation clock pauses while a blow lands, then the animation carries on where it stopped.
+  function animClock(p, clock) {
+    if (!p.stopUntil || clock < p.stopStart) return clock;
+    if (clock < p.stopUntil) return p.stopStart;
+    if (p.anim && p.anim.until > p.stopStart) { const d = p.stopUntil - p.stopStart; p.anim = { ...p.anim, start: p.anim.start + d, until: p.anim.until + d }; }
+    p.stopUntil = 0;
+    return clock;
+  }
+  // Several duels can run at once: keep each duel's meeting point a full slot away from the others so
   // health bars and nameplates never overlap. Searches outward from the midpoint, nearest free spot wins.
   function freeMeetX(mid, gap) {
     const slot = gap * 2 + size, lo = gap, hi = Math.max(gap, width - gap);
@@ -505,11 +676,16 @@ async function start() {
     const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
     const clock = Date.now();
     ctx.clearRect(0, 0, width, height);
+    ctx.save();
+    if (shake && clock < shake.until) {
+      const m = shake.mag * (shake.until - clock) / (shake.until - shake.start);
+      ctx.translate((Math.random() - .5) * 2 * m, (Math.random() - .5) * 2 * m);
+    }
     if (clock - lastCleanup > 1000) {
       for (const [key, p] of players) if (!p.fromArena && clock - p.lastSeen > 600000) players.delete(key);
       lastCleanup = clock; updateStatus();
     }
-    const gap = size * 1.15;
+    const gap = duelGap();
     for (const p of players.values()) {
       const duel = duelFor(p);
       const opponent = duel ? findPlayer(String(duel.a) === p.userId ? duel.b : duel.a) : null;
@@ -530,7 +706,7 @@ async function start() {
         else p.direction = opponent.x >= p.x ? 1 : -1;
       } else if (duel?.status === 'pending' && opponent) {
         p.direction = opponent.x >= p.x ? 1 : -1;
-      } else if (!ko) {
+      } else if (!ko && !(p.holdUntil > clock)) {
         p.x += p.speed * p.direction * dt;
         moving = true;
       }
@@ -539,21 +715,26 @@ async function start() {
       if (p.x > right) { p.x = right; p.direction = -1; }
       p.vy += 750 * dt; p.y += p.vy * dt;
       if (p.y >= 0) { p.y = 0; p.vy = 0; }
-      const y = height - 22 - p.lane + p.y;
+      const y = height - FLOOR - p.lane + p.y;
+      const grow = duel?.status === 'active' || p.bigUntil > clock ? DUEL_GROW : 1;
+      p.grow = (p.grow || 1) + (grow - (p.grow || 1)) * Math.min(1, dt * 6);
+      const s = size * p.grow;
       const sprite = sprites.get(p.renderAvatar) || sprites.get(p.avatar);
-      const anim = p.anim && clock < p.anim.until ? p.anim : null;
-      const progress = anim ? (clock - anim.start) / (anim.until - anim.start) : 0;
+      const ac = animClock(p, clock);
+      const anim = p.anim && ac < p.anim.until ? p.anim : null;
+      const progress = anim ? (ac - anim.start) / (anim.until - anim.start) : 0;
       // Lunge for attacks, knockback for hits; both are fallbacks that also run on top of drawn frames.
       let offset = 0;
-      if (anim?.kind === 'attack' && progress > 0) offset = Math.sin(progress * Math.PI) * size * (anim.heavy ? .45 : .3) * p.direction;
-      if (anim?.kind === 'hit' && progress > 0) offset = -Math.sin(progress * Math.PI) * size * (anim.heavy ? .3 : .16) * p.direction;
+      if (anim?.kind === 'attack' && progress > 0) offset = Math.sin(progress * Math.PI) * s * (anim.heavy ? .45 : .3) * p.direction;
+      if (anim?.kind === 'hit' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * (anim.heavy ? .3 : .16) * p.direction;
+      if (anim?.kind === 'dodge' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * .4 * p.direction;
       ctx.save();
       if (sprite?.loaded) {
-        const { frame, drawn } = frameFor(sprite, p, clock, moving);
+        const { frame, drawn } = frameFor(sprite, p, ac, moving);
         const single = sprite.mode === 'single' || sprite.frames.length === 1;
-        const bob = single && moving ? Math.abs(Math.sin((clock + p.phase) / 140)) * size * .06 : 0;
+        const bob = single && moving ? Math.abs(Math.sin((clock + p.phase) / 140)) * s * .06 : 0;
         const squash = single && moving ? 1 + Math.sin((clock + p.phase) / 70) * .04 : 1;
-        const drawWidth = size * frame.w / frame.h;
+        const drawWidth = s * frame.w / frame.h;
         ctx.translate(p.x + offset, y - bob);
         if (ko && !drawn) {
           const fall = Math.min(1, (clock - (p.koStart || clock - 400)) / 400);
@@ -564,31 +745,35 @@ async function start() {
         else if (anim?.kind === 'attack' && !drawn && progress > 0) ctx.filter = 'brightness(1.35)';
         // Sources face right; mirror left walking.
         ctx.scale(p.direction / squash, squash);
-        ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -size, drawWidth, size);
+        ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -s, drawWidth, s);
       } else {
         if (ko) ctx.globalAlpha = .5;
-        drawFallback(p, p.x + offset, y, now);
+        ctx.translate(p.x + offset, y); ctx.scale(p.grow, p.grow);
+        drawFallback(p, 0, 0, now);
       }
       ctx.restore();
-      drawEffects(p, p.x, y, clock);
+      drawEffects(p, p.x, y, clock, s, ac);
       const health = healthOf(p, duel);
-      if (health) drawHealthBar(p, p.x, y, health);
-      ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.fillStyle = p.color;
+      if (health) drawHealthBar(p, p.x, y, health, s);
+      ctx.font = 'bold 20px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.fillStyle = p.color;
       const shownElo = replayRatings(p.userId)?.before ?? p.arenaProfile?.elo;
       const rankedLabel = p.arenaProfile?.registered && Number.isFinite(Number(shownElo))
         ? p.label + ' · ' + Math.round(Number(shownElo))
         : p.label;
-      ctx.strokeText(rankedLabel, p.x, y + 15); ctx.fillText(rankedLabel, p.x, y + 15);
+      ctx.strokeText(rankedLabel, p.x, y + 23); ctx.fillText(rankedLabel, p.x, y + 23);
       if (p.text && clock < p.bubbleUntil && !health) {
+        ctx.font = 'bold 14px system-ui, sans-serif';
         const text = p.text.length > 38 ? p.text.slice(0, 37) + '…' : p.text;
         const bubbleWidth = Math.min(width, ctx.measureText(text).width + 16);
         const bx = Math.max(bubbleWidth / 2, Math.min(width - bubbleWidth / 2, p.x));
-        ctx.fillStyle = 'rgba(18,18,26,.88)'; ctx.fillRect(bx - bubbleWidth / 2, y - size - 31, bubbleWidth, 23);
-        ctx.fillStyle = '#ffffff'; ctx.fillText(text, bx, y - size - 15, Math.max(1, bubbleWidth - 8));
+        ctx.fillStyle = 'rgba(18,18,26,.88)'; ctx.fillRect(bx - bubbleWidth / 2, y - s - 33, bubbleWidth, 25);
+        ctx.fillStyle = '#ffffff'; ctx.fillText(text, bx, y - s - 15, Math.max(1, bubbleWidth - 8));
       }
     }
     drawParticles(clock, dt);
+    drawBanners(clock);
+    ctx.restore();
     drawAnnouncement();
     requestAnimationFrame(draw);
   }
@@ -693,8 +878,10 @@ async function start() {
       duels: arenaDuels,
       replays: [...replays.values()],
       players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
-        x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '' })),
+        x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '',
+        grow: Math.round((p.grow || 1) * 100) / 100, die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '' })),
       announcement: announcement && Date.now() < announcement.until ? announcement.text : '',
+      banners: banners.filter(b => Date.now() < b.until).map(b => b.text),
     });
   }
   updateStatus();

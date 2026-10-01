@@ -73,10 +73,11 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     const other = duel ? (duel.a === actorId ? duel.b : duel.a) : '';
     if (reason === 'quick_duel') {
       const w = state.players.find(p => p.userId === result.winnerId), l = state.players.find(p => p.userId === result.loserId);
-      const said = { hit: 'hit lands', counter: 'countered', miss: 'miss' };
-      const swings = (result.swings || []).map(s => `${nameOf(state, s.attackerId)} rolls ${s.die}: ${said[s.outcome]}.`).join(' ');
-      const end = ` ${nameOf(state, result.winnerId)} knocks out ${nameOf(state, result.loserId)}!` + (w && l ? ` Elo: ${nameOf(state, result.winnerId)} ${w.elo}, ${nameOf(state, result.loserId)} ${l.elo}.` : '');
-      return (swings.length > 220 ? swings.slice(0, 217) + '...' : swings) + end;
+      // One line; the overlay plays the rolls. "A beats B in 4 rolls (66 HP left). Elo: A 1012, B 988."
+      const n = (result.swings || []).length, wn = nameOf(state, result.winnerId), ln = nameOf(state, result.loserId);
+      const how = result.decision === 'hp' ? ` on HP after ${n} rolls` : ` in ${n} roll${n === 1 ? '' : 's'}` + (result.decision === 'sudden_death' ? ' (sudden death)' : '');
+      const left = ` (${result.winnerHp} HP left${result.flawless ? ', flawless, +3 bonus' : ''})`;
+      return `${wn} beats ${ln}${how}${left}.` + (w && l ? ` Elo: ${wn} ${w.elo}, ${ln} ${l.elo}.` : '');
     }
     if (!duel) return `Mini Chat: couldn't read that command, try again.`;   // ok but no duel = the text didn't parse as a command
     if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}.`;

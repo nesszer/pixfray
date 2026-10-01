@@ -540,7 +540,7 @@ export class ChannelRoom extends DurableObject {
     if (result.changed) await this.scheduleAlarm(result.state);
     const r = result.result || {};
     if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
-    return done(seReplyText({ result: r, state: result.state, actorId: userId, action, target, names, origin, now }), r.reason || (r.ok ? action : "error"), r.swings ? { duelId: r.duelId, swings: r.swings.map((s) => s.die + s.outcome[0]).join(" ") } : {});
+    return done(seReplyText({ result: r, state: result.state, actorId: userId, action, target, names, origin, now }), r.reason || (r.ok ? action : "error"), r.swings ? { duelId: r.duelId, swings: r.swings.map((s) => s.die + ({ crit: "x" }[s.outcome] || s.outcome[0])).join(" ") } : {});
   }
 
   // After a finished duel the stored profiles must match the game state, or the next command undoes the result.
@@ -583,7 +583,7 @@ export class ChannelRoom extends DurableObject {
         const parsed = parseGameCommand(textValue);
         if (parsed) {
           const targetProfile = parsed.target ? this.getProfileByUsername(parsed.target, state.config) : null;
-          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, rolls: Array.from({ length: 8 }, () => Math.random()) });
+          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, rolls: Array.from({ length: 24 }, () => Math.random()) });
           if (!main.result.ok && main.result.reason !== "duplicate") step({ type: "command_rejected", userId, command: parsed.action, reason: main.result.reason, retryAt: main.result.retryAt });
         } else {
           const active = state.players.find((item) => item.userId === userId);
