@@ -524,7 +524,8 @@ export class ChannelRoom extends DurableObject {
     const now = Date.now();
     const names = settings.names;
     const state0 = this.readState(channel);
-    if (!action || !userId || !username) return json({ reply: "Mini Chat: this command is missing sender details. Copy it again from the admin page." });
+    if (!action) return json({ reply: "Mini Chat: attack commands are gone. Duels are !challenge @name, then !fight." });
+    if (!userId || !username) return json({ reply: "Mini Chat: this command is missing sender details. Copy it again from the admin page." });
     if (!state0.chat.connected || state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID) return json({ reply: seReplyText({ result: { ok: false, reason: "chat_offline" }, state: state0, actorId: userId, action, target, names, origin, now }) });
     if (action === "challenge" && !target) return json({ reply: seReplyText({ result: { ok: false, reason: "target_required" }, state: state0, actorId: userId, action, target, names, origin, now }) });
     const messageId = "se:" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));

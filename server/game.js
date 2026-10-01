@@ -666,10 +666,11 @@ function applyAdmin(state, event, now) {
 
 export function parseGameCommand(text) {
   if (typeof text !== "string") return null;
-  const match = /^!(duel|challenge|accept|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i.exec(text.trim());
+  const match = /^!(duel|challenge|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i.exec(text.trim());
   if (!match) return null;
   let action = match[1].toLowerCase();
   if (action === "challenge") action = "duel";
+  if (action === "fight") action = "accept";
   const target = match[2] ? normalizeUsername(match[2]) : "";
   if (action === "duel" && !target) return null;
   return { action, target };

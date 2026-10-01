@@ -345,18 +345,17 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.match((await cmd('u1', 'alice', 'challenge', 'alice')).body.reply, /can't duel yourself/);
   assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /alice challenges @bob.*!fight/);
   assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /Duel on: alice vs bob/);
-  assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /alice hits bob for 35 \(bob 65 HP\)/);
-  assert.match((await cmd('u1', 'alice', 'strike')).body.reply, /cooldown: 1 s/);
+  assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /attack commands are gone/);
   // Renamed commands show up in replies; duplicates and bad names are refused.
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!yes', decline: 'no' } } })).body.streamelements.names.decline, '!no');
-  assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!heal' } } })).status, 400);
+  assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!challenge' } } })).status, 400);
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: 'bad name' } } })).status, 400);
   const rotated = (await r.call('/se-admin', { method: 'POST', body: { action: 'rotateSeKey' } })).body.streamelements;
   assert.notEqual(rotated.secret, se.secret);
-  assert.equal((await cmd('u1', 'alice', 'strike')).status, 403);
+  assert.equal((await cmd('u1', 'alice', 'decline')).status, 403);
   // Disconnecting the StreamElements source never calls Twitch and pauses duels.
   await r.call('/chat', { method: 'POST', body: { action: 'disconnected', reason: 'disconnected' } });
-  assert.match((await cmd('u1', 'alice', 'strike', '', rotated.secret)).body.reply, /paused/);
+  assert.match((await cmd('u1', 'alice', 'decline', '', rotated.secret)).body.reply, /paused/);
 });
 
 test('StreamElements quick duel: !fight rolls the dice and settles it in one reply', async () => {
@@ -368,5 +367,5 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 'q' + (++m) } });
   await cmd('u1', 'alice', 'challenge', 'bob');
   assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^((alice|bob) rolls [1-6]: (hit lands|countered|miss)\. )+(alice|bob) knocks out (alice|bob)! Elo: \w+ 1012, \w+ 988\.$/);
-  assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /not in a duel/);
+  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /no pending challenge/);
 });

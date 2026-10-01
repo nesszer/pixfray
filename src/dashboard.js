@@ -1,6 +1,6 @@
-// Viewer dashboard ("/"): sign-in state, character picker with live preview, nameplate color, default ability,
+// Viewer dashboard ("/"): sign-in state, character picker with live preview, nameplate color,
 // profile save and a compact leaderboard. Talks only to the routes in CONTRACTS.md section 2.
-import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, abilityDetail, seconds, CHANNEL, DEFAULT_COLOR, DEFAULT_ABILITIES, ABILITY_NAMES } from "./ui.js";
+import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, seconds, CHANNEL, DEFAULT_COLOR } from "./ui.js";
 
 const SWATCHES = ["#a78bfa", "#60a5fa", "#34d399", "#fbbf24", "#f87171", "#f472b6", "#e5e7eb", "#22d3ee"];
 const form = $("#profile-form"), saveBtn = $("#save"), saveSignin = $("#save-signin"), status = $("#save-status");
@@ -11,9 +11,9 @@ const preview = addSprite($("#preview"), null, { anim: "walk" });
 const current = () => ({
   avatar: form.querySelector("input[name=character]:checked")?.value || state.catalog[0]?.id || "",
   color: colorInput.value.toLowerCase(),
-  defaultAbility: form.querySelector("input[name=ability]:checked")?.value || "strike",
+  defaultAbility: state.profile?.defaultAbility || "strike",   // only used by the HP fight; quick duels ignore it
 });
-const dirty = () => { const c = current(), s = state.saved; return !s || c.avatar !== s.avatar || c.color !== s.color || c.defaultAbility !== s.defaultAbility; };
+const dirty = () => { const c = current(), s = state.saved; return !s || c.avatar !== s.avatar || c.color !== s.color; };
 
 function renderCharacters() {
   const box = $("#characters");
@@ -48,7 +48,7 @@ function update() {
   nameplate.textContent = state.session?.user?.displayName || "you";
   nameplate.style.color = c.color;
   nameplate.style.borderColor = c.color;
-  $("#preview-caption").textContent = entry ? (entry.label || entry.id) + " · " + ABILITY_NAMES[c.defaultAbility] + " on !attack" : "";
+  $("#preview-caption").textContent = entry ? entry.label || entry.id : "";
   for (const s of document.querySelectorAll(".swatch")) s.setAttribute("aria-pressed", String(s.dataset.color === c.color));
   if (state.session?.user && state.saved) setStatus(status, dirty() ? "You have unsaved changes." : "Saved. Your fighter shows up on stream with these settings.", dirty() ? "" : "ok");
 }
@@ -58,17 +58,12 @@ function applyProfile(p) {
   const radio = avatar && document.getElementById("char-" + avatar);
   if (radio) radio.checked = true;
   colorInput.value = /^#[0-9a-f]{6}$/i.test(p?.color || "") ? p.color.toLowerCase() : DEFAULT_COLOR;
-  const ability = form.querySelector('input[name=ability][value="' + (["strike", "heavy", "heal"].includes(p?.defaultAbility) ? p.defaultAbility : "strike") + '"]');
-  ability.checked = true;
 }
 
-function renderAbilities() {
-  const abilities = state.config?.abilities || DEFAULT_ABILITIES;
-  for (const node of document.querySelectorAll("[data-ability]")) node.textContent = abilityDetail(node.dataset.ability, abilities[node.dataset.ability]);
+function renderCommands() {
   if (state.config) {
     $("#cmd-timeout").textContent = seconds(state.config.challengeTimeoutMs);
-    $("#cmd-shared").textContent = seconds(state.config.sharedCooldownMs);
-    $("#cmd-idle").textContent = seconds(state.config.inactivityMs);
+    $("#cmd-rematch").textContent = seconds(state.config.rematchDelayMs);
     $("#lb-note").textContent = "Ranked duels need a saved profile. Everyone starts at " + state.config.initialElo + " Elo.";
   }
 }
@@ -136,7 +131,7 @@ async function init() {
     if (fallback.ok && Array.isArray(fallback.data)) state.catalog = fallback.data;
   }
   state.config = live.ok ? live.data?.config : null;
-  renderCharacters(); renderAbilities();
+  renderCharacters(); renderCommands();
   if (state.session?.user) {
     const [profile, access] = await Promise.all([api("/api/profile/" + CHANNEL), api("/api/access/" + CHANNEL)]);
     state.profile = profile.ok ? profile.data : null;

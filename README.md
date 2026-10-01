@@ -28,8 +28,8 @@ The working tree also holds v2. It adds:
   signs in with `/auth/login?connect=1` and clicks Connect chat on `/admin/` (TWITCH_SETUP.md).
 
 Chat commands for v2 duels:
-- `!challenge @viewer`, then `!accept` or `!decline` (`!fight` when chat goes through StreamElements, whose Duel module owns `!accept`).
-- `!attack`, `!strike`, `!heavy`, `!heal`.
+- `!challenge @viewer`, then `!fight` (or `!accept`) or `!decline`. Use `!fight` with StreamElements, whose Duel module owns `!accept`.
+- Accepting rolls the duel at once: each swing is a d6 (5-6 hit lands, 1-2 countered, 3-4 miss and the other fighter swings).
 
 Rules and routes are in CONTRACTS.md. The plan and the open gaps are in HANDOFF.md.
 

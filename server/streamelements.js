@@ -3,8 +3,8 @@
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
-export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'attack', 'strike', 'heavy', 'heal'];
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', attack: '!attack', strike: '!strike', heavy: '!heavy', heal: '!heal' };
+export const SE_ACTIONS = ['challenge', 'accept', 'decline'];   // quick duels need no attack commands
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline' };
 const MAX_REPLY = 380;   // StreamElements cuts responses at 400 bytes
 
 const reply = (body, status = 200) => new Response(String(body).slice(0, MAX_REPLY), { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
@@ -16,7 +16,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
   if (!m) return reply('Unknown command', 404);
   const [, channel, action] = m;
   if (!channels.includes(channel)) return reply('Mini Chat is not enabled for this channel', 404);
-  if (!SE_ACTIONS.includes(action)) return reply('Unknown command', 404);
+  if (!SE_ACTIONS.includes(action)) return reply('Mini Chat: attack commands are gone. Duels are !challenge @name, then !fight.');   // old !attack/!strike/!heavy/!heal
   const q = name => (url.searchParams.get(name) || '').trim();
   const key = q('k');
   if (!key || key.length > 128) return reply('Mini Chat: missing key. Copy the commands again from the admin page.');
@@ -67,7 +67,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
       const end = ` ${nameOf(state, result.winnerId)} knocks out ${nameOf(state, result.loserId)}!` + (w && l ? ` Elo: ${nameOf(state, result.winnerId)} ${w.elo}, ${nameOf(state, result.loserId)} ${l.elo}.` : '');
       return (swings.length > 220 ? swings.slice(0, 217) + '...' : swings) + end;
     }
-    if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}. Use ${n('attack')}, ${n('strike')}, ${n('heavy')} or ${n('heal')}.`;
+    if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}.`;
     if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} (or ${n('challenge')} @${me}) or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
     if (reason === 'challenge_declined') return `${me} declined the duel.`;
     if (reason === 'duel_completed') {
@@ -95,7 +95,6 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     case 'challenge_not_found': return `${me}, you have no pending challenge.`;
     case 'not_in_active_duel': case 'not_in_duel': return `${me}, you're not in a duel. Use ${n('challenge')} @name`;
     case 'wrong_opponent': return `${me}, that's not your opponent.`;
-    case 'cooldown': return `${me}, cooldown: ${secs((result.retryAt || now) - now)} s.`;
     case 'duplicate': return '';
     case 'active_player_cap': return 'Mini Chat: the arena is full.';
     default: return `Mini Chat: couldn't do that (${reason || 'error'}).`;

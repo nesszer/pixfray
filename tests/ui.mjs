@@ -96,18 +96,17 @@ try {
     await page.waitForSelector('#save:not([hidden])');
     assert.equal(await page.locator('#char-zombie').isChecked(), true);
     assert.equal(await page.locator('#color').inputValue(), '#f472b6');
-    assert.equal(await page.locator('input[name=ability][value=heal]').isChecked(), true);
+    assert.equal(await page.locator('input[name=ability]').count(), 0, 'no ability picker with quick duels');
     assert.equal(await page.locator('#admin-link').isHidden(), true);
     assert.match(await page.locator('#stat-elo').textContent(), /1012/);
     await page.waitForSelector('#leaderboard tr.me');
     await page.locator('label[for=char-adventurer]').click();
     await page.locator('.swatch[data-color="#34d399"]').click();
-    await page.locator('input[name=ability][value=heavy]').check();
     assert.match(await page.locator('#save-status').textContent(), /unsaved/i);
     if (s.name === '1280') await page.screenshot({ path: shots + '/viewer-signed-in-editing-1280.png', fullPage: true });
     await page.locator('#save').click();
     await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('Saved'));
-    assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heavy' });
+    assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heal' });   // the saved ability is kept as is
     await noOverflow(page, 'viewer signed-in ' + s.name);
     await page.screenshot({ path: shots + '/viewer-signed-in-' + s.name + '.png', fullPage: true });
     await context.close();

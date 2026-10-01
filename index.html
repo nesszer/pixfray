@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Chat — your fighter on nesszerra</title>
-<meta name="description" content="Pick your Mini Chat character, nameplate color and default ability for the nesszerra Twitch channel.">
+<meta name="description" content="Pick your Mini Chat character and nameplate color for the nesszerra Twitch channel.">
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
@@ -12,7 +12,7 @@
 <main class="page">
   <header class="page-header">
     <h1>Your fighter in nesszerra's chat</h1>
-    <p class="subtitle">Pick a character, a nameplate color and the ability <code>!attack</code> uses. Your profile is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
+    <p class="subtitle">Pick a character and a nameplate color. Your profile is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
   </header>
 
   <p class="callout" id="signin-note" hidden></p>
@@ -28,15 +28,6 @@
         <div class="swatches" id="swatches">
           <label class="sr-only" for="color">Custom nameplate color</label><input type="color" id="color" value="#a78bfa">
         </div>
-      </fieldset>
-      <fieldset>
-        <legend>Default ability for <code>!attack</code></legend>
-        <div class="ability-grid" id="abilities">
-          <label><input type="radio" name="ability" value="strike" checked><span><span class="name">Strike</span><span class="detail" data-ability="strike">10 damage, 3 s cooldown</span></span></label>
-          <label><input type="radio" name="ability" value="heavy"><span><span class="name">Heavy strike</span><span class="detail" data-ability="heavy">25 damage, 8 s cooldown</span></span></label>
-          <label><input type="radio" name="ability" value="heal"><span><span class="name">Heal</span><span class="detail" data-ability="heal">15 HP heal, 10 s cooldown</span></span></label>
-        </div>
-        <p class="hint">You can still use any ability in chat with <code>!strike</code>, <code>!heavy</code> or <code>!heal</code>.</p>
       </fieldset>
     </div>
     <aside class="stack" aria-label="Preview and save">
@@ -72,12 +63,20 @@
       <thead><tr><th>Command</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td><code>!challenge @viewer</code></td><td>Challenges a viewer. They have <span id="cmd-timeout">30 s</span> to reply.</td></tr>
-        <tr><td><code>!accept</code> / <code>!decline</code></td><td>Answers a challenge sent to you.</td></tr>
-        <tr><td><code>!attack @viewer</code></td><td>Uses your default ability.</td></tr>
-        <tr><td><code>!strike</code>, <code>!heavy</code>, <code>!heal</code></td><td>Uses that ability. Each has its own cooldown, plus <span id="cmd-shared">1 s</span> between any two actions.</td></tr>
+        <tr><td><code>!fight</code> / <code>!decline</code></td><td>Accepts or turns down a challenge sent to you. Accepting starts the duel right away.</td></tr>
       </tbody>
     </table></div>
-    <p class="caveat">Your character appears on stream after your first chat message. Duels left idle for <span id="cmd-idle">60 s</span> are cancelled without scoring.</p>
+    <h3>Each swing is one die roll</h3>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th class="num">Die</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td class="num">5–6</td><td>The hit lands and the other fighter is knocked out.</td></tr>
+        <tr><td class="num">1–2</td><td>Countered: the other fighter hits back and the swinger is knocked out.</td></tr>
+        <tr><td class="num">3–4</td><td>Miss. The other fighter swings next.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted small">The challenger swings first. Hit and counter are equally likely, so going first is no advantage. A duel ends within 8 swings.</p>
+    <p class="caveat">Your character appears on stream after your first chat message. The loser is knocked out for a few seconds, and the same two viewers wait <span id="cmd-rematch">30 s</span> before a rematch.</p>
   </section>
 
   <section class="section" id="obs-setup" aria-labelledby="obs-title">
