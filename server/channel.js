@@ -572,7 +572,7 @@ export class ChannelRoom extends DurableObject {
         }
         const updated = state.players.find((item) => item.userId === userId);
         if (updated?.registered && userProfile && (updated.username !== userProfile.username || updated.displayName !== userProfile.displayName)) this.upsertProfile(updated);
-        if (main?.result?.reason === "duel_completed") {
+        if (main?.result?.reason === "duel_completed" || main?.result?.reason === "quick_duel") {   // save Elo, wins and losses
           const duel = state.duels.find((item) => item.id === main.result.duelId);
           for (const id of duel ? [duel.a, duel.b] : []) {
             const participant = state.players.find((item) => item.userId === id);

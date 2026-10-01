@@ -368,4 +368,8 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   await cmd('u1', 'alice', 'challenge', 'bob');
   assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^((alice|bob) rolls [1-6]: (hit lands|countered|miss)\. )+(alice|bob) knocks out (alice|bob)! Elo: \w+ 1012, \w+ 988\.$/);
   assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /no pending challenge/);
+  // The result is saved, so the next command (which reloads the stored profile) keeps it.
+  const saved = Object.fromEntries(r.ctx.storage.sql.exec('SELECT user_id, elo, wins, losses FROM profiles').toArray().map((x) => [x.user_id, x]));
+  assert.deepEqual([saved.u1.wins + saved.u2.wins, saved.u1.losses + saved.u2.losses, saved.u1.elo + saved.u2.elo], [1, 1, 2000]);
+  assert.notEqual(saved.u1.elo, 1000);
 });
