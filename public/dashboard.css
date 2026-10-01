@@ -229,6 +229,12 @@ canvas.sprite { image-rendering: pixelated; display: block; }
 .swatches { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .swatch { width: 32px; height: 32px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); cursor: pointer; padding: 0; }
 .swatch[aria-pressed="true"] { outline: 2px solid var(--trim); outline-offset: 2px; }
+/* the custom color well carries a visible "Custom" label so it reads as a control, not a fifth swatch */
+.custom-color { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0; min-height: 34px; padding: 2px var(--space-3) 2px 2px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-2); font-weight: 500; cursor: pointer; }
+.custom-color:hover { border-color: var(--trim); color: var(--text); }
+.custom-color:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.custom-color input[type="color"] { width: 28px; height: 28px; min-height: 0; padding: 0; border: 0; background: none; }
 tr.me td { background: var(--accent-soft); }
 td canvas.sprite { display: inline-block; vertical-align: middle; margin-right: var(--space-2); }
 tr.podium td:first-child { color: var(--trim); font-weight: 650; }
@@ -270,8 +276,22 @@ details.history[open] > summary { margin-bottom: var(--space-4); }
 .page-index a:hover { color: var(--text); border-left-color: var(--trim); }
 
 @media (max-width: 900px) {
-  .hero-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "card" "pick"; padding: var(--space-6) var(--space-4); gap: var(--space-5); }
-  .hero-card { position: static; }
+  /* narrow screens: the picker comes first and the fighter card shrinks to a bar that stays at the bottom
+     of the screen while you pick, so the preview and Save are always in view */
+  .hero-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "pick" "card"; padding: var(--space-6) var(--space-4); gap: var(--space-5); }
+  .hero-card { top: auto; bottom: 0; z-index: 2; margin: 0 calc(-1 * var(--space-4)); padding: var(--space-3) var(--space-4);
+    border-width: 1px 0 0; border-radius: 0; outline: 0; box-shadow: 0 -4px 12px rgb(0 0 0 / 0.3);
+    grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "preview save" "stats stats" "status status"; gap: var(--space-2) var(--space-3); align-items: center; }
+  .hero-card .preview { grid-area: preview; grid-template-columns: 48px minmax(0, 1fr); justify-items: start; align-items: center; gap: 0 var(--space-3); padding: 0; background: none; border: 0; }
+  .hero-card .preview canvas.sprite { width: 48px; height: 48px; grid-row: span 2; }
+  .hero-card .preview .caption { text-align: left; }
+  .hero-card .toolbar { grid-area: save; max-width: 190px; }
+  .hero-card .toolbar > .btn { white-space: normal; line-height: 1.25; padding: var(--space-2) var(--space-3); text-align: center; }
+  .hero-card .stat-strip { grid-area: stats; }
+  .hero-card .stat { padding: var(--space-2) var(--space-3); }
+  .hero-card .stat .value { font-size: var(--text-md); }
+  .hero-card .status { grid-area: status; }
+  .hero-card .status:empty { display: none; }
   .with-index { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
   .page-index { position: static; }
   .page-index ol { display: flex; flex-wrap: wrap; gap: var(--space-2); border-left: 0; }
@@ -287,6 +307,10 @@ details.history[open] > summary { margin-bottom: var(--space-4); }
   .tabs [role="tab"][aria-selected="true"] { border: 1px solid var(--trim); background: var(--accent-soft); }
   /* rank columns are short numbers; skip the 160px first-column minimum on phones */
   .table-wrap > table.data td.num:first-child { min-width: 0; }
+  /* tables of explanations wrap their text on phones instead of scrolling it out of view */
+  .table-wrap > table.data.prose-table { width: 100%; }
+  .table-wrap > table.data.prose-table td:first-child { min-width: 0; }
+  table.data.prose-table th { white-space: normal; }
 }
 
 /* StreamElements replies are long URLs: let them wrap inside their cell */

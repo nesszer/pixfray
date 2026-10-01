@@ -136,6 +136,7 @@ $("#toggle-duels").addEventListener("click", (e) => {
   act("config", { patch: { enabled }, baseVersion: S.admin.configVersion, note: enabled ? "duels enabled" : "duels paused" },
     { button: e.currentTarget, done: enabled ? "Duels are on." : "Duels are paused. Open duels were cancelled without scoring." });
 });
+$("#open-chat-setup").addEventListener("click", () => selectTab($("#tab-chat"), true));
 $("#reset-health").addEventListener("click", (e) => act("resetHealth", undefined, { button: e.currentTarget, done: "Everyone in the arena is back to full health." }));
 $("#reset-round").addEventListener("click", (e) => act("resetRound", undefined, { button: e.currentTarget, confirmText: "Cancel every open duel without scoring and set the round counter to 0?", done: "Open duels cancelled; rounds restart at 1." }));
 $("#reset-all-ranks").addEventListener("click", (e) => act("resetAllRanks", undefined, { button: e.currentTarget, confirmText: "Reset Elo, wins and losses for every saved profile on " + CHANNEL + "? This can't be undone.", done: "All ranks reset." }));
@@ -147,14 +148,18 @@ function renderAll() {
   const a = S.admin, c = a.config, open = a.duels.filter((d) => OPEN.has(d.status));
   const chat = a.chatStatus || a.chat || {}, live = !!chat.connected;
   $("#meta").textContent = "Config version " + a.configVersion + " · state revision " + a.revision + " · signed in as " + (S.access.owner ? "broadcaster" : "moderator");
-  $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : !live ? "Duels are paused: Twitch chat isn't connected" : "Duels are live";
+  const waiting = c.enabled && !live;
+  $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : waiting ? "Waiting for Twitch chat" : "Duels are live";
   $("#summary-text").textContent = !c.enabled ? "Chat commands are ignored until duels are turned back on." :
-    !live ? "Twitch isn't sending chat to the arena" + (chat.lastRevocationReason ? " (Twitch revoked it: " + chat.lastRevocationReason + ")" : "") + ". Use Connect chat or StreamElements on the Chat setup tab; open duels were cancelled without scoring." :
+    waiting ? "Duels start once chat reaches the arena" + (chat.lastRevocationReason ? " (Twitch revoked it: " + chat.lastRevocationReason + ")" : "") + ". Connect Twitch chat or StreamElements on the Chat setup tab. Open duels were cancelled without scoring." :
     open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena, round " + a.round + ".";
   const toggle = $("#toggle-duels");
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
+  // while chat is offline the fix is on the Chat setup tab, so that becomes the main action
+  $("#open-chat-setup").hidden = !waiting;
+  toggle.classList.toggle("btn-primary", !waiting);
   $("#stats").replaceChildren(
-    stat("Duels", c.enabled ? "On" : "Paused", c.enabled ? "up" : "down", c.enabled ? "accepting commands" : "commands ignored"),
+    stat("Duels", c.enabled ? "On" : "Paused", waiting ? "" : c.enabled ? "up" : "down", waiting ? "waiting for chat" : c.enabled ? "accepting commands" : "commands ignored"),
     stat(chat.source === "streamelements" ? "StreamElements" : "Twitch chat", live ? "Connected" : "Offline", live ? "up" : "down", (chat.lastNotificationAt ?? chat.lastSeen) ? "last message " + timeAgo(chat.lastNotificationAt ?? chat.lastSeen) : "no messages yet"),
     stat("Open duels", open.length + " / " + c.maxDuels),
     stat("Round", a.round),

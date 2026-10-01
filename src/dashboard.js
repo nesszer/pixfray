@@ -39,7 +39,7 @@ function renderSwatches() {
   box.querySelectorAll(".swatch").forEach((n) => n.remove());
   for (const color of SWATCHES) {
     box.insertBefore(h("button", { type: "button", class: "swatch", style: { background: color }, "aria-label": "Nameplate color " + color, "aria-pressed": "false", "data-color": color,
-      onclick: () => { colorInput.value = color; update(); } }), colorInput.previousElementSibling);
+      onclick: () => { colorInput.value = color; update(); } }), box.querySelector(".custom-color"));
   }
 }
 

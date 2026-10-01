@@ -28,7 +28,7 @@
       <fieldset>
         <legend>Nameplate color</legend>
         <div class="swatches" id="swatches">
-          <label class="sr-only" for="color">Custom nameplate color</label><input type="color" id="color" value="#a78bfa">
+          <label class="custom-color" for="color"><input type="color" id="color" value="#a78bfa" aria-label="Custom nameplate color"><span>Custom</span></label>
         </div>
       </fieldset>
     </form>
@@ -67,7 +67,7 @@
     <div class="grid-2">
       <div>
         <h3>Commands</h3>
-        <div class="table-wrap"><table class="data">
+        <div class="table-wrap"><table class="data prose-table">
           <thead><tr><th>Command</th><th>What it does</th></tr></thead>
           <tbody>
             <tr><td><code>!challenge @viewer</code></td><td>Challenges a viewer. They have <span id="cmd-timeout">30 s</span> to reply.</td></tr>
@@ -79,7 +79,7 @@
       </div>
       <div>
         <h3>Each swing is one d6 roll</h3>
-        <div class="table-wrap"><table class="data">
+        <div class="table-wrap"><table class="data prose-table">
           <thead><tr><th class="num">Die</th><th>Result</th><th class="num">Damage (% of max HP)</th></tr></thead>
           <tbody>
             <tr><td class="num">6</td><td><span class="outcome-good">Critical hit</span> on the other fighter</td><td class="num">50</td></tr>
@@ -110,7 +110,7 @@
     </div>
   </section>
 
-  <p class="caveat">Character artwork credits are listed in ASSET_LICENSES.md (Kenney, CC0). Headings use Fraunces (SIL Open Font License). Signing in asks Twitch only for your public identity; Mini Chat never posts in chat as you.</p>
+  <p class="caveat">Character art by <a href="https://kenney.nl" rel="noopener">Kenney</a> (CC0). Headings use <a href="https://github.com/undercasetype/Fraunces" rel="noopener">Fraunces</a> (SIL Open Font License). Signing in asks Twitch only for your public identity; Mini Chat never posts in chat as you.</p>
 </main>
 <script type="module" src="/src/setup.js"></script>
 <script type="module" src="/src/dashboard.js"></script>

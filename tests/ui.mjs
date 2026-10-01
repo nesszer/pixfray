@@ -96,6 +96,7 @@ try {
     await page.waitForSelector('#save:not([hidden])');
     assert.equal(await page.locator('#char-zombie').isChecked(), true);
     assert.equal(await page.locator('#color').inputValue(), '#f472b6');
+    assert.equal(await page.locator('#swatches > :last-child').getAttribute('class'), 'custom-color', 'Custom comes after the preset colors');
     assert.equal(await page.locator('input[name=ability]').count(), 0, 'no ability picker with quick duels');
     assert.equal(await page.locator('#admin-link').isHidden(), true);
     assert.match(await page.locator('#stat-elo').textContent(), /1012/);
@@ -108,6 +109,14 @@ try {
     await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('Saved'));
     assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heal' });   // the saved ability is kept as is
     await noOverflow(page, 'viewer signed-in ' + s.name);
+    if (s.name !== '1280') {
+      // phones: explanation tables wrap instead of scrolling sideways, and the fighter bar stays at the bottom while picking
+      for (const w of await page.locator('.table-wrap:has(.prose-table)').all()) assert.ok(await w.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), 'duel table fits at ' + s.name);
+      await page.locator('#swatches').scrollIntoViewIfNeeded();
+      const bar = await page.locator('.hero-card').boundingBox(), vh = page.viewportSize().height;
+      assert.ok(bar.y + bar.height <= vh + 1 && bar.y > vh / 2, 'fighter bar sits at the bottom of the screen at ' + s.name);
+      await page.screenshot({ path: shots + '/viewer-signed-in-picking-' + s.name + '.png' });
+    }
     await page.screenshot({ path: shots + '/viewer-signed-in-' + s.name + '.png', fullPage: true });
     await context.close();
   }
@@ -168,6 +177,7 @@ try {
     await page.goto(base + '/admin/');
     await page.waitForSelector('#app:not([hidden])');
     await page.waitForFunction(() => document.querySelector('#summary-title').textContent === 'Duels are live');
+    assert.equal(await page.locator('#open-chat-setup').isHidden(), true, 'no chat-setup shortcut while chat is live');
     assert.equal(await page.locator('#duels tbody tr').count(), 2);
     assert.equal(await page.locator('#players tbody tr').count(), 4);
     assert.equal(await page.locator('#ranks tbody tr').count(), 3);
@@ -192,6 +202,13 @@ try {
       await page.click('#disconnect-chat');   // dialog auto-accepted
       await page.waitForFunction(() => /Chat disconnected/.test(document.querySelector('#chat-status').textContent));
       assert.equal(posts.at(-1).action, 'disconnectChat');
+      // chat offline: the Live tab points at the fix instead of offering to pause
+      await page.click('#tab-live');
+      await page.waitForFunction(() => document.querySelector('#summary-title').textContent === 'Waiting for Twitch chat');
+      assert.equal(await page.locator('#open-chat-setup').isVisible(), true);
+      assert.equal(await page.locator('#toggle-duels.btn-primary').count(), 0, 'one primary action');
+      await page.click('#open-chat-setup');
+      assert.equal(await page.locator('#tab-chat').getAttribute('aria-selected'), 'true');
     }
     assert.ok(await page.evaluate(() => window.__sockets.some((w) => w.url.endsWith('/api/live/nesszerra'))), 'live socket opened');
     if ((await page.request.head(base + '/upload.js')).ok()) {   // Lane D's uploader is mounted into the admin page
