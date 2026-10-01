@@ -111,11 +111,23 @@
     <section class="section" aria-labelledby="se-title">
       <h2 id="se-title">StreamElements commands</h2>
       <p class="muted small" id="se-text">Use this instead of Connect chat to run duels through your StreamElements bot. Each action is a StreamElements custom command; its bot posts the reply.</p>
+      <h3>Set it up in StreamElements</h3>
       <ol class="small stack">
-        <li>If you use the StreamElements Duel module, turn it off (Chat bot, Modules), because it owns <code>!duel</code>, <code>!accept</code> and <code>!deny</code>.</li>
-        <li>Pick a command name for each action below and click Save names.</li>
-        <li>In StreamElements (Chat bot, Custom commands), add each command with the reply shown. Then click Use StreamElements.</li>
+        <li><strong>Turn off the built-in Duel game.</strong> At streamelements.com, open the dashboard, go to Chat bot, then Modules, and switch off Duel. Its <code>!duel</code>, <code>!accept</code> and <code>!deny</code> would answer at the same time as ours.</li>
+        <li><strong>Optional: rename commands here first.</strong> Change a name in the table below (for example <code>!duel</code> for Challenge) and click Save names. The bot replies use your names.</li>
+        <li><strong>Add one command per row.</strong> In StreamElements go to Chat bot, then Commands, open the Custom commands tab and click Add new command. Then:
+          <ul>
+            <li>Command name: the name from the table without the <code>!</code>, for example <code>challenge</code>.</li>
+            <li>Reply: click Copy reply in that row and paste it. Paste the whole line; don't change it.</li>
+            <li>Advanced settings: set both cooldowns (user and global) to 0. The game has its own cooldowns, and a bot cooldown silently drops moves.</li>
+            <li>Click Activate command.</li>
+          </ul>
+        </li>
+        <li><strong>If a command with that name already exists</strong> (StreamElements says the name is taken): find it in the Custom commands list, click its edit (pencil) button, select everything in Reply, delete it, paste the copied reply, and click Save. Default commands can't be edited; turn them off or pick another name here.</li>
+        <li><strong>Click Use StreamElements</strong> below once all 7 are added.</li>
+        <li><strong>Test it:</strong> type <code>!strike</code> in your chat. The bot should answer "you're not in a duel". If it says "wrong key", copy the reply again.</li>
       </ol>
+      <p class="caveat small">Add commands in the dashboard, not with <code>!command add</code> in chat: the reply contains the key, and chat would show it to every viewer.</p>
       <div class="toolbar"><button class="btn" id="use-se" type="button">Use StreamElements</button><button class="btn" id="save-se-names" type="button">Save names</button><button class="btn" id="rotate-se" type="button">New key</button></div>
       <p class="status" id="se-status" role="status"></p>
       <div class="table-wrap"><table class="data" id="se-table">
