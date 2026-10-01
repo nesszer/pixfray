@@ -26,7 +26,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
     userId: q('id').slice(0, 32),
     username: q('u').replace(/^@/, '').toLowerCase().slice(0, 25),
     displayName: q('d').slice(0, 48),
-    target: q('t').replace(/^@/, '').toLowerCase().slice(0, 25),
+    target: q('t') === '-' ? '' : q('t').replace(/^@/, '').toLowerCase().slice(0, 25),   // '-' = no argument
     messageId: q('m').slice(0, 64),
   };
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -34,10 +34,11 @@ export async function handleStreamElements(request, env, { url, origin, channels
   return reply(data.reply || 'Mini Chat: something went wrong');   // always 200 so the bot shows the text
 }
 
-// Paste-ready StreamElements command replies, one per action.
+// Paste-ready StreamElements command replies, one per action. $(1|-) not $(1): with no argument, a bare
+// $(queryescape $(1)) makes StreamElements drop the whole command silently (seen with a bare !fight and !strike).
 export function seCommandLines(origin, channel, key, names = {}) {
   return SE_ACTIONS.map(action => {
-    const url = `${origin}/api/se/${channel}/${action}?k=${key}&id=$(sender.twitchid)&u=$(sender.name)&d=$(queryescape $(sender))&t=$(queryescape $(1))&m=$(msgid)`;
+    const url = `${origin}/api/se/${channel}/${action}?k=${key}&id=$(sender.twitchid)&u=$(sender.name)&d=$(queryescape $(sender))&t=$(queryescape $(1|-))&m=$(msgid)`;
     return { action, name: names[action] || DEFAULT_SE_NAMES[action], response: `$(customapi ${url})` };
   });
 }

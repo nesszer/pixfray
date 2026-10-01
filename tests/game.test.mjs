@@ -514,3 +514,12 @@ test('challenging your challenger accepts the duel', () => {
   assert.equal(w.duel(c.duelId).status, 'active');
   assert.equal(w.state.duels.length, 1);
 });
+
+test('StreamElements: a bare command sends t=- and reaches the room with no target', async () => {
+  const { handleStreamElements, seCommandLines } = await import('../server/streamelements.js');
+  assert.match(seCommandLines('https://x', 'nesszerra', 'k1')[1].response, /t=\$\(queryescape \$\(1\|-\)\)/);
+  let sent;
+  const url = new URL('https://x/api/se/nesszerra/accept?k=k1&id=2&u=bob&d=bob&t=-&m=1');
+  await handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async (c, p, init) => { sent = JSON.parse(init.body); return Response.json({ reply: 'ok' }); } });
+  assert.equal(sent.target, '');
+});
