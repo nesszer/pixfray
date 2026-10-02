@@ -94,7 +94,8 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     }
     return `${me}: done.`;
   }
-  const signUp = origin ? ` Save a fighter at ${origin}` : '';
+  // Every channel but nesszerra has its own profiles, so the link must name the channel.
+  const signUp = origin ? ` Save a fighter at ${origin}${state.channel && state.channel !== 'nesszerra' ? '/?channel=' + state.channel : ''}` : '';
   switch (reason) {
     case 'chat_offline': return 'Mini Chat: duels are paused, StreamElements is not connected in the admin page.';
     case 'duels_disabled': return 'Mini Chat: duels are turned off right now.';

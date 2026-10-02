@@ -561,7 +561,14 @@ export class ChannelRoom extends DurableObject {
     const target = normalizeUsername(input.target);
     const now = Date.now();
     const names = settings.names;
-    const state0 = this.readState(channel);
+    let state0 = this.readState(channel);
+    // SE_ONLY (test site): StreamElements is the only chat source, so a command with the right key switches to it.
+    if (this.env?.SE_ONLY === "1" && state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID) {
+      const switched = this.advance(channel, { type: "chat_subscription", subscriptionId: SE_SUBSCRIPTION_ID, status: "enabled", createdAt: now }, now);
+      if (switched.visible) this.broadcast(switched.state);
+      await this.scheduleAlarm(switched.state);
+      state0 = switched.state;
+    }
     // Every command is logged with what came in, what the game decided and what the bot said.
     const done = (reply, reason, extra = {}) => {
       logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });

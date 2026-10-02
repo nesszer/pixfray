@@ -34,6 +34,7 @@ async function bodyJson(request,limit=2200000){
 async function chatAction(env,url,channel,action,{takeover=false}={}){
   const room=(path,body)=>roomFetch(null,env,channel,path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
   const current=await (await room('/chat')).json();
+  if(action==='connectChat'&&env.SE_ONLY==='1')throw Object.assign(new Error('This site uses StreamElements for chat. Choose Use StreamElements.'),{status:400});
   if(action==='useStreamElements'){
     if(current.subscriptionId&&current.subscriptionId!==SE_SUBSCRIPTION_ID)await disconnectChat(env,{subscriptionId:current.subscriptionId,url});
     return room('/chat',{action:'connected',subscriptionId:SE_SUBSCRIPTION_ID,status:'enabled',createdAt:Date.now()});
@@ -134,7 +135,7 @@ export default {async fetch(request,env,ctx){
       if(request.method==='GET'){
         const r=await internal(request,env,channel,'/admin');if(!r.ok)return r;
         const data=await r.json();
-        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles});
+        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1'});
       }
       const data=await bodyJson(request,12000);
       if(data.action==='rotateSeKey'||data.action==='setSeNames'){
@@ -142,7 +143,7 @@ export default {async fetch(request,env,ctx){
         const out=await r.json();if(!r.ok)return json(out,r.status);
         return json({ok:true,streamelements:seView(env,url,channel,out.streamelements)});
       }
-      if(data.action==='connectChat'&&channel!=='nesszerra')return json({error:'This channel uses StreamElements for chat. Choose Use StreamElements.'},400);
+      if(data.action==='connectChat'&&(channel!=='nesszerra'||env.SE_ONLY==='1'))return json({error:'This channel uses StreamElements for chat. Choose Use StreamElements.'},400);
       if(data.action==='connectChat'||data.action==='disconnectChat'||data.action==='useStreamElements')return await chatAction(env,url,channel,data.action,{takeover:data.takeover===true});
       return internal(request,env,channel,'/admin',{...data,actorId:user.id,actorName:user.displayName||user.login});
     }

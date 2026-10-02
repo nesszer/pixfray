@@ -381,7 +381,10 @@ function renderChat() {
   const parts = ["Status: " + (CHAT_STATUS[c.status] || c.status || "not connected") + "."];
   if (c.lastNotificationAt) parts.push("Last chat message " + timeAgo(c.lastNotificationAt) + ".");
   if (c.lastRevocationReason) parts.push("Last revocation: " + (CHAT_STATUS[c.lastRevocationReason] || c.lastRevocationReason) + ".");
-  if (!c.connected) parts.push("Duels stay paused until chat is connected.");
+  if (S.admin.seOnly) parts.push("This site takes chat from StreamElements only; the first StreamElements command connects it.");
+  else if (!c.connected) parts.push("Duels stay paused until chat is connected.");
+  $("#chat-actions").hidden = !!S.admin.seOnly;
+  if (S.admin.seOnly) $("#owner-chat").hidden = true;
   $("#chat-text").textContent = parts.join(" ");
   $("#connect-chat").textContent = c.connected ? "Reconnect chat" : "Connect chat";
   $("#disconnect-chat").disabled = !c.subscriptionId && !c.connected;

@@ -29,6 +29,8 @@ return {
       PUBLIC_ORIGIN: bindings.text(origin),
       // Test site only: owner access for scripts/devtools.mjs (docs/DEVTOOLS.md). Production never declares it.
       ...(testing ? { DEV_TOOLS_TOKEN: bindings.secret() } : {}),
+      // Test site only: chat comes from StreamElements alone; Connect chat (EventSub) is refused.
+      ...(testing ? { SE_ONLY: bindings.text('1') } : {}),
       ...(localTest ? { MINI_LOCAL_TEST: bindings.text('1') } : {})
     }
   })

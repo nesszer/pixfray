@@ -372,6 +372,17 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.match((await cmd('u1', 'alice', 'decline', '', rotated.secret)).body.reply, /paused/);
 });
 
+test('SE_ONLY: a StreamElements command with the right key makes StreamElements the chat source', async () => {
+  const r = room({ SE_ONLY: '1' }, { quick: true });
+  const se = (await r.call('/admin')).body.streamelements;
+  await r.connectChat('sub-1');   // a Twitch subscription from before the switch
+  const cmd = (key) => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key, action: 'decline', userId: 'u1', username: 'alice', displayName: 'alice', target: '', messageId: 'x' + key.length } });
+  assert.equal((await cmd('wrong')).status, 403);
+  assert.equal((await r.call('/admin')).body.chatStatus.source, 'twitch', 'a wrong key changes nothing');
+  assert.doesNotMatch((await cmd(se.secret)).body.reply, /paused/);
+  assert.equal((await r.call('/admin')).body.chatStatus.source, 'streamelements');
+});
+
 test('StreamElements quick duel: !fight rolls the dice and settles it in one reply', async () => {
   const r = room({}, { quick: true });
   const se = (await r.call('/admin')).body.streamelements;
