@@ -82,7 +82,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     }
     if (!duel) return `Mini Chat: couldn't read that command, try again.`;   // ok but no duel = the text didn't parse as a command
     if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}.`;
-    if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} (or ${n('challenge')} @${me}) or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
+    if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
     if (reason === 'challenge_declined') return `${me} declined the duel.`;
     if (reason === 'duel_completed') {
       const w = state.players.find(p => p.userId === actorId), l = state.players.find(p => p.userId === other);
