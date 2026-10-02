@@ -120,7 +120,9 @@ function update() {
   nameplate.style.borderColor = c.color;
   $("#preview-caption").textContent = entry ? entry.label || entry.id : "";
   for (const s of document.querySelectorAll(".swatch")) s.setAttribute("aria-pressed", String(s.dataset.color === c.color));
-  if (state.session?.user && state.saved) setStatus(status, dirty() ? "You have unsaved changes." : "Saved. Your fighter shows up on stream with these settings.", dirty() ? "" : "ok");
+  // A fighter with no duels yet gets the next step instead of the plain saved line.
+  if (state.session?.user && state.saved) setStatus(status, dirty() ? "You have unsaved changes." : fresh() ? "" : "Saved. Your fighter shows up on stream with these settings.", dirty() ? "" : "ok");
+  renderNextStep();
 }
 
 function applyProfile(p) {
@@ -141,6 +143,25 @@ function renderCommands() {
     $("#lb-note").textContent = "Ranked duels need a saved profile. Everyone starts at " + state.config.initialElo + " Elo.";
     $("#hp-mode-note").hidden = state.config.quickDuel !== false;
   }
+}
+
+const fresh = () => Boolean(state.profile) && !(state.profile.wins + state.profile.losses);
+// Until the first duel: what to type in chat now that the fighter is saved.
+function renderNextStep() {
+  const next = $("#next-step"), show = Boolean(state.session?.user && state.saved && !dirty() && fresh());
+  next.hidden = !show;
+  if (show) next.replaceChildren(h("strong", {}, "Saved. Next: "), "in " + CHANNEL + "'s chat, type ", h("code", {}, "!challenge @friend"), ". They answer ", h("code", {}, "!fight"), ".");
+}
+
+// Back from Twitch sign-in (?signed_in=1): say who is signed in and what to do, then drop the flag from the address.
+function welcome() {
+  const params = new URLSearchParams(location.search), user = state.session?.user;
+  if (!params.has("signed_in")) return;
+  params.delete("signed_in");
+  history.replaceState(null, "", location.pathname + (params.size ? "?" + params : "") + location.hash);
+  if (!user) return;
+  setStatus(status, "Signed in as " + (user.displayName || user.login) + ". " + (state.profile ? "Your fighter is loaded." : "Pick a fighter and save."), "ok");
+  if (!state.profile) $("#fighter").scrollIntoView({ block: "start" });
 }
 
 function renderSignedIn() {
@@ -167,7 +188,7 @@ function renderLeaderboard() {
     tbody.replaceChildren(h("tr", { class: "empty" }, h("td", { colspan: 6 },
       h("strong", {}, "No ranked duels yet, so the top spot is open."), " To get on the board: ",
       state.session?.user ? "save your fighter above" : "sign in and save your fighter above",
-      ", say something in chat while the stream is live so your character walks in, then type ", h("code", {}, "!challenge @viewer"), ".")));
+      ", then type ", h("code", {}, "!challenge @viewer"), " in chat while the stream is live.")));
     return;
   }
   const entryOf = (id) => state.catalog.find((x) => x.id === id);
@@ -229,7 +250,7 @@ async function init() {
     state.saved = state.profile ? savedOf({ ...state.profile, stats: state.stats, hat: state.hat }) : null;
     if (!state.profile) setStatus(status, "You don't have a saved profile yet. Pick your fighter and save.");
   } else applyProfile(null);
-  renderSignedIn(); update();
+  renderSignedIn(); update(); welcome();
   loadLeaderboard();
 }
 init();

@@ -346,19 +346,22 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.deepEqual([se.lastCommandAt, se.rejectedAt], [0, 0], 'no command has reached the room yet');
   assert.equal((await cmd('u1', 'alice', 'challenge', 'bob', 'wrong')).status, 403);
   assert.deepEqual([(await admin()).streamelements.lastCommandAt, (await admin()).streamelements.rejectedAt > 0], [0, true], 'a wrong key is recorded');
-  assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /paused/);   // not the chat source yet
+  assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, 'The arena is closed right now. Come back soon!');   // not the chat source yet
   assert.ok((await admin()).streamelements.lastCommandAt > 0, 'a command with the right key is recorded');
   await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
   assert.equal((await admin()).chatStatus.source, 'streamelements');
-  assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /saved fighter/);
-  await r.save('u1', 'alice'); await r.save('u2', 'bob');
-  assert.match((await cmd('u1', 'alice', 'challenge')).body.reply, /who\?/);
-  assert.match((await cmd('u1', 'alice', 'challenge', 'alice')).body.reply, /can't duel yourself/);
-  assert.match((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, /alice challenges @bob.*!fight/);
+  // A sign-in refusal names who is missing a fighter.
+  assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/');
+  await r.save('u1', 'alice');
+  assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, '@bob has no fighter in the arena yet! Send them to https://test.example/');
+  await r.save('u2', 'bob');
+  assert.equal((await cmd('u1', 'alice', 'challenge')).body.reply, 'Challenge who? Name your rival: !challenge @name');
+  assert.equal((await cmd('u1', 'alice', 'challenge', 'alice')).body.reply, "alice, you can't fight your own shadow! Name a rival: !challenge @name");
+  assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, 'alice challenges @bob! @bob, type !fight to fight or !decline to back out within 30 s.');
   // Quick duels are off in this room, but StreamElements has no attack commands, so !fight settles the duel at once.
   assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^(alice|bob) beats (alice|bob) /);
   assert.equal(r.readState('nesszerra').duels.filter((d) => d.status === 'active').length, 0);
-  assert.match((await cmd('u1', 'alice', 'heavy')).body.reply, /attack commands are gone/);
+  assert.equal((await cmd('u1', 'alice', 'heavy')).body.reply, 'Lost in the arena? Type !minichat');
   // Renamed commands show up in replies; duplicates and bad names are refused.
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!yes', decline: 'no' } } })).body.streamelements.names.decline, '!no');
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!challenge' } } })).status, 400);
@@ -369,7 +372,7 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.equal((await cmd('u1', 'alice', 'decline')).status, 403);
   // Disconnecting the StreamElements source never calls Twitch and pauses duels.
   await r.call('/chat', { method: 'POST', body: { action: 'disconnected', reason: 'disconnected' } });
-  assert.match((await cmd('u1', 'alice', 'decline', '', rotated.secret)).body.reply, /paused/);
+  assert.match((await cmd('u1', 'alice', 'decline', '', rotated.secret)).body.reply, /arena is closed/);
 });
 
 test('SE_ONLY: a StreamElements command with the right key makes StreamElements the chat source', async () => {
@@ -379,7 +382,7 @@ test('SE_ONLY: a StreamElements command with the right key makes StreamElements 
   const cmd = (key) => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key, action: 'decline', userId: 'u1', username: 'alice', displayName: 'alice', target: '', messageId: 'x' + key.length } });
   assert.equal((await cmd('wrong')).status, 403);
   assert.equal((await r.call('/admin')).body.chatStatus.source, 'twitch', 'a wrong key changes nothing');
-  assert.doesNotMatch((await cmd(se.secret)).body.reply, /paused/);
+  assert.doesNotMatch((await cmd(se.secret)).body.reply, /closed/);
   assert.equal((await r.call('/admin')).body.chatStatus.source, 'streamelements');
 });
 
@@ -392,7 +395,7 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 'q' + (++m) } });
   await cmd('u1', 'alice', 'challenge', 'bob');
   assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^(alice|bob) beats (alice|bob) (in \d+ rolls?( \(sudden death\))?|on HP after 12 rolls) \((\d+ HP left|100 HP left, flawless, \+3 bonus)\)\. Elo: \w+ (1012|1015), \w+ 988\.$/);
-  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /no pending challenge/);
+  assert.equal((await cmd('u2', 'bob', 'accept')).body.reply, 'bob, nobody has challenged you yet. Start one: !challenge @name');
   // The result is saved, so the next command (which reloads the stored profile) keeps it.
   const saved = Object.fromEntries(r.ctx.storage.sql.exec('SELECT user_id, elo, wins, losses FROM profiles').toArray().map((x) => [x.user_id, x]));
   assert.deepEqual([saved.u1.wins + saved.u2.wins, saved.u1.losses + saved.u2.losses, [2000, 2003].includes(saved.u1.elo + saved.u2.elo)], [1, 1, true]);   // +3 if flawless
@@ -409,23 +412,40 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   assert.match((await r.call('/dev/logs?source=warn')).body[0].message, /profile for alice not saved/);
 });
 
-test('StreamElements !top and !elo read saved profiles, even while duels are paused', async () => {
+test('StreamElements !ranks, !elo and !minichat work even while duels are paused', async () => {
   const r = room();
   const se = (await r.call('/admin')).body.streamelements;
-  assert.deepEqual([se.names.top, se.names.elo], ['!top', '!elo']);
+  assert.deepEqual([se.names.top, se.names.elo, se.names.help], ['!ranks', '!elo', '!minichat']);
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 't' + (++m) } });
-  assert.match((await cmd('u1', 'alice', 'top')).body.reply, /nobody is ranked yet.*test\.example\/#ranks/);
-  assert.match((await cmd('u1', 'alice', 'elo')).body.reply, /^alice, save a fighter first at https:\/\/test\.example\/\.$/);
+  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'Mini Chat duels: gear up at https://test.example/, then name your rival with !challenge @name. They answer !fight.');
+  assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'The arena has no champions yet! Gear up at https://test.example/ and win a duel.');
+  assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/');
   await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
   r.ctx.storage.sql.exec("UPDATE profiles SET elo = 1040, wins = 3, losses = 1 WHERE user_id = 'u2'");
   r.ctx.storage.sql.exec("UPDATE profiles SET elo = 990, wins = 0, losses = 1 WHERE user_id = 'u3'");
   assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'Top 3: 1. bob 1040 · 2. alice 1000 · 3. cara 990. Full list: https://test.example/#ranks');
   assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, 'alice: 1000 Elo, rank 2 of 3, 0 wins and 0 losses.');
   assert.equal((await cmd('u1', 'alice', 'elo', 'bob')).body.reply, 'bob: 1040 Elo, rank 1 of 3, 3 wins and 1 loss.');
-  assert.match((await cmd('u1', 'alice', 'elo', 'zed')).body.reply, /@zed has no saved fighter/);
-  const log = (await r.call('/dev/logs?source=command')).body;
-  assert.equal(log[0].context.reason, 'elo_not_found');
+  assert.equal((await cmd('u1', 'alice', 'elo', 'zed')).body.reply, '@zed has no fighter in the arena yet! Send them to https://test.example/');
+  assert.equal((await r.call('/dev/logs?source=command')).body[0].context.reason, 'elo_not_found');
+  // A channel that stored the old !top name gets !ranks: StreamElements' built-in !top can't be replaced.
+  await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { top: '!top' } } });
+  assert.equal((await r.call('/admin')).body.streamelements.names.top, '!ranks');
+  // Renamed commands show up in !minichat.
+  await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { challenge: '!duel', accept: '!yes' } } });
+  assert.match((await cmd('u1', 'alice', 'help')).body.reply, /!duel @name\. They answer !yes\.$/);
+});
+
+test('/looks returns saved looks by login for the overlay: saved profiles only, at most 20 logins', async () => {
+  const r = room();
+  await r.save('u1', 'Alice', { avatar: 'toon-ghoul', color: '#112233' });
+  const looks = (await r.call('/looks?u=alice,nobody,bad%20name,ALICE')).body;
+  assert.deepEqual(looks, { alice: { avatar: 'toon-ghoul', color: '#112233', hat: '', displayName: 'Alice', elo: 1000 } });
+  assert.deepEqual((await r.call('/looks')).body, {});
+  for (let i = 0; i < 25; i++) await r.save('x' + i, 'v' + i);
+  const many = (await r.call('/looks?u=' + Array.from({ length: 25 }, (_, i) => 'v' + i).join(','))).body;
+  assert.equal(Object.keys(many).length, 20);
 });
 
 test('dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a line plays like real chat and returns the bot reply', async () => {

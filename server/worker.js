@@ -3,7 +3,7 @@ import { AuthStore,record,session,isOwner,configured,handleAuth,access,CHANNELS 
 import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './eventsub.js';
-import { handleStreamElements,seCommandLines,SE_SUBSCRIPTION_ID } from './streamelements.js';
+import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
 export {ChannelRoom,AuthStore};
 const enabledChannel=channel=>CHANNELS.includes(channel);
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
@@ -51,7 +51,7 @@ async function chatAction(env,url,channel,action,{takeover=false}={}){
 function seView(env,url,channel,se){
   if(!se?.secret)return null;
   const origin=env.PUBLIC_ORIGIN||url.origin;
-  return {key:se.secret,names:se.names,origin,lastCommandAt:se.lastCommandAt||0,rejectedAt:se.rejectedAt||0,commands:seCommandLines(origin,channel,se.secret,se.names)};
+  return {key:se.secret,names:se.names,origin,lastCommandAt:se.lastCommandAt||0,rejectedAt:se.rejectedAt||0,commands:seCommandLines(origin,channel,se.secret,se.names),timerText:seHelpText({names:se.names,origin,channel})};
 }
 // Test site only: DEV_TOOLS_TOKEN is declared only by `cf deploy --mode test`, so production has no token to match.
 // A matching "Authorization: Bearer" acts as the owner, for scripts/devtools.mjs (docs/DEVTOOLS.md).
@@ -112,7 +112,7 @@ export default {async fetch(request,env,ctx){
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
     if(path==='/api/health')return json({ok:true,version:'0.2.0',twitchConfigured:configured(env),productionEnabled:false});
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,dev,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
-    const match=path.match(/^\/api\/(state|live|profile|leaderboard|catalog|access|admin|assets)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
+    const match=path.match(/^\/api\/(state|live|profile|leaderboard|looks|catalog|access|admin|assets)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
     if(!match)return json({error:'Not found'},404);
     const [,route,channel,id]=match;
     if(!enabledChannel(channel))return json({error:'Mini Chat is not enabled for this channel'},403);
@@ -154,6 +154,8 @@ export default {async fetch(request,env,ctx){
       const [s,d]=await Promise.all([staticCatalog(env,url),internal(request,env,channel,'/catalog')]);
       return json([...s,...(d.ok?await d.json():[])]);
     }
+    // Saved looks for the overlay: public, the same fields the leaderboard shows.
+    if(route==='looks')return internal(request,env,channel,'/looks?u='+encodeURIComponent((url.searchParams.get('u')||'').slice(0,600)));
     return internal(request,env,channel,'/'+route);
   }catch(error){
     if(!error.status)ctx?.waitUntil?.(logWorkerError(env,error,{path}));

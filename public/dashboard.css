@@ -203,6 +203,7 @@ input[type="color"] { padding: 2px; width: 56px; cursor: pointer; }
 .rules li + li { margin-top: var(--space-1); }
 .hero-pick { grid-area: pick; }
 .hero-card { grid-area: card; position: sticky; top: var(--space-4); }
+.hero-card .status:empty:has(+ .next-step:not([hidden])) { display: none; }   /* the next step takes the empty status line's place */
 .form-stack > * + * { margin-top: var(--space-5); }
 
 /* the fighter card: 1px gold trim with an inner bronze line, like a framed card */
@@ -309,7 +310,7 @@ html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused fie
   .hero-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "pick" "card"; padding: var(--space-6) var(--space-4); gap: var(--space-5); }
   .hero-card { top: auto; bottom: 0; z-index: 2; margin: 0 calc(-1 * var(--space-4)); padding: var(--space-3) var(--space-4);
     border-width: 1px 0 0; border-radius: 0; outline: 0; box-shadow: 0 -4px 12px rgb(0 0 0 / 0.3);
-    grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "preview save" "stats stats" "points points" "status status"; gap: var(--space-2) var(--space-3); align-items: center; }
+    grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "preview save" "stats stats" "points points" "status status" "next next"; gap: var(--space-2) var(--space-3); align-items: center; }
   .hero-card .preview { grid-area: preview; grid-template-columns: 48px minmax(0, 1fr); justify-items: start; align-items: center; gap: 0 var(--space-3); padding: 0; background: none; border: 0; }
   .hero-card .preview canvas.sprite { width: 48px; height: 48px; grid-row: span 2; }
   .hero-card .preview .caption { text-align: left; }
@@ -321,6 +322,7 @@ html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused fie
   .hero-card .stat .value { font-size: var(--text-md); }
   .hero-card .status { grid-area: status; }
   .hero-card .status:empty { display: none; }
+  .hero-card .next-step { grid-area: next; margin: 0; padding: var(--space-2) var(--space-3); }
   .with-index { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
   .page-index { position: static; }
   .page-index ol { display: flex; flex-wrap: wrap; gap: var(--space-2); border-left: 0; }

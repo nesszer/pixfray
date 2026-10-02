@@ -59,6 +59,10 @@ async function start() {
   const players = new Map();
   const sprites = new Map();
   const profilesById = new Map();
+  // Saved looks for chatters the arena doesn't list yet (a StreamElements channel only hears of a viewer when they
+  // use a command): login -> { at, look }, misses included, refetched after 5 min. Batched, 20 logins per call.
+  const savedLooks = new Map(), lookQueue = new Set();
+  let lookTimer = 0;
   const meetPoints = new Map();
   // A quick duel is over on the server before the overlay sees it, so the overlay replays it from its events:
   // duel id -> an active duel whose hp follows the duel_action events until duel_completed.
@@ -212,8 +216,29 @@ async function start() {
     return p;
   }
   // Registered profiles (saved on the website) decide name, color and character. Unregistered chatters keep their chat look.
+  function queueLook(login) {
+    const hit = savedLooks.get(login);
+    if (!arenaEnabled || arenaDemo || (hit && Date.now() - hit.at < 300_000)) return;
+    lookQueue.add(login);
+    if (!lookTimer) lookTimer = setTimeout(fetchLooks, 1000);
+  }
+  async function fetchLooks() {
+    const batch = [...lookQueue].slice(0, 20);
+    for (const login of batch) { lookQueue.delete(login); savedLooks.set(login, { at: Date.now(), look: savedLooks.get(login)?.look || null }); }
+    try {
+      const response = await fetch('/api/looks/' + encodeURIComponent(channel) + '?u=' + batch.join(','), { cache: 'no-store', headers: { accept: 'application/json' } });
+      const data = response.ok ? await response.json() : {};
+      for (const login of batch) {
+        const look = data && typeof data[login] === 'object' ? data[login] : null;
+        savedLooks.set(login, { at: Date.now(), look: look ? { ...look, username: login, registered: true } : null });
+      }
+      for (const p of players.values()) if (batch.includes(p.key)) applyArenaProfile(p);
+    } catch { /* keep the random look until the next try */ }
+    lookTimer = lookQueue.size ? setTimeout(fetchLooks, 1000) : 0;
+  }
   function applyArenaProfile(p) {
-    const profile = arenaEnabled && p.userId ? profilesById.get(p.userId) : null;
+    const arena = arenaEnabled && p.userId ? profilesById.get(p.userId) : null;
+    const profile = arena?.registered ? arena : (arenaEnabled && savedLooks.get(p.key)?.look) || arena || null;
     p.arenaProfile = profile || null;
     p.renderAvatar = p.avatar;
     p.defaultAbility = '';
@@ -507,6 +532,7 @@ async function start() {
       p.color = sanitizeColor(settings[username]?.color) || p.chatColor || p.color;
     }
     applyArenaProfile(p);
+    if (!p.arenaProfile?.registered) queueLook(username);
     const ranked = Boolean(p.arenaProfile?.registered);
     p.lastSeen = now; p.messageId = message.id || ''; p.text = String(message.text || '').slice(0, 72); p.bubbleUntil = now + 4000;
     const command = parseCommand(message.text || '');

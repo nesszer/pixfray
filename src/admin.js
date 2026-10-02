@@ -435,12 +435,13 @@ $("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.cur
 $("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat", e.currentTarget));
 
 // ---------- StreamElements ----------
-const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
+const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", help: "How to play", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 function renderSe() {
   const se = S.admin.streamelements, c = S.admin.chatStatus || {};
   const using = c.connected && c.source === "streamelements";
   $("#use-se").textContent = using ? "StreamElements is the chat source" : "Use StreamElements";
   $("#use-se").disabled = using || !se;
+  $("#copy-timer").disabled = !se;
   // Test and production each have their own key, so commands copied from the other site never arrive here.
   const health = $("#se-health"), host = se?.origin ? new URL(se.origin).host : location.host;
   let warn = "", note = "";
@@ -487,6 +488,12 @@ $("#use-se").addEventListener("click", (e) => {
 $("#save-se-names").addEventListener("click", (e) => {
   const names = Object.fromEntries([...document.querySelectorAll("#se-table input")].map((i) => [i.dataset.action, i.value.trim()]));
   seAct({ action: "setSeNames", names }, e.currentTarget, "Names saved. Update the command names in StreamElements to match.");
+});
+$("#copy-timer").addEventListener("click", async () => {
+  const text = S.admin?.streamelements?.timerText;
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+  setStatus($("#se-status"), "Copied the timer message. Paste it as the message of a StreamElements timer.", "ok");
 });
 $("#rotate-se").addEventListener("click", (e) => {
   if (!confirm("Make a new key? Every StreamElements command stops working until you paste the new replies.")) return;

@@ -279,6 +279,32 @@ try {
   await crowd.screenshot({ path: 'screenshots/overlay-two-duels-1280.png' });
   await crowd.close();
 
+  // A chat-only viewer with a saved fighter (a StreamElements channel hears of them only through commands) gets the
+  // saved look from /api/looks instead of a random one; lookups are batched and cached, misses included.
+  const looksPage = await context.newPage();
+  looksPage.on('pageerror', error => errors.push(error.message));
+  const lookReads = [];
+  await looksPage.route('**/api/state/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...initial, players: [], duels: [] }) }));
+  await looksPage.route('**/api/catalog/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'neon', label: 'Neon', url: '/assets/player.png', frames: [{ x: 0, y: 0, w: 80, h: 110 }], fps: 8 }]) }));
+  await looksPage.route('**/api/looks/**', route => {
+    lookReads.push(new URL(route.request().url()).searchParams.get('u'));
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ cleo: { avatar: 'neon', color: '#11aa55', hat: '', displayName: 'Cleo Saved', elo: 1033 } }) });
+  });
+  await looksPage.goto(base + '/overlay.html?arena=1&debug=1&cap=8&size=64');
+  await looksPage.waitForFunction(() => window.__arenaSockets.length === 1 && window.__chatSockets.length === 1);
+  const irc = (login, id, text) => `@id=${login}-${text.length};user-id=${id};display-name=${login};color=#ff0000 :${login}!${login}@${login}.tmi.twitch.tv PRIVMSG #nesszerra :${text}
+`;
+  await looksPage.evaluate(lines => lines.forEach(line => window.__sendIrc(line)), [irc('cleo', '701', 'hi'), irc('dan', '702', 'hello')]);
+  await looksPage.waitForFunction(() => window.__arenaDebug().players.some(p => p.label === 'Cleo Saved'));
+  let looks = await looksPage.evaluate(() => window.__arenaDebug().players);
+  const cleo = looks.find(p => p.userId === '701'), dan = looks.find(p => p.userId === '702');
+  assert.deepEqual([cleo.avatar, cleo.color, cleo.elo], ['neon', '#11aa55', 1033], 'the saved look replaces the random pick');
+  assert.deepEqual([dan.label, dan.elo], ['dan', undefined], 'a viewer with no saved fighter keeps the chat look');
+  await looksPage.evaluate(lines => lines.forEach(line => window.__sendIrc(line)), [irc('cleo', '701', 'again'), irc('dan', '702', 'again!')]);
+  await looksPage.waitForTimeout(1500);
+  assert.deepEqual(lookReads, ['cleo,dan'], 'one batched lookup; hits and misses are cached');
+  await looksPage.close();
+
   const demoPage = await context.newPage();
   demoPage.on('pageerror', error => errors.push(error.message));
   const demoApiReads = [];

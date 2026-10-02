@@ -12,7 +12,7 @@ import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js"
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription } from "./eventsub.js";
 import { cleanStats, knownHat, validStats, hatUnlocked, upgradeRules } from "./upgrades.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText } from "./streamelements.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -22,6 +22,7 @@ const MAX_LIVE_SOCKETS = 200;
 const MAX_SOCKETS_PER_CLIENT = 16;      // one network can't fill the room and lock OBS out
 const REJECTED_WRITE_MS = 60_000;          // a wrong StreamElements key is recorded at most once a minute
 const MAX_CONFIG_HISTORY = 50;
+const MAX_LOOKS = 20;                  // logins per /looks call
 const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
 const MAX_EVENTSUB_IDS = 5_000;
 // Chat bots never walk into the arena or duel.
@@ -164,6 +165,19 @@ export class ChannelRoom extends DurableObject {
 
     if (path === "/leaderboard" && request.method === "GET") {
       return json(this.leaderboard(channel));
+    }
+
+    // Saved looks by login for the overlay (?u=a,b,c, at most 20): only viewers with a saved fighter are listed.
+    if (path === "/looks" && request.method === "GET") {
+      const logins = [...new Set(String(url.searchParams.get("u") || "").split(",").map(normalizeUsername).filter((u) => /^[a-z0-9_]+$/.test(u)))].slice(0, MAX_LOOKS);
+      if (!logins.length) return json({});
+      const config = this.readState(channel).config, out = {};
+      const rows = this.ctx.storage.sql.exec(`SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`, ...logins).toArray();
+      for (const row of rows) {
+        const p = normalizeProfileRow(row, config);
+        out[p.username.toLowerCase()] = { avatar: p.avatar, color: p.color, hat: p.hat || "", displayName: p.displayName, elo: p.elo };
+      }
+      return json(out);
     }
 
     if (path === "/profile" && request.method === "GET") {
@@ -570,6 +584,7 @@ export class ChannelRoom extends DurableObject {
     if (row) {
       const names = { ...DEFAULT_SE_NAMES, ...safeJsonParse(row.names, {}) };
       if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;   // StreamElements' Duel module owns !accept
+      if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top;   // and its built-in !top can't be replaced
       return { secret: row.secret, names, lastCommandAt: Number(row.last_command_at) || 0, rejectedAt: Number(row.rejected_at) || 0 };
     }
     const secret = randomHex();
@@ -608,9 +623,10 @@ export class ChannelRoom extends DurableObject {
       logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { channel, user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });
       return json({ reply });
     };
-    if (!action) return done("Mini Chat: attack commands are gone. Duels are !challenge @name, then !fight.", "unknown_action");
+    if (!action) return done(`Lost in the arena? Type ${names.help}`, "unknown_action");
     if (!userId || !username) return done("Mini Chat: this command is missing sender details. Copy it again from the admin page.", "missing_sender");
     if (SE_READ_ACTIONS.includes(action)) {
+      if (action === "help") return done(seHelpText({ names, origin, channel }), "help");
       if (action === "top") return done(seTopText(this.leaderboard(channel).slice(0, 5), { origin, channel }), "top");
       const found = this.eloLookup(channel, target ? { username: target } : { userId });
       return done(seEloText(found, { self: !target, askerName: input.displayName || username, target, origin, channel }), found ? "elo" : "elo_not_found");
@@ -624,7 +640,8 @@ export class ChannelRoom extends DurableObject {
     if (result.changed) await this.scheduleAlarm(result.state);
     const r = result.result || {};
     if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
-    return done(seReplyText({ result: r, state: result.state, actorId: userId, action, target, names, origin, now }), r.reason || (r.ok ? action : "error"), r.swings ? { duelId: r.duelId, swings: r.swings.map((s) => s.die + ({ crit: "x" }[s.outcome] || s.outcome[0])).join(" ") } : {});
+    const actorRegistered = r.reason !== "ranked_sign_in_required" || this.ctx.storage.sql.exec("SELECT 1 FROM profiles WHERE user_id = ?", userId).toArray().length > 0;
+    return done(seReplyText({ result: r, state: result.state, actorId: userId, action, target, names, origin, now, actorRegistered }), r.reason || (r.ok ? action : "error"), r.swings ? { duelId: r.duelId, swings: r.swings.map((s) => s.die + ({ crit: "x" }[s.outcome] || s.outcome[0])).join(" ") } : {});
   }
 
   // After a finished duel the stored profiles must match the game state, or the next command undoes the result.

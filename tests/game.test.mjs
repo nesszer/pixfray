@@ -531,7 +531,7 @@ test('StreamElements: an empty room reply (repeated message id) posts nothing; a
   const url = new URL('https://x/api/se/nesszerra/accept?k=k1&id=2&u=bob&d=bob&t=-&m=1');
   const call = (body) => handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async () => Response.json(body) }).then((r) => r.text());
   assert.equal(await call({ reply: '' }), '');
-  assert.equal(await call({}), 'Mini Chat: something went wrong');
+  assert.equal(await call({}), "That move didn't land. Try again in a moment!");
 });
 
 // roll r gives die 1 + floor(r * 6): 0.9 -> 6 (crit 50), 0.75 -> 5 (hit 34), 0.5 -> 4 (miss), 0.1 -> 1 (counter 34)
@@ -627,8 +627,8 @@ test('invisible characters that chat clients append to repeated messages are ign
 test('StreamElements sign-up link names the channel, except for nesszerra', async () => {
   const { seReplyText } = await import('../server/streamelements.js');
   const reply = (channel) => seReplyText({ result: { ok: false, reason: 'target_not_found' }, state: createInitialState(channel), actorId: 'u1', action: 'challenge', target: 'bob', origin: 'https://chat.example' });
-  assert.match(reply('miolafff'), /Save a fighter at https:\/\/chat\.example\/\?channel=miolafff$/);
-  assert.match(reply('nesszerra'), /Save a fighter at https:\/\/chat\.example$/);
+  assert.equal(reply('miolafff'), '@bob has no fighter in the arena yet! Send them to https://chat.example/?channel=miolafff');
+  assert.equal(reply('nesszerra'), '@bob has no fighter in the arena yet! Send them to https://chat.example/');
 });
 
 // ---------- upgrades (server/upgrades.js) ----------

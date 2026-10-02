@@ -30,6 +30,8 @@ wins; report the difference to Lane A. Only the `nesszerra` channel is enabled. 
 | GET | `/api/access/:channel` | optional | none | `{owner, moderator, canManage, reason}` | 403 for a disabled channel |
 | GET | `/api/state/:channel` | none | none | Snapshot (section 3) | 403, 405 |
 | GET | `/api/leaderboard/:channel` | none | none | Up to 100 `Profile` rows, ordered by elo desc, then wins desc, then username | 403 |
+| GET | `/api/looks/:channel?u=login1,login2` | none | at most 20 logins | `{login:{avatar, color, hat, displayName, elo}}` for viewers with a saved fighter only. The overlay uses it for chat-only viewers, batched and cached for 5 min. | 403 |
+| GET | `/api/se/:channel/:action?k=..&id=..&u=..&d=..&t=..&m=..` | the channel's StreamElements key `k` | `action` is `challenge`, `accept`, `decline`, `top` (default name `!ranks`), `elo` or `help` (default name `!minichat`) | always 200 `text/plain`: the one-line chat reply for the bot to post (empty for a repeated message id) | 405, 404 unknown channel |
 | GET | `/api/catalog/:channel` | none | none | `[...static characters.json, ...custom entries]` (section 5) | 403 |
 | GET | `/api/profile/:channel` | cookie | none | `Profile` or `null` | 401 |
 | POST | `/api/profile/:channel` | cookie | `{avatar, color:"#rrggbb", defaultAbility:"strike"\|"heavy"\|"heal"}`, max 4000 bytes | `{profile, revision}` | 400 invalid field or unknown character, 401, 413 |

@@ -161,11 +161,12 @@
             </ul>
           </li>
           <li><strong>If a command with that name already exists</strong> (StreamElements says the name is taken): find it in the Custom commands list, click its edit (pencil) button, select everything in Reply, delete it, paste the copied reply, and click Save. Default commands can't be edited; turn them off or pick another name here.</li>
-          <li><strong>Click Use StreamElements</strong> below once the duel commands are added. The <code>!top</code> and <code>!elo</code> rows are optional.</li>
-          <li><strong>Test it:</strong> type <code>!decline</code> in your chat. The bot should answer "you have no pending challenge". If it says "wrong key", copy the reply again.</li>
+          <li><strong>Click Use StreamElements</strong> below once the duel commands are added. The <code>!ranks</code>, <code>!elo</code> and <code>!minichat</code> rows are optional; <code>!minichat</code> tells viewers how to join.</li>
+          <li><strong>Test it:</strong> type <code>!decline</code> in your chat. The bot should answer "nobody has challenged you yet". If it says "wrong key", copy the reply again.</li>
+          <li><strong>Optional: remind chat how to join.</strong> In StreamElements go to Chat bot, then Timers, and add a timer that runs every 15 to 20 minutes. Click Copy timer message and paste it as the message. Mini Chat never posts on its own.</li>
         </ol>
         <p class="caveat small">Add commands in the dashboard, not with <code>!command add</code> in chat: the reply contains the key, and chat would show it to every viewer.</p>
-        <div class="toolbar"><button class="btn" id="use-se" type="button">Use StreamElements</button><button class="btn" id="save-se-names" type="button">Save names</button><button class="btn" id="rotate-se" type="button">New key</button></div>
+        <div class="toolbar"><button class="btn" id="use-se" type="button">Use StreamElements</button><button class="btn" id="save-se-names" type="button">Save names</button><button class="btn" id="rotate-se" type="button">New key</button><button class="btn" id="copy-timer" type="button">Copy timer message</button></div>
         <p class="status" id="se-status" role="status"></p>
         <div class="table-wrap"><table class="data" id="se-table">
           <thead><tr><th scope="col">Action</th><th scope="col">Command name</th><th scope="col">StreamElements reply</th><th scope="col"><span class="sr-only">Copy</span></th></tr></thead>

@@ -130,6 +130,36 @@ try {
     await context.close();
   }
 
+  // 3b. First run: back from Twitch sign-in with no fighter, save one, then the next step until the first duel.
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    let saved = null;
+    await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+    await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
+    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board.filter((p) => p.userId !== user.id)));
+    await page.route('**/api/profile/nesszerra', async (r) => {
+      if (r.request().method() === 'POST') { saved = { ...user, username: user.login, ...r.request().postDataJSON(), elo: 1000, wins: 0, losses: 0 }; return json(r, { profile: saved, revision: 3 }); }
+      return json(r, saved);
+    });
+    await page.goto(base + '/?signed_in=1');
+    await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('Signed in'));
+    assert.equal(await page.locator('#save-status').textContent(), 'Signed in as Viewer_One. Pick a fighter and save.');
+    assert.equal(new URL(page.url()).search, '', 'the signed_in flag is gone from the address');
+    assert.equal(await page.locator('#next-step').isHidden(), true);
+    await page.locator('label[for=char-adventurer]').click();
+    await page.locator('#save').click();
+    await page.waitForSelector('#next-step:not([hidden])');
+    assert.equal(await page.locator('#next-step').textContent(), "Saved. Next: in nesszerra's chat, type !challenge @friend. They answer !fight.");
+    assert.equal(await page.locator('#save-status').textContent(), '', 'the next step replaces the plain saved line');
+    if (s.name !== '1280') {
+      const bar = await page.locator('.hero-card').boundingBox(), vh = page.viewportSize().height;
+      assert.ok(bar.y + bar.height <= vh + 1 && bar.height < vh / 2, 'fighter bar with the next step still fits at ' + s.name);
+    }
+    await noOverflow(page, 'viewer first run ' + s.name);
+    await page.screenshot({ path: shots + '/viewer-first-run-' + s.name + '.png' });
+    await context.close();
+  }
+
   // 4. Signed in but not a moderator -> admin gate.
   {
     const { context, page } = await newPage(sizes[1]);

@@ -3,9 +3,12 @@
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
-export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'top', 'elo'];   // quick duels need no attack commands
-export const SE_READ_ACTIONS = ['top', 'elo'];   // only read saved profiles: no game state, so they work while duels are paused
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', top: '!top', elo: '!elo' };
+export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'top', 'elo', 'help'];   // quick duels need no attack commands
+export const SE_READ_ACTIONS = ['top', 'elo', 'help'];   // no game state, so they work while duels are paused
+// StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', top: '!ranks', elo: '!elo', help: '!minichat' };
+export const LOST_TEXT = 'Lost in the arena? Type !minichat';
+export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
 const MAX_REPLY = 380;   // StreamElements cuts responses at 400 bytes
 
 const reply = (body, status = 200) => new Response(String(body).slice(0, MAX_REPLY), { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
@@ -17,7 +20,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
   if (!m) return reply('Unknown command', 404);
   const [, channel, action] = m;
   if (!channels.includes(channel)) return reply('Mini Chat is not enabled for this channel', 404);
-  if (!SE_ACTIONS.includes(action)) return reply('Mini Chat: attack commands are gone. Duels are !challenge @name, then !fight.');   // old !attack/!strike/!heavy/!heal
+  if (!SE_ACTIONS.includes(action)) return reply(LOST_TEXT);   // e.g. an old !attack/!strike/!heavy/!heal
   const q = name => (url.searchParams.get(name) || '').trim();
   const key = q('k');
   if (!key || key.length > 128) return reply('Mini Chat: missing key. Copy the commands again from the admin page.');
@@ -34,7 +37,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
   // always 200 so the bot shows the text; '' (a repeated message id) means post nothing
-  return reply(typeof data.reply === 'string' ? data.reply : 'Mini Chat: something went wrong');
+  return reply(typeof data.reply === 'string' ? data.reply : MISSED_TEXT);
 }
 
 // $(1) as sent by StreamElements -> a Twitch login, or '' for none. '-' means no argument; chat clients
@@ -66,11 +69,20 @@ const secs = ms => Math.max(1, Math.ceil(ms / 1000));
 const short = s => String(s || '').slice(0, 25);
 // The site link for a channel: every channel but nesszerra names itself.
 const siteLink = (origin, channel, hash = '') => origin ? `${origin}/${channel && channel !== 'nesszerra' ? '?channel=' + channel : ''}${hash}` : '';
+const gearUp = (origin, channel, lead = 'Gear up at') => { const link = siteLink(origin, channel); return link ? ` ${lead} ${link}` : ''; };
+const noFighter = (who, self, origin, channel) => self ? `@${who}, you have no fighter in the arena yet!${gearUp(origin, channel)}` : `@${who} has no fighter in the arena yet!${gearUp(origin, channel, 'Send them to')}`;
+
+// !minichat: how to join, with this channel's own command names.
+export function seHelpText({ names = {}, origin = '', channel = '' } = {}) {
+  const n = a => names[a] || DEFAULT_SE_NAMES[a];
+  const link = siteLink(origin, channel);
+  return `Mini Chat duels: gear up${link ? ' at ' + link : ' on the Mini Chat site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}.`;
+}
 
 // !top: the first five of the leaderboard (rows in leaderboard order) on one line.
 export function seTopText(rows, { origin = '', channel = '' } = {}) {
   const link = siteLink(origin, channel, '#ranks');
-  if (!rows.length) return `Mini Chat: nobody is ranked yet. Save a fighter${link ? ' at ' + link : ''} and win a duel.`;
+  if (!rows.length) return `The arena has no champions yet!${gearUp(origin, channel)} and win a duel.`;
   const line = `Top ${Math.min(5, rows.length)}: ` + rows.slice(0, 5).map((r, i) => `${i + 1}. ${short(r.displayName || r.username)} ${r.elo}`).join(' · ') + '.';
   return link && line.length + link.length < MAX_REPLY - 12 ? `${line} Full list: ${link}` : line;
 }
@@ -78,9 +90,7 @@ export function seTopText(rows, { origin = '', channel = '' } = {}) {
 // !elo [@name]: one fighter's rating and place. `found` = { profile, rank, total } or null.
 export function seEloText(found, { self, askerName = '', target = '', origin = '', channel = '' } = {}) {
   if (!found) {
-    if (!self) return `Mini Chat: @${target} has no saved fighter yet.`;
-    const link = siteLink(origin, channel);
-    return `${short(askerName) || 'You'}, save a fighter first${link ? ' at ' + link : ''}.`;
+    return self ? noFighter(short(askerName) || 'you', true, origin, channel) : noFighter(target, false, origin, channel);
   }
   const { profile: p, rank, total } = found;
   return `${short(p.displayName || p.username)}: ${p.elo} Elo, rank ${rank} of ${total}, ${p.wins} win${p.wins === 1 ? '' : 's'} and ${p.losses} loss${p.losses === 1 ? '' : 'es'}.`;
@@ -88,7 +98,8 @@ export function seEloText(found, { self, askerName = '', target = '', origin = '
 const nameOf = (state, id) => { const p = state.players.find(x => x.userId === id); return p?.displayName || p?.username || 'someone'; };
 
 // One short chat line for the bot to post, built from the reducer result and the state after it.
-export function seReplyText({ result, state, actorId, action, target, names = {}, origin, now = Date.now() }) {
+// actorRegistered: whether the sender has a saved fighter, so a sign-in refusal can say who is missing one.
+export function seReplyText({ result, state, actorId, action, target, names = {}, origin, now = Date.now(), actorRegistered = true }) {
   const n = a => names[a] || DEFAULT_SE_NAMES[a];
   const me = nameOf(state, actorId);
   const reason = result?.reason || '';
@@ -103,10 +114,10 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
       const left = ` (${result.winnerHp} HP left${result.flawless ? ', flawless, +3 bonus' : ''})`;
       return `${wn} beats ${ln}${how}${left}.` + (w && l ? ` Elo: ${wn} ${w.elo}, ${ln} ${l.elo}.` : '');
     }
-    if (!duel) return `Mini Chat: couldn't read that command, try again.`;   // ok but no duel = the text didn't parse as a command
-    if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}.`;
-    if (action === 'challenge') return `${me} challenges @${target} to a duel. @${target}, type ${n('accept')} or ${n('decline')} within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
-    if (reason === 'challenge_declined') return `${me} declined the duel.`;
+    if (!duel) return MISSED_TEXT;   // ok but no duel = the text didn't parse as a command
+    if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}!`;
+    if (action === 'challenge') return `${me} challenges @${target}! @${target}, type ${n('accept')} to fight or ${n('decline')} to back out within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
+    if (reason === 'challenge_declined') return `${me} backs out of the duel.`;
     if (reason === 'duel_completed') {
       const w = state.players.find(p => p.userId === actorId), l = state.players.find(p => p.userId === other);
       return `${me} knocked out ${nameOf(state, other)} and wins.` + (w && l ? ` Elo: ${me} ${w.elo}, ${nameOf(state, other)} ${l.elo}.` : '');
@@ -118,23 +129,24 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     return `${me}: done.`;
   }
   // Every channel but nesszerra has its own profiles, so the link must name the channel.
-  const signUp = origin ? ` Save a fighter at ${origin}${state.channel && state.channel !== 'nesszerra' ? '/?channel=' + state.channel : ''}` : '';
+  const ch = state.channel;
   switch (reason) {
-    case 'chat_offline': return 'Mini Chat: duels are paused, StreamElements is not connected in the admin page.';
-    case 'duels_disabled': return 'Mini Chat: duels are turned off right now.';
-    case 'ranked_sign_in_required': return action === 'challenge' || action === 'accept' ? `Mini Chat: both players need a saved fighter first.${signUp}` : `${me}, save a fighter first.${signUp}`;
-    case 'target_required': return `Mini Chat: who? Use ${n('challenge')} @name`;
-    case 'target_not_found': return `Mini Chat: @${target} needs to save a fighter first.${signUp}`;
-    case 'self_duel': return `${me}, you can't duel yourself.`;
-    case 'player_busy': return `Mini Chat: one of you is already in a duel.`;
-    case 'respawning': return `${me} is still knocked out.`;
-    case 'channel_full': return 'Mini Chat: all duel slots are taken, try again soon.';
-    case 'rematch_cooldown': return `Mini Chat: rematch available in ${secs((result.retryAt || now) - now)} s.`;
-    case 'challenge_not_found': return `${me}, you have no pending challenge.`;
-    case 'not_in_active_duel': case 'not_in_duel': return `${me}, you're not in a duel. Use ${n('challenge')} @name`;
-    case 'wrong_opponent': return `${me}, that's not your opponent.`;
+    case 'chat_offline': case 'duels_disabled': return 'The arena is closed right now. Come back soon!';
+    case 'ranked_sign_in_required':
+      if (!actorRegistered) return noFighter(me, true, origin, ch);
+      return target ? noFighter(target, false, origin, ch) : `Your rival has no fighter in the arena yet!${gearUp(origin, ch, 'Send them to')}`;
+    case 'target_required': return `Challenge who? Name your rival: ${n('challenge')} @name`;
+    case 'target_not_found': return noFighter(target, false, origin, ch);
+    case 'self_duel': return `${me}, you can't fight your own shadow! Name a rival: ${n('challenge')} @name`;
+    case 'player_busy': return 'One of you is already fighting! Wait for the bell, then try again.';
+    case 'respawning': return `${me} is still seeing stars. Give it a few seconds!`;
+    case 'channel_full': return 'Every ring is taken! Try again in a moment.';
+    case 'rematch_cooldown': return `Rematch in ${secs((result.retryAt || now) - now)} s! Catch your breath first.`;
+    case 'challenge_not_found': return `${me}, nobody has challenged you yet. Start one: ${n('challenge')} @name`;
+    case 'not_in_active_duel': case 'not_in_duel': return `${me}, you're not in a fight. Start one: ${n('challenge')} @name`;
+    case 'wrong_opponent': return `${me}, that's not your rival!`;
     case 'duplicate': return '';
-    case 'active_player_cap': return 'Mini Chat: the arena is full.';
-    default: return `Mini Chat: couldn't do that (${reason || 'error'}).`;
+    case 'active_player_cap': return 'The arena is packed! Try again soon.';
+    default: return MISSED_TEXT;   // the reason code stays in the command log
   }
 }
