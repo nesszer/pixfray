@@ -8,3 +8,4 @@ dist/
 *.log
 .devtools.local.json
 *.local.txt
+.asset-src/

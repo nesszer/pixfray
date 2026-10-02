@@ -9,7 +9,7 @@
 //   atlas_dimensions, 413 atlas_too_large, 415 not_png, 409 custom_limit_reached.
 // DELETE /api/assets/:channel/:id (canManage) -> {ok:true, id, usage} or 404 {reason:"not_found"}.
 // The same validation runs in the Worker (cheap rejection) and again in the ChannelRoom before the insert.
-export const UPLOAD_LIMITS = Object.freeze({ maxFrames: 24, frameSize: 128, maxAtlasBytes: 1_572_864, maxCharacters: 8, mime: 'image/png', maxAtlasSide: 1024, maxLabel: 32 });
+export const UPLOAD_LIMITS = Object.freeze({ maxFrames: 24, frameSize: 128, maxAtlasBytes: 1_572_864, maxCharacters: 24, mime: 'image/png', maxAtlasSide: 1024, maxLabel: 32 });
 export const CUSTOM_ID = /^c-[a-z0-9-]{1,40}$/;
 export const ANIMATIONS = Object.freeze(['idle', 'walk', 'attack', 'ko', 'jump', 'cheer']);
 // base64 of the largest atlas plus room for the frame lists and label.
@@ -60,7 +60,7 @@ export async function handleRoomAssets(room, request, { path, channel }) {
     try { upload = validateUpload(body); } catch (error) { if (error instanceof UploadError) return fail(error.status, error.reason, error.message); throw error; }
     const createdBy = typeof body.createdBy === 'string' && body.createdBy ? body.createdBy.slice(0, 64) : 'unknown';
     const id = customId(upload.meta.label), now = Date.now();
-    // Count and insert in one transaction so two moderators can't both take the 8th slot.
+    // Count and insert in one transaction so two moderators can't both take the last slot.
     const inserted = room.ctx.storage.transactionSync(() => {
       const [{ count }] = sql.exec('SELECT COUNT(*) AS count FROM custom_characters').toArray();
       if (count >= UPLOAD_LIMITS.maxCharacters) return false;

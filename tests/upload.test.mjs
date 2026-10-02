@@ -85,24 +85,24 @@ function room() {
   return r;
 }
 
-test('the room stores up to 8 characters and refuses the 9th', async () => {
+test('the room stores up to 24 characters and refuses the 25th', async () => {
   const r = room();
   const ids = [];
-  for (let i = 1; i <= 8; i++) {
+  for (let i = 1; i <= 24; i++) {
     const res = await r.call('/asset', { method: 'POST', data: { ...body({ label: 'Knight ' + i }), createdBy: 'u' + i } });
     assert.equal(res.status, 201, JSON.stringify(res.body));
-    assert.match(res.body.item.id, /^c-knight-\d-[0-9a-f]{6}$/);
+    assert.match(res.body.item.id, /^c-knight-\d+-[0-9a-f]{6}$/);
     assert.equal(res.body.item.url, '/api/assets/nesszerra/' + res.body.item.id);
     assert.equal(res.body.usage.count, i);
     ids.push(res.body.item.id);
   }
-  const ninth = await r.call('/asset', { method: 'POST', data: body({ label: 'Knight 9' }) });
-  assert.equal(ninth.status, 409);
-  assert.equal(ninth.body.reason, 'custom_limit_reached');
-  assert.deepEqual(customUsage(r), { count: 8, limit: 8, bytes: 8 * makePng(256, 64).length });
+  const extra = await r.call('/asset', { method: 'POST', data: body({ label: 'Knight 25' }) });
+  assert.equal(extra.status, 409);
+  assert.equal(extra.body.reason, 'custom_limit_reached');
+  assert.deepEqual(customUsage(r), { count: 24, limit: 24, bytes: 24 * makePng(256, 64).length });
 
   const catalog = await r.call('/catalog');
-  assert.equal(catalog.body.length, 8);
+  assert.equal(catalog.body.length, 24);
   assert.ok(catalog.body.every((e) => e.custom === true && e.license && e.frames.length && !('atlas' in e)));
 
   const png = await r.call('/asset/' + ids[0]);
@@ -111,13 +111,13 @@ test('the room stores up to 8 characters and refuses the 9th', async () => {
   assert.deepEqual(readPng(png.body), { width: 256, height: 64 });
 
   const list = await r.call('/asset');
-  assert.equal(list.body.items.length, 8);
+  assert.equal(list.body.items.length, 24);
   assert.equal(list.body.items[0].createdBy, 'u1');
-  assert.equal(list.body.limits.maxCharacters, 8);
+  assert.equal(list.body.limits.maxCharacters, 24);
 
   const del = await r.call('/asset/' + ids[0], { method: 'DELETE' });
   assert.equal(del.status, 200);
-  assert.equal(del.body.usage.count, 7);
+  assert.equal(del.body.usage.count, 23);
   assert.equal((await r.call('/asset/' + ids[0])).status, 404);
   assert.equal((await r.call('/asset/' + ids[0], { method: 'DELETE' })).status, 404);
   assert.equal((await r.call('/asset', { method: 'POST', data: body({ label: 'Replacement' }) })).status, 201);
@@ -232,6 +232,6 @@ test('a packed plan plus its PNG passes server validation end to end', () => {
 test('ensureUploadSchema is idempotent', () => {
   const ctx = fakeRoomCtx();
   ensureUploadSchema(ctx.storage.sql); ensureUploadSchema(ctx.storage.sql);
-  assert.deepEqual(customUsage({ ctx }), { count: 0, limit: 8, bytes: 0 });
+  assert.deepEqual(customUsage({ ctx }), { count: 0, limit: 24, bytes: 0 });
   assert.equal(typeof handleRoomAssets, 'function');
 });

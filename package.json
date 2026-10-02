@@ -15,6 +15,7 @@
     "test:upload": "node tests/upload-workerd.mjs",
     "test:e2e": "node tests/e2e-local.mjs",
     "seed:local": "node tests/seed-local.mjs",
+    "build:characters": "node scripts/build-characters.mjs",
     "test:all": "node scripts/test-all.mjs"
   },
   "devDependencies": {

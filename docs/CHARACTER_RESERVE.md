@@ -1,6 +1,10 @@
 # Character reserve
 
-40 free characters, vetted on 2026-10-01 and ready to import later. None of them are bundled yet.
+29 free characters, vetted on 2026-10-01 and ready to import later. None of them are bundled yet.
+
+24 other characters, taken from this list and from the OpenGameArt packs by pzUH, were imported on
+2026-10-02 with `scripts/build-characters.mjs` (see `ASSET_LICENSES.md`). Their rows were removed from the
+table below.
 
 How each row was vetted: the official archive was downloaded from the Kenney asset page, the
 license file inside the archive was read, and the listed sprite files were opened to confirm they
@@ -33,48 +37,40 @@ Frame columns: **walk** and **idle** are movement frames; **attack** and **ko** 
 | # | Name | Pack | Files (inside the archive) | Size (px) | walk | idle | attack | ko |
 |---|---|---|---|---|---|---|---|---|
 | 1 | Yellow Alien | Platformer Art Deluxe | `Extra animations and enemies/Alien sprites/alienYellow_*.png` | up to 70 x 100 | walk1, walk2 | stand | effects | hurt |
-| 2 | Green Pixel Astronaut | Pixel Platformer | `Tiles/Characters/tile_0000.png`, `tile_0001.png` | 24 x 24 | 2 frames | tile_0000 | effects | effects |
-| 3 | Blue Pixel Astronaut | Pixel Platformer | `Tiles/Characters/tile_0002.png`, `tile_0003.png` | 24 x 24 | 2 frames | tile_0002 | effects | effects |
-| 4 | Pink Pixel Astronaut | Pixel Platformer | `Tiles/Characters/tile_0004.png`, `tile_0005.png` | 24 x 24 | 2 frames | tile_0004 | effects | effects |
-| 5 | Blue Blob | Abstract Platformer | `PNG/Players/Player Blue/playerBlue_*.png` (18 poses) | up to 64 x 40 | walk1-walk5 | stand | effects | hit, dead |
-| 6 | Green Blob | Abstract Platformer | `PNG/Players/Player Green/playerGreen_*.png` (18 poses) | up to 64 x 39 | walk1-walk5 | stand | effects | hit, dead |
-| 7 | Grey Blob | Abstract Platformer | `PNG/Players/Player Grey/playerGrey_*.png` (18 poses) | up to 64 x 36 | walk1-walk5 | stand | effects | hit, dead |
-| 8 | Red Blob | Abstract Platformer | `PNG/Players/Player Red/playerRed_*.png` (18 poses) | up to 64 x 38 | walk1-walk5 | stand | effects | hit, dead |
-| 9 | Green Hand | Scribble Platformer | `PNG/Default/character_handGreen.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 10 | Purple Hand | Scribble Platformer | `PNG/Default/character_handPurple.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 11 | Red Hand | Scribble Platformer | `PNG/Default/character_handRed.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 12 | Yellow Hand | Scribble Platformer | `PNG/Default/character_handYellow.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 13 | Green Round | Scribble Platformer | `PNG/Default/character_roundGreen.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 14 | Purple Round | Scribble Platformer | `PNG/Default/character_roundPurple.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 15 | Red Round | Scribble Platformer | `PNG/Default/character_roundRed.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 16 | Yellow Round | Scribble Platformer | `PNG/Default/character_roundYellow.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 17 | Green Square | Scribble Platformer | `PNG/Default/character_squareGreen.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 18 | Purple Square | Scribble Platformer | `PNG/Default/character_squarePurple.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 19 | Red Square | Scribble Platformer | `PNG/Default/character_squareRed.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 20 | Yellow Square | Scribble Platformer | `PNG/Default/character_squareYellow.png` | 64 x 64 | single PNG | single PNG | effects | effects |
-| 21 | Bat | Platformer Art Extended Enemies | `Enemy sprites/bat*.png` | up to 88 x 47 | bat, fly | hang | effects | hit, dead |
-| 22 | Bee | Platformer Art Extended Enemies | `Enemy sprites/bee*.png` | up to 61 x 48 | bee, fly | bee | effects | hit, dead |
-| 23 | Fly | Platformer Art Extended Enemies | `Enemy sprites/fly*.png` | up to 65 x 45 | fly, fly_fly | fly | effects | hit, dead |
-| 24 | Frog | Platformer Art Extended Enemies | `Enemy sprites/frog*.png` | up to 61 x 54 | frog, leap | frog | effects | hit, dead |
-| 25 | Ghost | Platformer Art Extended Enemies | `Enemy sprites/ghost*.png` | 51 x 73 | ghost, normal | normal | effects | hit, dead |
-| 26 | Ladybug | Platformer Art Extended Enemies | `Enemy sprites/ladyBug*.png` | up to 61 x 42 | ladyBug, walk | ladyBug | effects | hit |
-| 27 | Mouse | Platformer Art Extended Enemies | `Enemy sprites/mouse*.png` | up to 59 x 35 | mouse, walk | mouse | effects | hit, dead |
-| 28 | Snail | Platformer Art Extended Enemies | `Enemy sprites/snail*.png` | up to 60 x 40 | snail, walk | snail | effects | hit, shell |
-| 29 | Spider | Platformer Art Extended Enemies | `Enemy sprites/spider*.png` | up to 77 x 53 | walk1, walk2 | spider | effects | hit, dead |
-| 30 | Worm | Platformer Art Extended Enemies | `Enemy sprites/worm*.png` | 63 x 23 | worm, walk | worm | effects | hit, dead |
-| 31 | Green Slime | Platformer Art Extended Enemies | `Enemy sprites/slimeGreen*.png` | up to 57 x 34 | slimeGreen, walk | slimeGreen | effects | hit, squashed, dead |
-| 32 | Blue Slime | Platformer Art Extended Enemies | `Enemy sprites/slimeBlue*.png` | up to 57 x 34 | slimeBlue, blue | slimeBlue | effects | hit, squashed, dead |
-| 33 | Snake | Platformer Art Extended Enemies | `Enemy sprites/snake.png`, `snake_walk.png`, `snake_hit.png`, `snake_dead.png` | 63 x 23 | snake, walk | snake | effects | hit, dead |
-| 34 | Slime Block | Platformer Art Extended Enemies | `Enemy sprites/slimeBlock*.png` | 51 x 50 | slimeBlock | slimeBlock | effects | hit, dead |
-| 35 | Grass Block | Platformer Art Extended Enemies | `Enemy sprites/grassBlock*.png` | 71 x 70 | grassBlock, jump | grassBlock | effects | hit, dead |
-| 36 | Barnacle | Platformer Art Extended Enemies | `Enemy sprites/barnacle*.png` | up to 51 x 58 | barnacle, bite | barnacle | bite | hit, dead |
-| 37 | Yellow Pixel Astronaut | Pixel Platformer | `Tiles/Characters/tile_0006.png`, `tile_0007.png` | 24 x 24 | 2 frames | tile_0006 | effects | effects |
-| 38 | Beige Pixel Astronaut | Pixel Platformer | `Tiles/Characters/tile_0009.png`, `tile_0010.png` | 24 x 24 | 2 frames | tile_0009 | effects | effects |
-| 39 | Pixel Block Face | Pixel Platformer | `Tiles/Characters/tile_0011.png`, `tile_0012.png` | 24 x 24 | 2 frames | tile_0011 | effects | effects |
-| 40 | Pixel Bat | Pixel Platformer | `Tiles/Characters/tile_0024.png` to `tile_0026.png` | 24 x 24 | 3 frames | tile_0024 | effects | effects |
+| 2 | Grey Blob | Abstract Platformer | `PNG/Players/Player Grey/playerGrey_*.png` (18 poses) | up to 64 x 36 | walk1-walk5 | stand | effects | hit, dead |
+| 3 | Green Hand | Scribble Platformer | `PNG/Default/character_handGreen.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 4 | Purple Hand | Scribble Platformer | `PNG/Default/character_handPurple.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 5 | Red Hand | Scribble Platformer | `PNG/Default/character_handRed.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 6 | Yellow Hand | Scribble Platformer | `PNG/Default/character_handYellow.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 7 | Green Round | Scribble Platformer | `PNG/Default/character_roundGreen.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 8 | Purple Round | Scribble Platformer | `PNG/Default/character_roundPurple.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 9 | Red Round | Scribble Platformer | `PNG/Default/character_roundRed.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 10 | Yellow Round | Scribble Platformer | `PNG/Default/character_roundYellow.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 11 | Green Square | Scribble Platformer | `PNG/Default/character_squareGreen.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 12 | Purple Square | Scribble Platformer | `PNG/Default/character_squarePurple.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 13 | Red Square | Scribble Platformer | `PNG/Default/character_squareRed.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 14 | Yellow Square | Scribble Platformer | `PNG/Default/character_squareYellow.png` | 64 x 64 | single PNG | single PNG | effects | effects |
+| 15 | Bat | Platformer Art Extended Enemies | `Enemy sprites/bat*.png` | up to 88 x 47 | bat, fly | hang | effects | hit, dead |
+| 16 | Bee | Platformer Art Extended Enemies | `Enemy sprites/bee*.png` | up to 61 x 48 | bee, fly | bee | effects | hit, dead |
+| 17 | Fly | Platformer Art Extended Enemies | `Enemy sprites/fly*.png` | up to 65 x 45 | fly, fly_fly | fly | effects | hit, dead |
+| 18 | Ghost | Platformer Art Extended Enemies | `Enemy sprites/ghost*.png` | 51 x 73 | ghost, normal | normal | effects | hit, dead |
+| 19 | Spider | Platformer Art Extended Enemies | `Enemy sprites/spider*.png` | up to 77 x 53 | walk1, walk2 | spider | effects | hit, dead |
+| 20 | Worm | Platformer Art Extended Enemies | `Enemy sprites/worm*.png` | 63 x 23 | worm, walk | worm | effects | hit, dead |
+| 21 | Green Slime | Platformer Art Extended Enemies | `Enemy sprites/slimeGreen*.png` | up to 57 x 34 | slimeGreen, walk | slimeGreen | effects | hit, squashed, dead |
+| 22 | Blue Slime | Platformer Art Extended Enemies | `Enemy sprites/slimeBlue*.png` | up to 57 x 34 | slimeBlue, blue | slimeBlue | effects | hit, squashed, dead |
+| 23 | Snake | Platformer Art Extended Enemies | `Enemy sprites/snake.png`, `snake_walk.png`, `snake_hit.png`, `snake_dead.png` | 63 x 23 | snake, walk | snake | effects | hit, dead |
+| 24 | Slime Block | Platformer Art Extended Enemies | `Enemy sprites/slimeBlock*.png` | 51 x 50 | slimeBlock | slimeBlock | effects | hit, dead |
+| 25 | Grass Block | Platformer Art Extended Enemies | `Enemy sprites/grassBlock*.png` | 71 x 70 | grassBlock, jump | grassBlock | effects | hit, dead |
+| 26 | Barnacle | Platformer Art Extended Enemies | `Enemy sprites/barnacle*.png` | up to 51 x 58 | barnacle, bite | barnacle | bite | hit, dead |
+| 27 | Beige Pixel Astronaut | Pixel Platformer | `Tiles/Characters/tile_0009.png`, `tile_0010.png` | 24 x 24 | 2 frames | tile_0009 | effects | effects |
+| 28 | Pixel Block Face | Pixel Platformer | `Tiles/Characters/tile_0011.png`, `tile_0012.png` | 24 x 24 | 2 frames | tile_0011 | effects | effects |
+| 29 | Pixel Bat | Pixel Platformer | `Tiles/Characters/tile_0024.png` to `tile_0026.png` | 24 x 24 | 3 frames | tile_0024 | effects | effects |
 
 ## Checked and left out
 
+- Already bundled from the reserve: Blue, Green and Red Blob (Abstract Platformer); Frog, Ladybug, Mouse and
+  Snail (the New Platformer Pack versions, drawn at higher resolution, replace the Extended Enemies ones); and
+  the four Pixel Platformer astronauts (shown as Pixel Green, Pixel Blue, Pixel Pink and Pixel Yellow).
 - Toon Characters 1 (https://kenney.nl/assets/toon-characters): all 6 characters are already in the
   launch roster.
 - Platformer Art Deluxe aliens Beige, Blue, Green and Pink: already in the launch roster.

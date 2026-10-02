@@ -209,7 +209,7 @@ plays an effect (flash, shake, fade) over `idle`. Static characters live in
 Custom characters:
 - Ids match `^c-[a-z0-9-]{1,40}$`. `url` is `/api/assets/<channel>/<id>`.
 - Limits (`UPLOAD_LIMITS`): PNG only, at most 24 frames, frames up to 128x128, an atlas of at most
-  1,572,864 bytes, and at most 8 characters per channel.
+  1,572,864 bytes, and at most 24 characters per channel.
 - Stored in the room table `custom_characters(id, meta JSON without id/url, atlas BLOB, bytes,
   created_by, created_at)`.
 

@@ -11,9 +11,11 @@ const catalog = JSON.parse(read('public/assets/characters.json').toString('utf8'
 const licenses = read('ASSET_LICENSES.md').toString('utf8');
 const rect = (f) => f && [f.x, f.y, f.w, f.h].every(Number.isInteger) && f.w > 0 && f.h > 0 && f.x >= 0 && f.y >= 0;
 
-test('the launch roster has 10 to 15 characters with unique ids', () => {
+test('the roster has 15 launch characters plus the v3 additions, with unique ids', () => {
   assert.ok(Array.isArray(catalog));
-  assert.ok(catalog.length >= 10 && catalog.length <= 15, 'got ' + catalog.length);
+  assert.ok(catalog.length >= 15 && catalog.length <= 60, 'got ' + catalog.length);
+  const labels = catalog.map((c) => c.label.toLowerCase());
+  assert.equal(new Set(labels).size, labels.length, 'labels are unique');
   const ids = catalog.map((c) => c.id);
   assert.equal(new Set(ids).size, ids.length);
   for (const id of ids) assert.match(id, /^[a-z0-9-]{1,40}$/);
@@ -58,17 +60,17 @@ test('combat-ready characters exist and every character is licensed in ASSET_LIC
     assert.ok(licenses.includes(c.url.split('/').pop()), c.url + ' file is listed in ASSET_LICENSES.md');
     assert.ok(licenses.includes(c.source), c.source + ' is listed in ASSET_LICENSES.md');
   }
-  for (const notice of ['KENNEY_LICENSE.txt', 'KENNEY_TOON_LICENSE.txt', 'KENNEY_PLATFORMER_ART_LICENSE.txt']) {
+  for (const notice of ['KENNEY_LICENSE.txt', 'KENNEY_TOON_LICENSE.txt', 'KENNEY_PLATFORMER_ART_LICENSE.txt', 'KENNEY_NEW_PLATFORMER_LICENSE.txt', 'KENNEY_PIXEL_PLATFORMER_LICENSE.txt', 'KENNEY_ABSTRACT_PLATFORMER_LICENSE.txt', 'OGA_PZUH_LICENSE.txt']) {
     const text = read('public/assets/' + notice).toString('utf8');
     assert.match(text, /CC0/, notice + ' states CC0');
     assert.ok(licenses.includes(notice), notice + ' is referenced');
   }
 });
 
-test('the reserve lists at least 30 characters, each with a source and license', () => {
+test('the reserve lists at least 25 characters, each with a source and license', () => {
   const doc = read('docs/CHARACTER_RESERVE.md').toString('utf8');
   const rows = doc.split('\n').filter((l) => /^\| \d+ \|/.test(l));
-  assert.ok(rows.length >= 30, 'got ' + rows.length);
+  assert.ok(rows.length >= 25, 'got ' + rows.length);
   const packs = doc.split('\n').filter((l) => /^\| .+ \| https:\/\/kenney\.nl\/assets\//.test(l));
   assert.ok(packs.length >= 1);
   for (const p of packs) assert.match(p, /CC0/);
