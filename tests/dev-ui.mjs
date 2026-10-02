@@ -27,6 +27,9 @@ const diag = (configured) => ({
 });
 async function stub(page, { configured }) {
   let codex = { authorized: false, note: '', updatedBy: '', updatedAt: 0 };
+  const tok = 'cd'.repeat(16);
+  const reg = { builtin: ['nesszerra', 'miolafff'], max: 200, channels: [{ login: 'oldstreamer', enabledAt: now - 86400000 }],
+    invites: [{ token: 'ef'.repeat(16), login: 'latecomer', createdAt: now - 9 * 86400000, status: 'expired' }] };
   await page.route('**/api/session', (r) => json(r, { user: owner, owner: true, configured: true, channels: ['nesszerra'], productionEnabled: false }));
   await page.route('**/api/dev/**', (r) => {
     const u = new URL(r.request().url()), op = u.pathname.slice('/api/dev/'.length), method = r.request().method();
@@ -36,6 +39,13 @@ async function stub(page, { configured }) {
     if (op === 'logs') return json(r, [{ id: 2, at: now - 600000, source: 'room', message: 'room error', context: { path: '/eventsub', method: 'POST' } }, { id: 1, at: now - 900000, source: 'worker', message: 'Unexpected token in JSON at position 0', context: { path: '/api/profile/nesszerra' } }]);
     if (op === 'codex' && method === 'POST') { const b = JSON.parse(r.request().postData()); codex = { authorized: b.authorized, note: b.note, updatedBy: 'nesszerra', updatedAt: Date.now() }; return json(r, codex); }
     if (op === 'codex') return json(r, codex);
+    if (op === 'channels' && method === 'POST') {
+      const b = JSON.parse(r.request().postData());
+      if (b.action === 'invite') { reg.invites.unshift({ token: tok, login: b.login.toLowerCase(), createdAt: Date.now(), status: 'valid' }); return json(r, { ok: true, token: tok, link: base + '/start/?invite=' + tok, ...reg }); }
+      if (b.action === 'pause' || b.action === 'resume') { const c = reg.channels.find((x) => x.login === b.login); if (b.action === 'pause') c.pausedAt = Date.now(); else delete c.pausedAt; return json(r, { ok: true, ...reg }); }
+      if (b.action === 'revoke') { reg.invites = reg.invites.filter((i) => i.token !== b.token); return json(r, { ok: true, ...reg }); }
+    }
+    if (op === 'channels') return json(r, reg);
     if (!configured) return json(r, { error: 'GitHub is not configured: set the GITHUB_TOKEN secret and GITHUB_REPO (see docs/LIVE_FIX.md)', reason: 'github_not_configured' }, 501);
     if (op === 'runs') return json(r, [{ id: 1, title: 'deploy test live-fix/overlay-text r1a2b3c4d5e', status: 'completed', conclusion: 'success', branch: 'live-fix/overlay-text', createdAt: new Date(now - 1200000).toISOString(), url: 'https://github.com/' }, { id: 2, title: 'deploy production main r9f8e7d6c5b', status: 'in_progress', conclusion: null, branch: 'main', createdAt: new Date(now - 60000).toISOString(), url: 'https://github.com/' }]);
     if (op === 'versions') return json(r, { production: { script: 'nesszerra-mini-chat', deployments: [{ id: 'd', createdOn: new Date(now - 60000).toISOString(), message: 'promote #7', versions: [{ versionId: '5d1c9a3e-0000-4000-8000-000000000001', percentage: 90 }, { versionId: '4c0b8a2d-0000-4000-8000-000000000000', percentage: 10 }] }], versions: [{ id: '4c0b8a2d-0000-4000-8000-000000000000', number: 11, tag: 'gh-0a1b2c3-1200', createdOn: new Date(now - 86400000).toISOString() }] }, test: { script: 'nesszerra-mini-chat-test', deployments: [], versions: [], error: 'Cloudflare API error 404' } });
@@ -97,6 +107,22 @@ for (const size of sizes) {
   page.on('dialog', (d) => d.accept());
   await page.check('#codex-toggle');
   await page.waitForFunction(() => document.querySelector('#codex-state').textContent === 'on');
+  // Channels: invite a streamer, turn an invited channel off, remove an expired invite.
+  assert.match(await page.textContent('#channels'), /miolafff.*Built in/s);
+  assert.deepEqual(await page.$$eval('#log-channel option', (o) => o.map((x) => x.value)), ['nesszerra', 'miolafff', 'oldstreamer']);
+  await page.fill('#invite-login', 'NewStreamer');
+  await page.click('#invite-form button[type=submit]');
+  await page.waitForSelector('#invite-link-box:not([hidden])');
+  assert.match(await page.inputValue('#invite-link'), /\/start\/\?invite=(cd){16}$/);
+  assert.match(await page.textContent('#invite-status'), /Send this link to newstreamer/);
+  assert.match(await page.textContent('#invites'), /newstreamer.*Waiting/s);
+  await page.click('#channels button:has-text("Turn off")');
+  await page.waitForFunction(() => /oldstreamer is off/.test(document.querySelector('#invite-status').textContent));
+  assert.match(await page.textContent('#channels'), /oldstreamer.*Off.*Turn on/s);
+  await page.click('#invites button:has-text("Remove")');
+  await page.waitForFunction(() => !/latecomer/.test(document.querySelector('#invites').textContent));
+  assert.equal(await page.isVisible('#invite-link-box'), true, 'removing another invite keeps the new link on screen');
+  await page.locator('#sec-channels').screenshot({ path: path.join(shots, `dev-channels-${size.name}.png`) });
   await noOverflow(page, 'configured ' + size.name);
   await page.screenshot({ path: path.join(shots, `dev-configured-${size.name}.png`), fullPage: true });
   await ctx.close();

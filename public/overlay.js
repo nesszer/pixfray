@@ -28,6 +28,14 @@ const CANCEL_TEXT = {
   player_removed: 'player removed',
 };
 
+// true when the server says the channel is off ({ off: 'paused' | 'not_enabled' }); any other answer lets the overlay run.
+async function channelOff(channel) {
+  try {
+    const r = await fetch('/api/state/' + channel, { headers: { Accept: 'application/json' } });
+    return r.status === 403 && !!(await r.json())?.off;
+  } catch { return false; }
+}
+
 async function start() {
   const canvas = document.querySelector('#stage');
   if (!canvas) return;
@@ -39,6 +47,9 @@ async function start() {
   const arenaEnabled = params.get('arena') === '1';
   const arenaDemo = arenaEnabled && demo;
   const debug = params.get('debug') === '1';
+  // A channel that is turned off or was never set up shows nothing. It checks again every 5 minutes, so turning
+  // Mini Chat back on needs no OBS refresh.
+  if (!demo && await channelOff(channel)) { setTimeout(() => location.reload(), 300_000); return; }
   // Most characters on screen. The channel setting (mod controls) arrives with every snapshot and wins over ?cap=.
   let cap = Math.max(1, Math.min(100, Number(params.get('cap')) || 100));
   const size = Math.max(24, Math.min(96, Number(params.get('size')) || 60));

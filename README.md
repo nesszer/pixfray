@@ -37,6 +37,11 @@ Chat commands for v2 duels:
   duel in about 8-12 s. The default ability only changes how blows look.
 - Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).
 
+Adding a streamer: on `/admin/dev` (Channels), type their Twitch login and send them the invite
+link. They sign in on `/start/` and follow the Stream setup checklist; docs/STREAMER_SETUP.md walks
+through it. nesszerra and miolafff are built in; up to 200 invited channels can be on, and each one
+can be turned off by its streamer or the owner without losing fighters or ranks.
+
 Rules and routes are in CONTRACTS.md. The plan and the open gaps are in HANDOFF.md.
 
 Tests: `npm run test:all` runs these in order:

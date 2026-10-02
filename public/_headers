@@ -10,6 +10,9 @@
 /admin/*
   Content-Security-Policy: frame-ancestors 'none'
   X-Frame-Options: DENY
+/start/*
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
 
 # The test site and the OBS overlay stay out of search results.
 /overlay*

@@ -4,8 +4,11 @@ import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
+import { channelState,isOn,offError,readInvite,setPaused } from './channels.js';
 export {ChannelRoom,AuthStore};
-const enabledChannel=channel=>CHANNELS.includes(channel);
+// A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
+// page's state and profile saves are refused.
+const OPEN_WHEN_PAUSED=['access','admin','leaderboard','catalog','assets'];
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
 const validProfile=({avatar,color,defaultAbility})=>typeof avatar==='string'&&/^[a-z0-9_-]{1,64}$/.test(avatar)&&typeof color==='string'&&/^#[a-f0-9]{6}$/i.test(color)&&['strike','heavy','heal'].includes(defaultAbility);
 // Raw call into a ChannelRoom. Adds the internal secret and channel binding; the caller owns method/body.
@@ -92,7 +95,7 @@ export default {async fetch(request,env,ctx){
     // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
     if(path.startsWith('/api/se/')){
       if(!env.INTERNAL_SECRET)return new Response('Mini Chat is not configured',{status:503});
-      return await handleStreamElements(request,env,{url,origin:env.PUBLIC_ORIGIN||url.origin,channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),
+      return await handleStreamElements(request,env,{url,origin:env.PUBLIC_ORIGIN||url.origin,channelState:channel=>channelState(env,channel),roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),
         // StreamElements took over from a Twitch EventSub subscription: delete it so Twitch stops sending chat.
         dropSubscription:subscriptionId=>ctx?.waitUntil?.(disconnectChat(env,{subscriptionId,url}).catch(e=>console.warn('eventsub drop failed',e?.message)))});
     }
@@ -107,17 +110,21 @@ export default {async fetch(request,env,ctx){
     const devMatch=path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat)$/);
     if(path.startsWith('/api/devtools/')){
       if(!dev||!devMatch)return json({error:'Not found'},404);
-      if(!enabledChannel(devMatch[1]))return json({error:'Mini Chat is not enabled for this channel'},403);
+      const st=await channelState(env,devMatch[1]);if(!isOn(st))return json(offError(st),403);
       if(request.method!=='POST')return json({error:'Use POST'},405);
       return await handleDevtools(request,env,devMatch[1],devMatch[2],await bodyJson(request,4000));
     }
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
     if(path==='/api/health')return json({ok:true,version:'0.2.0',twitchConfigured:configured(env),productionEnabled:false});
+    // /start: who an invite is for and whether it still works. The 128-bit token is the secret.
+    const inviteMatch=path.match(/^\/api\/invite\/([a-f0-9]{32})$/);
+    if(inviteMatch)return json(await readInvite(env,inviteMatch[1]));
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,dev,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
     const match=path.match(/^\/api\/(state|live|profile|leaderboard|looks|catalog|access|admin|assets)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
     if(!match)return json({error:'Not found'},404);
     const [,route,channel,id]=match;
-    if(!enabledChannel(channel))return json({error:'Mini Chat is not enabled for this channel'},403);
+    const state=await channelState(env,channel);
+    if(!isOn(state)&&!(state==='paused'&&OPEN_WHEN_PAUSED.includes(route)))return json(offError(state),403);
     if(route==='live'&&request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return json({error:'WebSocket upgrade required'},426);
     if(route==='access')return json(await access(env,user,channel));
     if(route==='assets')return await handleUploads(request,env,{user,owner,channel,id:id||'',url,bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
@@ -141,9 +148,15 @@ export default {async fetch(request,env,ctx){
         const data=await r.json();
         // modsReady: the broadcaster's token is stored, so moderators can be checked and open this page too.
         const modsReady=!!(await record(env,'broadcaster:'+channel));
-        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',modsReady});
+        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',modsReady,channelState:state});
       }
       const data=await bodyJson(request,12000);
+      // Turn Mini Chat off or back on: the broadcaster or the owner, never a mod. Fighters and ranks are kept.
+      if(data.action==='pauseChannel'||data.action==='resumeChannel'){
+        if(!roles.owner&&!roles.broadcaster)return json({error:'Only '+channel+' can turn Mini Chat off or on'},403);
+        await setPaused(env,channel,data.action==='pauseChannel');
+        return json({ok:true,channelState:data.action==='pauseChannel'?'paused':'on'});
+      }
       if(data.action==='rotateSeKey'||data.action==='setSeNames'||data.action==='setDuelModuleOff'){
         const r=await roomFetch(null,env,channel,'/se-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:data.action,names:data.names,value:data.value===true})});
         const out=await r.json();if(!r.ok)return json(out,r.status);

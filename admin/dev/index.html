@@ -29,6 +29,7 @@
     <div class="with-index">
       <nav class="page-index" aria-label="On this page"><ol>
         <li><a href="#sec-health">Health</a></li>
+        <li><a href="#sec-channels">Channels</a></li>
         <li><a href="#sec-logs">Error log</a></li>
         <li><a href="#sec-code">Code editor</a></li>
         <li><a href="#sec-release">Release</a></li>
@@ -52,6 +53,38 @@
             <div class="stat"><div class="label">Overlay sockets</div><div class="value" id="s-sockets">–</div><div class="delta" id="s-sockets-note"></div></div>
           </div>
           <p class="caveat" id="health-caveat">Request counts come from Cloudflare analytics for the whole account (the Free limit is per account and resets at 00:00 UTC). They lag by a few minutes.</p>
+        </section>
+
+        <section class="section" id="sec-channels">
+          <h2 id="channels-title">Channels: invite a streamer, or turn a channel off</h2>
+          <form class="toolbar" id="invite-form">
+            <label class="inline" for="invite-login">Twitch login</label>
+            <input id="invite-login" class="narrow" autocomplete="off" spellcheck="false" maxlength="26" required>
+            <button class="btn" type="submit">Create invite link</button>
+          </form>
+          <p class="status" id="invite-status" role="status"></p>
+          <div class="toolbar" id="invite-link-box" hidden>
+            <label class="inline" for="invite-link" id="invite-link-label">Invite link</label>
+            <input id="invite-link" readonly>
+            <button class="btn" id="copy-invite" type="button">Copy link</button>
+          </div>
+          <div class="grid-2">
+            <div>
+              <h3>Channels</h3>
+              <div class="table-wrap"><table class="data">
+                <thead><tr><th>Channel</th><th>Status</th><th>Since</th><th>Action</th></tr></thead>
+                <tbody id="channels"></tbody>
+              </table></div>
+            </div>
+            <div>
+              <h3>Invites</h3>
+              <div class="table-wrap"><table class="data">
+                <thead><tr><th>For</th><th>Status</th><th>Created</th><th>Action</th></tr></thead>
+                <tbody id="invites"></tbody>
+              </table></div>
+            </div>
+          </div>
+          <p class="caveat">An invite works for 7 days, once, and only for the Twitch account it names. Built-in channels are always on. A channel that's off keeps its fighters and ranks; its overlay, commands and viewer page stop until it's turned back on. Up to <span id="channels-max">200</span> channels can be on.</p>
         </section>
 
         <section class="section" id="sec-logs">

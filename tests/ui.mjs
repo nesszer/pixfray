@@ -402,6 +402,101 @@ try {
     assert.equal(await page.locator('#setup-next').isHidden(), true);
     await context.close();
   }
+  // 8. /start: an invite link in each state (stubbed /api/invite), at 1280/390.
+  const tok = 'ab'.repeat(16);
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    let invite = { status: 'valid', login: 'newstreamer' };
+    await page.route('**/api/invite/*', (r) => json(r, invite));
+    await page.goto(base + '/start/');
+    await page.waitForFunction(() => !document.querySelector('#invite-title').textContent.includes('Checking'));
+    assert.equal(await page.locator('#invite-title').textContent(), 'Mini Chat is invite-only right now');
+    await page.goto(base + '/start/?invite=' + tok);
+    await page.waitForFunction(() => !document.querySelector('#invite-title').textContent.includes('Checking'));
+    assert.equal(await page.locator('#invite-title').textContent(), 'Set up Mini Chat for newstreamer');
+    assert.equal(await page.locator('#invite-actions a.btn-primary').getAttribute('href'), '/auth/login?invite=' + tok);
+    assert.equal(await page.locator('#invite-actions a').count(), 1);
+    assert.equal(await page.locator('#invite-problem').isHidden(), true);
+    await noOverflow(page, 'start valid ' + s.name);
+    await page.screenshot({ path: shots + '/start-valid-' + s.name + '.png', fullPage: true });
+    // back from Twitch after cancelling the permission: offer setup without mod access, and drop ?error from the URL
+    await page.goto(base + '/start/?invite=' + tok + '&error=denied');
+    await page.waitForSelector('#invite-problem:not([hidden])');
+    assert.match(await page.locator('#invite-problem').textContent(), /cancelled the Twitch permission/);
+    assert.deepEqual(await page.locator('#invite-actions a').evaluateAll((a) => a.map((x) => x.getAttribute('href'))), ['/auth/login?invite=' + tok, '/auth/login?invite=' + tok + '&mods=0']);
+    assert.equal(new URL(page.url()).search, '?invite=' + tok);
+    if (s.name === '390') await page.locator('#invite').screenshot({ path: shots + '/start-denied-390.png' });
+    await page.goto(base + '/start/?invite=' + tok + '&error=wrong_account');
+    await page.waitForSelector('#invite-problem:not([hidden])');
+    assert.match(await page.locator('#invite-problem').textContent(), /This invite is for newstreamer\. Log out of twitch\.tv, then sign in again as newstreamer\./);
+    invite = { status: 'used', login: 'newstreamer' };
+    await page.goto(base + '/start/?invite=' + tok);
+    await page.waitForSelector('#invite-problem:not([hidden])');
+    assert.equal(await page.locator('#invite-actions a').getAttribute('href'), '/auth/login?channel=newstreamer&next=%2Fadmin%2F');
+    invite = { status: 'expired', login: 'newstreamer' };
+    await page.goto(base + '/start/?invite=' + tok);
+    await page.waitForSelector('#invite-problem:not([hidden])');
+    assert.match(await page.locator('#invite-problem').textContent(), /has expired/);
+    assert.equal(await page.locator('#invite-actions a').count(), 0);
+    await context.close();
+  }
+
+  // 9. An invited channel's own admin page: connect mod access later, turn Mini Chat off and back on.
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    const me = { id: '5505', login: 'newstreamer', displayName: 'NewStreamer' };
+    let channelState = 'on';
+    const posts = [];
+    await page.route('**/api/session', (r) => json(r, { user: me, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+    await page.route('**/api/access/newstreamer', (r) => json(r, { owner: false, broadcaster: true, moderator: false, canManage: true }));
+    await page.route('**/api/leaderboard/newstreamer', (r) => json(r, []));
+    await page.route('**/api/assets/newstreamer', (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
+    await page.route('**/api/admin/newstreamer', (r) => {
+      if (r.request().method() === 'POST') { const body = r.request().postDataJSON(); posts.push(body); channelState = body.action === 'pauseChannel' ? 'paused' : 'on'; return json(r, { ok: true, channelState }); }
+      return json(r, { type: 'snapshot', channel: 'newstreamer', revision: 1, paused: false, chat: { connected: false, lastSeen: 0, status: 'disconnected' }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
+        chatStatus: { connected: false, status: 'disconnected', subscriptionId: '', createdAt: 0 }, history: [{ version: 1, config, actorId: 'system', at: now, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 },
+        streamelements: null, overlays: 0, modsReady: false, channelState, access: { owner: false, broadcaster: true, moderator: false, canManage: true } });
+    });
+    page.on('dialog', (d) => d.accept());
+    await page.goto(base + '/admin/?channel=newstreamer&mods=denied#chat');
+    await page.waitForSelector('#app:not([hidden])');
+    await page.waitForFunction(() => /permission was cancelled/.test(document.querySelector('#check-status').textContent));
+    assert.equal(new URL(page.url()).search, '?channel=newstreamer', 'the mods flag is dropped from the URL');
+    assert.equal(await page.locator('#check-mods a').getAttribute('href'), '/auth/login?channel=newstreamer&connect=mods');
+    assert.equal(await page.locator('#channel-power').isVisible(), true);
+    assert.equal(await page.locator('#paused-note').isHidden(), true);
+    await page.click('#power-toggle');
+    await page.waitForSelector('#paused-note:not([hidden])');
+    assert.deepEqual(posts.at(-1), { action: 'pauseChannel' });
+    assert.equal(await page.locator('#power-title').textContent(), 'Mini Chat is off on newstreamer');
+    assert.equal(await page.locator('#power-toggle').textContent(), 'Turn Mini Chat back on');
+    await noOverflow(page, 'admin paused ' + s.name);
+    await page.screenshot({ path: shots + '/admin-paused-' + s.name + '.png' });
+    await page.locator('#channel-power').screenshot({ path: shots + '/admin-power-' + s.name + '.png' });
+    await page.click('#power-toggle');
+    await page.waitForSelector('#paused-note', { state: 'hidden' });
+    assert.deepEqual(posts.at(-1), { action: 'resumeChannel' });
+    await context.close();
+  }
+
+  // 10. The viewer page of a channel that is off, or was never set up.
+  {
+    const { context, page } = await newPage(sizes[1]);
+    let off = 'paused';
+    await page.route('**/api/state/*', (r) => json(r, { error: 'off', off }, 403));
+    await page.goto(base + '/?channel=newstreamer');
+    await page.waitForSelector('#off-note:not([hidden])');
+    assert.match(await page.locator('#off-note').textContent(), /Mini Chat is off on newstreamer's channel right now/);
+    assert.equal(await page.locator('.fighter-card').isVisible(), true);
+    off = 'not_enabled';
+    await page.goto(base + '/?channel=nobodyhere');
+    await page.waitForSelector('#off-note:not([hidden])');
+    assert.match(await page.locator('#off-note').textContent(), /isn't set up on nobodyhere's channel/);
+    assert.equal(await page.locator('.fighter-card').isHidden(), true);
+    await noOverflow(page, 'viewer not set up 390');
+    await page.screenshot({ path: shots + '/viewer-not-set-up-390.png' });
+    await context.close();
+  }
   assert.deepEqual(errors, []);
   console.log('PASS: viewer + admin UI at 1280/390, signed-out (real server), signed-in viewer save, mod gate, admin actions, config save/409/revert; no page errors.');
 } finally { await browser.close(); }

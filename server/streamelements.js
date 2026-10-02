@@ -9,17 +9,21 @@ export const SE_READ_ACTIONS = ['top', 'elo', 'help'];   // no game state, so th
 export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', top: '!ranks', elo: '!elo', help: '!minichat' };
 export const LOST_TEXT = 'Lost in the arena? Type !minichat';
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
+export const OFF_TEXT = 'Mini Chat is off on this channel right now.';
 const MAX_REPLY = 380;   // StreamElements cuts responses at 400 bytes
 
 const reply = (body, status = 200) => new Response(String(body).slice(0, MAX_REPLY), { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 
 // GET /api/se/<channel>/<action>. The per-channel key is the authentication; the room checks it.
-export async function handleStreamElements(request, env, { url, origin, channels, roomFetch, dropSubscription }) {
+// channelState(channel) -> 'builtin' | 'on' | 'paused' | null (server/channels.js); tests may pass a channels list.
+export async function handleStreamElements(request, env, { url, origin, channels = [], channelState, roomFetch, dropSubscription }) {
   if (request.method !== 'GET') return reply('Use GET', 405);
   const m = SE_PATH.exec(url.pathname);
   if (!m) return reply('Unknown command', 404);
   const [, channel, action] = m;
-  if (!channels.includes(channel)) return reply('Mini Chat is not enabled for this channel', 404);
+  const state = channelState ? await channelState(channel) : channels.includes(channel) ? 'builtin' : null;
+  if (state === 'paused') return reply(OFF_TEXT);
+  if (state !== 'builtin' && state !== 'on') return reply('Mini Chat is not enabled for this channel', 404);
   if (!SE_ACTIONS.includes(action)) return reply(LOST_TEXT);   // e.g. an old !attack/!strike/!heavy/!heal
   const q = name => (url.searchParams.get(name) || '').trim();
   const key = q('k');

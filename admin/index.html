@@ -26,6 +26,7 @@
   </section>
 
   <div id="app" hidden>
+    <p class="callout warning" id="paused-note" hidden></p>
     <div class="tabs" role="tablist" aria-label="Mod controls">
       <button type="button" role="tab" id="tab-live" aria-controls="panel-live" aria-selected="true">Live</button>
       <button type="button" role="tab" id="tab-players" aria-controls="panel-players" aria-selected="false" tabindex="-1">Players</button>
@@ -196,6 +197,12 @@
           <tbody></tbody>
         </table></div>
         <p class="caveat small">The reply contains this channel's key. Anyone who sees it can send duel moves as any viewer, so keep it to the broadcaster and mods; click New key if it leaks, then paste the commands again. StreamElements only calls the site on commands, so characters appear when a viewer uses one.</p>
+      </section>
+      <section class="section" id="channel-power" aria-labelledby="power-title" hidden>
+        <h2 id="power-title">Turn Mini Chat off</h2>
+        <p id="power-text"></p>
+        <div class="toolbar"><button class="btn" id="power-toggle" type="button">Turn Mini Chat off</button></div>
+        <p class="status" id="power-status" role="status"></p>
       </section>
     </div>
   </div>

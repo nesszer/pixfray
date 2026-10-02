@@ -1,8 +1,11 @@
 # mini-chat contracts
 
 This file is for every lane that builds against the backend. If it disagrees with the code, the code
-wins; report the difference to Lane A. Only the `nesszerra` channel is enabled. Any other channel in
-`:channel` (including `miolafff`) returns 403.
+wins; report the difference to Lane A. `nesszerra` and `miolafff` are built in and always on. Other
+channels are added by invite (section 2a). A channel that isn't set up returns 403
+`{error, off:"not_enabled"}`; a channel that is turned off returns 403 `{error, off:"paused"}` on
+every route except `access`, `admin`, `leaderboard`, `catalog` and `assets`, so its streamer and mods
+can still sign in and turn it back on.
 
 ## 1. Conventions
 
@@ -13,8 +16,9 @@ wins; report the difference to Lane A. Only the `nesszerra` channel is enabled. 
 - Request bodies must be a JSON object. Malformed JSON, `null` or an array returns 400; a body
   over the route's limit returns 413.
 - Auth uses the `mini_session` cookie (HttpOnly), set by `/auth/callback`.
-- Roles come from `GET /api/access/:channel`: `owner` (the nesszerra account), `moderator` (Helix
-  moderator check) and `canManage = owner || moderator`.
+- Roles come from `GET /api/access/:channel`: `owner` (the nesszerra account), `broadcaster` (the
+  channel's own account), `moderator` (Helix moderator check, needs the stored broadcaster token) and
+  `canManage = owner || broadcaster || moderator`.
 - Unknown errors return 503 `{error:"Service unavailable; check owner diagnostics"}` and are
   logged for the developer page.
 
@@ -22,12 +26,14 @@ wins; report the difference to Lane A. Only the `nesszerra` channel is enabled. 
 
 | Method | Path | Auth | Request | Success response | Errors |
 |---|---|---|---|---|---|
-| GET | `/auth/login[?connect=1]` | none | none | 302 to Twitch | 503 when Twitch is not configured |
-| GET | `/auth/callback` | none | Twitch `code` and `state` | 302 to `/`, sets the cookie | 400, 403 |
+| GET | `/auth/login[?channel=x][&connect=1\|mods][&next=/admin/]` | none | none | 302 to Twitch. `connect=1` (nesszerra only) asks for the EventSub chat scopes; `connect=mods` asks the channel's broadcaster for `moderation:read` and comes back to `/admin/?channel=x&mods=connected\|denied\|wrong_account#chat` | 403 channel not set up, 503 when Twitch is not configured |
+| GET | `/auth/login?invite=<token>[&mods=0]` | none | none | 302 to Twitch, asking for `moderation:read` unless `mods=0`. A bad invite goes to `/start/?invite=..&error=invalid\|expired\|used` instead | 503 |
+| GET | `/auth/callback` | none | Twitch `code` and `state` | 302 to `/` (or `next`), sets the cookie. An invite signup turns the channel on, stores the broadcaster token when the scope was granted, and lands on `/admin/?channel=<login>&signed_in=1#chat`. A failed signup goes back to `/start/?invite=..&error=wrong_account\|full\|denied\|failed` with no session | 400, 403 |
+| GET | `/api/invite/:token` | none | 32 hex chars | `{status:"valid"\|"used"\|"expired"\|"invalid", login?}` | 404 malformed token |
 | POST | `/auth/logout` | cookie | none | clears the cookie | 403 when cross-origin |
 | GET | `/api/session` | optional | none | `{user:{id,login,displayName}\|null, owner, configured, channels:["nesszerra"], productionEnabled:false}` | 503 when secrets are missing |
 | GET | `/api/health` | none | none | `{ok:true, version, twitchConfigured, productionEnabled:false}` | |
-| GET | `/api/access/:channel` | optional | none | `{owner, moderator, canManage, reason}` | 403 for a disabled channel |
+| GET | `/api/access/:channel` | optional | none | `{owner, broadcaster, moderator, canManage, reason}` | 403 for a channel that isn't set up |
 | GET | `/api/state/:channel` | none | none | Snapshot (section 3) | 403, 405 |
 | GET | `/api/leaderboard/:channel` | none | none | Up to 100 `Profile` rows, ordered by elo desc, then wins desc, then username | 403 |
 | GET | `/api/looks/:channel?u=login1,login2` | none | at most 20 logins | `{login:{avatar, color, hat, displayName, elo}}` for viewers with a saved fighter only. The overlay uses it for chat-only viewers, batched and cached for 5 min. | 403 |
@@ -35,7 +41,7 @@ wins; report the difference to Lane A. Only the `nesszerra` channel is enabled. 
 | GET | `/api/catalog/:channel` | none | none | `[...static characters.json, ...custom entries]` (section 5) | 403 |
 | GET | `/api/profile/:channel` | cookie | none | `Profile` or `null` | 401 |
 | POST | `/api/profile/:channel` | cookie | `{avatar, color:"#rrggbb", defaultAbility:"strike"\|"heavy"\|"heal"}`, max 4000 bytes | `{profile, revision}` | 400 invalid field or unknown character, 401, 413 |
-| GET | `/api/admin/:channel` | canManage | none | Snapshot plus `{chatStatus (section 4), history:[{version,config,actorId,actorName,at,note}] (newest first, 50 max; actorName is the Twitch display name at save time, empty for older rows), customUsage:{count,limit,bytes}, access:{owner,moderator,canManage,reason}, overlays (open role=overlay sockets), modsReady (broadcaster token stored), streamelements:{key,names,commands,seen:{action:ms},duelModuleOff,lastCommandAt,rejectedAt,timerText}}` | 401 signed out, 403 not a mod |
+| GET | `/api/admin/:channel` | canManage | none | Snapshot plus `{chatStatus (section 4), history:[{version,config,actorId,actorName,at,note}] (newest first, 50 max; actorName is the Twitch display name at save time, empty for older rows), customUsage:{count,limit,bytes}, access:{owner,moderator,canManage,reason}, overlays (open role=overlay sockets), modsReady (broadcaster token stored), channelState ("builtin"\|"on"\|"paused"), streamelements:{key,names,commands,seen:{action:ms},duelModuleOff,lastCommandAt,rejectedAt,timerText}}` | 401 signed out, 403 not a mod |
 | POST | `/api/admin/:channel` | canManage | `{action, payload?}`, max 12000 bytes. Any `actorId` you send is replaced by the session user. | `{ok:true, reason, revision, ...}` | 400 / 403 / 404 / 409 with `{ok:false, reason, error}` |
 | WS | `/api/live/:channel[?role=overlay]` | none | Upgrade | Read-only overlay socket (section 3). OBS overlays send `role=overlay` so the admin setup checklist can count them. | 426 without an upgrade, 429 over 64 sockets |
 | POST | `/api/eventsub` | Twitch EventSub HMAC signature (section 4) | Twitch webhook body, max 64 KB | verification: 200 `text/plain` challenge; notification, revocation, unknown types and duplicates: 204 | 400 missing headers or bad JSON, 403 bad signature or stale timestamp, 405, 413, 503 secrets missing or room failure (Twitch retries) |
@@ -46,9 +52,28 @@ wins; report the difference to Lane A. Only the `nesszerra` channel is enabled. 
 | GET | `/api/dev/diagnostics` | owner | none | `{worker:{version,twitchConfigured,productionEnabled,deployedVersion}, room:{channel,revision,chat:{connected,lastSeen,status},chatStatus,paused,configVersion,players,openDuels,sockets:{live},errors,errorsBySource,lastError}, integrations:{github:{configured,missing[],repo,base,workflow}, cloudflare:{configured,missing[],versionMetadata}}, usage, codex}` | 401, 403 |
 | GET, DELETE | `/api/dev/logs[?source=room\|worker&limit=1..100]` | owner | none | GET: error rows `[{id,at,source,message,context}]`, newest first. DELETE clears them. | 401, 403 |
 | GET, POST | `/api/dev/settings` | owner | POST `{action:"config"\|"rollbackConfig", payload}` or `{action:"connectChat"\|"disconnectChat", takeover?:true}` | The same versioned config as `/api/admin` (history rows carry the owner's actorName); chat actions answer like the admin ones | 400, 403 `reconnect`, 409, 502 |
+| GET, POST | `/api/dev/channels` | owner | POST `{action:"invite", login}`, `{action:"revoke", token}`, `{action:"pause"\|"resume", login}` | `{builtin:[login], max, channels:[{login,enabledAt,pausedAt?}], invites:[{token,login,createdAt,usedAt?,status}]}`; `invite` adds `{token, link}` | 400 `bad_login`/`invalid`/`builtin` (pause), 404 `not_found`, 409 `exists`/`builtin` (invite), 403 `full` (200 channels on) |
 | GET, POST | `/api/dev/codex` | owner | POST `{authorized:bool, note?}` | `{authorized, note, updatedBy, updatedAt}`; off by default and only records the decision | 400 |
 | GET | `/api/dev/usage`, `/api/dev/versions` | owner | none | Request usage and Worker versions from the Cloudflare API, or `{configured:false, error}` / `missing[]` when `CF_API_TOKEN`/`CF_ACCOUNT_ID` are unset | 401, 403 |
 | GET/POST | `/api/dev/code/tree`, `code/file`, `code/save`, `code/pr`, `runs`, `deploy`, `promote`, `hotfix`, `rollback` | owner | See docs/LIVE_FIX.md | GitHub-backed flow | 501 `{reason:"github_not_configured", missing:[...]}` until `GITHUB_TOKEN`/`GITHUB_REPO` are set; 404 `unknown_route`, 405 `method_not_allowed` |
+
+### 2a. Channel registry (server/channels.js)
+
+Built-in channels come from `CHANNELS` in `server/auth.js`. Invited channels live in the AuthStore
+Durable Object:
+
+- `invite:<token>` = `{login, createdAt, by, usedAt?}`. The token is 32 hex chars. An invite is
+  single use, works for 7 days, only for the Twitch account it names, and is kept 30 days for the
+  owner's list.
+- `channel:<login>` = `{id, login, enabledAt, pausedAt?}`. At most 200 channels can be on; resuming
+  a channel counts against the cap too.
+- AuthStore `GET /list?key=channel:|invite:` returns `[{key, value}]` for one prefix (500 max).
+- `channelState(env, ch)` is cached per isolate (60 s for a hit, 10 s for a miss), so pausing reaches
+  every isolate within about a minute. EventSub and `/api/session` still use the built-ins only;
+  invited channels use StreamElements.
+- An overlay on a paused or unknown channel draws nothing and reloads every 5 minutes. One that was
+  already open when the channel was paused keeps running until OBS reloads it. StreamElements
+  commands on a paused channel answer "Mini Chat is off on this channel right now."
 
 ### Admin actions (`POST /api/admin/:channel`)
 
@@ -65,6 +90,7 @@ wins; report the difference to Lane A. Only the `nesszerra` channel is enabled. 
 | `removePlayer` | `{userId}` | Removes the player from the arena and deletes the stored profile. |
 | `connectChat` | none | Handled by the Worker, not the room. Ensures exactly one Twitch EventSub `channel.chat.message` webhook for this site (section 4) and records it in the room. Returns `{ok, reason, revision, chatStatus}`. 403 `{error, reconnect:"/auth/login?connect=1"}` when Twitch reports missing authorization; 409 `{reconnect}` when the broadcaster id is unknown; 409 `{error, connectedElsewhere}` when another site holds the chat subscription (retry with `takeover:true` to move it here, section 4); 502 when Twitch fails. |
 | `disconnectChat` | none | Deletes the subscription at Twitch, marks chat disconnected, pauses duels and cancels open ones (`chat_disconnected`). StreamElements commands don't reconnect a channel turned off this way. |
+| `pauseChannel` / `resumeChannel` | none | Handled by the Worker; the broadcaster or the owner only (403 for mods). Turns an invited channel off or back on (`channel:<login>.pausedAt`). Fighters, ranks and settings are kept. Other isolates notice within a minute. 400 for a built-in channel. Returns `{ok:true, channelState}`. |
 | `setDuelModuleOff` | `{value:boolean}` (top level) | Handled by the Worker. Saves the setup checklist tick "StreamElements Duel module turned off". New key keeps it. |
 
 ## 3. Overlay socket `/api/live/:channel`

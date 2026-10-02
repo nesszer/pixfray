@@ -19,6 +19,8 @@ To connect a site:
 
 The webhook secret is derived from `AUTH_SECRET`, so there is no extra secret to set. The room re-checks the subscription at Twitch every hour and pauses duels ("Duels paused · chat offline") if Twitch revoked or removed it. Disconnect chat on `/admin/` deletes the subscription.
 
-`miolafff` remains disabled until its owner authorizes onboarding. No viewer needs chat access permissions to customize a profile. Ranked duels require a saved Twitch-linked profile.
+Other channels join by invite (docs/STREAMER_SETUP.md). Their sign-in asks only for
+`moderation:read`, so the channel's mods can use its mod controls; they use StreamElements for chat,
+so they need no chat scopes. No viewer needs chat access permissions to customize a profile. Ranked duels require a saved Twitch-linked profile.
 
 The code/deployment dashboard additionally needs a repo-scoped GitHub integration and GitHub Actions deployment secrets. These prerequisites are shown as unconfigured until provided; they do not silently grant moderators deployment access.

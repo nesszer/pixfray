@@ -42,7 +42,7 @@ async function start() {
   if (!s.data.owner) return gate('The live-fix space is limited to the nesszerra account. Moderators can use Mod controls.', [h('a', { class: 'btn', href: '/admin/' }, 'Open mod controls')]);
   $('#gate').hidden = true; $('#app').hidden = false;
   if (!$('#branch').value) $('#branch').value = 'live-fix/' + new Date().toISOString().slice(0, 10);
-  await Promise.all([loadDiagnostics(), loadConfig(), loadLogs()]);
+  await Promise.all([loadDiagnostics(), loadConfig(), loadLogs(), loadChannels()]);
   loadRuns(); loadVersions();
 }
 function gate(text, actions) { $('#gate-text').textContent = text; $('#gate-actions').replaceChildren(...actions); $('#gate').hidden = false; $('#app').hidden = true; }
@@ -208,6 +208,74 @@ $('#save-config').addEventListener('click', (e) => busy(e.currentTarget, async (
   status('#config-status', `Saved ${Object.keys(patch).join(', ')}.`, 'ok'); $('#config-note').value = '';
   loadConfig();
 }));
+
+// ---------- channels (server/channels.js) ----------
+async function loadChannels() {
+  const r = await api('/api/dev/channels');
+  if (!r.ok) { rows('#channels', [], errorText(r, 'Channels unavailable'), 4); rows('#invites', [], '–', 4); return; }
+  renderChannels(r.data);
+}
+function channelAction(action, login, button) {
+  if (action === 'pause' && !confirm('Turn Mini Chat off on ' + login + '? The overlay, commands and viewer page stop; fighters and ranks are kept.')) return;
+  return busy(button, async () => {
+    const r = await api('/api/dev/channels', { method: 'POST', body: { action, login } });
+    if (!r.ok) return status('#invite-status', errorText(r, 'Could not change ' + login), 'error');
+    status('#invite-status', login + (action === 'pause' ? ' is off.' : ' is on.'), 'ok');
+    renderChannels(r.data);
+  });
+}
+async function revoke(invite, button) {
+  return busy(button, async () => {
+    const r = await api('/api/dev/channels', { method: 'POST', body: { action: 'revoke', token: invite.token } });
+    if (!r.ok) return status('#invite-status', errorText(r, 'Could not revoke'), 'error');
+    if ($('#invite-link').value.endsWith(invite.token)) $('#invite-link-box').hidden = true;
+    status('#invite-status', 'Invite for ' + invite.login + ' removed.', 'ok');
+    renderChannels(r.data);
+  });
+}
+function renderChannels(d) {
+  $('#channels-max').textContent = d.max;
+  const admin = (login) => h('a', { href: '/admin/?channel=' + login }, login);
+  rows('#channels', [
+    ...d.builtin.map((login) => h('tr', {}, h('td', {}, admin(login)), h('td', {}, h('span', { class: 'badge' }, 'Built in')), h('td', {}, '–'), h('td', {}, '–'))),
+    ...d.channels.map((c) => h('tr', {}, h('td', {}, admin(c.login)),
+      h('td', {}, h('span', { class: 'badge ' + (c.pausedAt ? 'warning' : 'positive') }, c.pausedAt ? 'Off' : 'On')),
+      h('td', {}, fmtTime(c.pausedAt || c.enabledAt)),
+      h('td', {}, h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => channelAction(c.pausedAt ? 'resume' : 'pause', c.login, e.currentTarget) }, c.pausedAt ? 'Turn on' : 'Turn off')))),
+  ], 'No channels.', 4);
+  const label = { valid: 'Waiting', used: 'Used', expired: 'Expired' };
+  rows('#invites', d.invites.map((i) => h('tr', {}, h('td', {}, i.login),
+    h('td', {}, h('span', { class: 'badge' + (i.status === 'used' ? ' positive' : i.status === 'expired' ? ' warning' : '') }, label[i.status] || i.status)),
+    h('td', {}, fmtTime(i.usedAt || i.createdAt)),
+    h('td', {}, i.status === 'used' ? '–' : h('div', { class: 'toolbar' },
+      i.status === 'valid' ? h('button', { class: 'btn btn-small', type: 'button', onclick: () => showInvite(i.login, location.origin + '/start/?invite=' + i.token) }, 'Show link') : null,
+      h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => revoke(i, e.currentTarget) }, i.status === 'valid' ? 'Revoke' : 'Remove'))))), 'No invites yet.', 4);
+  // the error log can read any channel that is set up
+  const pick = $('#log-channel'), current = pick.value;
+  pick.replaceChildren(...[...d.builtin, ...d.channels.map((c) => c.login)].map((login) => h('option', { value: login }, login)));
+  pick.value = current;
+}
+function showInvite(login, link) {
+  $('#invite-link-label').textContent = 'Invite link for ' + login;
+  $('#invite-link').value = link;
+  $('#invite-link-box').hidden = false;
+}
+$('#invite-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  busy(e.submitter || $('#invite-form button'), async () => {
+    const r = await api('/api/dev/channels', { method: 'POST', body: { action: 'invite', login: $('#invite-login').value } });
+    if (!r.ok) { $('#invite-link-box').hidden = true; return status('#invite-status', errorText(r, 'Could not create the invite'), 'error'); }
+    const login = r.data.invites.find((i) => i.token === r.data.token)?.login || $('#invite-login').value;
+    showInvite(login, r.data.link);
+    status('#invite-status', 'Send this link to ' + login + '. It works for 7 days, once.', 'ok');
+    $('#invite-login').value = '';
+    renderChannels(r.data);
+  });
+});
+$('#copy-invite').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#invite-link').value); status('#invite-status', 'Copied.', 'ok'); }
+  catch { $('#invite-link').select(); status('#invite-status', 'Select the link and copy it with Ctrl+C.'); }
+});
 
 // ---------- logs ----------
 async function loadLogs() {

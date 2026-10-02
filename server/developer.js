@@ -1,5 +1,5 @@
 import { chatStatus } from './game.js';
-import { CHANNELS } from './auth.js';
+import { channelState, overview, createInvite, revokeInvite, setPaused } from './channels.js';
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // nesszerra Twitch account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -37,13 +37,14 @@ export async function handleDeveloper(request, env, c) {
   // Caught here because worker.js returns this promise without awaiting it inside its try block.
   if (method === 'POST') try { body = await c.bodyJson(request, op === 'code/save' ? MAX_FILE_BYTES * 2 + 4096 : 8000); } catch (e) { return fail(e.status || 400, e.message || 'Invalid request body', e.status === 413 ? 'body_too_large' : 'invalid_body'); }
   // ?channel= picks which channel's room to read (logs, diagnostics); Worker errors always land in nesszerra's.
-  const channel = CHANNELS.includes(c.url.searchParams.get('channel')) ? c.url.searchParams.get('channel') : 'nesszerra';
+  const asked = c.url.searchParams.get('channel') || '', channel = asked && await channelState(env, asked) ? asked : 'nesszerra';
   try { return await handler({ request, env, c, body, query: c.url.searchParams, room: (path, init) => c.roomFetch(channel, path, init) }); }
   catch (error) { c.waitUntil?.(logWorkerError(env, error, { path: c.path })); return fail(503, 'Service unavailable; check owner diagnostics', 'upstream_error'); }
 }
 
 const ROUTES = {
   diagnostics: { GET: diagnostics },
+  channels: { GET: async ({ env }) => json(await overview(env)), POST: channelsAction },
   logs: { GET: ({ room, query }) => room('/dev/logs?' + logQuery(query)), DELETE: ({ room }) => room('/dev/logs', { method: 'DELETE' }) },
   settings: { GET: ({ room }) => room('/admin'), POST: settings },
   codex: { GET: ({ room }) => room('/dev/codex'), POST: codex },
@@ -59,6 +60,21 @@ const ROUTES = {
   hotfix: { POST: withGithub(hotfix) },
   rollback: { POST: withGithub(rollback) },
 };
+
+// Owner Channels box: invite a streamer, revoke an invite, turn a channel off or on.
+async function channelsAction({ env, c, body }) {
+  const { action } = body || {};
+  try {
+    if (action === 'invite') {
+      const token = await createInvite(env, body.login, c.user.login);
+      return json({ ok: true, token, link: (env.PUBLIC_ORIGIN || c.url.origin) + '/start/?invite=' + token, ...await overview(env) });
+    }
+    if (action === 'revoke') await revokeInvite(env, String(body.token || ''));
+    else if (action === 'pause' || action === 'resume') await setPaused(env, String(body.login || ''), action === 'pause');
+    else return fail(400, 'Unknown action', 'unknown_action');
+  } catch (e) { if (e.reason) return fail(e.status, e.message, e.reason); throw e; }
+  return json({ ok: true, ...await overview(env) });
+}
 
 async function diagnostics({ env, room }) {
   const [r, codexRes, use] = await Promise.all([room('/dev/diagnostics'), room('/dev/codex'), usage(env)]);

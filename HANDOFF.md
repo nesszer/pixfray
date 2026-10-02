@@ -107,7 +107,11 @@ Fixed in this pass:
 
 ### Channels
 - One ChannelRoom per channel. Profiles, Elo and settings are separate per channel.
-- `nesszerra` is enabled for testing. `miolafff` is disabled until its owner authorizes it.
+- `nesszerra` and `miolafff` are built in. Since 2026-10-02 other channels join by invite: the owner
+  creates one on `/admin/dev`, the streamer signs in on `/start/`, and the Stream setup checklist
+  takes it from there (docs/STREAMER_SETUP.md, CONTRACTS.md section 2a). Invited channels use
+  StreamElements for chat, not EventSub. The streamer or the owner can turn a channel off; data is
+  kept and nothing is purged automatically.
 
 ### Viewer dashboard (`/`)
 - Twitch sign-in. Profiles are saved server-side, so they follow the viewer across devices.

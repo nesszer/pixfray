@@ -230,6 +230,16 @@ form.addEventListener("submit", async (event) => {
   renderSignedIn(); renderHats(); renderUpgrades(); update(); loadLeaderboard();
 });
 
+// The channel is turned off (paused) or was never set up (server/channels.js).
+function showOff(off) {
+  const note = $("#off-note");
+  note.hidden = false;
+  if (off === "paused") { note.textContent = "Mini Chat is off on " + CHANNEL + "'s channel right now. Saved fighters and ranks are kept for when it's back."; return; }
+  note.replaceChildren("Mini Chat isn't set up on " + CHANNEL + "'s channel. ", h("a", { href: "/" }, "Pick a fighter on nesszerra's channel"), ".");
+  $("#profile-form").hidden = true;
+  $(".fighter-card").hidden = true;
+}
+
 async function init() {
   renderSwatches();
   const [session, catalog, live] = await Promise.all([api("/api/session"), api("/api/catalog/" + CHANNEL), api("/api/state/" + CHANNEL)]);
@@ -240,6 +250,7 @@ async function init() {
     if (fallback.ok && Array.isArray(fallback.data)) state.catalog = fallback.data;
   }
   state.config = live.ok ? live.data?.config : null;
+  if (live.status === 403 && live.data?.off) showOff(live.data.off);
   renderCharacters(); renderCommands();
   if (state.session?.user) {
     const [profile, access] = await Promise.all([api("/api/profile/" + CHANNEL), api("/api/access/" + CHANNEL)]);

@@ -202,6 +202,12 @@ input[type="color"] { padding: 2px; width: 56px; cursor: pointer; }
 .rules { margin: 0 0 var(--space-4); padding-left: var(--space-5); max-width: var(--measure); }
 .rules li + li { margin-top: var(--space-1); }
 .hero-pick { grid-area: pick; }
+/* /start: the overlay demo on a dark stage (the overlay itself is transparent on stream) */
+.stage-figure { margin: 0; }
+.stage { aspect-ratio: 16 / 9; background: var(--topbar); border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
+.stage iframe { display: block; width: 100%; height: 100%; border: 0; color-scheme: normal; }   /* matching the overlay's scheme keeps the frame transparent */
+.invite-card { grid-area: card; }
+.invite-card h2 { margin: 0; }
 .hero-card { grid-area: card; position: sticky; top: var(--space-4); }
 .hero-card .status:empty:has(+ .next-step:not([hidden])) { display: none; }   /* the next step takes the empty status line's place */
 .form-stack > * + * { margin-top: var(--space-5); }
@@ -321,6 +327,7 @@ html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused fie
      of the screen while you pick, so the preview and Save are always in view */
   html:has(.hero-card) { scroll-padding-bottom: 120px; }   /* keyboard focus scrolls clear of the bottom bar */
   .hero-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "pick" "card"; padding: var(--space-6) var(--space-4); gap: var(--space-5); }
+  .hero-grid:has(.invite-card) { grid-template-areas: "copy" "card" "pick"; }   /* /start: the sign-in comes before the demo */
   .hero-card { top: auto; bottom: 0; z-index: 2; margin: 0 calc(-1 * var(--space-4)); padding: var(--space-3) var(--space-4);
     border-width: 1px 0 0; border-radius: 0; outline: 0; box-shadow: 0 -4px 12px rgb(0 0 0 / 0.3);
     grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "preview save" "stats stats" "points points" "status status" "next next"; gap: var(--space-2) var(--space-3); align-items: center; }

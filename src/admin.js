@@ -90,7 +90,14 @@ async function init() {
   $("#owner-chat").hidden = !S.access.owner || CHANNEL !== "nesszerra";
   $("#connect-chat").hidden = CHANNEL !== "nesszerra";   // other channels get chat through StreamElements only
   await Promise.all([load(), loadLeaderboard(), loadCustom()]);
-  connectLive();
+  if (S.admin?.channelState !== "paused") connectLive();
+  // Back from "Connect mod access" (/auth/login?connect=mods)
+  const mods = new URLSearchParams(location.search).get("mods");
+  const MODS = { connected: "Mod access is connected. Your Twitch moderators can sign in to this page now.", denied: "The Twitch permission was cancelled, so mod access isn't connected.", wrong_account: "Mod access has to be connected while signed in to Twitch as " + CHANNEL + "." };
+  if (MODS[mods]) {
+    setStatus($("#check-status"), MODS[mods], mods === "connected" ? "ok" : "error");
+    const url = new URL(location.href); url.searchParams.delete("mods"); history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
   mountUploads();
 }
 async function load() {
@@ -171,7 +178,7 @@ function renderAll() {
   collectNames();
   const a = S.admin, c = a.config, open = a.duels.filter((d) => OPEN.has(d.status));
   const chat = a.chatStatus || a.chat || {}, live = !!chat.connected;
-  $("#meta").textContent = "Rules version " + a.configVersion + " · state revision " + a.revision + " · signed in as " + (S.access.owner ? "broadcaster" : "moderator");
+  $("#meta").textContent = "Rules version " + a.configVersion + " · state revision " + a.revision + " · signed in as " + (S.access.owner || S.access.broadcaster ? "broadcaster" : "moderator");
   const waiting = c.enabled && !live;
   $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : waiting ? "Waiting for Twitch chat" : "Duels are live";
   $("#summary-text").textContent = !c.enabled ? "Chat commands are ignored until duels are turned back on." :
@@ -191,7 +198,7 @@ function renderAll() {
     stat("Rules version", "v" + a.configVersion));
   if (document.activeElement !== $("#announce")) $("#announce").value = a.config.announce || "off";
   if (document.activeElement !== $("#cap")) $("#cap").value = a.config.maxOnStream || 50;
-  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe(); renderChecklist();
+  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe(); renderChecklist(); renderPower();
 }
 function stat(label, value, cls, delta) {
   return h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), delta ? h("div", { class: "delta " + (cls || "") }, delta) : null);
@@ -542,7 +549,10 @@ function renderChecklist() {
     detail("check-commands", (se.commands.length - missing.length) + " of " + se.commands.length + " commands have reached Mini Chat." +
       (missing.length ? " Not used yet: " + missing.map((x) => x.name).join(", ") + ". Type each one in your chat; any reply from the bot counts." : ""));
   }
-  detail("check-mods", a.modsReady ? "Twitch moderators of " + CHANNEL + " can sign in and use this page." : "Only " + CHANNEL + " can open this page. Moderators need " + CHANNEL + "'s permission to check the mod list, which isn't connected yet.");
+  const mods = $("#check-mods [data-detail]");
+  if (a.modsReady) mods.textContent = "Twitch moderators of " + CHANNEL + " can sign in and use this page.";
+  else mods.replaceChildren("Only " + CHANNEL + " can open this page. To let your Twitch moderators in, Mini Chat needs permission to read your moderator list. ",
+    S.access?.broadcaster ? h("a", { href: "/auth/login?" + new URLSearchParams({ channel: CHANNEL, connect: "mods" }) }, "Connect mod access") : "Only " + CHANNEL + " can connect it.");
   $("#check-title").textContent = done === required.length ? "Stream setup is done" : "Stream setup: " + done + " of " + required.length + " steps done";
   const next = required.find((s) => !s.done), pointer = $("#setup-next");
   pointer.hidden = !next;
@@ -563,6 +573,34 @@ $("#duel-module-off").addEventListener("change", async (e) => {
   setStatus($("#check-status"), box.checked ? "Saved: the Duel module is off." : "Saved: the Duel module step is open again.", "ok");
   await load();
 });
+// ---------- turning Mini Chat off (invited channels; the broadcaster or the owner) ----------
+const mayPower = () => !!(S.access?.broadcaster || S.access?.owner) && ["on", "paused"].includes(S.admin?.channelState);
+function renderPower() {
+  const paused = S.admin.channelState === "paused", toggle = $("#power-toggle");
+  $("#channel-power").hidden = !mayPower();
+  $("#power-title").textContent = paused ? "Mini Chat is off on " + CHANNEL : "Turn Mini Chat off";
+  $("#power-text").textContent = paused
+    ? "The overlay, the chat commands and the viewer page are stopped. Fighters and ranks are kept, so turning it back on picks up where it left off."
+    : "Stops the overlay, the chat commands and the viewer page on " + CHANNEL + ". Fighters and ranks are kept, and you can turn it back on here at any time.";
+  toggle.textContent = paused ? "Turn Mini Chat back on" : "Turn Mini Chat off";
+  toggle.className = paused ? "btn btn-primary" : "btn btn-danger";
+  const note = $("#paused-note");
+  note.hidden = !paused;
+  if (paused) note.replaceChildren("Mini Chat is off on " + CHANNEL + ": the overlay, the commands and the viewer page are stopped. ",
+    mayPower() ? h("a", { href: "#chat", onclick: (e) => { e.preventDefault(); selectTab($("#tab-chat")); $("#channel-power").scrollIntoView({ block: "center" }); toggle.focus({ preventScroll: true }); } }, "Turn it back on") : CHANNEL + " can turn it back on.");
+}
+$("#power-toggle").addEventListener("click", async (e) => {
+  const button = e.currentTarget, pause = S.admin.channelState !== "paused";
+  if (pause && !confirm("Turn Mini Chat off on " + CHANNEL + "? The overlay, the commands and the viewer page stop until you turn it back on. Fighters and ranks are kept.")) return;
+  button.disabled = true;
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: pause ? "pauseChannel" : "resumeChannel" } });
+  button.disabled = false;
+  if (!r.ok) return setStatus($("#power-status"), "Couldn't change it: " + errorText(r) + ".", "error");
+  setStatus($("#power-status"), pause ? "Mini Chat is off. Overlays and chat commands stop within a minute." : "Mini Chat is back on. Refresh the OBS source if the overlay stays empty.", "ok");
+  await load();
+  if (!pause && !S.socket) connectLive();
+});
+
 // While setup is unfinished and on screen, refetch every 10 s so a new overlay or command turns its row to Done.
 setInterval(() => { if (S.admin && !document.hidden && !$("#panel-chat").hidden && setupSteps().some((s) => !s.done && !s.optional)) load(); }, 10000);
 
