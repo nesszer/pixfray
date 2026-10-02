@@ -13,6 +13,9 @@ return {
     entrypoint: "./server/worker.js",
     domains: [testing ? "test.chat.miolaf.xyz" : "chat.miolaf.xyz"],
     assets: { runWorkerFirst: ["/api/*","/auth/*"], notFoundHandling:"none" },
+    // Workers Logs: console output and requests, kept by Cloudflare (dashboard: Workers > this worker > Logs).
+    // redactQueryString keeps StreamElements keys (?k=...) out of the stored request URLs.
+    observability: { enabled: true, redactQueryString: true, logs: { enabled: true, invocationLogs: true } },
     exports: {
       ChannelRoom: exports.durableObject({storage:"sqlite"}),
       AuthStore: exports.durableObject({storage:"sqlite"})

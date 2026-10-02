@@ -571,7 +571,7 @@ export class ChannelRoom extends DurableObject {
     }
     // Every command is logged with what came in, what the game decided and what the bot said.
     const done = (reply, reason, extra = {}) => {
-      logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });
+      logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { channel, user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });
       return json({ reply });
     };
     if (!action) return done("Mini Chat: attack commands are gone. Duels are !challenge @name, then !fight.", "unknown_action");
@@ -596,7 +596,7 @@ export class ChannelRoom extends DurableObject {
       if (!p?.registered) continue;
       const row = this.ctx.storage.sql.exec("SELECT elo, wins, losses FROM profiles WHERE user_id = ?", id).toArray()[0];
       if (!row || row.elo !== p.elo || row.wins !== p.wins || row.losses !== p.losses) {
-        logRoomEvent(this, "warn", `profile for ${p.username} not saved after ${duelId}`, { userId: id, game: { elo: p.elo, wins: p.wins, losses: p.losses }, saved: row || null });
+        logRoomEvent(this, "warn", `profile for ${p.username} not saved after ${duelId}`, { channel: state.channel, userId: id, game: { elo: p.elo, wins: p.wins, losses: p.losses }, saved: row || null });
       }
     }
   }
