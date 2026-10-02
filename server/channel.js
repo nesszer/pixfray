@@ -22,6 +22,7 @@ const MAX_LIVE_SOCKETS = 200;
 const MAX_SOCKETS_PER_CLIENT = 16;      // one network can't fill the room and lock OBS out
 const REJECTED_WRITE_MS = 60_000;          // a wrong StreamElements key is recorded at most once a minute
 const MAX_CONFIG_HISTORY = 50;
+const SEEN_WRITE_MS = 60_000;             // each command's "last seen" time is written at most once a minute
 const MAX_LOOKS = 20;                  // logins per /looks call
 const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
 const MAX_EVENTSUB_IDS = 5_000;
@@ -121,6 +122,10 @@ export class ChannelRoom extends DurableObject {
     // page can tell when the bot's commands were copied from another site (test vs production) or an old key.
     const seColumns = sql.exec("PRAGMA table_info(se_settings)").toArray().map((c) => c.name);
     for (const column of ["last_command_at", "rejected_at"]) if (!seColumns.includes(column)) sql.exec(`ALTER TABLE se_settings ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+    // v2.5: when each command (action) last arrived with the right key, for the setup checklist.
+    if (!seColumns.includes("seen_json")) sql.exec("ALTER TABLE se_settings ADD COLUMN seen_json TEXT NOT NULL DEFAULT '{}'");
+    // and the broadcaster's "StreamElements Duel module is off" tick (nothing can check it for them)
+    if (!seColumns.includes("duel_module_off")) sql.exec("ALTER TABLE se_settings ADD COLUMN duel_module_off INTEGER NOT NULL DEFAULT 0");
     this.seenMessages = new Map();   // EventSub Message-Id -> receivedAt; commands are also deduped durably by message_id
   }
 
@@ -160,7 +165,7 @@ export class ChannelRoom extends DurableObject {
       this.seedConfigHistory(state);
       const history = this.ctx.storage.sql.exec("SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?", MAX_CONFIG_HISTORY).toArray()
         .map((row) => ({ version: row.version, config: safeJsonParse(row.config, {}), actorId: row.actor_id, actorName: row.actor_name, at: row.at, note: row.note }));
-      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings() });
+      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings(), overlays: this.ctx.getWebSockets("overlay").length });
     }
 
     if (path === "/leaderboard" && request.method === "GET") {
@@ -229,7 +234,7 @@ export class ChannelRoom extends DurableObject {
       return json({ ...result.result, revision: result.state.revision });
     }
 
-    if (path === "/live" && request.method === "GET") return this.upgrade(request, "live", channel);
+    if (path === "/live" && request.method === "GET") return this.upgrade(request, "live", channel, url.searchParams.get("role") === "overlay");
 
     // Worker-only routes (never reachable from /api/admin): verified EventSub messages and subscription bookkeeping.
     if (path === "/eventsub" && request.method === "POST") {
@@ -249,7 +254,7 @@ export class ChannelRoom extends DurableObject {
       const current = this.seSettings();
       if (body.value.action === "rotateSeKey") {
         this.writeSeSettings(randomHex(), current.names);
-        this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = 0, rejected_at = 0 WHERE id = 1");   // a new key starts unheard
+        this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = 0, rejected_at = 0, seen_json = '{}' WHERE id = 1");   // a new key starts unheard
       }
       else if (body.value.action === "setSeNames") {
         const input = body.value.names && typeof body.value.names === "object" ? body.value.names : {};
@@ -261,6 +266,8 @@ export class ChannelRoom extends DurableObject {
         }
         if (new Set(Object.values(names)).size !== SE_ACTIONS.length) return json({ error: "Each action needs its own command name" }, 400);
         this.writeSeSettings(current.secret, names);
+      } else if (body.value.action === "setDuelModuleOff") {
+        this.ctx.storage.sql.exec("UPDATE se_settings SET duel_module_off = ? WHERE id = 1", body.value.value === true ? 1 : 0);
       } else return json({ error: "unknown StreamElements action" }, 400);
       return json({ ok: true, streamelements: this.seSettings() });
     }
@@ -527,7 +534,7 @@ export class ChannelRoom extends DurableObject {
     };
   }
 
-  async upgrade(request, kind, channel) {
+  async upgrade(request, kind, channel, overlay = false) {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "websocket upgrade required" }, 426);
     const ip = request.headers.get("X-Mini-Client-Ip"), clientTag = ip ? "ip:" + ip.slice(0, 64) : null;
     if (clientTag && this.ctx.getWebSockets(clientTag).length >= MAX_SOCKETS_PER_CLIENT) {
@@ -540,7 +547,7 @@ export class ChannelRoom extends DurableObject {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    this.ctx.acceptWebSocket(server, clientTag ? [kind, clientTag] : [kind]);
+    this.ctx.acceptWebSocket(server, [kind, ...(clientTag ? [clientTag] : []), ...(overlay ? ["overlay"] : [])]);   // "overlay": OBS browser sources, counted for /admin
     server.serializeAttachment({ kind, channel });
     const result = this.advance(channel, { type: "tick" }, Date.now());
     server.send(JSON.stringify(this.publicState(result.state)));
@@ -580,16 +587,18 @@ export class ChannelRoom extends DurableObject {
   }
 
   seSettings() {
-    const row = this.ctx.storage.sql.exec("SELECT secret, names, last_command_at, rejected_at FROM se_settings WHERE id = 1").toArray()[0];
+    const row = this.ctx.storage.sql.exec("SELECT secret, names, last_command_at, rejected_at, seen_json, duel_module_off FROM se_settings WHERE id = 1").toArray()[0];
     if (row) {
       const names = { ...DEFAULT_SE_NAMES, ...safeJsonParse(row.names, {}) };
       if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;   // StreamElements' Duel module owns !accept
       if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top;   // and its built-in !top can't be replaced
-      return { secret: row.secret, names, lastCommandAt: Number(row.last_command_at) || 0, rejectedAt: Number(row.rejected_at) || 0 };
+      const stored = safeJsonParse(row.seen_json, {}), seen = {};
+      for (const action of SE_ACTIONS) if (Number(stored?.[action]) > 0) seen[action] = Number(stored[action]);
+      return { secret: row.secret, names, lastCommandAt: Number(row.last_command_at) || 0, rejectedAt: Number(row.rejected_at) || 0, seen, duelModuleOff: row.duel_module_off === 1 };
     }
     const secret = randomHex();
     this.writeSeSettings(secret, DEFAULT_SE_NAMES);
-    return { secret, names: { ...DEFAULT_SE_NAMES }, lastCommandAt: 0, rejectedAt: 0 };
+    return { secret, names: { ...DEFAULT_SE_NAMES }, lastCommandAt: 0, rejectedAt: 0, seen: {}, duelModuleOff: false };
   }
 
   writeSeSettings(secret, names) {
@@ -603,16 +612,22 @@ export class ChannelRoom extends DurableObject {
       if (Date.now() - settings.rejectedAt > REJECTED_WRITE_MS) this.ctx.storage.sql.exec("UPDATE se_settings SET rejected_at = ? WHERE id = 1", Date.now());
       return json({ reply: "Mini Chat: wrong key. Copy the commands again from the admin page." }, 403);
     }
-    this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ? WHERE id = 1", Date.now());
     const action = SE_ACTIONS.includes(input.action) ? input.action : "";
+    if (action && Date.now() - (settings.seen[action] || 0) > SEEN_WRITE_MS) {
+      this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ?, seen_json = ? WHERE id = 1", Date.now(), JSON.stringify({ ...settings.seen, [action]: Date.now() }));
+    } else this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ? WHERE id = 1", Date.now());
     const userId = validUserId(input.userId);
     const username = normalizeUsername(input.username);
     const target = normalizeUsername(input.target);
     const now = Date.now();
     const names = settings.names;
     let state0 = this.readState(channel);
-    // SE_ONLY (test site): StreamElements is the only chat source, so a command with the right key switches to it.
-    if (this.env?.SE_ONLY === "1" && state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID) {
+    // The first command with the right key makes StreamElements the chat source, unless a mod turned chat off on
+    // purpose (Disconnect chat; "Use StreamElements" turns it back on). SE_ONLY (test site) always switches.
+    let switchedFrom = "";
+    const turnedOff = state0.chat.status === "disconnected" && state0.chat.createdAt > 0;
+    if (state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID && (this.env?.SE_ONLY === "1" || !turnedOff)) {
+      switchedFrom = state0.chat.subscriptionId || "";   // a Twitch EventSub subscription the Worker deletes
       const switched = this.advance(channel, { type: "chat_subscription", subscriptionId: SE_SUBSCRIPTION_ID, status: "enabled", createdAt: now }, now);
       if (switched.visible) this.broadcast(switched.state);
       await this.scheduleAlarm(switched.state);
@@ -621,7 +636,7 @@ export class ChannelRoom extends DurableObject {
     // Every command is logged with what came in, what the game decided and what the bot said.
     const done = (reply, reason, extra = {}) => {
       logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { channel, user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });
-      return json({ reply });
+      return json(switchedFrom ? { reply, switchedFrom } : { reply });
     };
     if (!action) return done(`Lost in the arena? Type ${names.help}`, "unknown_action");
     if (!userId || !username) return done("Mini Chat: this command is missing sender details. Copy it again from the admin page.", "missing_sender");

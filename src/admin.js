@@ -191,7 +191,7 @@ function renderAll() {
     stat("Rules version", "v" + a.configVersion));
   if (document.activeElement !== $("#announce")) $("#announce").value = a.config.announce || "off";
   if (document.activeElement !== $("#cap")) $("#cap").value = a.config.maxOnStream || 50;
-  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe();
+  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe(); renderChecklist();
 }
 function stat(label, value, cls, delta) {
   return h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), delta ? h("div", { class: "delta " + (cls || "") }, delta) : null);
@@ -438,14 +438,15 @@ $("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat",
 const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", help: "How to play", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 function renderSe() {
   const se = S.admin.streamelements, c = S.admin.chatStatus || {};
-  const using = c.connected && c.source === "streamelements";
+  const using = c.connected && c.source === "streamelements", twitch = c.connected && c.source === "twitch";
   $("#use-se").textContent = using ? "StreamElements is the chat source" : "Use StreamElements";
   $("#use-se").disabled = using || !se;
   $("#copy-timer").disabled = !se;
   // Test and production each have their own key, so commands copied from the other site never arrive here.
   const health = $("#se-health"), host = se?.origin ? new URL(se.origin).host : location.host;
   let warn = "", note = "";
-  if (se && using && !se.lastCommandAt) warn = "No StreamElements command has reached " + host + " with this key yet. If the replies in StreamElements were copied from another site, such as the test site, copy every reply again from the table below (they point at " + host + "), paste them into StreamElements, then type " + (se.names?.decline || "!decline") + " in chat to test.";
+  if (se && !twitch && !se.lastCommandAt && !using) note = "No StreamElements command has reached " + host + " yet. Add the commands from the table below, then type " + (se.names?.decline || "!decline") + " in chat to test.";
+  else if (se && using && !se.lastCommandAt) warn = "No StreamElements command has reached " + host + " with this key yet. If the replies in StreamElements were copied from another site, such as the test site, copy every reply again from the table below (they point at " + host + "), paste them into StreamElements, then type " + (se.names?.decline || "!decline") + " in chat to test.";
   else if (se && se.rejectedAt > se.lastCommandAt) warn = "A StreamElements command arrived " + timeAgo(se.rejectedAt) + " with an old key and was refused. Copy every reply again from the table below and paste it into StreamElements.";
   else if (se?.lastCommandAt) note = "Last StreamElements command reached " + host + " " + timeAgo(se.lastCommandAt) + ".";
   health.hidden = !(warn || note);
@@ -453,7 +454,13 @@ function renderSe() {
   health.textContent = warn || note;
   if (!se) return;
   const tbody = $("#se-table tbody");
-  if (tbody.dataset.key === se.key && tbody.children.length) return;   // keep unsaved name edits
+  if (tbody.dataset.key !== se.key || !tbody.children.length) drawSeTable(se, tbody);   // otherwise keep unsaved name edits
+  for (const cell of tbody.querySelectorAll("[data-seen]")) {
+    const at = se.seen?.[cell.dataset.seen];
+    cell.replaceChildren(h("span", { class: at ? "badge positive" : "badge" }, at ? "Working · " + timeAgo(at) : "Not used yet"));
+  }
+}
+function drawSeTable(se, tbody) {
   tbody.dataset.key = se.key;
   tbody.replaceChildren(...se.commands.map((cmd) => {
     const tr = document.createElement("tr");
@@ -467,7 +474,8 @@ function renderSe() {
     Object.assign(copy, { type: "button", className: "btn", textContent: "Copy reply" });
     copy.addEventListener("click", async () => { await navigator.clipboard.writeText(cmd.response); setStatus($("#se-status"), "Copied the reply for " + input.value + ". Paste it as the response of that StreamElements command.", "ok"); });
     copyCell.append(copy);
-    tr.append(label, nameCell, reply, copyCell);
+    const seen = document.createElement("td"); seen.dataset.seen = cmd.action;
+    tr.append(label, nameCell, seen, reply, copyCell);
     return tr;
   }));
 }
@@ -499,6 +507,64 @@ $("#rotate-se").addEventListener("click", (e) => {
   if (!confirm("Make a new key? Every StreamElements command stops working until you paste the new replies.")) return;
   seAct({ action: "rotateSeKey" }, e.currentTarget, "New key made. Copy every reply again into StreamElements.");
 });
+
+// ---------- setup checklist ----------
+// Each step has a live state from /api/admin; the Live tab points at the first unfinished one.
+const DUEL_ACTIONS = ["challenge", "accept", "decline"];
+function setupSteps() {
+  const a = S.admin, se = a.streamelements, seen = se?.seen || {}, c = a.chatStatus || {};
+  const twitch = c.connected && c.source === "twitch";   // Twitch chat directly: the StreamElements steps don't apply
+  return [
+    { id: "check-overlay", done: a.overlays > 0, next: "open the overlay in OBS" },
+    { id: "check-duel", done: twitch || !!se?.duelModuleOff, next: "turn off the StreamElements Duel module" },
+    { id: "check-commands", done: twitch || (!!se && DUEL_ACTIONS.every((x) => seen[x])), next: "test the commands in chat" },
+    { id: "check-mods", done: !!a.modsReady, optional: true },
+  ];
+}
+function renderChecklist() {
+  const a = S.admin, se = a.streamelements, c = a.chatStatus || {}, twitch = c.connected && c.source === "twitch";
+  const steps = setupSteps(), required = steps.filter((s) => !s.optional), done = required.filter((s) => s.done).length;
+  for (const s of steps) {
+    const li = $("#" + s.id), badge = li.querySelector("[data-badge]");
+    badge.textContent = s.done ? "Done" : s.optional ? "Optional" : "To do";
+    badge.className = "badge" + (s.done ? " positive" : s.optional ? "" : " warning");
+  }
+  const detail = (id, text) => { $("#" + id + " [data-detail]").textContent = text; };
+  const n = a.overlays || 0;
+  detail("check-overlay", n ? n + " overlay" + (n === 1 ? " is" : "s are") + " connected right now." : "No overlay is open. Copy the link under \"Add the overlay to OBS\" below into an OBS Browser Source.");
+  const box = $("#duel-module-off");
+  if (document.activeElement !== box) box.checked = !!se?.duelModuleOff;
+  box.disabled = !se;
+  if (twitch) detail("check-commands", "Twitch chat is connected directly, so StreamElements commands aren't needed.");
+  else if (!se) detail("check-commands", "StreamElements isn't available for this channel.");
+  else {
+    const missing = se.commands.filter((x) => !se.seen?.[x.action]);
+    detail("check-commands", (se.commands.length - missing.length) + " of " + se.commands.length + " commands have reached Mini Chat." +
+      (missing.length ? " Not used yet: " + missing.map((x) => x.name).join(", ") + ". Type each one in your chat; any reply from the bot counts." : ""));
+  }
+  detail("check-mods", a.modsReady ? "Twitch moderators of " + CHANNEL + " can sign in and use this page." : "Only " + CHANNEL + " can open this page. Moderators need " + CHANNEL + "'s permission to check the mod list, which isn't connected yet.");
+  $("#check-title").textContent = done === required.length ? "Stream setup is done" : "Stream setup: " + done + " of " + required.length + " steps done";
+  const next = required.find((s) => !s.done), pointer = $("#setup-next");
+  pointer.hidden = !next;
+  if (next) pointer.replaceChildren("Stream setup: " + done + " of " + required.length + " steps done. Next: ", h("a", { href: "#chat", onclick: (e) => { e.preventDefault(); goToStep(next.id); } }, next.next), ".");
+}
+function goToStep(id) {
+  selectTab($("#tab-chat"));
+  const li = $("#" + id);
+  li.scrollIntoView({ block: "center" });
+  li.focus({ preventScroll: true });
+}
+$("#duel-module-off").addEventListener("change", async (e) => {
+  const box = e.currentTarget;
+  box.disabled = true;
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: "setDuelModuleOff", value: box.checked } });
+  box.disabled = false;
+  if (!r.ok) { box.checked = !box.checked; return setStatus($("#check-status"), "Couldn't save: " + errorText(r) + ".", "error"); }
+  setStatus($("#check-status"), box.checked ? "Saved: the Duel module is off." : "Saved: the Duel module step is open again.", "ok");
+  await load();
+});
+// While setup is unfinished and on screen, refetch every 10 s so a new overlay or command turns its row to Done.
+setInterval(() => { if (S.admin && !document.hidden && !$("#panel-chat").hidden && setupSteps().some((s) => !s.done && !s.optional)) load(); }, 10000);
 
 // ---------- live updates ----------
 function connectLive() {

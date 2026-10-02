@@ -346,12 +346,14 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.deepEqual([se.lastCommandAt, se.rejectedAt], [0, 0], 'no command has reached the room yet');
   assert.equal((await cmd('u1', 'alice', 'challenge', 'bob', 'wrong')).status, 403);
   assert.deepEqual([(await admin()).streamelements.lastCommandAt, (await admin()).streamelements.rejectedAt > 0], [0, true], 'a wrong key is recorded');
-  assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, 'The arena is closed right now. Come back soon!');   // not the chat source yet
-  assert.ok((await admin()).streamelements.lastCommandAt > 0, 'a command with the right key is recorded');
-  await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
+  assert.equal(se.duelModuleOff, false);
+  assert.deepEqual(se.seen, {});
+  // The first command with the right key makes StreamElements the chat source. A sign-in refusal names who is missing a fighter.
+  const first = (await cmd('u1', 'alice', 'challenge', 'bob')).body;
+  assert.deepEqual(first, { reply: '@alice, you have no fighter in the arena yet! Gear up at https://test.example/' }, 'no Twitch subscription to drop');
   assert.equal((await admin()).chatStatus.source, 'streamelements');
-  // A sign-in refusal names who is missing a fighter.
-  assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/');
+  assert.ok((await admin()).streamelements.lastCommandAt > 0, 'a command with the right key is recorded');
+  assert.deepEqual(Object.keys((await admin()).streamelements.seen), ['challenge'], 'each command is marked as seen');
   await r.save('u1', 'alice');
   assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, '@bob has no fighter in the arena yet! Send them to https://test.example/');
   await r.save('u2', 'bob');
@@ -368,11 +370,40 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: 'bad name' } } })).status, 400);
   const rotated = (await r.call('/se-admin', { method: 'POST', body: { action: 'rotateSeKey' } })).body.streamelements;
   assert.notEqual(rotated.secret, se.secret);
-  assert.deepEqual([rotated.lastCommandAt, rotated.rejectedAt], [0, 0], 'a new key starts unheard');
+  assert.deepEqual([rotated.lastCommandAt, rotated.rejectedAt, rotated.seen], [0, 0, {}], 'a new key starts unheard');
   assert.equal((await cmd('u1', 'alice', 'decline')).status, 403);
   // Disconnecting the StreamElements source never calls Twitch and pauses duels.
   await r.call('/chat', { method: 'POST', body: { action: 'disconnected', reason: 'disconnected' } });
   assert.match((await cmd('u1', 'alice', 'decline', '', rotated.secret)).body.reply, /arena is closed/);
+});
+
+test('the first StreamElements command moves a Twitch-chat channel over, but not one a mod turned off; seen times are throttled', async () => {
+  const r = room({}, { quick: true });
+  const admin = async () => (await r.call('/admin')).body;
+  const se = (await admin()).streamelements;
+  let m = 0;
+  const cmd = (action) => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: 'u1', username: 'alice', displayName: 'alice', target: '', messageId: 'se' + (++m) } });
+  await r.connectChat('sub-1');
+  await r.save('u1', 'alice');
+  const first = (await cmd('decline')).body;
+  assert.equal(first.switchedFrom, 'sub-1', 'the Worker deletes the old EventSub subscription');
+  assert.match(first.reply, /nobody has challenged you/);
+  assert.equal((await admin()).chatStatus.source, 'streamelements');
+  assert.equal((await cmd('decline')).body.switchedFrom, undefined, 'only the switch reports it');
+  const seenAt = (await admin()).streamelements.seen.decline;
+  await sleep(5);
+  await cmd('decline');
+  assert.equal((await admin()).streamelements.seen.decline, seenAt, 'written at most once a minute per command');
+  await cmd('help');
+  assert.deepEqual(Object.keys((await admin()).streamelements.seen).sort(), ['decline', 'help']);
+  // Disconnect chat on purpose: commands don't turn it back on; Use StreamElements does.
+  await r.call('/chat', { method: 'POST', body: { action: 'disconnected', reason: 'disconnected' } });
+  assert.match((await cmd('decline')).body.reply, /arena is closed/);
+  assert.equal((await admin()).chatStatus.connected, false);
+  // The Duel-module tick is saved and survives a new key.
+  assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setDuelModuleOff', value: true } })).body.streamelements.duelModuleOff, true);
+  assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'rotateSeKey' } })).body.streamelements.duelModuleOff, true);
+  assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setDuelModuleOff', value: false } })).body.streamelements.duelModuleOff, false);
 });
 
 test('SE_ONLY: a StreamElements command with the right key makes StreamElements the chat source', async () => {
@@ -481,6 +512,18 @@ test('overlay sockets: one network is capped, and a full room drops an old socke
   finally { globalThis.WebSocketPair = saved; }
   assert.deepEqual(oldest.closed, [1013, 'room full']);
   assert.ok(r.ctx.sockets.at(-1).tags.includes('ip:192.0.2.1'), 'the new socket is tagged with its network');
+});
+
+test('overlay sockets opened with role=overlay are counted for the admin setup checklist', async () => {
+  const r = room();
+  assert.equal((await r.call('/admin')).body.overlays, 0);
+  const saved = globalThis.WebSocketPair;
+  globalThis.WebSocketPair = class { constructor() { this[0] = {}; this[1] = fakeSocket(null, 'live'); } };
+  const open = (path) => r.fetch(new Request('https://room' + path, { headers: { Upgrade: 'websocket', 'X-Mini-Internal': SECRET, 'X-Mini-Channel': 'nesszerra' } })).catch(() => {});
+  try { await open('/live?role=overlay'); await open('/live'); }   // Node's Response can't build a 101; the socket is accepted first
+  finally { globalThis.WebSocketPair = saved; }
+  assert.deepEqual(r.ctx.sockets.map((s) => s.tags.includes('overlay')), [true, false]);
+  assert.equal((await r.call('/admin')).body.overlays, 1);
 });
 
 test('profiles save upgrades and hats within the points and unlocks the saved wins allow', async () => {

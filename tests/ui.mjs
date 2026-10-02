@@ -360,6 +360,48 @@ try {
     if (se.warn && !se.rejectedAt) { await page.locator('#se-health').scrollIntoViewIfNeeded(); await page.screenshot({ path: shots + '/admin-se-warning-1280.png' }); }
     await context.close();
   }
+  // 7. Setup checklist: live states from /api/admin, the Live tab points at the first unfinished step, the Duel-module tick saves.
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    const actions = ['challenge', 'accept', 'decline', 'top', 'elo', 'help'];
+    let overlays = 0, duelModuleOff = false, seen = { challenge: now - 120000, decline: now - 120000 };
+    const posts = [];
+    const chatStatus = { connected: true, source: 'streamelements', status: 'enabled', subscriptionId: 'se-streamelements', createdAt: now - 86400000, lastNotificationAt: now - 120000, lastRevocationReason: '', checkedAt: 0 };
+    const streamelements = () => ({ key: 'k'.repeat(48), names: {}, origin: base, lastCommandAt: now - 120000, rejectedAt: 0, seen, duelModuleOff, timerText: 'x',
+      commands: actions.map((action) => ({ action, name: '!' + action, response: '$(customapi ' + base + '/api/se/nesszerra/' + action + '?k=' + 'k'.repeat(48) + ')' })) });
+    await page.route('**/api/session', (r) => json(r, { user: mod, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+    await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: true, canManage: true }));
+    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
+    await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
+    await page.route('**/api/admin/nesszerra', (r) => {
+      if (r.request().method() === 'POST') { const body = r.request().postDataJSON(); posts.push(body); if (body.action === 'setDuelModuleOff') duelModuleOff = body.value; return json(r, { ok: true }); }
+      return json(r, { type: 'snapshot', channel: 'nesszerra', revision: 5, paused: false, chat: { connected: true, lastSeen: now, status: 'enabled' }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
+        chatStatus, history: [{ version: 1, config, actorId: 'system', at: now - 86400000, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 }, streamelements: streamelements(), overlays, modsReady: true, access: { owner: false, moderator: true, canManage: true } });
+    });
+    await page.goto(base + '/admin/');
+    await page.waitForSelector('#setup-next:not([hidden])');
+    assert.equal(await page.locator('#setup-next').textContent(), 'Stream setup: 0 of 3 steps done. Next: open the overlay in OBS.');
+    await page.click('#setup-next a');
+    assert.equal(await page.locator('#panel-chat').isVisible(), true);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'check-overlay');
+    assert.equal(await page.locator('#check-title').textContent(), 'Stream setup: 0 of 3 steps done');
+    assert.match(await page.locator('#check-overlay').textContent(), /To do.*No overlay is open/);
+    assert.match(await page.locator('#check-commands').textContent(), /2 of 6 commands have reached Mini Chat\. Not used yet: !accept, !top, !elo, !help\./);
+    assert.match(await page.locator('#check-mods').textContent(), /Done.*moderators of nesszerra can sign in/);
+    assert.deepEqual(await page.locator('#se-table [data-seen]').allTextContents(), ['Working · 2 min ago', 'Not used yet', 'Working · 2 min ago', 'Not used yet', 'Not used yet', 'Not used yet']);
+    await noOverflow(page, 'setup checklist ' + s.name);
+    await page.locator('#setup-check').screenshot({ path: shots + '/admin-checklist-' + s.name + '.png' });
+    // tick the Duel module box; then an overlay connects and !fight arrives, and the next refresh finishes setup
+    await page.check('#duel-module-off');
+    await page.waitForFunction(() => /Duel module is off/.test(document.querySelector('#check-status').textContent));
+    assert.deepEqual(posts.at(-1), { action: 'setDuelModuleOff', value: true });
+    assert.match(await page.locator('#check-duel').textContent(), /^Done/);
+    overlays = 1; seen = { ...seen, accept: now };
+    await page.waitForFunction(() => document.querySelector('#check-title').textContent === 'Stream setup is done', null, { timeout: 15000 });
+    assert.match(await page.locator('#check-overlay').textContent(), /1 overlay is connected right now/);
+    assert.equal(await page.locator('#setup-next').isHidden(), true);
+    await context.close();
+  }
   assert.deepEqual(errors, []);
   console.log('PASS: viewer + admin UI at 1280/390, signed-out (real server), signed-in viewer save, mod gate, admin actions, config save/409/revert; no page errors.');
 } finally { await browser.close(); }

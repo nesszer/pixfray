@@ -534,6 +534,16 @@ test('StreamElements: an empty room reply (repeated message id) posts nothing; a
   assert.equal(await call({}), "That move didn't land. Try again in a moment!");
 });
 
+test('StreamElements: when the room switches over from a Twitch subscription, the Worker is asked to delete it', async () => {
+  const { handleStreamElements } = await import('../server/streamelements.js');
+  const url = new URL('https://x/api/se/nesszerra/decline?k=k1&id=2&u=bob&d=bob&t=-&m=1');
+  const dropped = [];
+  const call = (body) => handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async () => Response.json(body), dropSubscription: (id) => dropped.push(id) }).then((r) => r.text());
+  assert.equal(await call({ reply: 'hi', switchedFrom: 'sub-1' }), 'hi');
+  await call({ reply: 'hi' });
+  assert.deepEqual(dropped, ['sub-1']);
+});
+
 // roll r gives die 1 + floor(r * 6): 0.9 -> 6 (crit 50), 0.75 -> 5 (hit 34), 0.5 -> 4 (miss), 0.1 -> 1 (counter 34)
 function quick(rolls) {
   const w = arena({ quick: true });

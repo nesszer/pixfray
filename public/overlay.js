@@ -1023,6 +1023,7 @@ async function start() {
     if (arenaDemo) { setupDemoArena(); return; }
     arenaClient = createArenaClient({
       channel,
+      role: 'overlay',
       onSnapshot: acceptArenaSnapshot,
       onEvent: queueArenaEvent,
       onStatus(event) {

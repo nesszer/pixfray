@@ -19,6 +19,7 @@ function revisionOf(value) {
  */
 export function createArenaClient({
   channel,
+  role = '',   // 'overlay' lets the admin page count open OBS overlays
   onSnapshot = () => {},
   onEvent = () => {},
   onStatus = () => {},
@@ -159,7 +160,7 @@ export function createArenaClient({
     socket = null;
     status('connecting', { revision });
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = protocol + '//' + location.host + '/api/live/' + encodeURIComponent(normalizedChannel);
+    const url = protocol + '//' + location.host + '/api/live/' + encodeURIComponent(normalizedChannel) + (role === 'overlay' ? '?role=overlay' : '');
     let activeSocket;
     try {
       activeSocket = new WebSocketImpl(url);

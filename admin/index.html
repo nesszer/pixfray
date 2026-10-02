@@ -44,6 +44,7 @@
           <button class="btn" id="reset-round" type="button">Cancel open duels and restart rounds</button>
         </div>
         <p class="status" id="action-status" role="status"></p>
+        <p class="small" id="setup-next" hidden></p>
       </section>
       <section class="section" aria-label="Arena numbers">
         <div class="stat-strip" id="stats"></div>
@@ -120,6 +121,28 @@
       </section>
     </div>
     <div role="tabpanel" id="panel-chat" aria-labelledby="tab-chat" tabindex="0" hidden>
+      <section class="section" id="setup-check" aria-labelledby="check-title">
+        <h2 id="check-title">Stream setup</h2>
+        <ol class="checklist" id="checklist">
+          <li id="check-overlay" tabindex="-1"><span class="badge" data-badge>…</span><div><strong>Overlay open in OBS</strong><p class="small muted" data-detail></p></div></li>
+          <li id="check-duel" tabindex="-1"><span class="badge" data-badge>…</span><div><strong>StreamElements Duel module turned off</strong><p class="small muted">Its <code>!duel</code>, <code>!accept</code> and <code>!deny</code> answer at the same time as Mini Chat. In StreamElements go to Chat bot, then Modules, and switch off Duel, or type <code>!module duel disable</code> in chat.</p><label class="check small"><input type="checkbox" id="duel-module-off"> I turned off the Duel module</label></div></li>
+          <li id="check-commands" tabindex="-1"><span class="badge" data-badge>…</span><div><strong>Commands answer in chat</strong><p class="small muted" data-detail></p></div></li>
+          <li id="check-mods" tabindex="-1"><span class="badge" data-badge>…</span><div><strong>Moderators can help</strong><p class="small muted" data-detail></p></div></li>
+        </ol>
+        <p class="status" id="check-status" role="status"></p>
+        <h3>If something doesn't work</h3>
+        <details class="small"><summary>The overlay is blank in OBS</summary>
+          <ol>
+            <li>Copy the link again with Copy link below and paste the whole link into the Browser Source URL.</li>
+            <li>Set the source to 1920 × 1080.</li>
+            <li>Turn off "Shutdown source when not visible".</li>
+            <li>Right-click the source and choose Refresh. "Overlay open in OBS" above turns to Done within 10 seconds.</li>
+          </ol>
+        </details>
+        <details class="small"><summary>Two bots answer the same command</summary>
+          <p>The StreamElements Duel module is still on. Switch it off under Chat bot, then Modules, or type <code>!module duel disable</code> in chat.</p>
+        </details>
+      </section>
       <section class="section" aria-labelledby="chat-title">
         <h2 id="chat-title">Twitch chat connection</h2>
         <p class="muted small" id="chat-text"></p>
@@ -161,15 +184,15 @@
             </ul>
           </li>
           <li><strong>If a command with that name already exists</strong> (StreamElements says the name is taken): find it in the Custom commands list, click its edit (pencil) button, select everything in Reply, delete it, paste the copied reply, and click Save. Default commands can't be edited; turn them off or pick another name here.</li>
-          <li><strong>Click Use StreamElements</strong> below once the duel commands are added. The <code>!ranks</code>, <code>!elo</code> and <code>!minichat</code> rows are optional; <code>!minichat</code> tells viewers how to join.</li>
-          <li><strong>Test it:</strong> type <code>!decline</code> in your chat. The bot should answer "nobody has challenged you yet". If it says "wrong key", copy the reply again.</li>
+          <li><strong>Test it:</strong> type <code>!decline</code> in your chat. Any answer from the bot except "wrong key" means it works, and that row below shows Working. If it says "wrong key", copy the reply again. The first command that arrives makes StreamElements the chat source; Use StreamElements does the same by hand.</li>
+          <li>The <code>!ranks</code>, <code>!elo</code> and <code>!minichat</code> rows are optional. <code>!minichat</code> tells viewers how to join.</li>
           <li><strong>Optional: remind chat how to join.</strong> In StreamElements go to Chat bot, then Timers, and add a timer that runs every 15 to 20 minutes. Click Copy timer message and paste it as the message. Mini Chat never posts on its own.</li>
         </ol>
         <p class="caveat small">Add commands in the dashboard, not with <code>!command add</code> in chat: the reply contains the key, and chat would show it to every viewer.</p>
         <div class="toolbar"><button class="btn" id="use-se" type="button">Use StreamElements</button><button class="btn" id="save-se-names" type="button">Save names</button><button class="btn" id="rotate-se" type="button">New key</button><button class="btn" id="copy-timer" type="button">Copy timer message</button></div>
         <p class="status" id="se-status" role="status"></p>
         <div class="table-wrap"><table class="data" id="se-table">
-          <thead><tr><th scope="col">Action</th><th scope="col">Command name</th><th scope="col">StreamElements reply</th><th scope="col"><span class="sr-only">Copy</span></th></tr></thead>
+          <thead><tr><th scope="col">Action</th><th scope="col">Command name</th><th scope="col">Status</th><th scope="col">StreamElements reply</th><th scope="col"><span class="sr-only">Copy</span></th></tr></thead>
           <tbody></tbody>
         </table></div>
         <p class="caveat small">The reply contains this channel's key. Anyone who sees it can send duel moves as any viewer, so keep it to the broadcaster and mods; click New key if it leaks, then paste the commands again. StreamElements only calls the site on commands, so characters appear when a viewer uses one.</p>

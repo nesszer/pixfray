@@ -14,7 +14,7 @@ const MAX_REPLY = 380;   // StreamElements cuts responses at 400 bytes
 const reply = (body, status = 200) => new Response(String(body).slice(0, MAX_REPLY), { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 
 // GET /api/se/<channel>/<action>. The per-channel key is the authentication; the room checks it.
-export async function handleStreamElements(request, env, { url, origin, channels, roomFetch }) {
+export async function handleStreamElements(request, env, { url, origin, channels, roomFetch, dropSubscription }) {
   if (request.method !== 'GET') return reply('Use GET', 405);
   const m = SE_PATH.exec(url.pathname);
   if (!m) return reply('Unknown command', 404);
@@ -36,6 +36,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
   };
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
+  if (data.switchedFrom && dropSubscription) dropSubscription(data.switchedFrom);
   // always 200 so the bot shows the text; '' (a repeated message id) means post nothing
   return reply(typeof data.reply === 'string' ? data.reply : MISSED_TEXT);
 }

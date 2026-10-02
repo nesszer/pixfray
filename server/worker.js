@@ -51,7 +51,7 @@ async function chatAction(env,url,channel,action,{takeover=false}={}){
 function seView(env,url,channel,se){
   if(!se?.secret)return null;
   const origin=env.PUBLIC_ORIGIN||url.origin;
-  return {key:se.secret,names:se.names,origin,lastCommandAt:se.lastCommandAt||0,rejectedAt:se.rejectedAt||0,commands:seCommandLines(origin,channel,se.secret,se.names),timerText:seHelpText({names:se.names,origin,channel})};
+  return {key:se.secret,names:se.names,origin,lastCommandAt:se.lastCommandAt||0,rejectedAt:se.rejectedAt||0,seen:se.seen||{},duelModuleOff:!!se.duelModuleOff,commands:seCommandLines(origin,channel,se.secret,se.names),timerText:seHelpText({names:se.names,origin,channel})};
 }
 // Test site only: DEV_TOOLS_TOKEN is declared only by `cf deploy --mode test`, so production has no token to match.
 // A matching "Authorization: Bearer" acts as the owner, for scripts/devtools.mjs (docs/DEVTOOLS.md).
@@ -92,7 +92,9 @@ export default {async fetch(request,env,ctx){
     // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
     if(path.startsWith('/api/se/')){
       if(!env.INTERNAL_SECRET)return new Response('Mini Chat is not configured',{status:503});
-      return await handleStreamElements(request,env,{url,origin:env.PUBLIC_ORIGIN||url.origin,channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init)});
+      return await handleStreamElements(request,env,{url,origin:env.PUBLIC_ORIGIN||url.origin,channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),
+        // StreamElements took over from a Twitch EventSub subscription: delete it so Twitch stops sending chat.
+        dropSubscription:subscriptionId=>ctx?.waitUntil?.(disconnectChat(env,{subscriptionId,url}).catch(e=>console.warn('eventsub drop failed',e?.message)))});
     }
     // A dev token is not a browser credential, so it skips the same-origin check; a wrong one is refused outright.
     const dev=request.headers.has('Authorization')?await devToken(request,env):false;
@@ -137,11 +139,13 @@ export default {async fetch(request,env,ctx){
       if(request.method==='GET'){
         const r=await internal(request,env,channel,'/admin');if(!r.ok)return r;
         const data=await r.json();
-        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1'});
+        // modsReady: the broadcaster's token is stored, so moderators can be checked and open this page too.
+        const modsReady=!!(await record(env,'broadcaster:'+channel));
+        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',modsReady});
       }
       const data=await bodyJson(request,12000);
-      if(data.action==='rotateSeKey'||data.action==='setSeNames'){
-        const r=await roomFetch(null,env,channel,'/se-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:data.action,names:data.names})});
+      if(data.action==='rotateSeKey'||data.action==='setSeNames'||data.action==='setDuelModuleOff'){
+        const r=await roomFetch(null,env,channel,'/se-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:data.action,names:data.names,value:data.value===true})});
         const out=await r.json();if(!r.ok)return json(out,r.status);
         return json({ok:true,streamelements:seView(env,url,channel,out.streamelements)});
       }
@@ -155,6 +159,7 @@ export default {async fetch(request,env,ctx){
       return json([...s,...(d.ok?await d.json():[])]);
     }
     // Saved looks for the overlay: public, the same fields the leaderboard shows.
+    if(route==='live')return internal(request,env,channel,url.searchParams.get('role')==='overlay'?'/live?role=overlay':'/live');
     if(route==='looks')return internal(request,env,channel,'/looks?u='+encodeURIComponent((url.searchParams.get('u')||'').slice(0,600)));
     return internal(request,env,channel,'/'+route);
   }catch(error){
