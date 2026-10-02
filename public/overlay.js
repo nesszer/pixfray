@@ -40,6 +40,7 @@ async function start() {
   const debug = params.get('debug') === '1';
   const cap = Math.max(1, Math.min(100, Number(params.get('cap')) || 100));
   const size = Math.max(24, Math.min(96, Number(params.get('size')) || 60));
+  const announce = ['bottom', 'off'].includes(params.get('announce')) ? params.get('announce') : 'top';   // where duel announcements sit
   const sound = params.get('sound') === '1';   // quiet duel sounds, off unless asked for
   const status = document.querySelector('#status');
   const storageKey = 'mini-chat:cosmetics:' + channel;
@@ -624,12 +625,13 @@ async function start() {
   }
   function drawAnnouncement() {
     const lines = liveAnnouncements();
-    if (!lines.length) return;
+    if (!lines.length || announce === 'off') return;
+    const above = height - FLOOR - 28 - size * DUEL_GROW - 150 - 64;   // clear of the win banner and the fighters
     ctx.save();
     ctx.font = '700 24px system-ui, sans-serif';
     ctx.textAlign = 'center';
     lines.forEach((line, i) => {
-      const top = 26 + i * 56;
+      const top = announce === 'bottom' ? Math.max(8, above - (lines.length - 1 - i) * 56) : 26 + i * 56;
       const boxWidth = Math.min(width - 24, Math.max(260, ctx.measureText(line.text).width + 40));
       const left = (width - boxWidth) / 2;
       ctx.fillStyle = 'rgba(12,16,25,.82)';
