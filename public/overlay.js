@@ -873,15 +873,17 @@ async function start() {
     const snapshot = () => acceptArenaSnapshot({ channel, revision: ++revision, paused: false, chat: { connected: true, lastSeen: Date.now(), status: 'enabled' }, config: { maxHp: 100 }, players: demoProfiles, duels: duel ? [duel] : [], events: [] }, { revision });
     const event = fields => ({ id: 'demo-' + revision + '-' + (++seq), at: Date.now(), ...fields });
     snapshot();
-    const badge = document.createElement('div');
-    badge.id = 'arena-mode';
-    badge.textContent = 'DEMO · local match · not saved';
-    Object.assign(badge.style, {
-      position: 'fixed', top: '12px', right: '12px', zIndex: '2', padding: '7px 10px',
-      borderRadius: '4px', color: '#fff', background: 'rgba(12,16,25,.82)',
-      font: '600 11px system-ui,sans-serif', pointerEvents: 'none',
-    });
-    document.body.appendChild(badge);
+    if (debug) {   // the demo label is for testing only; on stream the demo looks like the real overlay
+      const badge = document.createElement('div');
+      badge.id = 'arena-mode';
+      badge.textContent = 'DEMO · local match · not saved';
+      Object.assign(badge.style, {
+        position: 'fixed', top: '12px', right: '12px', zIndex: '2', padding: '7px 10px',
+        borderRadius: '4px', color: '#fff', background: 'rgba(12,16,25,.82)',
+        font: '600 11px system-ui,sans-serif', pointerEvents: 'none',
+      });
+      document.body.appendChild(badge);
+    }
     // The same rules as the server's quick duel (settleQuickDuel in server/game.js): one d6 per swing, 6 crits for 50,
     // 5 hits for 34, 3-4 misses, 1-2 is countered for 34. After 12 rolls more HP wins, a tie goes to sudden death.
     // Like a real !fight, the whole duel arrives at once (settled snapshot plus events) and the overlay replays it.
