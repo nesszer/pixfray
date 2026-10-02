@@ -118,6 +118,26 @@ async function start() {
   }
   const validFrames = list => Array.isArray(list) ? list.filter(f =>
     f && [f.x, f.y, f.w, f.h].every(Number.isFinite) && f.x >= 0 && f.y >= 0 && f.w > 0 && f.h > 0) : [];
+  // Packs crop their frames differently: a frog or a pixel hero fills its frame, a Kenney adventurer leaves margin.
+  // Measure the visible figure in the standing frame and shrink bulky ones so every fighter has about the same
+  // on-stage size (sqrt of visible width x height, in frame heights). 0.78 keeps the original characters as they were.
+  function bulkFit(image, frame) {
+    try {
+      const c = document.createElement('canvas');
+      c.width = frame.w; c.height = frame.h;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(image, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
+      const data = g.getImageData(0, 0, frame.w, frame.h).data;
+      let left = frame.w, right = -1, top = frame.h, bottom = -1;
+      for (let y = 0; y < frame.h; y++) for (let x = 0; x < frame.w; x++) {
+        if (data[(y * frame.w + x) * 4 + 3] <= 40) continue;
+        if (x < left) left = x; if (x > right) right = x; if (y < top) top = y; if (y > bottom) bottom = y;
+      }
+      if (right < left) return 1;
+      const bulk = Math.sqrt((right - left + 1) * (bottom - top + 1)) / frame.h;
+      return Math.min(1, 0.78 / bulk);
+    } catch { return 1; }
+  }
   function addSprite(id, item) {
     if (!item || typeof item.url !== 'string' || sprites.has(id)) return;
     const url = new URL(item.url, location.href);
@@ -134,6 +154,7 @@ async function start() {
         sprite.frames = [{ x: 0, y: 0, w: image.naturalWidth, h: image.naturalHeight }];
       }
       sprite.loaded = sprite.frames.length > 0;
+      if (sprite.loaded) sprite.fit = bulkFit(image, sprite.frames[0]);
     };
     image.onerror = () => { sprite.loaded = false; };
     image.src = url.href;
@@ -830,7 +851,7 @@ async function start() {
         const single = sprite.mode === 'single' || sprite.frames.length === 1;
         const bob = single && moving ? Math.abs(Math.sin((clock + p.phase) / 140)) * s * .06 : 0;
         const squash = single && moving ? 1 + Math.sin((clock + p.phase) / 70) * .04 : 1;
-        const drawWidth = s * frame.w / frame.h;
+        const drawHeight = s * (sprite.fit || 1), drawWidth = drawHeight * frame.w / frame.h;
         ctx.translate(p.x + offset, y - bob);
         if (ko && !drawn) {
           const fall = Math.min(1, (clock - (p.koStart || clock - 400)) / 400);
@@ -841,8 +862,8 @@ async function start() {
         else if (anim?.kind === 'attack' && !drawn && progress > 0) ctx.filter = 'brightness(1.35)';
         // Sources face right; mirror left walking.
         ctx.scale(p.direction / squash, squash);
-        ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -s, drawWidth, s);
-        if (p.hat) drawHat(ctx, p.hat, sprite.image, frame, -drawWidth / 2, -s, drawWidth, s);
+        ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
+        if (p.hat) drawHat(ctx, p.hat, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
       } else {
         if (ko) ctx.globalAlpha = .5;
         ctx.translate(p.x + offset, y); ctx.scale(p.grow, p.grow);
