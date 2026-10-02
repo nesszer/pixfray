@@ -99,12 +99,13 @@ export async function handleAuth(request,env){
   if(!identity||validation.client_id!==env.TWITCH_CLIENT_ID||validation.user_id!==identity.id)return Response.json({error:'Twitch identity mismatch'},{status:403});
   const user={id:identity.id,login:identity.login,displayName:identity.display_name};
   // Resolve the channel's current immutable ID from Twitch, never from a claimed form field.
-  const ownerRes=await fetch('https://api.twitch.tv/helix/users?login=nesszerra',{headers});
-  if(!ownerRes.ok)return Response.json({error:'Cannot resolve channel owner'},{status:502});
-  const owner=(await ownerRes.json()).data?.[0];
-  if(!owner)return Response.json({error:'Test channel not found'},{status:502});
-  if(env.OWNER_TWITCH_ID&&env.OWNER_TWITCH_ID!==owner.id)return Response.json({error:'Owner configuration mismatch'},{status:403});
-  await record(env,'owner:nesszerra',{id:owner.id},Date.now()+90*86400000);
+  // A failed lookup only blocks connecting chat; viewers still sign in and the last stored owner record stays.
+  const ownerRes=await fetch('https://api.twitch.tv/helix/users?login=nesszerra',{headers}).catch(()=>null);
+  const owner=ownerRes?.ok?(await ownerRes.json()).data?.[0]:null;
+  if(owner){
+    if(env.OWNER_TWITCH_ID&&env.OWNER_TWITCH_ID!==owner.id)return Response.json({error:'Owner configuration mismatch'},{status:403});
+    await record(env,'owner:nesszerra',{id:owner.id},Date.now()+90*86400000);
+  }else if(pending.connect)return Response.json({error:'Cannot resolve channel owner'},{status:502});
   if(pending.connect){
     if(user.id!==owner.id)return Response.json({error:'Only nesszerra can connect broadcaster authorization'},{status:403});
     const missing=CONNECT_SCOPES.filter(x=>!validation.scopes?.includes(x));
@@ -116,12 +117,16 @@ export async function handleAuth(request,env){
   const response=new Response(null,{status:303,headers:{Location:back}});
   response.headers.append('Set-Cookie',cookie('mini_session',key,21600));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
 }
+const verdict=moderator=>({owner:false,moderator,canManage:moderator,reason:moderator?'':'Current Twitch moderator role required'});
 export async function access(env,user,channel){
   const owner=await isOwner(env,user);
   if(owner)return {owner:true,moderator:false,canManage:true};
   if(!user)return {owner:false,moderator:false,canManage:false,reason:'Sign in with Twitch'};
   // The broadcaster manages their own channel; the login comes from Twitch at sign-in, never from a form field.
   if(String(user.login||'').toLowerCase()===channel)return {owner:false,broadcaster:true,moderator:false,canManage:true};
+  // The Helix verdict is cached for a minute so a raid of signed-in viewers can't exhaust the broadcaster's rate limit.
+  const cacheKey='mod:'+channel+':'+user.id,cached=await record(env,cacheKey);
+  if(cached!==null)return verdict(cached===true);
   const encrypted=await record(env,'broadcaster:'+channel);
   if(!encrypted)return {owner:false,moderator:false,canManage:false,reason:'Broadcaster must connect moderator authorization'};
   let token=await unseal(env,encrypted);
@@ -138,9 +143,11 @@ export async function access(env,user,channel){
     const v=await r.json();if(v.user_id!==token.userId||v.client_id!==env.TWITCH_CLIENT_ID||!v.scopes?.includes('moderation:read'))throw new Error('Broadcaster authorization is invalid');
     token.validatedAt=Date.now();await record(env,'broadcaster:'+channel,await seal(env,token),Date.now()+90*86400000);
   }
-  let r=await fetch('https://api.twitch.tv/helix/moderation/moderators?broadcaster_id='+token.userId+'&user_id='+encodeURIComponent(user.id),{headers:authHeaders()});
-  if(r.status===401){await renew();await record(env,'broadcaster:'+channel,await seal(env,token),Date.now()+90*86400000);r=await fetch('https://api.twitch.tv/helix/moderation/moderators?broadcaster_id='+token.userId+'&user_id='+encodeURIComponent(user.id),{headers:authHeaders()});}
+  const checkMod=()=>fetch('https://api.twitch.tv/helix/moderation/moderators?broadcaster_id='+token.userId+'&user_id='+encodeURIComponent(user.id),{headers:authHeaders()});
+  let r=await checkMod();
+  if(r.status===401){await renew();await record(env,'broadcaster:'+channel,await seal(env,token),Date.now()+90*86400000);r=await checkMod();}
   if(!r.ok)throw new Error('Current moderator role cannot be verified');
   const moderator=(await r.json()).data?.some(x=>x.user_id===user.id)||false;
-  return {owner:false,moderator,canManage:moderator,reason:moderator?'':'Current Twitch moderator role required'};
+  await record(env,cacheKey,moderator,Date.now()+60000);
+  return verdict(moderator);
 }

@@ -408,3 +408,19 @@ test('dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   assert.match(fight.body.reply, /testbot_[ab] beats testbot_[ab]/);
   assert.equal((await r.call('/leaderboard')).body.filter((p) => p.wins + p.losses === 1).length, 2, 'Elo and records are saved');
 });
+
+test('overlay sockets: one network is capped, and a full room drops an old socket instead of refusing', async () => {
+  const r = room();
+  const upgrade = (ip) => r.upgrade(new Request('https://room/live', { headers: { Upgrade: 'websocket', 'X-Mini-Client-Ip': ip } }), 'live', 'nesszerra');
+  for (let i = 0; i < 16; i++) r.ctx.acceptWebSocket(fakeSocket(null, 'live'), ['live', 'ip:198.51.100.7']);
+  const capped = await upgrade('198.51.100.7');
+  assert.equal(capped.status, 429);
+  for (let i = 16; i < 200; i++) r.ctx.acceptWebSocket(fakeSocket(null, 'live'), ['live', 'ip:203.0.113.' + i]);
+  const oldest = r.ctx.sockets[0];
+  const saved = globalThis.WebSocketPair;
+  globalThis.WebSocketPair = class { constructor() { this[0] = {}; this[1] = fakeSocket(null, 'live'); } };
+  try { await upgrade('192.0.2.1').catch(() => {}); }   // Node's Response can't build a 101; the eviction happens first
+  finally { globalThis.WebSocketPair = saved; }
+  assert.deepEqual(oldest.closed, [1013, 'room full']);
+  assert.ok(r.ctx.sockets.at(-1).tags.includes('ip:192.0.2.1'), 'the new socket is tagged with its network');
+});

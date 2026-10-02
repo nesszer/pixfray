@@ -26,7 +26,7 @@ export async function api(path, { method = "GET", body } = {}) {
   const init = { method, credentials: "same-origin", headers: { Accept: "application/json" } };
   if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
   let response;
-  try { response = await fetch(path, init); } catch { return { ok: false, status: 0, data: { error: "Network error; check your connection" } }; }
+  try { response = await fetch(path, init); } catch { return { ok: false, status: 0, data: { error: "Network error. Check your connection and try again." } }; }
   let data = null;
   try { data = await response.json(); } catch {}
   return { ok: response.ok, status: response.status, data };
@@ -75,7 +75,7 @@ export function renderWho(container, session, onSignOut) {
     container.append(h("span", {}, "Signed in as ", h("strong", {}, session.user.displayName || session.user.login)),
       h("button", { class: "btn btn-small", type: "button", onclick: onSignOut }, "Sign out"));
   } else if (session && session.configured === false) {
-    container.append(h("span", {}, "Twitch sign-in is not configured on this server yet"));
+    container.append(h("span", {}, "Twitch sign-in isn't set up on this server yet"));
   } else {
     container.append(h("a", { class: "btn", href: loginHref(location.pathname.startsWith("/admin") ? "/admin/" : "/") }, "Sign in with Twitch"));
   }
@@ -91,6 +91,7 @@ export async function signOut() {
 const images = new Map();
 const sprites = new Set();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+reducedMotion.addEventListener("change", () => { for (const s of sprites) s.drawn = ""; start(); });
 function image(url) {
   if (!images.has(url)) { const img = new Image(); img.decoding = "async"; img.src = url; images.set(url, img); }
   return images.get(url);
@@ -116,9 +117,9 @@ export function addSprite(canvas, entry, { anim = "walk", active = () => true } 
   const s = { canvas, entry, anim, active, drawn: "" };
   sprites.add(s);
   const img = entry && image(entry.url);
-  img?.addEventListener("load", () => { s.drawn = ""; }, { once: true });
+  img?.addEventListener("load", () => { s.drawn = ""; start(); }, { once: true });
   start();
-  return { set(next) { s.entry = next; s.drawn = ""; if (next) image(next.url).addEventListener("load", () => { s.drawn = ""; }, { once: true }); start(); }, destroy() { sprites.delete(s); } };
+  return { set(next) { s.entry = next; s.drawn = ""; if (next) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); }, destroy() { sprites.delete(s); } };
 }
 let running = false;
 function start() { if (!running) { running = true; requestAnimationFrame(tick); } }
@@ -131,5 +132,6 @@ function tick(now) {
     const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index;
     if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index])) s.drawn = key;
   }
-  if (sprites.size) requestAnimationFrame(tick); else running = false;
+  // With reduced motion every sprite is a still frame, so the loop sleeps until something needs redrawing.
+  if (sprites.size && !reducedMotion.matches) requestAnimationFrame(tick); else running = false;
 }

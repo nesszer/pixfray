@@ -17,7 +17,9 @@ const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
 const USER_HEADER = "X-Mini-User-Id";
 const MAX_PROFILE_ID_LENGTH = 64;
-const MAX_LIVE_SOCKETS = 64;
+const MAX_LIVE_SOCKETS = 200;
+const MAX_SOCKETS_PER_CLIENT = 16;      // one network can't fill the room and lock OBS out
+const REJECTED_WRITE_MS = 60_000;          // a wrong StreamElements key is recorded at most once a minute
 const MAX_CONFIG_HISTORY = 50;
 const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
 const MAX_EVENTSUB_IDS = 5_000;
@@ -477,13 +479,18 @@ export class ChannelRoom extends DurableObject {
 
   async upgrade(request, kind, channel) {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "websocket upgrade required" }, 426);
-    if (this.ctx.getWebSockets("live").length >= MAX_LIVE_SOCKETS) {
-      return json({ error: "too many overlay connections" }, 429);
+    const ip = request.headers.get("X-Mini-Client-Ip"), clientTag = ip ? "ip:" + ip.slice(0, 64) : null;
+    if (clientTag && this.ctx.getWebSockets(clientTag).length >= MAX_SOCKETS_PER_CLIENT) {
+      return json({ error: "too many overlay connections from this network" }, 429);
+    }
+    const live = this.ctx.getWebSockets("live");
+    if (live.length >= MAX_LIVE_SOCKETS) {   // full: drop an existing socket rather than refuse the new one
+      try { live[0].close(1013, "room full"); } catch {}
     }
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    this.ctx.acceptWebSocket(server, [kind]);
+    this.ctx.acceptWebSocket(server, clientTag ? [kind, clientTag] : [kind]);
     server.serializeAttachment({ kind, channel });
     const result = this.advance(channel, { type: "tick" }, Date.now());
     server.send(JSON.stringify(this.publicState(result.state)));
@@ -542,7 +549,7 @@ export class ChannelRoom extends DurableObject {
   async streamElements(channel, input, origin) {
     const settings = this.seSettings();
     if (!timingSafeEqual(String(input.key || ""), settings.secret)) {
-      this.ctx.storage.sql.exec("UPDATE se_settings SET rejected_at = ? WHERE id = 1", Date.now());
+      if (Date.now() - settings.rejectedAt > REJECTED_WRITE_MS) this.ctx.storage.sql.exec("UPDATE se_settings SET rejected_at = ? WHERE id = 1", Date.now());
       return json({ reply: "Mini Chat: wrong key. Copy the commands again from the admin page." }, 403);
     }
     this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ? WHERE id = 1", Date.now());

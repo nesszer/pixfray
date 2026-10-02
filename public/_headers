@@ -1,0 +1,18 @@
+# Static responses only; /api/* and /auth/* set their own headers in server/worker.js.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# Pages with sign-in and mod actions can't be framed by other sites (clickjacking). The overlay stays frameable for OBS.
+/
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
+/admin/*
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
+
+# The test site and the OBS overlay stay out of search results.
+/overlay*
+  X-Robots-Tag: noindex, nofollow
+https://test.chat.miolaf.xyz/*
+  X-Robots-Tag: noindex, nofollow

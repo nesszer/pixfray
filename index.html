@@ -1,7 +1,15 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mini Chat — your fighter on nesszerra</title>
+<title>Mini Chat: pick your fighter on nesszerra</title>
 <meta data-channel name="description" content="Pick your Mini Chat character and nameplate color for the nesszerra Twitch channel.">
+<link rel="canonical" href="https://chat.miolaf.xyz/">
+<meta name="theme-color" content="#17110c">
+<meta property="og:type" content="website"><meta property="og:site_name" content="Mini Chat"><meta property="og:url" content="https://chat.miolaf.xyz/">
+<meta property="og:title" content="Mini Chat: pick your fighter on nesszerra">
+<meta property="og:description" content="Pick a character and nameplate color, then duel other viewers in nesszerra's Twitch chat.">
+<meta property="og:image" content="https://chat.miolaf.xyz/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Mini Chat characters lined up under the Mini Chat name">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
@@ -17,6 +25,7 @@
     <header class="hero-copy">
       <h1 id="hero-title" data-channel>Your fighter in nesszerra's chat</h1>
       <p class="lead" data-channel>Pick a character and a nameplate color. Your profile is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
+      <p class="how">To duel: say something in chat so your character walks onto the stream, then type <code>!challenge @name</code>. They accept with <code>!fight</code>. <a href="#duels">Full rules</a></p>
       <p class="note" id="signin-note" hidden></p>
     </header>
 
@@ -90,12 +99,17 @@
         </table></div>
       </div>
     </div>
-    <p>The challenger swings first, then the fighters take turns. Two critical hits or three hits knock a fighter out. After 12 rolls the fighter with more health wins; if health is level, the next hit or counter decides it. A win without taking any damage is flawless and earns 3 extra Elo.</p>
-    <p class="caveat">Your character appears on stream after your first chat message. The loser is knocked out for a few seconds, and the same two viewers wait <span id="cmd-rematch">30 s</span> before a rematch.</p>
+    <ul class="rules">
+      <li>The challenger swings first, then the fighters take turns.</li>
+      <li>Two critical hits or three hits knock a fighter out.</li>
+      <li>After 12 rolls the fighter with more health wins. If health is level, the next hit or counter decides it.</li>
+      <li>A win without taking any damage is flawless and earns 3 extra Elo.</li>
+    </ul>
+    <p class="caveat">The loser is knocked out for a few seconds, and the same two viewers wait <span id="cmd-rematch">30 s</span> before a rematch.</p>
   </section>
 
 
-  <p class="caveat">Character art by <a href="https://kenney.nl" rel="noopener">Kenney</a> (CC0). Headings use <a href="https://github.com/undercasetype/Fraunces" rel="noopener">Fraunces</a> (SIL Open Font License). Signing in asks Twitch only for your public identity; Mini Chat never posts in chat as you.</p>
+  <p class="caveat">Character art by <a href="https://kenney.nl" rel="noopener">Kenney</a> (CC0). Headings use <a href="https://github.com/undercasetype/Fraunces" rel="noopener">Fraunces</a> (SIL Open Font License). Signing in shares only your public Twitch name. Mini Chat never posts in chat as you.</p>
 </main>
 <script type="module" src="/src/dashboard.js"></script>
 </body></html>

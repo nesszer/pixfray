@@ -7,10 +7,11 @@ import { handleStreamElements,seCommandLines,SE_SUBSCRIPTION_ID } from './stream
 export {ChannelRoom,AuthStore};
 const enabledChannel=channel=>CHANNELS.includes(channel);
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
+const validProfile=({avatar,color,defaultAbility})=>typeof avatar==='string'&&/^[a-z0-9_-]{1,64}$/.test(avatar)&&typeof color==='string'&&/^#[a-f0-9]{6}$/i.test(color)&&['strike','heavy','heal'].includes(defaultAbility);
 // Raw call into a ChannelRoom. Adds the internal secret and channel binding; the caller owns method/body.
 function roomFetch(request,env,channel,path,init={}){
   const h=new Headers(init.headers||{});h.set('X-Mini-Internal',env.INTERNAL_SECRET);h.set('X-Mini-Channel',channel);
-  if(request?.headers.get('Upgrade'))h.set('Upgrade','websocket');
+  if(request?.headers.get('Upgrade')){h.set('Upgrade','websocket');const ip=request.headers.get('CF-Connecting-IP');if(ip)h.set('X-Mini-Client-Ip',ip);}
   return env.ROOMS.get(env.ROOMS.idFromName(channel)).fetch('https://room'+path,{...init,headers:h});
 }
 function internal(request,env,channel,path,body){
@@ -68,7 +69,7 @@ async function handleDevtools(request,env,channel,action,data){
   if(!/^[a-zA-Z0-9_:-]{1,64}$/.test(userId)||!/^[a-z0-9_]{1,25}$/.test(username))return json({error:'userId and username required'},400);
   if(action==='profile'){
     const {avatar='player',color='#4FA3FF',defaultAbility='strike'}=data;
-    if(typeof avatar!=='string'||!/^[a-z0-9_-]{1,64}$/.test(avatar)||typeof color!=='string'||!/^#[a-f0-9]{6}$/i.test(color)||!['strike','heavy','heal'].includes(defaultAbility))return json({error:'Invalid profile fields'},400);
+    if(!validProfile({avatar,color,defaultAbility}))return json({error:'Invalid profile fields'},400);
     return internal(request,env,channel,'/profile',{userId,username,displayName,avatar,color,defaultAbility});
   }
   if(action==='chat'){
@@ -122,7 +123,7 @@ export default {async fetch(request,env,ctx){
       if(request.method==='GET')return internal(request,env,channel,'/profile?userId='+encodeURIComponent(user.id));
       if(request.method!=='POST')return json({error:'Use GET or POST'},405);
       const {avatar,color,defaultAbility}=await bodyJson(request,4000);
-      if(typeof avatar!=='string'||!/^[a-z0-9_-]{1,64}$/.test(avatar)||typeof color!=='string'||!/^#[a-f0-9]{6}$/i.test(color)||!['strike','heavy','heal'].includes(defaultAbility))return json({error:'Invalid profile fields'},400);
+      if(!validProfile({avatar,color,defaultAbility}))return json({error:'Invalid profile fields'},400);
       const dynamicRes=await internal(request,env,channel,'/catalog');const dynamic=dynamicRes.ok?await dynamicRes.json():[];
       if(![...await staticCatalog(env,url),...dynamic].some(x=>x.id===avatar))return json({error:'Unknown character'},400);
       return internal(request,env,channel,'/profile',{userId:user.id,username:user.login,displayName:user.displayName,avatar,color,defaultAbility});

@@ -115,3 +115,29 @@ test('stored Twitch tokens are authenticated ciphertext', async () => {
   const corrupted = { ...encrypted, data: encrypted.data.slice(0, 8) + 'AAAA' + encrypted.data.slice(12) };
   await assert.rejects(unseal(f.env, corrupted));
 });
+test('a moderator check is cached for a minute, so repeat page loads do not call Twitch again', async () => {
+  const f = environment(), cookie = await signedIn(f);
+  f.entries.set('broadcaster:nesszerra', await seal(f.env, { access_token: 'a', refresh_token: 'r', userId: '1', validatedAt: Date.now() }));
+  const realFetch = globalThis.fetch; let helix = 0;
+  globalThis.fetch = async (url) => { if (String(url).includes('/helix/moderation/moderators')) { helix++; return Response.json({ data: [{ user_id: '2' }] }); } throw new Error('unexpected fetch ' + url); };
+  try {
+    for (let i = 0; i < 3; i++) assert.equal((await (await worker.fetch(req('/api/access/nesszerra', 'GET', undefined, cookie), f.env)).json()).canManage, true);
+  } finally { globalThis.fetch = realFetch; }
+  assert.equal(helix, 1);
+  assert.equal(f.entries.get('mod:nesszerra:2'), true);
+});
+test('viewers can still sign in when Twitch fails to look up the channel owner', async (t) => {
+  const f = environment();
+  const login = await worker.fetch(req('/auth/login'), f.env);
+  const state = new URL(login.headers.get('Location')).searchParams.get('state');
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = String(url);
+    if (u.endsWith('/oauth2/token')) return Response.json({ access_token: 'user-token', refresh_token: 'r' });
+    if (u.endsWith('/oauth2/validate')) return Response.json({ client_id: 'test-app', user_id: '2', scopes: [] });
+    if (u.includes('users?login=nesszerra')) return new Response('busy', { status: 503 });
+    return Response.json({ data: [{ id: '2', login: 'viewer', display_name: 'Viewer' }] });
+  });
+  const r = await worker.fetch(new Request('https://chat.miolaf.xyz/auth/callback?code=c&state=' + state, { headers: { Cookie: 'mini_oauth=' + state } }), f.env);
+  assert.equal(r.status, 303);
+  assert.match(r.headers.get('Set-Cookie'), /mini_session=/);
+});

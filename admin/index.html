@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Chat mod controls — nesszerra</title>
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#17110c">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
@@ -109,7 +110,7 @@
           <figure class="chart">
             <div class="title" id="usage-title">Custom character usage</div>
             <div class="bars" id="usage-bars"></div>
-            <figcaption>Source: /api/admin/nesszerra customUsage. Limits: PNG only, 24 frames, 128 × 128 px per frame, 1.5 MB per atlas, 8 characters per channel.</figcaption>
+            <figcaption>Limits: PNG only, 24 frames, 128 × 128 px per frame, 1.5 MB per atlas, 8 characters per channel.</figcaption>
           </figure>
           <div class="small muted" id="custom-list"></div>
         </div>
@@ -125,7 +126,7 @@
         <div class="toolbar" id="chat-actions"><button class="btn" id="connect-chat" type="button">Connect chat</button><button class="btn" id="disconnect-chat" type="button">Disconnect chat</button></div>
         <p class="status" id="chat-status" role="status"></p>
         <div id="owner-chat" hidden class="stack section">
-          <p class="small">Twitch sends chat to this site through one EventSub subscription. It needs nesszerra's permission to read chat and check moderators. If Connect chat reports missing authorization, reconnect Twitch, then click Connect chat again.</p>
+          <p class="small" data-channel>Twitch sends chat to this site through one EventSub subscription. It needs nesszerra's permission to read chat and check moderators. If Connect chat reports missing authorization, reconnect Twitch, then click Connect chat again.</p>
           <div class="toolbar"><a class="btn" href="/auth/login?connect=1">Reconnect Twitch</a></div>
         </div>
       </section>

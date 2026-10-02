@@ -79,7 +79,7 @@ function renderSignedIn() {
   note.hidden = signedIn;
   if (!s) note.textContent = "Sign-in is unavailable right now, so profiles can't be saved. You can still browse characters and the leaderboard.";
   else if (s.configured === false) note.textContent = "Twitch sign-in isn't set up on this server yet, so profiles can't be saved. You can still browse characters and the leaderboard.";
-  else note.textContent = "Browse freely. Sign in with Twitch to save your fighter; ranked duels need a saved profile.";
+  else note.textContent = "Sign in with Twitch to save your fighter. It shares only your public Twitch name, and ranked duels need a saved profile.";
   const stats = $("#my-stats");
   stats.hidden = !state.profile;
   if (state.profile) {
@@ -119,6 +119,7 @@ async function loadLeaderboard() {
 }
 
 form.addEventListener("change", update);
+addEventListener("beforeunload", (e) => { if (state.session?.user && state.saved && dirty()) e.preventDefault(); });
 colorInput.addEventListener("input", update);
 form.addEventListener("submit", async (event) => {
   event.preventDefault();

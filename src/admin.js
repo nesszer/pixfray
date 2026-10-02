@@ -133,12 +133,13 @@ async function act(action, payload, { confirmText, button, done } = {}) {
 }
 $("#toggle-duels").addEventListener("click", (e) => {
   const enabled = !S.admin.config.enabled;
+  const open = S.admin.duels.filter((d) => OPEN.has(d.status)).length;
   act("config", { patch: { enabled }, baseVersion: S.admin.configVersion, note: enabled ? "duels enabled" : "duels paused" },
-    { button: e.currentTarget, done: enabled ? "Duels are on." : "Duels are paused. Open duels were cancelled without scoring." });
+    { button: e.currentTarget, confirmText: !enabled && open ? "Pause duels? The " + open + " open duel" + (open === 1 ? "" : "s") + " will be cancelled without scoring." : undefined, done: enabled ? "Duels are on." : "Duels are paused. Open duels were cancelled without scoring." });
 });
 $("#open-chat-setup").addEventListener("click", () => selectTab($("#tab-chat"), true));
-$("#reset-health").addEventListener("click", (e) => act("resetHealth", undefined, { button: e.currentTarget, done: "Everyone in the arena is back to full health." }));
-$("#reset-round").addEventListener("click", (e) => act("resetRound", undefined, { button: e.currentTarget, confirmText: "Cancel every open duel without scoring and set the round counter to 0?", done: "Open duels cancelled; rounds restart at 1." }));
+$("#reset-health").addEventListener("click", (e) => act("resetHealth", undefined, { button: e.currentTarget, confirmText: "Put every viewer in the arena back to full health?", done: "Everyone in the arena is back to full health." }));
+$("#reset-round").addEventListener("click", (e) => act("resetRound", undefined, { button: e.currentTarget, confirmText: "Cancel every open duel without scoring and restart rounds at 1?", done: "Open duels cancelled; rounds restart at 1." }));
 $("#reset-all-ranks").addEventListener("click", (e) => act("resetAllRanks", undefined, { button: e.currentTarget, confirmText: "Reset Elo, wins and losses for every saved profile on " + CHANNEL + "? This can't be undone.", done: "All ranks reset." }));
 $("#reset-all").addEventListener("click", (e) => act("resetAll", undefined, { button: e.currentTarget, confirmText: "Remove every character from the arena and cancel all duels? Saved profiles and ranks stay.", done: "Arena cleared." }));
 
@@ -147,11 +148,11 @@ function renderAll() {
   collectNames();
   const a = S.admin, c = a.config, open = a.duels.filter((d) => OPEN.has(d.status));
   const chat = a.chatStatus || a.chat || {}, live = !!chat.connected;
-  $("#meta").textContent = "Config version " + a.configVersion + " · state revision " + a.revision + " · signed in as " + (S.access.owner ? "broadcaster" : "moderator");
+  $("#meta").textContent = "Rules version " + a.configVersion + " · state revision " + a.revision + " · signed in as " + (S.access.owner ? "broadcaster" : "moderator");
   const waiting = c.enabled && !live;
   $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : waiting ? "Waiting for Twitch chat" : "Duels are live";
   $("#summary-text").textContent = !c.enabled ? "Chat commands are ignored until duels are turned back on." :
-    waiting ? "Duels start once chat reaches the arena" + (chat.lastRevocationReason ? " (Twitch revoked it: " + chat.lastRevocationReason + ")" : "") + ". Connect Twitch chat or StreamElements on the Stream setup tab. Open duels were cancelled without scoring." :
+    waiting ? "Duels start when chat is connected" + (chat.lastRevocationReason ? " (Twitch revoked access: " + chat.lastRevocationReason + ")" : "") + ". Connect Twitch chat or StreamElements on the Stream setup tab." :
     open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena, round " + a.round + ".";
   const toggle = $("#toggle-duels");
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
@@ -164,7 +165,7 @@ function renderAll() {
     stat("Open duels", open.length + " / " + c.maxDuels),
     stat("Round", a.round),
     stat("In the arena", a.players.length),
-    stat("Config version", "v" + a.configVersion));
+    stat("Rules version", "v" + a.configVersion));
   renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe();
 }
 function stat(label, value, cls, delta) {
@@ -174,8 +175,15 @@ function hp(value, max, who) {
   const pct = Math.max(0, Math.min(100, Math.round((value / max) * 100)));
   return h("span", { class: "hp" }, h("span", { class: "track", "aria-hidden": "true" }, h("i", { style: { "--v": pct + "%" } })), h("span", { class: "num" }, (who ? who + " " : "") + value + " / " + max));
 }
+// Snapshots rebuild the tables; put keyboard focus back on the same row's button afterwards.
+function keepFocus(tbody, render) {
+  const key = tbody.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+  render();
+  if (key) tbody.querySelector('[data-key="' + CSS.escape(key) + '"]')?.focus();
+}
 const empty = (cols, text) => h("tr", {}, h("td", { colspan: cols, class: "muted" }, text));
-function renderDuels() {
+function renderDuels() { keepFocus($("#duels tbody"), drawDuels); }
+function drawDuels() {
   const tbody = $("#duels tbody"), now = Date.now();
   const open = S.admin.duels.filter((d) => OPEN.has(d.status));
   if (!open.length) return tbody.replaceChildren(empty(6, "No open duels. Viewers start one with !challenge @viewer."));
@@ -188,10 +196,12 @@ function renderDuels() {
       h("td", {}, d.status === "active" ? h("div", {}, h("div", {}, hp(d.hp?.[d.a] ?? max, max, nameOf(d.a))), h("div", {}, hp(d.hp?.[d.b] ?? max, max, nameOf(d.b)))) : "—"),
       h("td", { class: "num" }, d.round || "—"),
       h("td", {}, (d.status === "pending" ? "expires in " : "idle cancel in ") + seconds(Math.round(left / 1000) * 1000)),
-      h("td", {}, h("button", { class: "btn btn-small", type: "button", onclick: (e) => act("cancelDuel", { duelId: d.id }, { button: e.currentTarget, done: "Duel cancelled without scoring." }) }, "Cancel duel")));
+      h("td", {}, h("button", { class: "btn btn-small", type: "button", "data-key": "cancel:" + d.id, "aria-label": "Cancel duel " + nameOf(d.a) + " vs " + nameOf(d.b),
+        onclick: (e) => act("cancelDuel", { duelId: d.id }, { button: e.currentTarget, confirmText: "Cancel " + nameOf(d.a) + " vs " + nameOf(d.b) + " without scoring?", done: "Duel cancelled without scoring." }) }, "Cancel duel")));
   }));
 }
-function renderPlayers() {
+function renderPlayers() { keepFocus($("#players tbody"), drawPlayers); }
+function drawPlayers() {
   const tbody = $("#players tbody"), now = Date.now(), max = S.admin.config.maxHp;
   if (!S.admin.players.length) return tbody.replaceChildren(empty(7, "Nobody is in the arena. Characters appear after a viewer's first chat message."));
   tbody.replaceChildren(...S.admin.players.map((p) => h("tr", {},
@@ -199,18 +209,19 @@ function renderPlayers() {
     h("td", {}, p.respawnAt > now ? h("span", { class: "badge negative" }, "Knocked out") : hp(p.hp, max)),
     h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses),
     h("td", {}, timeAgo(p.lastSeen)),
-    h("td", {}, h("button", { class: "btn btn-small btn-danger", type: "button", onclick: (e) => removePlayer(p, e.currentTarget) }, "Remove")))));
+    h("td", {}, h("button", { class: "btn btn-small btn-danger", type: "button", "data-key": "remove:" + p.userId, "aria-label": "Remove " + (p.displayName || p.username), onclick: (e) => removePlayer(p, e.currentTarget) }, "Remove")))));
 }
 const removePlayer = (p, button) => act("removePlayer", { userId: p.userId }, { button, confirmText: "Remove " + (p.displayName || p.username) + " from the arena and delete their saved profile?", done: "Viewer removed." });
-function renderRanks() {
+function renderRanks() { keepFocus($("#ranks tbody"), drawRanks); }
+function drawRanks() {
   const tbody = $("#ranks tbody");
   if (!S.leaderboard.length) return tbody.replaceChildren(empty(6, "No saved profiles yet."));
   tbody.replaceChildren(...S.leaderboard.map((p, i) => h("tr", {},
     h("td", { class: "num" }, i + 1), h("td", {}, p.displayName || p.username),
     h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses),
     h("td", {}, h("div", { class: "toolbar" },
-      h("button", { class: "btn btn-small", type: "button", onclick: (e) => act("resetRank", { userId: p.userId }, { button: e.currentTarget, confirmText: "Reset " + (p.displayName || p.username) + "'s Elo, wins and losses?", done: "Rank reset." }) }, "Reset rank"),
-      h("button", { class: "btn btn-small btn-danger", type: "button", onclick: (e) => removePlayer(p, e.currentTarget) }, "Remove"))))));
+      h("button", { class: "btn btn-small", type: "button", "data-key": "rank:" + p.userId, "aria-label": "Reset rank for " + (p.displayName || p.username), onclick: (e) => act("resetRank", { userId: p.userId }, { button: e.currentTarget, confirmText: "Reset " + (p.displayName || p.username) + "'s Elo, wins and losses?", done: "Rank reset." }) }, "Reset rank"),
+      h("button", { class: "btn btn-small btn-danger", type: "button", "data-key": "rank-remove:" + p.userId, "aria-label": "Remove " + (p.displayName || p.username), onclick: (e) => removePlayer(p, e.currentTarget) }, "Remove"))))));
 }
 
 // ---------- config editor ----------
@@ -247,6 +258,7 @@ function buildPatch() {
   for (const input of document.querySelectorAll("#config-fields input[data-key]")) {
     const key = input.dataset.key, r = readField(input);
     input.setCustomValidity(r.error || "");
+    if (r.error) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
     input.parentElement.classList.toggle("changed", !r.error && r.value !== get(editedConfig, key));
     if (r.error) { errors.push(r.error); continue; }
     if (r.value === get(editedConfig, key)) continue;
@@ -258,6 +270,7 @@ function buildPatch() {
   return { patch, errors };
 }
 const formDirty = () => Object.keys(buildPatch().patch).length > 0;
+addEventListener("beforeunload", (e) => { if (S.admin && formDirty()) e.preventDefault(); });   // unsaved rule edits
 function syncConfigButtons() {
   const { patch, errors } = buildPatch(), changed = Object.keys(patch).length > 0;
   $("#config-save").disabled = !changed || errors.length > 0;

@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /api/
+Disallow: /auth/
+
+Sitemap: https://chat.miolaf.xyz/sitemap.xml
