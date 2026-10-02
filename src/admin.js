@@ -4,7 +4,7 @@ import { api, errorText, h, $, setStatus, renderWho, signOut, seconds, timeAgo, 
 applyChannel();
 if (CHANNEL !== "nesszerra") document.querySelector(".page-header .subtitle").textContent = "For the " + CHANNEL + " broadcaster. Changes apply to every OBS overlay right away.";
 
-const LIMITS = { maxCharacters: 8, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
+const LIMITS = { maxCharacters: 24, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 // Editable config fields (CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
 const GROUPS = [
   { title: "Health and duels", fields: [
@@ -326,7 +326,7 @@ async function loadCustom() {
   const box = $("#custom-list");
   if (!r.ok) { box.replaceChildren(h("p", {}, "Couldn't list custom characters: " + errorText(r))); return; }
   customItems = r.data.items || []; customLimits = r.data.limits || null;
-  if (!customItems.length) { box.replaceChildren(h("p", {}, "No custom characters yet. The 8 slots are shared by the broadcaster and all moderators.")); return; }
+  if (!customItems.length) { box.replaceChildren(h("p", {}, "No custom characters yet. The 24 slots are shared by the broadcaster and all moderators.")); return; }
   box.replaceChildren(h("div", { class: "table-wrap" }, h("table", { class: "data" },
     h("thead", {}, h("tr", {}, h("th", {}, "Character"), h("th", { class: "num" }, "Frames"), h("th", { class: "num" }, "Size"), h("th", {}, "Added"))),
     h("tbody", {}, customItems.map((x) => h("tr", {}, h("td", {}, x.label || x.id), h("td", { class: "num" }, (x.frames || []).length + Object.values(x.animations || {}).reduce((n, f) => n + f.length, 0)),

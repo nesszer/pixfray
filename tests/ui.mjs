@@ -160,9 +160,9 @@ try {
     await page.route('**/api/session', (r) => json(r, { user: role === 'owner' ? { id: '9009', login: 'nesszerra', displayName: 'nesszerra' } : mod, owner: role === 'owner', configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: role === 'owner', moderator: role === 'mod', canManage: true }));
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
-    await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [{ id: 'c-mascot', label: 'Mascot', frames: [{ x: 0, y: 0, w: 128, h: 128 }, { x: 128, y: 0, w: 128, h: 128 }], animations: { attack: [{ x: 256, y: 0, w: 128, h: 128 }] }, bytes: 48213, createdBy: mod.id, createdAt: now - 7200000 }], usage: { count: 1, limit: 8, bytes: 48213 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
+    await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [{ id: 'c-mascot', label: 'Mascot', frames: [{ x: 0, y: 0, w: 128, h: 128 }, { x: 128, y: 0, w: 128, h: 128 }], animations: { attack: [{ x: 256, y: 0, w: 128, h: 128 }] }, bytes: 48213, createdBy: mod.id, createdAt: now - 7200000 }], usage: { count: 1, limit: 24, bytes: 48213 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 24 } }));
     await page.route('**/api/admin/nesszerra', async (r) => {
-      if (r.request().method() === 'GET') return json(r, { ...snapshot(), chatStatus, history: history(), customUsage: { count: 1, limit: 8, bytes: 48213 }, access: { owner: role === 'owner', moderator: role === 'mod', canManage: true } });
+      if (r.request().method() === 'GET') return json(r, { ...snapshot(), chatStatus, history: history(), customUsage: { count: 1, limit: 24, bytes: 48213 }, access: { owner: role === 'owner', moderator: role === 'mod', canManage: true } });
       const body = r.request().postDataJSON(); posts.push(body);
       if (conflictNext) { conflictNext = false; version = 4; return json(r, { ok: false, reason: 'config_version_conflict', error: 'config_version_conflict' }, 409); }
       if (body.action === 'config' || body.action === 'rollbackConfig') version += 1;
@@ -183,7 +183,7 @@ try {
     assert.equal(await page.locator('#ranks tbody tr').count(), 3);
     assert.equal(await page.locator('#history tbody tr').count(), 3);
     assert.match(await page.locator('#history tbody tr').nth(1).textContent(), /Heavy strike damage 35 HP → 30 HP/);
-    assert.match(await page.locator('#usage-title').textContent(), /1 of 8/);
+    assert.match(await page.locator('#usage-title').textContent(), /1 of 24/);
     assert.equal(await page.locator('#dev-open').isVisible(), role === 'owner');   // on the Live tab, shown first
     assert.equal(await page.locator('#panel-chat').isHidden(), true, 'only the Live tab shows at first');
     await page.click('#tab-chat');

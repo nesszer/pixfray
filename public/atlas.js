@@ -1,6 +1,6 @@
 // Atlas packing for custom characters (Lane D). Pure logic plus one canvas draw step, so it runs in the browser
 // and in node tests. The server repeats every limit check in server/uploads.js.
-export const LIMITS = Object.freeze({ maxFrames: 24, frameSize: 128, maxAtlasBytes: 1_572_864, maxCharacters: 8, mime: 'image/png', maxAtlasSide: 1024, maxLabel: 32 });
+export const LIMITS = Object.freeze({ maxFrames: 24, frameSize: 128, maxAtlasBytes: 1_572_864, maxCharacters: 24, mime: 'image/png', maxAtlasSide: 1024, maxLabel: 32 });
 export const ANIMATION_SLOTS = Object.freeze(['idle', 'walk', 'attack', 'ko']);
 export const ATLAS_COLUMNS = 8; // 8 x 128 = 1024 px wide at most; 24 frames -> 3 rows.
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

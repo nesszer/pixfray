@@ -66,17 +66,17 @@ try {
     assert.equal(many.status, 400);
     assert.equal((await many.json()).reason, 'too_many_frames');
   });
-  await check('the 9th character is refused, a delete frees a slot', async () => {
-    for (let i = 2; i <= 8; i++) assert.equal((await upload('Knight ' + i)).status, 201);
-    const ninth = await upload('Knight 9');
-    assert.equal(ninth.status, 409);
-    assert.equal((await ninth.json()).reason, 'custom_limit_reached');
+  await check('the 25th character is refused, a delete frees a slot', async () => {
+    for (let i = 2; i <= 24; i++) assert.equal((await upload('Knight ' + i)).status, 201);
+    const extra = await upload('Knight 25');
+    assert.equal(extra.status, 409);
+    assert.equal((await extra.json()).reason, 'custom_limit_reached');
     const admin = await (await call('/api/admin/nesszerra')).json();
-    assert.equal(admin.customUsage.count, 8);
+    assert.equal(admin.customUsage.count, 24);
     const del = await call('/api/assets/nesszerra/' + firstId, 'DELETE');
     assert.equal(del.status, 200);
-    assert.equal((await del.json()).usage.count, 7);
-    assert.equal((await upload('Knight 9')).status, 201);
+    assert.equal((await del.json()).usage.count, 23);
+    assert.equal((await upload('Knight 25')).status, 201);
   });
   await check('signed-out and cross-origin uploads are refused', async () => {
     const anon = await mf.dispatchFetch(ORIGIN + '/api/assets/nesszerra', { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: '{}' });

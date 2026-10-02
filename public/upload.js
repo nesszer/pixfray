@@ -18,7 +18,7 @@
 //   PNG frames    PNG files per animation (idle, walk, attack, knockout). Files in a slot play in name order.
 // Frames are aligned (bottom-centre) and packed into one atlas in the browser, previewed, then posted as
 // POST /api/assets/:channel {label, mode, fps, atlas:<base64 PNG>, frames, animations}. The server checks every
-// limit again: PNG only, 24 frames, 128 x 128 per frame, 1.5 MB per atlas, 8 characters per channel.
+// limit again: PNG only, 24 frames, 128 x 128 per frame, 1.5 MB per atlas, 24 characters per channel.
 import { LIMITS, ANIMATION_SLOTS, pngInfo, checkFrames, planAtlas, fitSingle, drawAtlas, uploadBody, formatBytes } from './atlas.js';
 
 const SLOT_LABELS = { idle: 'Idle', walk: 'Walk', attack: 'Attack', ko: 'Knockout' };

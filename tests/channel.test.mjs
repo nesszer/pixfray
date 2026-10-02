@@ -273,7 +273,7 @@ test('versioned config editor: history, optimistic version check, rollback', asy
   assert.deepEqual(view.history.map((h) => [h.version, h.actorId, h.note]), [[2, 'mod1', 'buff heavy'], [1, 'system', 'initial']]);
   assert.equal(view.history[0].config.abilities.heavy.damage, 30);
   assert.equal(view.history[0].actorName, 'ModOne', 'history keeps the actor display name');
-  assert.deepEqual(view.customUsage, { count: 0, limit: 8, bytes: 0 });
+  assert.deepEqual(view.customUsage, { count: 0, limit: 24, bytes: 0 });
   const rb = await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'rollbackConfig', payload: { version: 1 } } });
   assert.equal(rb.status, 200);
   assert.equal(rb.body.configVersion, 3);
@@ -301,7 +301,7 @@ test('catalog, assets and dev routes answer inside the room; uploads validate', 
   const r = room();
   assert.deepEqual((await r.call('/catalog')).body, []);
   assert.equal((await r.call('/asset/c-missing')).status, 404);
-  assert.equal((await r.call('/asset')).body.usage.limit, 8);
+  assert.equal((await r.call('/asset')).body.usage.limit, 24);
   const bad = await r.call('/asset', { method: 'POST', body: {} });
   assert.equal(bad.status, 400);
   assert.equal(bad.body.reason, 'invalid_label');
