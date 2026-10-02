@@ -57,6 +57,8 @@
         <section class="section" id="sec-logs">
           <h2>Error log, newest first</h2>
           <div class="toolbar">
+            <label class="inline" for="log-channel">Channel</label>
+            <select id="log-channel" class="narrow"><option value="nesszerra">nesszerra</option><option value="miolafff">miolafff</option></select>
             <label class="inline" for="log-source">Source</label>
             <select id="log-source" class="narrow"><option value="">All</option><option value="room">Durable Object</option><option value="worker">Worker</option><option value="command">Chat commands</option><option value="warn">Warnings</option></select>
             <button class="btn" id="clear-logs" type="button">Clear log</button>

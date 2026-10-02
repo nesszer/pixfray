@@ -211,15 +211,16 @@ $('#save-config').addEventListener('click', (e) => busy(e.currentTarget, async (
 
 // ---------- logs ----------
 async function loadLogs() {
-  const source = $('#log-source').value, r = await api('/api/dev/logs' + (source ? '?source=' + source : ''));
+  const source = $('#log-source').value, r = await api('/api/dev/logs?channel=' + $('#log-channel').value + (source ? '&source=' + source : ''));
   if (!r.ok) return rows('#logs', [], errorText(r, 'Logs unavailable'), 4);
   rows('#logs', r.data.map((x) => h('tr', {}, h('td', {}, fmtTime(x.at)), h('td', {}, ({ room: 'Durable Object', worker: 'Worker', command: 'Chat command', warn: 'Warning' })[x.source] || x.source), h('td', { class: 'wrap' }, x.message),
     h('td', { class: 'wrap ctx' }, h('code', {}, x.context ? JSON.stringify(x.context) : '–')))), 'Nothing logged.', 4);
 }
 $('#log-source').addEventListener('change', loadLogs);
+$('#log-channel').addEventListener('change', loadLogs);
 $('#clear-logs').addEventListener('click', (e) => busy(e.currentTarget, async () => {
-  if (!confirm('Clear every stored error row?')) return;
-  const r = await api('/api/dev/logs', { method: 'DELETE' });
+  if (!confirm('Clear every stored log row for ' + $('#log-channel').value + '?')) return;
+  const r = await api('/api/dev/logs?channel=' + $('#log-channel').value, { method: 'DELETE' });
   if (r.ok) { loadLogs(); loadDiagnostics(); }
 }));
 $('#refresh').addEventListener('click', (e) => busy(e.currentTarget, async () => { await Promise.all([loadDiagnostics(), loadLogs()]); loadRuns(); loadVersions(); }));
