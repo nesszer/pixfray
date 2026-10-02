@@ -41,7 +41,8 @@ async function start() {
   const debug = params.get('debug') === '1';
   const cap = Math.max(1, Math.min(100, Number(params.get('cap')) || 100));
   const size = Math.max(24, Math.min(96, Number(params.get('size')) || 60));
-  const announce = ['bottom', 'off'].includes(params.get('announce')) ? params.get('announce') : 'top';   // where duel announcements sit
+  // Duel announcement banner: hidden unless the OBS link asks for it (?announce=top or bottom); the streamers found it noisy.
+  const announce = ['top', 'bottom'].includes(params.get('announce')) ? params.get('announce') : 'off';
   const sound = params.get('sound') === '1';   // quiet duel sounds, off unless asked for
   const status = document.querySelector('#status');
   const storageKey = 'mini-chat:cosmetics:' + channel;

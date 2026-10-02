@@ -8,7 +8,7 @@ function update() {
   url.searchParams.set("channel", CHANNEL);
   url.searchParams.set("size", size.value);
   url.searchParams.set("cap", cap.value);
-  if (announce.value !== "top") url.searchParams.set("announce", announce.value);
+  if (announce.value !== "off") url.searchParams.set("announce", announce.value);
   url.searchParams.set("arena", "1"); // shared duels from the server; remove for the chat-only v1 overlay
   document.querySelector("#obs-url").value = url.href;
   document.querySelector("#preview-link").href = url.href;
