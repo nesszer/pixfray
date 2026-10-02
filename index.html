@@ -32,7 +32,8 @@
     <form id="profile-form" class="hero-pick form-stack" novalidate>
       <fieldset>
         <legend>Character <span class="muted small" id="char-count"></span></legend>
-        <div class="char-grid" id="characters" role="radiogroup" aria-label="Character"><p class="muted small">Loading characters…</p></div>
+        <div class="char-grid collapsed" id="characters" role="radiogroup" aria-label="Character"><p class="muted small">Loading characters…</p></div>
+        <button class="btn btn-small more-chars" id="more-chars" type="button" aria-controls="characters" aria-expanded="false" hidden>Show all characters</button>
       </fieldset>
       <fieldset>
         <legend>Nameplate color</legend>
@@ -61,6 +62,7 @@
         <div class="stat"><div class="label">Elo</div><div class="value" id="stat-elo">—</div></div>
         <div class="stat"><div class="label">Wins / losses</div><div class="value" id="stat-wl">—</div></div>
       </div>
+      <a class="points-link" id="points-link" href="#upgrades" hidden></a>
       <div class="toolbar">
         <button class="btn btn-primary" id="save" type="submit" form="profile-form" hidden>Save profile</button>
         <a class="btn btn-primary" id="save-signin" href="/auth/login" data-login="/">Sign in with Twitch to save</a>

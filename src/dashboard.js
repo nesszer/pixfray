@@ -58,6 +58,10 @@ function renderUpgrades() {
     ? "Each win gives one point, up to " + r.maxPoints + ". Move points between stats whenever you're not in a duel."
     : "Save your fighter, then each win gives one upgrade point, up to " + r.maxPoints + ".";
   const shown = canEdit ? state.stats : { power: 0, guard: 0, luck: 0 };
+  // The fighter card points at unspent points; the section is below the character list.
+  const link = $("#points-link");
+  link.hidden = !canEdit || left <= 0;
+  link.textContent = left + (left === 1 ? " upgrade point" : " upgrade points") + " to spend";
   list.replaceChildren(...r.stats.map((k) => {
     const t = STAT_TEXT[k], n = shown[k];
     const step = (d) => () => { state.stats[k] += d; renderUpgrades(); update(); };
@@ -73,6 +77,8 @@ function renderCharacters() {
   const box = $("#characters");
   if (!state.catalog.length) { box.replaceChildren(h("p", { class: "muted small" }, "No characters are available right now. Reload to try again.")); return; }
   $("#char-count").textContent = "(" + state.catalog.length + " available)";
+  $("#more-chars").hidden = state.catalog.length <= 12;
+  showAllChars(false);
   box.replaceChildren(...state.catalog.map((entry) => {
     const id = "char-" + entry.id;
     const input = h("input", { type: "radio", name: "character", id, value: entry.id });
@@ -86,6 +92,15 @@ function renderCharacters() {
     return option;
   }));
 }
+
+// The list starts with 12 characters (plus the picked one); this button shows the rest.
+function showAllChars(all) {
+  const btn = $("#more-chars");
+  $("#characters").classList.toggle("collapsed", !all);
+  btn.setAttribute("aria-expanded", String(all));
+  btn.textContent = all ? "Show fewer characters" : "Show all " + state.catalog.length + " characters";
+}
+$("#more-chars").addEventListener("click", () => showAllChars($("#characters").classList.contains("collapsed")));
 
 function renderSwatches() {
   const box = $("#swatches");
