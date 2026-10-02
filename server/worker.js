@@ -123,11 +123,13 @@ export default {async fetch(request,env,ctx){
       if(!user)return json({error:'Sign in to customize your profile'},401);
       if(request.method==='GET')return internal(request,env,channel,'/profile?userId='+encodeURIComponent(user.id));
       if(request.method!=='POST')return json({error:'Use GET or POST'},405);
-      const {avatar,color,defaultAbility}=await bodyJson(request,4000);
+      const {avatar,color,defaultAbility,stats,hat}=await bodyJson(request,4000);
       if(!validProfile({avatar,color,defaultAbility}))return json({error:'Invalid profile fields'},400);
+      // stats/hat are optional; the room checks them against the saved wins (server/upgrades.js).
+      if(stats!==undefined&&(!stats||typeof stats!=='object'||Array.isArray(stats))||hat!==undefined&&typeof hat!=='string')return json({error:'Invalid profile fields'},400);
       const dynamicRes=await internal(request,env,channel,'/catalog');const dynamic=dynamicRes.ok?await dynamicRes.json():[];
       if(![...await staticCatalog(env,url),...dynamic].some(x=>x.id===avatar))return json({error:'Unknown character'},400);
-      return internal(request,env,channel,'/profile',{userId:user.id,username:user.login,displayName:user.displayName,avatar,color,defaultAbility});
+      return internal(request,env,channel,'/profile',{userId:user.id,username:user.login,displayName:user.displayName,avatar,color,defaultAbility,stats,hat});
     }
     if(route==='admin'){
       if(request.method!=='GET'&&request.method!=='POST')return json({error:'Use GET or POST'},405);

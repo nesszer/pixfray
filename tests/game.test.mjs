@@ -622,3 +622,62 @@ test('StreamElements sign-up link names the channel, except for nesszerra', asyn
   assert.match(reply('miolafff'), /Save a fighter at https:\/\/chat\.example\/\?channel=miolafff$/);
   assert.match(reply('nesszerra'), /Save a fighter at https:\/\/chat\.example$/);
 });
+
+// ---------- upgrades (server/upgrades.js) ----------
+test('upgrade points: one per win up to 10, at most 5 per stat; a rank reset trims luck, then guard, then power', async () => {
+  const u = await import('../server/upgrades.js');
+  assert.deepEqual([0, 3, 10, 40].map(u.pointsFor), [0, 3, 10, 10]);
+  assert.deepEqual(u.validStats({ power: 2, guard: 1 }, 3), { power: 2, guard: 1, luck: 0 });
+  assert.equal(u.validStats({ power: 2, guard: 2 }, 3), null, 'more points than wins');
+  assert.equal(u.validStats({ power: 6 }, 10), null, 'over the per-stat cap');
+  assert.equal(u.validStats({ power: 1.5 }, 10), null);
+  assert.deepEqual(u.effectiveStats({ power: 3, guard: 3, luck: 3 }, 5), { power: 3, guard: 2, luck: 0 });
+  assert.equal(u.hatUnlocked('crown', 19), false);
+  assert.equal(u.hatUnlocked('crown', 20), true);
+  assert.equal(u.hatUnlocked('cap', 0), true);
+  assert.equal(u.hatUnlocked('sombrero', 99), false);
+});
+
+function upgraded(stats) {
+  const w = arena({ quick: true });
+  for (const [login, s] of Object.entries(stats)) { w.register(login, { stats: s }); w.state.players.find((p) => p.username === login).wins = 10; }
+  return w;
+}
+function quickWith(w, rolls) {
+  w.say('alice', '!challenge @bob');
+  return w.apply({ type: 'command', messageId: 'q' + (++seq), userId: 'id-bob', username: 'bob', displayName: 'bob', text: '!accept', timestamp: w.now, rolls });
+}
+
+test('quick duels: power adds 4% damage per point and guard takes 4% off per point', () => {
+  const hit = [0.75, 0.5, 0.75, 0.5, 0.75, 0.5, 0.75];
+  assert.deepEqual(quickWith(upgraded({ alice: { power: 5 } }), hit).swings.map((s) => s.damage), [41, 0, 41, 0, 18]);
+  assert.deepEqual(quickWith(upgraded({ bob: { guard: 5 } }), hit).swings.map((s) => s.damage), [27, 0, 27, 0, 27, 0, 19]);
+  // Points the wins no longer cover don't count: 5 power with 0 wins hits for the base 34.
+  const w = arena({ quick: true });
+  w.register('alice', { stats: { power: 5 } });
+  assert.equal(quickWith(w, hit).swings[0].damage, 34);
+});
+
+test('quick duels: luck turns a miss into a hit with 4% per point, from a second roll', () => {
+  const rolls = Array(48).fill(0.9);
+  rolls[0] = 0.5;     // alice rolls a 4: a miss
+  rolls[24] = 0.1;    // her luck roll: 0.1 < 5 x 4% -> the miss lands as a hit
+  const r = quickWith(upgraded({ alice: { luck: 5 } }), rolls);
+  assert.equal(r.swings[0].outcome, 'hit');
+  assert.equal(r.swings[0].lucky, true);
+  assert.equal(r.swings[0].damage, 34);
+  rolls[24] = 0.25;   // above 20%: stays a miss
+  assert.equal(quickWith(upgraded({ alice: { luck: 5 } }), rolls).swings[0].outcome, 'miss');
+});
+
+test('upgrades and hat come from the saved profile; no respec while a challenge is open', () => {
+  const w = upgraded({ alice: { power: 2 } });
+  assert.deepEqual(w.player('alice').stats, { power: 2, guard: 0, luck: 0 });
+  // A chat command carrying the stored profile keeps them.
+  w.apply({ type: 'command', messageId: 'p1', userId: 'id-alice', username: 'alice', displayName: 'alice', text: 'hi', timestamp: w.now, profile: { userId: 'id-alice', username: 'alice', registered: true, wins: 10, stats: { power: 4 }, hat: 'crown' } });
+  assert.equal(w.player('alice').stats.power, 4);
+  assert.equal(w.player('alice').hat, 'crown');
+  w.say('alice', '!challenge @bob');
+  assert.equal(w.register('alice', { stats: { guard: 4 } }).reason, 'in_duel');
+  assert.equal(w.register('alice', { stats: { power: 4 }, hat: 'cap' }).ok, true, 'same build, new hat is fine');
+});

@@ -1,3 +1,5 @@
+import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, STAT_STEP } from "./upgrades.js";
+
 const DEFAULT_CONFIG = {
   enabled: true,
   // Quick duels: accepting settles the duel at once with a d6 exchange (hit, counter or miss).
@@ -61,6 +63,8 @@ function defaultProfile(userId, config, now) {
     lastSeen: now,
     registered: false,
     respawnAt: 0,
+    stats: emptyStats(),
+    hat: "",
   };
 }
 
@@ -164,6 +168,9 @@ function recentProfile(state, profile, now) {
   if (Number.isInteger(profile.elo) && profile.registered) merged.elo = profile.elo;
   if (Number.isInteger(profile.wins) && profile.registered) merged.wins = profile.wins;
   if (Number.isInteger(profile.losses) && profile.registered) merged.losses = profile.losses;
+  // Upgrades and hat come from the saved profile only (the dashboard sets them; chat can't).
+  if (profile.registered && profile.stats) merged.stats = cleanStats(profile.stats);
+  if (profile.registered && typeof profile.hat === "string") merged.hat = knownHat(profile.hat) ? profile.hat : "";
   // hp/respawnAt only seed a new player, so a later chat message can never undo a KO.
   if (!existing && Number.isInteger(profile.hp) && profile.registered) merged.hp = Math.min(state.config.maxHp, Math.max(0, profile.hp));
   if (!existing && Number.isInteger(profile.respawnAt)) merged.respawnAt = profile.respawnAt;
@@ -332,15 +339,19 @@ function beginDuel(state, duel, now) {
 // 6 is a crit (50% of max HP), 5 a hit (34%), 3-4 a miss, 1-2 the other fighter counters (34%).
 // First to 0 HP loses. After QUICK_MAX_ROLLS rolls the fighter with more HP wins; equal HP goes to
 // sudden death, where the next hit or counter knocks out. A winner who took no damage is flawless (+3 Elo).
+// Upgrades (server/upgrades.js): power and guard scale each blow; luck can turn a miss into a hit, using a
+// second roll at LUCK_ROLLS + i.
 // rolls are numbers in [0, 1) from the room; missing ones come from a hash so the reducer stays pure.
 const QUICK_MAX_ROLLS = 12;
 const QUICK_FLAWLESS_BONUS = 3;
+const LUCK_ROLLS = 24;
 function settleQuickDuel(state, duel, rolls, now) {
   const list = Array.isArray(rolls) ? rolls : [];
   const rollAt = (i) => (Number.isFinite(list[i]) && list[i] >= 0 && list[i] < 1 ? list[i] : hashRoll(duel.id + ":" + now + ":" + i));
   const maxHp = duel.rules.maxHp;
   const blow = { hit: Math.round(maxHp * 0.34), crit: Math.round(maxHp * 0.5), counter: Math.round(maxHp * 0.34) };
   const look = (id) => player(state, id)?.defaultAbility || "strike";   // cosmetic: picks the attack effect on the overlay
+  const stats = Object.fromEntries([duel.a, duel.b].map((id) => [id, effectiveStats(player(state, id)?.stats, player(state, id)?.wins)]));
   const swings = [];
   let attacker = duel.a, defender = duel.b, winnerId = "", loserId = "", decision = "ko";
   for (let i = 0; !winnerId && i < 200; i++) {
@@ -355,19 +366,21 @@ function settleQuickDuel(state, duel, rolls, now) {
       decision = "sudden_death";
     }
     const die = 1 + Math.floor(rollAt(i) * 6);
-    const outcome = die === 6 ? "crit" : die === 5 ? "hit" : die <= 2 ? "counter" : "miss";
-    const swing = { attackerId: attacker, defenderId: defender, die, outcome, damage: 0 };
+    let outcome = die === 6 ? "crit" : die === 5 ? "hit" : die <= 2 ? "counter" : "miss";
+    const lucky = outcome === "miss" && rollAt(LUCK_ROLLS + i) < STAT_STEP * stats[attacker].luck;
+    if (lucky) outcome = "hit";
+    const swing = { attackerId: attacker, defenderId: defender, die, outcome, damage: 0, ...(lucky ? { lucky: true } : {}) };
     swings.push(swing);
     if (outcome === "miss") {
       addEvent(state, "duel_action", now, { duelId: duel.id, userId: attacker, targetId: defender, ability: look(attacker), amount: 0, hp: clone(duel.hp), miss: true, die });
     } else {
       const dealer = outcome === "counter" ? defender : attacker, target = outcome === "counter" ? attacker : defender;
-      const amount = suddenDeath ? duel.hp[target] : Math.min(duel.hp[target], blow[outcome]);
+      const amount = suddenDeath ? duel.hp[target] : Math.min(duel.hp[target], scaledDamage(blow[outcome], stats[dealer], stats[target]));
       duel.hp[target] -= amount;
       swing.damage = amount;
       const finisher = duel.hp[target] <= 0;
       addEvent(state, "duel_action", now, { duelId: duel.id, userId: dealer, targetId: target, ability: look(dealer), amount, hp: clone(duel.hp), die,
-        ...(outcome === "counter" ? { counter: true } : {}), ...(outcome === "crit" ? { crit: true } : {}), ...(finisher ? { finisher: true } : {}) });
+        ...(outcome === "counter" ? { counter: true } : {}), ...(outcome === "crit" ? { crit: true } : {}), ...(lucky ? { lucky: true } : {}), ...(finisher ? { finisher: true } : {}) });
       if (finisher) { winnerId = dealer; loserId = target; }
     }
     [attacker, defender] = [defender, attacker];
@@ -454,7 +467,9 @@ function applyAbility(state, duel, actor, abilityName, now) {
     amount = duel.hp[actor.userId] - before;
   } else {
     const before = duel.hp[targetId];
-    duel.hp[targetId] = Math.max(0, before - ability.damage);
+    const foe = player(state, targetId);
+    const damage = scaledDamage(ability.damage, effectiveStats(actor.stats, actor.wins), effectiveStats(foe?.stats, foe?.wins));
+    duel.hp[targetId] = Math.max(0, before - damage);
     amount = before - duel.hp[targetId];
   }
   cooldown.sharedUntil = now + duel.rules.sharedCooldownMs;
@@ -710,17 +725,23 @@ export function applyProfile(state, profile, now) {
     avatar: safeString(profile?.avatar || "player", 64),
     color: /^#[0-9a-f]{6}$/i.test(profile?.color || "") ? profile.color.toUpperCase() : "#A78BFA",
     defaultAbility: ABILITIES.has(profile?.defaultAbility) ? profile.defaultAbility : "strike",
+    stats: cleanStats(profile?.stats),
+    hat: knownHat(profile?.hat) ? profile.hat : "",
     registered: true,
   };
   if (!normalized.userId || !normalized.username) return { ok: false, reason: "invalid_profile" };
   const existing = player(state, normalized.userId);
   const p = existing || defaultProfile(normalized.userId, state.config, now);
+  // No respec while a challenge or duel is open: the build counts from when the duel starts to its end.
+  if (existing && hasOpenDuel(state, p.userId) && JSON.stringify(cleanStats(p.stats)) !== JSON.stringify(normalized.stats)) return { ok: false, reason: "in_duel" };
   Object.assign(p, {
     username: normalized.username,
     displayName: normalized.displayName,
     avatar: normalized.avatar,
     color: normalized.color,
     defaultAbility: normalized.defaultAbility,
+    stats: normalized.stats,
+    hat: normalized.hat,
     registered: true,
     lastSeen: now,
   });

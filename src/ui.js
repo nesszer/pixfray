@@ -101,7 +101,11 @@ export const framesFor = (entry, anim) => {
   const list = anim === "idle" ? a.idle || entry?.frames : anim === "walk" ? a.walk || entry?.frames : a[anim] || a.idle || entry?.frames;
   return Array.isArray(list) && list.length ? list : [];
 };
-export function drawFrame(canvas, entry, frame) {
+// Hats are drawn by public/hats.js, the same module the overlay uses. It is a static file, so it loads at runtime.
+let hats = null;
+const HATS_URL = new URL("/hats.js", location.href).href;   // a full URL, so the Vite dev server serves the public file as-is
+import(/* @vite-ignore */ HATS_URL).then((m) => { hats = m; for (const s of sprites) s.drawn = ""; start(); }).catch(() => {});
+export function drawFrame(canvas, entry, frame, hat = "") {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const img = entry && image(entry.url);
@@ -109,17 +113,21 @@ export function drawFrame(canvas, entry, frame) {
   const scale = Math.min(canvas.width / frame.w, canvas.height / frame.h);
   const w = Math.round(frame.w * scale), h2 = Math.round(frame.h * scale);
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, Math.round((canvas.width - w) / 2), canvas.height - h2, w, h2);
+  // With a hat, the figure is shrunk a little so the hat stays inside the canvas.
+  const room = hat && hats ? 0.8 : 1;
+  const dw = Math.round(w * room), dh = Math.round(h2 * room), dx = Math.round((canvas.width - dw) / 2), dy = canvas.height - dh;
+  ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
+  if (hat && hats) hats.drawHat(ctx, hat, img, frame, dx, dy, dw, dh);
   return true;
 }
 // sprite = {canvas, entry, anim, active()} ; returns a handle with .set(entry) and .destroy()
-export function addSprite(canvas, entry, { anim = "walk", active = () => true } = {}) {
-  const s = { canvas, entry, anim, active, drawn: "" };
+export function addSprite(canvas, entry, { anim = "walk", active = () => true, hat = "" } = {}) {
+  const s = { canvas, entry, anim, active, hat, drawn: "" };
   sprites.add(s);
   const img = entry && image(entry.url);
   img?.addEventListener("load", () => { s.drawn = ""; start(); }, { once: true });
   start();
-  return { set(next) { s.entry = next; s.drawn = ""; if (next) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); }, destroy() { sprites.delete(s); } };
+  return { hat(id) { s.hat = id || ""; s.drawn = ""; start(); }, set(next) { s.entry = next; s.drawn = ""; if (next) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); }, destroy() { sprites.delete(s); } };
 }
 let running = false;
 function start() { if (!running) { running = true; requestAnimationFrame(tick); } }
@@ -129,8 +137,8 @@ function tick(now) {
     const moving = !reducedMotion.matches && s.active();
     const frames = framesFor(s.entry, moving ? s.anim : "idle");
     const index = moving && frames.length ? Math.floor(now / (1000 / (s.entry?.fps || 8))) % frames.length : 0;
-    const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index;
-    if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index])) s.drawn = key;
+    const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index + ":" + s.hat;
+    if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index], s.hat)) s.drawn = key;
   }
   // With reduced motion every sprite is a still frame, so the loop sleeps until something needs redrawing.
   if (sprites.size && !reducedMotion.matches) requestAnimationFrame(tick); else running = false;

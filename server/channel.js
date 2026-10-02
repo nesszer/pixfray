@@ -11,6 +11,7 @@ import {
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription } from "./eventsub.js";
+import { cleanStats, knownHat, validStats, hatUnlocked, upgradeRules } from "./upgrades.js";
 import { SE_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
@@ -71,6 +72,8 @@ function normalizeProfileRow(row, config) {
     lastSeen: Number.isInteger(row.last_seen) ? row.last_seen : 0,
     registered: true,
     respawnAt: 0,
+    stats: cleanStats({ power: row.power, guard: row.guard, luck: row.luck }),
+    hat: knownHat(row.hat) ? row.hat : "",
   };
 }
 
@@ -102,6 +105,10 @@ export class ChannelRoom extends DurableObject {
     const sql = this.ctx.storage.sql;
     sql.exec("CREATE TABLE IF NOT EXISTS game_state (id INTEGER PRIMARY KEY CHECK (id = 1), channel TEXT NOT NULL, document TEXT NOT NULL)");
     sql.exec("CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT NOT NULL, avatar TEXT NOT NULL, color TEXT NOT NULL, default_ability TEXT NOT NULL, elo INTEGER NOT NULL, wins INTEGER NOT NULL, losses INTEGER NOT NULL, last_seen INTEGER NOT NULL DEFAULT 0)");
+    // v2.5: upgrade points spent from wins (server/upgrades.js) and the chosen hat.
+    const profileColumns = sql.exec("PRAGMA table_info(profiles)").toArray().map((c) => c.name);
+    for (const column of ["power", "guard", "luck"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+    if (!profileColumns.includes("hat")) sql.exec("ALTER TABLE profiles ADD COLUMN hat TEXT NOT NULL DEFAULT ''");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
     sql.exec("CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')");
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
@@ -166,7 +173,7 @@ export class ChannelRoom extends DurableObject {
       const profile = this.getProfile(userId, state.config);
       if (!profile) return json(null);
       const active = state.players.find((item) => item.userId === userId);
-      return json(active ? { ...profile, hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : profile);
+      return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins) });
     }
 
     if (path === "/profile" && request.method === "POST") {
@@ -179,7 +186,7 @@ export class ChannelRoom extends DurableObject {
       if (!result.ok) return json({ error: result.reason }, result.status || 400);
       this.broadcast(result.state);
       await this.scheduleAlarm(result.state);
-      return json({ profile: result.profile, revision: result.state.revision });
+      return json({ profile: { ...result.profile, upgrades: upgradeRules(result.profile.wins) }, revision: result.state.revision });
     }
 
     if (path === "/admin" && request.method === "POST") {
@@ -368,6 +375,12 @@ export class ChannelRoom extends DurableObject {
     return this.ctx.storage.transactionSync(() => {
       const state = this.readState(channel);
       const existing = this.getProfile(userId, state.config);
+      // Upgrades and hat: optional in the request (left out = keep the saved ones), checked against the saved wins.
+      const wins = existing?.wins || 0;
+      const stats = input.stats === undefined ? existing?.stats : validStats(input.stats, wins);
+      if (stats === null) return { ok: false, reason: "invalid_upgrades" };
+      const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
+      if (hat !== (existing?.hat || "") && !hatUnlocked(hat, wins)) return { ok: false, reason: knownHat(hat) ? "hat_locked" : "invalid_profile" };
       const profile = {
         ...(existing || {
           userId,
@@ -390,6 +403,8 @@ export class ChannelRoom extends DurableObject {
         avatar,
         color,
         defaultAbility,
+        stats: stats || cleanStats(),
+        hat,
         registered: true,
       };
       const result = reduceGame(state, { type: "profile_saved", profile }, now);
@@ -403,7 +418,7 @@ export class ChannelRoom extends DurableObject {
 
   getProfile(userId, config) {
     const row = this.ctx.storage.sql.exec(
-      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen FROM profiles WHERE user_id = ?",
+      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE user_id = ?",
       userId,
     ).toArray()[0];
     return normalizeProfileRow(row, config);
@@ -413,7 +428,7 @@ export class ChannelRoom extends DurableObject {
     const name = normalizeUsername(username);
     if (!name) return null;
     const row = this.ctx.storage.sql.exec(
-      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen FROM profiles WHERE username = ? COLLATE NOCASE",
+      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE username = ? COLLATE NOCASE",
       name,
     ).toArray()[0];
     return normalizeProfileRow(row, config);
@@ -427,8 +442,9 @@ export class ChannelRoom extends DurableObject {
       profile.userId,
     );
     this.ctx.storage.sql.exec(
-      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, avatar = excluded.avatar, color = excluded.color, default_ability = excluded.default_ability, elo = excluded.elo, wins = excluded.wins, losses = excluded.losses, last_seen = excluded.last_seen",
+      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, avatar = excluded.avatar, color = excluded.color, default_ability = excluded.default_ability, elo = excluded.elo, wins = excluded.wins, losses = excluded.losses, last_seen = excluded.last_seen, " +
+      "power = excluded.power, guard = excluded.guard, luck = excluded.luck, hat = excluded.hat",
       profile.userId,
       profile.username,
       profile.displayName,
@@ -439,6 +455,8 @@ export class ChannelRoom extends DurableObject {
       profile.wins,
       profile.losses,
       Number.isInteger(profile.lastSeen) ? profile.lastSeen : 0,
+      ...(({ power, guard, luck }) => [power, guard, luck])(cleanStats(profile.stats)),
+      knownHat(profile.hat) ? profile.hat : "",
     );
   }
 
@@ -453,7 +471,7 @@ export class ChannelRoom extends DurableObject {
   leaderboard(channel) {
     const state = this.readState(channel);
     const rows = this.ctx.storage.sql.exec(
-      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC LIMIT 100",
+      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC LIMIT 100",
     ).toArray();
     return rows.map((row) => {
       const profile = normalizeProfileRow(row, state.config);
@@ -629,7 +647,7 @@ export class ChannelRoom extends DurableObject {
         const parsed = parseGameCommand(textValue);
         if (parsed) {
           const targetProfile = parsed.target ? this.getProfileByUsername(parsed.target, state.config) : null;
-          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, quick: subscriptionId === SE_SUBSCRIPTION_ID, rolls: Array.from({ length: 24 }, () => Math.random()) });
+          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, quick: subscriptionId === SE_SUBSCRIPTION_ID, rolls: Array.from({ length: 48 }, () => Math.random()) });
           if (!main.result.ok && main.result.reason !== "duplicate") step({ type: "command_rejected", userId, command: parsed.action, reason: main.result.reason, retryAt: main.result.retryAt });
         } else {
           const active = state.players.find((item) => item.userId === userId);

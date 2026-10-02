@@ -1,5 +1,6 @@
 import { connectChat } from './chat.js';
 import { createArenaClient } from './arena-client.js';
+import { drawHat } from './hats.js';
 
 export function sanitizeColor(value) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : null;
@@ -189,6 +190,7 @@ async function start() {
     p.arenaProfile = profile || null;
     p.renderAvatar = p.avatar;
     p.defaultAbility = '';
+    p.hat = '';
     if (!profile) return;
     if (profile.displayName || profile.username) p.label = String(profile.displayName || profile.username).slice(0, 24);
     if (!profile.registered) return;
@@ -198,6 +200,7 @@ async function start() {
     // A newly seen id (fresh upload) refetches at once; ids that stay unknown retry at most every 30 s.
     else if (avatar && !arenaDemo && (!missingAvatars.has(avatar) || Date.now() - lastCatalogFetch > 30_000) && missingAvatars.add(avatar)) void loadArenaCatalog().then(() => { for (const q of players.values()) applyArenaProfile(q); });
     p.defaultAbility = String(profile.defaultAbility || '').slice(0, 20);
+    p.hat = typeof profile.hat === 'string' ? profile.hat : '';
   }
   function acceptArenaSnapshot(snapshot, metadata = {}) {
     if (!snapshot || typeof snapshot !== 'object') return;
@@ -819,6 +822,7 @@ async function start() {
         // Sources face right; mirror left walking.
         ctx.scale(p.direction / squash, squash);
         ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -s, drawWidth, s);
+        if (p.hat) drawHat(ctx, p.hat, sprite.image, frame, -drawWidth / 2, -s, drawWidth, s);
       } else {
         if (ko) ctx.globalAlpha = .5;
         ctx.translate(p.x + offset, y); ctx.scale(p.grow, p.grow);
@@ -867,6 +871,7 @@ async function start() {
     ].map(([displayName, avatar, color, defaultAbility, elo], index) => ({
       userId: 'demo-' + index, username: displayName.toLowerCase(), displayName, registered: true,
       avatar, color, defaultAbility, hp: 100, elo, wins: index % 4, losses: index % 3, lastSeen: Date.now(), respawnAt: 0,
+      hat: ['crown', 'cap', 'halo', 'tophat', 'horns', 'wizard', 'beanie', 'bandana'][index],
     }));
     arenaTransport = 'demo';
     arenaChat = { connected: true, lastSeen: Date.now(), status: 'enabled' };

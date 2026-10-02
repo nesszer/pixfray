@@ -443,3 +443,28 @@ test('overlay sockets: one network is capped, and a full room drops an old socke
   assert.deepEqual(oldest.closed, [1013, 'room full']);
   assert.ok(r.ctx.sockets.at(-1).tags.includes('ip:192.0.2.1'), 'the new socket is tagged with its network');
 });
+
+test('profiles save upgrades and hats within the points and unlocks the saved wins allow', async () => {
+  const r = room();
+  await r.save('u1', 'alice');
+  assert.equal((await r.save('u1', 'alice', { stats: { power: 1 } })).body.error, 'invalid_upgrades');
+  assert.equal((await r.save('u1', 'alice', { hat: 'crown' })).body.error, 'hat_locked');
+  assert.equal((await r.save('u1', 'alice', { hat: 'sombrero' })).status, 400);
+  // Six wins, in the database and in the live game state (duels keep the two in step).
+  r.ctx.storage.sql.exec("UPDATE profiles SET wins = 6 WHERE user_id = 'u1'");
+  const live = r.readState('nesszerra'); live.players.find((p) => p.userId === 'u1').wins = 6; r.writeState(live);
+  const saved = await r.save('u1', 'alice', { stats: { power: 3, luck: 2 }, hat: 'tophat' });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual(saved.body.profile.stats, { power: 3, guard: 0, luck: 2 });
+  const got = (await r.call('/profile?userId=u1')).body;
+  assert.equal(got.hat, 'tophat');
+  assert.deepEqual(got.stats, { power: 3, guard: 0, luck: 2 });
+  assert.equal(got.upgrades.points, 6);
+  assert.equal(got.upgrades.hats.find((h) => h.id === 'tophat').unlocked, true);
+  // Leaving stats and hat out keeps them.
+  assert.equal((await r.save('u1', 'alice', { color: '#654321' })).body.profile.hat, 'tophat');
+  assert.equal((await r.call('/profile?userId=u1')).body.stats.power, 3);
+  // Overlays get the hat with the player.
+  const state = (await r.call('/state')).body;
+  assert.equal(state.players.find((p) => p.userId === 'u1')?.hat, 'tophat');
+});

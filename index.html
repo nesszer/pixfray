@@ -40,6 +40,15 @@
           <label class="custom-color" for="color"><input type="color" id="color" value="#a78bfa" aria-label="Custom nameplate color"><span>Custom</span></label>
         </div>
       </fieldset>
+      <fieldset>
+        <legend>Hat <span class="muted small" id="hat-note"></span></legend>
+        <div class="char-grid hat-grid" id="hats" role="radiogroup" aria-label="Hat"></div>
+      </fieldset>
+      <fieldset id="upgrades">
+        <legend>Upgrades <span class="muted small" id="points-note"></span></legend>
+        <p class="muted small" id="upgrades-help">Each win gives one point, up to 10. Move points between stats whenever you're not in a duel.</p>
+        <div class="upgrade-list" id="upgrade-list"></div>
+      </fieldset>
     </form>
 
     <aside class="hero-card fighter-card" aria-label="Preview and save">
@@ -104,6 +113,7 @@
       <li>Two critical hits or three hits knock a fighter out.</li>
       <li>After 12 rolls the fighter with more health wins. If health is level, the next hit or counter decides it.</li>
       <li>A win without taking any damage is flawless and earns 3 extra Elo.</li>
+      <li>Upgrades change the numbers: each Power point adds 4% to your blows, each Guard point takes 4% off blows you take, and each Luck point gives a 4% chance that a miss still hits.</li>
     </ul>
     <p class="caveat">The loser is knocked out for a few seconds, and the same two viewers wait <span id="cmd-rematch">30 s</span> before a rematch.</p>
   </section>
