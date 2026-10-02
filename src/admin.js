@@ -148,6 +148,18 @@ $("#announce").addEventListener("change", async (e) => {
   setStatus(status, select.value === "off" ? "Announcements hidden on every overlay." : "Saved. Overlays show announcements within seconds.", "ok");
   await load();
 });
+// The on-screen limit is channel config too, so open overlays apply it from their next snapshot.
+$("#cap").addEventListener("change", async (e) => {
+  const input = e.currentTarget, status = $("#cap-status"), value = Number(input.value);
+  if (!Number.isInteger(value) || value < 15 || value > 100) { setStatus(status, "Pick a whole number from 15 to 100.", "error"); input.value = S.admin.config.maxOnStream || 50; return; }
+  input.disabled = true;
+  setStatus(status, "Saving…");
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: "config", payload: { patch: { maxOnStream: value }, baseVersion: S.admin.configVersion, note: "up to " + value + " on stream" } } });
+  input.disabled = false;
+  if (!r.ok) { setStatus(status, "Couldn't save: " + errorText(r) + ".", "error"); input.value = S.admin.config.maxOnStream || 50; return; }
+  setStatus(status, "Saved. Overlays show up to " + value + " characters within seconds.", "ok");
+  await load();
+});
 $("#open-chat-setup").addEventListener("click", () => selectTab($("#tab-chat"), true));
 $("#reset-health").addEventListener("click", (e) => act("resetHealth", undefined, { button: e.currentTarget, confirmText: "Put every viewer in the arena back to full health?", done: "Everyone in the arena is back to full health." }));
 $("#reset-round").addEventListener("click", (e) => act("resetRound", undefined, { button: e.currentTarget, confirmText: "Cancel every open duel without scoring and restart rounds at 1?", done: "Open duels cancelled; rounds restart at 1." }));
@@ -178,6 +190,7 @@ function renderAll() {
     stat("In the arena", a.players.length),
     stat("Rules version", "v" + a.configVersion));
   if (document.activeElement !== $("#announce")) $("#announce").value = a.config.announce || "off";
+  if (document.activeElement !== $("#cap")) $("#cap").value = a.config.maxOnStream || 50;
   renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe();
 }
 function stat(label, value, cls, delta) {
@@ -422,7 +435,7 @@ $("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.cur
 $("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat", e.currentTarget));
 
 // ---------- StreamElements ----------
-const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
+const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 function renderSe() {
   const se = S.admin.streamelements, c = S.admin.chatStatus || {};
   const using = c.connected && c.source === "streamelements";

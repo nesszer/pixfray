@@ -593,6 +593,10 @@ test('quick duels are the default and work through a mutual challenge too', () =
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { announce: 'left' } } }).reason, 'invalid_config_announce');
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { announce: 'top' } } }).ok, true);
   assert.equal(w.state.config.announce, 'top');
+  assert.equal(w.state.config.maxOnStream, 50, 'up to 50 characters on stream by default');
+  for (const bad of [14, 101, 30.5, '30']) assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { maxOnStream: bad } } }).reason, 'invalid_config_maxOnStream');
+  assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { maxOnStream: 15 } } }).ok, true);
+  assert.equal(w.state.config.maxOnStream, 15);
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: false } } }).ok, true);
 });
 

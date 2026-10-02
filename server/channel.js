@@ -12,7 +12,7 @@ import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js"
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription } from "./eventsub.js";
 import { cleanStats, knownHat, validStats, hatUnlocked, upgradeRules } from "./upgrades.js";
-import { SE_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText } from "./streamelements.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -480,6 +480,21 @@ export class ChannelRoom extends DurableObject {
     });
   }
 
+  // One saved profile with its leaderboard place (same order as leaderboard()), or null.
+  eloLookup(channel, { userId, username }) {
+    const sql = this.ctx.storage.sql;
+    const row = (userId
+      ? sql.exec("SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE user_id = ?", userId)
+      : sql.exec("SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE username = ? COLLATE NOCASE", username)).toArray()[0];
+    if (!row) return null;
+    const ahead = sql.exec(
+      "SELECT COUNT(*) AS n FROM profiles WHERE elo > ? OR (elo = ? AND wins > ?) OR (elo = ? AND wins = ? AND username COLLATE NOCASE < ?)",
+      row.elo, row.elo, row.wins, row.elo, row.wins, row.username,
+    ).toArray()[0].n;
+    const total = sql.exec("SELECT COUNT(*) AS n FROM profiles").toArray()[0].n;
+    return { profile: normalizeProfileRow(row, this.readState(channel).config), rank: Number(ahead) + 1, total: Number(total) };
+  }
+
   publicState(state) {
     return {
       type: "snapshot",
@@ -595,6 +610,11 @@ export class ChannelRoom extends DurableObject {
     };
     if (!action) return done("Mini Chat: attack commands are gone. Duels are !challenge @name, then !fight.", "unknown_action");
     if (!userId || !username) return done("Mini Chat: this command is missing sender details. Copy it again from the admin page.", "missing_sender");
+    if (SE_READ_ACTIONS.includes(action)) {
+      if (action === "top") return done(seTopText(this.leaderboard(channel).slice(0, 5), { origin, channel }), "top");
+      const found = this.eloLookup(channel, target ? { username: target } : { userId });
+      return done(seEloText(found, { self: !target, askerName: input.displayName || username, target, origin, channel }), found ? "elo" : "elo_not_found");
+    }
     if (!state0.chat.connected || state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID) return done(seReplyText({ result: { ok: false, reason: "chat_offline" }, state: state0, actorId: userId, action, target, names, origin, now }), "chat_offline");
     if (action === "challenge" && !target) return done(seReplyText({ result: { ok: false, reason: "target_required" }, state: state0, actorId: userId, action, target, names, origin, now }), "target_required");
     const messageId = "se:" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));

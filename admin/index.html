@@ -134,7 +134,7 @@
         <h2 id="obs-title">Add the overlay to OBS with one Browser Source link</h2>
         <div class="controls">
           <div><label for="size">Character size <output id="size-label">64px</output></label><input id="size" type="range" min="32" max="96" value="64"></div>
-          <div><label for="cap">Maximum characters</label><select id="cap"><option>25</option><option selected>50</option><option>100</option></select></div>
+          <div><label for="cap">Most characters on stream</label><input id="cap" type="number" min="15" max="100" step="1" value="50" inputmode="numeric"><p class="hint" id="cap-status" role="status">15 to 100. When it's full, the chatter who has been quiet longest leaves. Saved for the channel.</p></div>
           <div><label for="announce">Duel announcements</label><select id="announce"><option value="off" selected>Hidden</option><option value="top">Top of the screen</option><option value="bottom">Just above the fighters</option></select><p class="hint" id="announce-status" role="status">Saved for the channel. Open overlays change within seconds, no new link needed.</p></div>
         </div>
         <div class="stack">
@@ -161,7 +161,7 @@
             </ul>
           </li>
           <li><strong>If a command with that name already exists</strong> (StreamElements says the name is taken): find it in the Custom commands list, click its edit (pencil) button, select everything in Reply, delete it, paste the copied reply, and click Save. Default commands can't be edited; turn them off or pick another name here.</li>
-          <li><strong>Click Use StreamElements</strong> below once all 3 are added.</li>
+          <li><strong>Click Use StreamElements</strong> below once the duel commands are added. The <code>!top</code> and <code>!elo</code> rows are optional.</li>
           <li><strong>Test it:</strong> type <code>!decline</code> in your chat. The bot should answer "you have no pending challenge". If it says "wrong key", copy the reply again.</li>
         </ol>
         <p class="caveat small">Add commands in the dashboard, not with <code>!command add</code> in chat: the reply contains the key, and chat would show it to every viewer.</p>

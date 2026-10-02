@@ -409,6 +409,25 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   assert.match((await r.call('/dev/logs?source=warn')).body[0].message, /profile for alice not saved/);
 });
 
+test('StreamElements !top and !elo read saved profiles, even while duels are paused', async () => {
+  const r = room();
+  const se = (await r.call('/admin')).body.streamelements;
+  assert.deepEqual([se.names.top, se.names.elo], ['!top', '!elo']);
+  let m = 0;
+  const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 't' + (++m) } });
+  assert.match((await cmd('u1', 'alice', 'top')).body.reply, /nobody is ranked yet.*test\.example\/#ranks/);
+  assert.match((await cmd('u1', 'alice', 'elo')).body.reply, /^alice, save a fighter first at https:\/\/test\.example\/\.$/);
+  await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
+  r.ctx.storage.sql.exec("UPDATE profiles SET elo = 1040, wins = 3, losses = 1 WHERE user_id = 'u2'");
+  r.ctx.storage.sql.exec("UPDATE profiles SET elo = 990, wins = 0, losses = 1 WHERE user_id = 'u3'");
+  assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'Top 3: 1. bob 1040 · 2. alice 1000 · 3. cara 990. Full list: https://test.example/#ranks');
+  assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, 'alice: 1000 Elo, rank 2 of 3, 0 wins and 0 losses.');
+  assert.equal((await cmd('u1', 'alice', 'elo', 'bob')).body.reply, 'bob: 1040 Elo, rank 1 of 3, 3 wins and 1 loss.');
+  assert.match((await cmd('u1', 'alice', 'elo', 'zed')).body.reply, /@zed has no saved fighter/);
+  const log = (await r.call('/dev/logs?source=command')).body;
+  assert.equal(log[0].context.reason, 'elo_not_found');
+});
+
 test('dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a line plays like real chat and returns the bot reply', async () => {
   const off = room({}, { quick: true });
   await off.connectChat();

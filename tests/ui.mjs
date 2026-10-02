@@ -198,7 +198,7 @@ try {
     await page.click('#tab-chat');
     assert.equal(new URL(page.url()).hash, '#chat');
     // the OBS Browser Source link moved here from the viewer page
-    assert.match(await page.locator('#obs-url').inputValue(), /\/overlay\.html\?channel=nesszerra&size=64&cap=50&arena=1$/);
+    assert.match(await page.locator('#obs-url').inputValue(), /\/overlay\.html\?channel=nesszerra&size=64&arena=1$/);
     assert.match(await page.locator('#demo').getAttribute('href'), /arena=1&demo=1$/);
     assert.equal(await page.locator('#se-health').isHidden(), true, 'no StreamElements note before any command');
     assert.equal(await page.locator('#owner-chat').isVisible(), role === 'owner');
@@ -299,7 +299,13 @@ try {
       await page.selectOption('#announce', 'top');
       await page.waitForFunction(() => /within seconds/.test(document.querySelector('#announce-status').textContent) && !document.querySelector('#announce').disabled);
       assert.deepEqual(posts.at(-1).payload.patch, { announce: 'top' });
-      assert.match(await page.locator('#obs-url').inputValue(), /cap=50&arena=1$/, 'the setting is not in the link');
+      assert.match(await page.locator('#obs-url').inputValue(), /size=\d+&arena=1$/, 'the settings are not in the link');
+      // The on-stream limit is a channel setting too; out-of-range values are refused before posting.
+      await page.fill('#cap', '9'); await page.locator('#cap').dispatchEvent('change');
+      assert.match(await page.locator('#cap-status').textContent(), /15 to 100/);
+      await page.fill('#cap', '30'); await page.locator('#cap').dispatchEvent('change');
+      await page.waitForFunction(() => /up to 30/.test(document.querySelector('#cap-status').textContent) && !document.querySelector('#cap').disabled);
+      assert.deepEqual(posts.at(-1).payload.patch, { maxOnStream: 30 });
     }
     await context.close();
   }

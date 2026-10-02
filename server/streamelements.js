@@ -3,8 +3,9 @@
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
-export const SE_ACTIONS = ['challenge', 'accept', 'decline'];   // quick duels need no attack commands
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline' };
+export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'top', 'elo'];   // quick duels need no attack commands
+export const SE_READ_ACTIONS = ['top', 'elo'];   // only read saved profiles: no game state, so they work while duels are paused
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', top: '!top', elo: '!elo' };
 const MAX_REPLY = 380;   // StreamElements cuts responses at 400 bytes
 
 const reply = (body, status = 200) => new Response(String(body).slice(0, MAX_REPLY), { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
@@ -62,6 +63,28 @@ export function seCommandText(action, target) {
 }
 
 const secs = ms => Math.max(1, Math.ceil(ms / 1000));
+const short = s => String(s || '').slice(0, 25);
+// The site link for a channel: every channel but nesszerra names itself.
+const siteLink = (origin, channel, hash = '') => origin ? `${origin}/${channel && channel !== 'nesszerra' ? '?channel=' + channel : ''}${hash}` : '';
+
+// !top: the first five of the leaderboard (rows in leaderboard order) on one line.
+export function seTopText(rows, { origin = '', channel = '' } = {}) {
+  const link = siteLink(origin, channel, '#ranks');
+  if (!rows.length) return `Mini Chat: nobody is ranked yet. Save a fighter${link ? ' at ' + link : ''} and win a duel.`;
+  const line = `Top ${Math.min(5, rows.length)}: ` + rows.slice(0, 5).map((r, i) => `${i + 1}. ${short(r.displayName || r.username)} ${r.elo}`).join(' · ') + '.';
+  return link && line.length + link.length < MAX_REPLY - 12 ? `${line} Full list: ${link}` : line;
+}
+
+// !elo [@name]: one fighter's rating and place. `found` = { profile, rank, total } or null.
+export function seEloText(found, { self, askerName = '', target = '', origin = '', channel = '' } = {}) {
+  if (!found) {
+    if (!self) return `Mini Chat: @${target} has no saved fighter yet.`;
+    const link = siteLink(origin, channel);
+    return `${short(askerName) || 'You'}, save a fighter first${link ? ' at ' + link : ''}.`;
+  }
+  const { profile: p, rank, total } = found;
+  return `${short(p.displayName || p.username)}: ${p.elo} Elo, rank ${rank} of ${total}, ${p.wins} win${p.wins === 1 ? '' : 's'} and ${p.losses} loss${p.losses === 1 ? '' : 'es'}.`;
+}
 const nameOf = (state, id) => { const p = state.players.find(x => x.userId === id); return p?.displayName || p?.username || 'someone'; };
 
 // One short chat line for the bot to post, built from the reducer result and the state after it.

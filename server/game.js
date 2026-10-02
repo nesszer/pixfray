@@ -8,6 +8,8 @@ const DEFAULT_CONFIG = {
   quickDuel: true,
   // Overlay duel banner: "off", "top" or "bottom". Live overlays read it from the snapshot, so mods change it without a new OBS link.
   announce: "off",
+  // Most characters walking on the overlay at once (the longest-quiet chatter leaves first). Overlays read it from the snapshot too.
+  maxOnStream: 50,
   maxHp: 100,
   maxDuels: 5,
   challengeTimeoutMs: 30_000,
@@ -28,6 +30,7 @@ const DEFAULT_CONFIG = {
 const LEGACY_CONFIG = { ...DEFAULT_CONFIG, inactivityMs: 60_000, abilities: { strike: { damage: 10, cooldownMs: 3_000 }, heavy: { damage: 25, cooldownMs: 8_000 }, heal: { amount: 15, cooldownMs: 10_000 } } };
 
 const ANNOUNCE = ["off", "top", "bottom"];
+const ON_STREAM = [15, 100];
 const MAX_ACTIVE_PLAYERS = 100;
 const MAX_RECENT_EVENTS = 100;
 const MAX_APPLIED_MESSAGE_IDS = 1_000;
@@ -89,6 +92,7 @@ function normalizeConfig(config) {
     if (key === "abilities") continue;
     if (typeof value === "boolean") merged[key] = Boolean(merged[key]);
     else if (key === "announce") merged[key] = ANNOUNCE.includes(merged[key]) ? merged[key] : value;
+    else if (key === "maxOnStream") merged[key] = Number.isInteger(merged[key]) ? Math.max(ON_STREAM[0], Math.min(ON_STREAM[1], merged[key])) : value;
     else if (!Number.isInteger(merged[key])) merged[key] = value;
   }
   for (const [name, defaults] of Object.entries(DEFAULT_CONFIG.abilities)) {
@@ -560,6 +564,7 @@ function validateConfigPatch(patch) {
     sharedCooldownMs: [250, 60_000],
     initialElo: [0, 10_000],
     eloK: [1, 100],
+    maxOnStream: ON_STREAM,
   };
   for (const key of Object.keys(patch)) {
     if (key === "enabled" || key === "quickDuel") {
