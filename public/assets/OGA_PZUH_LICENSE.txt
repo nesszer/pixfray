@@ -1,0 +1,22 @@
+OpenGameArt packs by pzUH - license record
+
+The archives of these packs contain only images and no license file. This notice was written for this
+project (it is not a copy of a file from the archives). It records what each OpenGameArt page showed
+when it was checked on 2026-10-02: author "pzUH", License(s): CC0.
+
+License: Creative Commons Zero 1.0 Universal (CC0-1.0)
+https://creativecommons.org/publicdomain/zero/1.0/
+You may use, modify and redistribute these assets in personal and commercial projects. Credit is not
+required.
+
+Packs and the characters taken from them:
+
+  The Knight - Free Sprite              https://opengameart.org/content/the-knight-free-sprite              knight
+  Santa Claus - Free Sprites            https://opengameart.org/content/santa-claus-free-sprites            santa
+  Ninja Adventure - Free Sprite         https://opengameart.org/content/ninja-adventure-free-sprite         ninja
+  Adventurer Girl - Free Sprite         https://opengameart.org/content/adventurer-girl-free-sprite         cowgirl
+  Temple Run - Free Sprite              https://opengameart.org/content/temple-run-free-sprite              cowboy
+  Cat & Dog - Free Sprites              https://opengameart.org/content/cat-dog-free-sprites                cat, dog
+  Free Dino Sprites                     https://opengameart.org/content/free-dino-sprites                   dino
+
+Author profile: https://opengameart.org/users/pzuh

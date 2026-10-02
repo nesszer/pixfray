@@ -7,3 +7,4 @@ dist/
 .secrets.local.json
 *.log
 .devtools.local.json
+.asset-src/

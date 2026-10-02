@@ -43,7 +43,7 @@ the setup section of `index.html`, and `tests/smoke.mjs`. The v1 smoke test stil
 | Viewer + admin UI | `index.html`, `admin/index.html`, `src/`, `public/dashboard.css` | `tests/ui.mjs` passes at 1280/390; design check has 0 FAIL |
 | Overlay arena | `public/overlay.js` (`arena=1`), `public/arena-client.js` | `tests/arena-browser.mjs` and the live E2E pass |
 | Chat (EventSub webhook) | `server/eventsub.js`, the chat steps in `server/channel.js` | Signed-webhook unit tests and the local E2E pass; not yet run against real Twitch |
-| Content + uploads | 15 characters, `server/uploads.js`, `public/upload.js`, `docs/CHARACTER_RESERVE.md` | Upload tests and `tests/upload-workerd.mjs` pass |
+| Content + uploads | 39 characters (15 launch + 24 added in v3, built by `scripts/build-characters.mjs`), `server/uploads.js`, `public/upload.js`, `docs/CHARACTER_RESERVE.md` | Upload tests and `tests/upload-workerd.mjs` pass |
 | Live-fix | `server/developer.js`, `admin/dev/`, `public/dev.js`, `scripts/release.mjs`, `.github/` | `tests/dev-ui.mjs` and dev API tests pass with mocked GitHub/Cloudflare |
 
 Run it all with `npm run test:all` (see `VALIDATION_V2.md` for the exact commands and the spec
@@ -157,7 +157,7 @@ Fixed in this pass:
 - Either one PNG (animated by the engine with movement and effects) or PNG frames for idle, walk,
   attack and knockout.
 - Frames are aligned and packed into an atlas in the browser, with a preview before saving.
-- Limits: PNG only, 24 frames max, 128×128 per frame, 1.5 MB per atlas, 8 custom characters per channel.
+- Limits: PNG only, 24 frames max, 128×128 per frame, 1.5 MB per atlas, 24 custom characters per channel.
 - Validate the limits on the server as well as in the browser.
 
 ### Live-fix space (`/admin/dev`)
