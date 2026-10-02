@@ -18,5 +18,11 @@ Packs and the characters taken from them:
   Temple Run - Free Sprite              https://opengameart.org/content/temple-run-free-sprite              cowboy
   Cat & Dog - Free Sprites              https://opengameart.org/content/cat-dog-free-sprites                cat, dog
   Free Dino Sprites                     https://opengameart.org/content/free-dino-sprites                   dino
+  Cute Girl - Free Sprites              https://opengameart.org/content/cute-girl-free-sprites              cute-girl
+  Jack O'Lantern - Free Sprite          https://opengameart.org/content/jack-o-lantern-free-sprite          pumpkin
+  Ninja Girl - Free Sprite              https://opengameart.org/content/ninja-girl-free-sprite              ninja-girl
+  Red Hat Boy - Free Sprites            https://opengameart.org/content/red-hat-boy-free-sprites            red-hat-boy
+  The Boy - Free Sprites                https://opengameart.org/content/the-boy-free-sprites                flat-boy
+  The Robot - Free Sprite               https://opengameart.org/content/the-robot-free-sprite               robot
 
 Author profile: https://opengameart.org/users/pzuh

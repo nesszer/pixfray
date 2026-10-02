@@ -41,6 +41,11 @@ const PACKS = {
     url: 'https://kenney.nl/media/pages/assets/abstract-platformer/a8f4badcb5-1677579172/kenney_abstract-platformer.zip',
     license: { entry: 'License.txt', out: 'KENNEY_ABSTRACT_PLATFORMER_LICENSE.txt' },
   },
+  'kenney-jumper': {
+    source: 'https://kenney.nl/assets/jumper-pack', file: 'kenney_jumper-pack.zip', sha256: 'eca9d66cd3f31eb186e2e73fb531c0d9ff1283376ca5a5195680d4995ac35bf9',
+    url: 'https://kenney.nl/media/pages/assets/jumper-pack/4654b2d2e5-1677666699/kenney_jumper-pack.zip',
+    license: { entry: 'License.txt', out: 'KENNEY_JUMPER_LICENSE.txt' },
+  },
   // OpenGameArt packs by pzUH. The archives carry no license file; the CC0 statement is on each OpenGameArt page and is
   // recorded in public/assets/OGA_PZUH_LICENSE.txt (written by hand, not generated here).
   'oga-knight': { source: 'https://opengameart.org/content/the-knight-free-sprite', file: 'oga_FreeKnight.zip', sha256: '84a1355be8af79d9077c84ce90f536af8d5be9ab8e449d383122053c9cb089b7', url: OGA + 'FreeKnight.zip' },
@@ -49,6 +54,12 @@ const PACKS = {
   'oga-adventure-girl': { source: 'https://opengameart.org/content/adventurer-girl-free-sprite', file: 'oga_AdventureGirl.zip', sha256: 'dee3c944f21cac7475d9f107d7055c07a7acdc4f2eb7612be48c2842417749d5', url: OGA + 'Adventure%20Girl.zip' },
   'oga-cat-dog': { source: 'https://opengameart.org/content/cat-dog-free-sprites', file: 'oga_CatnDog.zip', sha256: 'e60f863e5abdce6fcded54f6b82bbda752ba0b555bc69c76c7da42d692e7b47c', url: OGA + 'CatnDog.zip' },
   'oga-temple-run': { source: 'https://opengameart.org/content/temple-run-free-sprite', file: 'oga_TempleRun.zip', sha256: 'd6d005f32e6d64c4187c911be2e3f19ceab7ef915d70be432ce9cd8ef52abb33', url: OGA + 'TempleRun.zip' },
+  'oga-cute-girl': { source: 'https://opengameart.org/content/cute-girl-free-sprites', file: 'oga_CuteGirlFiles.zip', sha256: 'facd021364fba2cfb25c21172ce890aea1bedbebab437be51c4426ee0dc9257d', url: OGA + 'CuteGirlFiles.zip' },
+  'oga-jack': { source: 'https://opengameart.org/content/jack-o-lantern-free-sprite', file: 'oga_JackFree.zip', sha256: '386a223a9540f24654bc5d305369e5e390c80fd25d78f0b1c296f063375f39de', url: OGA + 'JackFree.zip' },
+  'oga-ninja-girl': { source: 'https://opengameart.org/content/ninja-girl-free-sprite', file: 'oga_NinjaGirl.zip', sha256: '6fa7c8de581b6f35029261f7f2dfe5dbe0a79c493ba960f7c932a741188d85c6', url: OGA + 'NinjaGirl.zip' },
+  'oga-red-hat-boy': { source: 'https://opengameart.org/content/red-hat-boy-free-sprites', file: 'oga_redhatfiles.zip', sha256: '8ce021bdda109c2d0b32458d0c25511b4b02888cd41bcfb8d917676e54a3dcfb', url: OGA + 'redhatfiles.zip' },
+  'oga-flat-boy': { source: 'https://opengameart.org/content/the-boy-free-sprites', file: 'oga_FlatBoy.zip', sha256: 'd105576e4fa1cba4ac54752176b9d5aa20fdc0be1cb41c30635e8845e28f99b1', url: OGA + 'FlatBoy.zip' },
+  'oga-robot': { source: 'https://opengameart.org/content/the-robot-free-sprite', file: 'oga_RobotFree.zip', sha256: 'f9ae663c870a63c11fc3c4a825d420256503e98ad3351561e79af272aa7396e0', url: OGA + 'RobotFree.zip' },
   // A single sprite sheet rather than an archive: `sheet` gives the tile size, and frames are named "tile <n>" (left to right).
   // The CC0 statement is on the OpenGameArt page, recorded in public/assets/OGA_SOGOMN_LICENSE.txt (written by hand).
   'oga-turtle': { source: 'https://opengameart.org/content/animated-turtle', file: 'oga_turtle_4.png', sha256: 'acc903a48fbfc3277ee5ffbea8a85682965c8ba728f21f799e17798aca4126d8', url: OGA + 'turtle_4.png', sheet: { w: 32, h: 32 } },
@@ -95,6 +106,12 @@ const blob = (colour, id, label) => {
 // pzUH characters are big (400-900 px) side views: scaled down to ~104 px tall. 10 fps over 10 frames = one stride per second.
 const pz = (pack, id, label, o) => ({ id, label, pack, fps: 10, scale: { height: 104 }, ...o });
 
+// Kenney Jumper Pack: big flat-colour sprites, scaled down like the pzUH ones. Frame lists are file names without ".png".
+const jumper = (dir, id, label, o) => ({
+  id, label, pack: 'kenney-jumper', fps: 6, scale: { height: 104 },
+  ...Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.map((n) => `PNG/${dir}/${n}.png`)])),
+});
+
 const CHARACTERS = [
   pz('oga-knight', 'knight', 'Knight', {
     walk: p('png/', 'Walk', range(1, 10)), idle: p('png/', 'Idle', every(range(1, 10), 1)), jump: p('png/', 'Jump', [5]), cheer: p('png/', 'Jump', [3, 7]),
@@ -126,6 +143,33 @@ const CHARACTERS = [
     walk: p('png/', 'Walk', range(1, 10)), idle: p('png/', 'Idle', range(1, 10)), jump: p('png/', 'Jump', [6]), cheer: p('png/', 'Jump', [4, 8]),
     ko: p('png/', 'Dead', [1, 3, 5, 8]),
   }),
+  pz('oga-cute-girl', 'cute-girl', 'Cute Girl', {
+    walk: p('png/', 'Walk', every(range(1, 20), 2)), idle: p('png/', 'Idle', every(range(1, 16), 2)), jump: p('png/', 'Jump', [15]), cheer: p('png/', 'Jump', [8, 22]),
+    ko: p('png/', 'Dead', [1, 10, 20, 30]),
+  }),
+  pz('oga-jack', 'pumpkin', 'Pumpkin', {
+    walk: p('png/', 'Walk', range(1, 10)), idle: p('png/', 'Idle', range(1, 10)), jump: p('png/', 'Jump', [5]), cheer: p('png/', 'Jump', [3, 7]),
+    ko: p('png/', 'Dead', [1, 4, 7, 10]),
+  }),
+  pz('oga-ninja-girl', 'ninja-girl', 'Ninja Girl', {
+    walk: u('png/', 'Run', range(0, 9)), idle: u('png/', 'Idle', range(0, 9)), jump: u('png/', 'Jump', [5]), cheer: u('png/', 'Jump', [3, 7]),
+    attack: u('png/', 'Attack', [0, 2, 4, 6, 8]), ko: u('png/', 'Dead', [0, 3, 6, 9]),
+  }),
+  pz('oga-red-hat-boy', 'red-hat-boy', 'Red Hat Boy', {
+    walk: p('png/', 'Run', range(1, 8)), idle: p('png/', 'Idle', range(1, 10)), jump: p('png/', 'Jump', [6]), cheer: p('png/', 'Jump', [4, 8]),
+  }),
+  pz('oga-flat-boy', 'flat-boy', 'Kid', {
+    walk: p('png/', 'Walk', every(range(1, 15), 2)), idle: p('png/', 'Idle', every(range(1, 15), 2)), jump: p('png/', 'Jump', [8]), cheer: p('png/', 'Jump', [5, 11]),
+  }),
+  pz('oga-robot', 'robot', 'Gold Robot', {
+    walk: p('png/', 'Run', range(1, 8)), idle: p('png/', 'Idle', range(1, 10)), jump: p('png/', 'Jump', [5]), cheer: p('png/', 'Jump', [3, 7]),
+    attack: p('png/', 'Melee', range(1, 8)), ko: p('png/', 'Dead', [1, 4, 7, 10]),
+  }),
+  jumper('Players', 'bunny-brown', 'Brown Bunny', { walk: ['bunny1_walk1', 'bunny1_walk2'], idle: ['bunny1_stand'], jump: ['bunny1_jump'], cheer: ['bunny1_ready', 'bunny1_jump'], ko: ['bunny1_hurt'] }),
+  jumper('Players', 'bunny-purple', 'Purple Bunny', { walk: ['bunny2_walk1', 'bunny2_walk2'], idle: ['bunny2_stand'], jump: ['bunny2_jump'], cheer: ['bunny2_ready', 'bunny2_jump'], ko: ['bunny2_hurt'] }),
+  jumper('Enemies', 'spike-man', 'Spike Man', { walk: ['spikeMan_walk1', 'spikeMan_walk2'], idle: ['spikeMan_stand'], jump: ['spikeMan_jump'], cheer: ['spikeMan_stand', 'spikeMan_jump'] }),
+  jumper('Enemies', 'fly-man', 'Propeller', { walk: ['flyMan_fly', 'flyMan_still_fly'], idle: ['flyMan_stand'], jump: ['flyMan_jump'], cheer: ['flyMan_stand', 'flyMan_jump'] }),
+  { ...jumper('Enemies', 'wing-man', 'Wing Bird', { walk: ['wingMan1', 'wingMan2', 'wingMan3', 'wingMan4', 'wingMan5', 'wingMan4', 'wingMan3', 'wingMan2'], idle: ['wingMan1'], jump: ['wingMan3'], cheer: ['wingMan1', 'wingMan5'] }), fps: 12 },
   npp('green', 'npp-mint', 'Mint Astronaut'),
   npp('purple', 'npp-violet', 'Violet Astronaut'),
   npp('pink', 'npp-rose', 'Rose Astronaut'),
@@ -143,6 +187,11 @@ const CHARACTERS = [
   pixel('0002', '0003', 'pixel-blue', 'Pixel Blue'),
   pixel('0004', '0005', 'pixel-pink', 'Pixel Pink'),
   pixel('0006', '0007', 'pixel-yellow', 'Pixel Yellow'),
+  pixel('0009', '0010', 'pixel-diver', 'Pixel Diver'),
+  pixel('0011', '0012', 'pixel-block', 'Angry Block'),
+  pixel('0015', '0016', 'pixel-spike', 'Spike Helmet'),
+  pixel('0021', '0022', 'pixel-bot', 'Pixel Robot'),
+  { ...pixel('0024', '0025', 'pixel-bat', 'Pixel Bat'), walk: ['0024', '0025', '0026', '0025'].map((t) => `Tiles/Characters/tile_${t}.png`) },
   blob('Blue', 'blob-blue', 'Blue Blob'),
   blob('Green', 'blob-green', 'Green Blob'),
   blob('Red', 'blob-red', 'Red Blob'),

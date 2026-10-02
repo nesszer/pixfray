@@ -2,7 +2,7 @@
 
 Every image in `public/assets/` is listed below with its source, author and license. All 15 launch
 characters are by **Kenney Vleugels (Kenney.nl)**. The 24 characters added in v3 are by **Kenney** and by
-**pzUH** (OpenGameArt). Everything is licensed **Creative Commons Zero 1.0 Universal (CC0-1.0)**:
+**pzUH** (OpenGameArt); v4 adds the turtle by **Sogomn** and 16 more by Kenney and pzUH. Everything is licensed **Creative Commons Zero 1.0 Universal (CC0-1.0)**:
 https://creativecommons.org/publicdomain/zero/1.0/
 
 Attribution is optional under CC0; this project credits Kenney as a courtesy. The assets may be used
@@ -84,7 +84,7 @@ repeatable.
 | `npp-mouse` | Mouse | `npp-mouse.png` | mouse | 128 x 98 | walk_a, walk_b, rest | effects |
 | `npp-frog` | Frog | `npp-frog.png` | frog | 128 x 128 | idle, jump, rest | effects |
 
-## Pixel Platformer 1.2 (4 characters, added in v3)
+## Pixel Platformer 1.2 (4 characters added in v3, 5 in v4)
 
 - Source: https://kenney.nl/assets/pixel-platformer
 - Archive (downloaded 2026-10-02): https://kenney.nl/media/pages/assets/pixel-platformer/33bb4921eb-1696667883/kenney_pixel-platformer.zip
@@ -98,6 +98,11 @@ repeatable.
 | `pixel-blue` | Pixel Blue | `pixel-blue.png` | tile_0002, tile_0003 | 80 x 92 | same | effects |
 | `pixel-pink` | Pixel Pink | `pixel-pink.png` | tile_0004, tile_0005 | 80 x 92 | same | effects |
 | `pixel-yellow` | Pixel Yellow | `pixel-yellow.png` | tile_0006, tile_0007 | 80 x 92 | same | effects |
+| `pixel-diver` | Pixel Diver | `pixel-diver.png` | tile_0009, tile_0010 | 80 x 92 | same | effects |
+| `pixel-block` | Angry Block | `pixel-block.png` | tile_0011, tile_0012 | 72 x 72 | same | effects |
+| `pixel-spike` | Spike Helmet | `pixel-spike.png` | tile_0015, tile_0016 | 60 x 76 | same | effects |
+| `pixel-bot` | Pixel Robot | `pixel-bot.png` | tile_0021, tile_0022 | 96 x 88 | same | effects |
+| `pixel-bat` | Pixel Bat | `pixel-bat.png` | tile_0024, tile_0025, tile_0026 | 96 x 68 | walk 24, 25, 26, 25 | effects |
 
 ## Abstract Platformer (3 characters, added in v3)
 
@@ -113,7 +118,7 @@ repeatable.
 | `blob-green` | Green Blob | `blob-green.png` | Player Green | 128 x 100 | same | effects for attack; `ko` = hit, dead |
 | `blob-red` | Red Blob | `blob-red.png` | Player Red | 128 x 96 | same | effects for attack; `ko` = hit, dead |
 
-## pzUH sprites on OpenGameArt (8 characters from 7 packs, added in v3)
+## pzUH sprites on OpenGameArt (8 characters from 7 packs in v3, 6 more packs in v4)
 
 - Author: pzUH, https://opengameart.org/users/pzuh; license CC0-1.0 (each page lists "License(s): CC0", checked 2026-10-02)
 - The archives hold only images. The license record is `public/assets/OGA_PZUH_LICENSE.txt`, written for this project (it is not a copy of a file from the archives).
@@ -129,6 +134,28 @@ repeatable.
 | `cat` | Cat | `cat.png` | https://opengameart.org/content/cat-dog-free-sprites | https://opengameart.org/sites/default/files/CatnDog.zip | 126 x 104 | 10 / 10 / none / 1 (hurt) | effects for attack |
 | `dog` | Dog | `dog.png` | https://opengameart.org/content/cat-dog-free-sprites | https://opengameart.org/sites/default/files/CatnDog.zip | 124 x 104 | 10 / 10 / none / 1 (hurt) | effects for attack |
 | `dino` | Dino | `dino.png` | https://opengameart.org/content/free-dino-sprites | https://opengameart.org/sites/default/files/FreeDinoSprite.zip | 128 x 60 | 10 / 10 / none / 4 | effects for attack |
+| `cute-girl` | Cute Girl | `cute-girl.png` | https://opengameart.org/content/cute-girl-free-sprites | https://opengameart.org/sites/default/files/CuteGirlFiles.zip | 100 x 104 | 10 / 8 / none / 4 | effects for attack |
+| `pumpkin` | Pumpkin | `pumpkin.png` | https://opengameart.org/content/jack-o-lantern-free-sprite | https://opengameart.org/sites/default/files/JackFree.zip | 98 x 105 | 10 / 10 / none / 4 | effects for attack |
+| `ninja-girl` | Ninja Girl | `ninja-girl.png` | https://opengameart.org/content/ninja-girl-free-sprite | https://opengameart.org/sites/default/files/NinjaGirl.zip | 106 x 104 | 10 / 10 / 5 / 4 | attack + ko frames |
+| `red-hat-boy` | Red Hat Boy | `red-hat-boy.png` | https://opengameart.org/content/red-hat-boy-free-sprites | https://opengameart.org/sites/default/files/redhatfiles.zip | 66 x 104 | 8 (run) / 10 / none / none | effects |
+| `flat-boy` | Kid | `flat-boy.png` | https://opengameart.org/content/the-boy-free-sprites | https://opengameart.org/sites/default/files/FlatBoy.zip | 82 x 104 | 8 / 8 / none / none | effects |
+| `robot` | Gold Robot | `robot.png` | https://opengameart.org/content/the-robot-free-sprite | https://opengameart.org/sites/default/files/RobotFree.zip | 124 x 107 | 8 (run) / 10 / 8 (melee) / 4 | attack + ko frames |
+
+## Jumper Pack (5 characters, added in v4)
+
+- Source: https://kenney.nl/assets/jumper-pack
+- Archive (downloaded 2026-10-02): https://kenney.nl/media/pages/assets/jumper-pack/4654b2d2e5-1677666699/kenney_jumper-pack.zip
+- Author: Kenney Vleugels (Kenney.nl); license CC0-1.0
+- Included notice, byte-for-byte: `public/assets/KENNEY_JUMPER_LICENSE.txt` ("Jumper Pack by Kenney Vleugels ... License (Creative Commons Zero, CC0)")
+- Poses taken from `PNG/Players/` and `PNG/Enemies/`, scaled down to about 104 px tall (area average).
+
+| Catalog id | Label | File | Original sprites | Cell | Frames (in order) | Combat |
+|---|---|---|---|---|---|---|
+| `bunny-brown` | Brown Bunny | `bunny-brown.png` | bunny1_* | 76 x 104 | walk1, walk2, stand, jump, hurt, ready | effects for attack; `ko` = hurt |
+| `bunny-purple` | Purple Bunny | `bunny-purple.png` | bunny2_* | 76 x 104 | same | effects for attack; `ko` = hurt |
+| `spike-man` | Spike Man | `spike-man.png` | spikeMan_* | 80 x 104 | walk1, walk2, stand, jump | effects |
+| `fly-man` | Propeller | `fly-man.png` | flyMan_* | 92 x 104 | fly, still_fly, stand, jump | effects |
+| `wing-man` | Wing Bird | `wing-man.png` | wingMan1-wingMan5 | 128 x 74 | wingMan1-5 | effects |
 
 ## Animated turtle by Sogomn on OpenGameArt (1 character)
 

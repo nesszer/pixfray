@@ -60,7 +60,7 @@ test('combat-ready characters exist and every character is licensed in ASSET_LIC
     assert.ok(licenses.includes(c.url.split('/').pop()), c.url + ' file is listed in ASSET_LICENSES.md');
     assert.ok(licenses.includes(c.source), c.source + ' is listed in ASSET_LICENSES.md');
   }
-  for (const notice of ['KENNEY_LICENSE.txt', 'KENNEY_TOON_LICENSE.txt', 'KENNEY_PLATFORMER_ART_LICENSE.txt', 'KENNEY_NEW_PLATFORMER_LICENSE.txt', 'KENNEY_PIXEL_PLATFORMER_LICENSE.txt', 'KENNEY_ABSTRACT_PLATFORMER_LICENSE.txt', 'OGA_PZUH_LICENSE.txt', 'OGA_SOGOMN_LICENSE.txt']) {
+  for (const notice of ['KENNEY_LICENSE.txt', 'KENNEY_TOON_LICENSE.txt', 'KENNEY_PLATFORMER_ART_LICENSE.txt', 'KENNEY_NEW_PLATFORMER_LICENSE.txt', 'KENNEY_PIXEL_PLATFORMER_LICENSE.txt', 'KENNEY_ABSTRACT_PLATFORMER_LICENSE.txt', 'OGA_PZUH_LICENSE.txt', 'OGA_SOGOMN_LICENSE.txt', 'KENNEY_JUMPER_LICENSE.txt']) {
     const text = read('public/assets/' + notice).toString('utf8');
     assert.match(text, /CC0/, notice + ' states CC0');
     assert.ok(licenses.includes(notice), notice + ' is referenced');

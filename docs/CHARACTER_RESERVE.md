@@ -1,10 +1,10 @@
 # Character reserve
 
-29 free characters, vetted on 2026-10-01 and ready to import later. None of them are bundled yet.
+26 free characters, vetted on 2026-10-01 and ready to import later. None of them are bundled yet.
 
 24 other characters, taken from this list and from the OpenGameArt packs by pzUH, were imported on
 2026-10-02 with `scripts/build-characters.mjs` (see `ASSET_LICENSES.md`). Their rows were removed from the
-table below.
+table below. Three more (Pixel Platformer tiles 9-12 and 24-26) were imported on 2026-10-02 in v4.
 
 How each row was vetted: the official archive was downloaded from the Kenney asset page, the
 license file inside the archive was read, and the listed sprite files were opened to confirm they
@@ -62,9 +62,6 @@ Frame columns: **walk** and **idle** are movement frames; **attack** and **ko** 
 | 24 | Slime Block | Platformer Art Extended Enemies | `Enemy sprites/slimeBlock*.png` | 51 x 50 | slimeBlock | slimeBlock | effects | hit, dead |
 | 25 | Grass Block | Platformer Art Extended Enemies | `Enemy sprites/grassBlock*.png` | 71 x 70 | grassBlock, jump | grassBlock | effects | hit, dead |
 | 26 | Barnacle | Platformer Art Extended Enemies | `Enemy sprites/barnacle*.png` | up to 51 x 58 | barnacle, bite | barnacle | bite | hit, dead |
-| 27 | Beige Pixel Astronaut | Pixel Platformer | `Tiles/Characters/tile_0009.png`, `tile_0010.png` | 24 x 24 | 2 frames | tile_0009 | effects | effects |
-| 28 | Pixel Block Face | Pixel Platformer | `Tiles/Characters/tile_0011.png`, `tile_0012.png` | 24 x 24 | 2 frames | tile_0011 | effects | effects |
-| 29 | Pixel Bat | Pixel Platformer | `Tiles/Characters/tile_0024.png` to `tile_0026.png` | 24 x 24 | 3 frames | tile_0024 | effects | effects |
 
 ## Checked and left out
 
