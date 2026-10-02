@@ -251,7 +251,7 @@ tr.podium td:first-child { color: var(--trim); font-weight: 650; }
 .outcome-bad { color: var(--negative); font-weight: 600; }
 
 /* admin tabs */
-.tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-strong); margin-bottom: var(--space-6); overflow-x: auto; scrollbar-width: thin; }
+.tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-strong); margin-bottom: var(--space-6); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .tabs [role="tab"] { flex: 0 0 auto; min-height: 44px; padding: 0 var(--space-4); border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0;
   background: none; color: var(--text-2); font: 600 var(--text-sm)/1 var(--font-sans); cursor: pointer; margin-bottom: -1px; }
 .tabs [role="tab"]:hover { color: var(--text); background: var(--surface); }

@@ -119,6 +119,14 @@ test('chat commands run a full duel; Elo persists to the leaderboard; overlays g
   assert.equal('relay' in live.sent.at(-1), false);
 });
 
+test('chat bots like StreamElements never join the arena', async () => {
+  const r = room();
+  await r.connectChat();
+  assert.equal((await r.chat('b1', 'streamelements', 'Thank you for following!')).body.reason, 'chat_bot');
+  assert.equal((await r.chat('b2', 'nightbot', '!challenge @alice')).body.reason, 'chat_bot');
+  assert.equal(r.readState('nesszerra').players.length, 0);
+});
+
 test('unregistered chatters appear in their Twitch color but cannot duel; rejections are logged', async () => {
   const r = room();
   await r.save('u1', 'alice');

@@ -58,6 +58,7 @@ async function start() {
   const replays = new Map();
   const KO_HOLD_MS = 2500;   // how long the loser stays down after a replayed knockout
   const DUEL_GROW = 1.5;     // fighters stand this much bigger while they duel
+  const CHAT_BOTS = new Set(['streamelements', 'nightbot', 'moobot', 'fossabot', 'streamlabs', 'wizebot', 'sery_bot', 'soundalerts', 'kofistreambot', 'botrixoficial']);   // same list as server/channel.js
   const FLOOR = 32;          // room under the feet for the nameplate
   const banners = [];        // winner banners above finished duels
   let shake = null;          // screen shake after a finishing blow
@@ -443,7 +444,7 @@ async function start() {
   }
   function onMessage(message) {
     const username = String(message.username || message.userId || '').toLowerCase().slice(0, 64);
-    if (!username) return;
+    if (!username || CHAT_BOTS.has(username)) return;
     const now = Date.now();
     let p = players.get(username) || (message.userId ? findPlayer(message.userId) : null);
     if (!p) p = spawn(username, { label: String(message.displayName || username).slice(0, 24), chatLabel: String(message.displayName || username).slice(0, 24) });

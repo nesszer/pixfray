@@ -23,6 +23,8 @@ const REJECTED_WRITE_MS = 60_000;          // a wrong StreamElements key is reco
 const MAX_CONFIG_HISTORY = 50;
 const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
 const MAX_EVENTSUB_IDS = 5_000;
+// Chat bots never walk into the arena or duel.
+const CHAT_BOTS = new Set(["streamelements", "nightbot", "moobot", "fossabot", "streamlabs", "wizebot", "sery_bot", "soundalerts", "kofistreambot", "botrixoficial"]);
 const PRESENCE_REFRESH_MS = 30_000;        // chat-only viewers refresh their arena presence at most this often
 const LAST_SEEN_WRITE_MS = 60_000;         // chat.lastSeen alone is persisted at most once a minute
 const CHAT_CHECK_MS = 60 * 60_000;         // the alarm re-checks the Helix subscription at most hourly
@@ -612,6 +614,7 @@ export class ChannelRoom extends DurableObject {
       if (!state.chat.connected) step({ type: "chat_verified", subscriptionId });
       let main = null;
       if (!userId || !/^[a-z0-9_]{1,25}$/.test(username) || !displayName) main = { result: { ok: false, reason: "invalid_event" } };
+      else if (CHAT_BOTS.has(username)) main = { result: { ok: false, reason: "chat_bot" } };
       else {
         const userProfile = this.getProfile(userId, state.config);
         // Registered players keep their saved look; other chatters take their Twitch name color.

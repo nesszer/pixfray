@@ -374,8 +374,10 @@ async function mountUploads() {
 const CHAT_STATUS = { enabled: "connected", webhook_callback_verification_pending: "waiting for Twitch to verify the webhook", pending: "waiting for Twitch to verify the webhook",
   disconnected: "not connected", authorization_revoked: "Twitch permission was revoked", user_removed: "the Twitch account was removed",
   notification_failures_exceeded: "Twitch stopped after repeated delivery failures", version_removed: "Twitch retired this subscription version", subscription_missing: "the subscription no longer exists on Twitch" };
+let verifying = false;   // "Twitch is verifying" note shown after Connect chat; replaced once the webhook is verified
 function renderChat() {
   const c = S.admin.chatStatus || {};
+  if (verifying && c.connected) { verifying = false; setStatus($("#chat-status"), "Chat connected. Duels are live.", "ok"); }
   const parts = ["Status: " + (CHAT_STATUS[c.status] || c.status || "not connected") + "."];
   if (c.lastNotificationAt) parts.push("Last chat message " + timeAgo(c.lastNotificationAt) + ".");
   if (c.lastRevocationReason) parts.push("Last revocation: " + (CHAT_STATUS[c.lastRevocationReason] || c.lastRevocationReason) + ".");
@@ -397,7 +399,8 @@ async function chatAct(action, button, takeover = false) {
     const fix = r.data?.reconnect ? (S.access.owner ? " Use Reconnect Twitch below." : " Ask nesszerra to reconnect Twitch.") : "";
     return setStatus($("#chat-status"), "That didn't work: " + errorText(r) + fix, "error");
   }
-  setStatus($("#chat-status"), action === "disconnectChat" ? "Chat disconnected. Duels are paused." : r.data?.chatStatus?.connected ? "Chat connected. Duels are live." : "Subscription created; Twitch is verifying the webhook. This page updates when it's done.", "ok");
+  verifying = action === "connectChat" && !r.data?.chatStatus?.connected;
+  setStatus($("#chat-status"), action === "disconnectChat" ? "Chat disconnected. Duels are paused." : verifying ? "Subscription created. Twitch is checking the connection; this updates when it's done." : "Chat connected. Duels are live.", "ok");
   await load();
 }
 $("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.currentTarget));
