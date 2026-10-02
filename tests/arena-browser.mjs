@@ -83,8 +83,9 @@ try {
     channel: 'nesszerra',
     revision: 3,
     paused: false,
+    build: 'build-1',
     chat: { connected: true, lastSeen: Date.now(), status: 'enabled' },
-    config: { maxHp: 100 },
+    config: { maxHp: 100, announce: 'top' },
     players: [
       { userId: '101', username: 'aria', displayName: 'Aria Prime', avatar: 'neon', color: '#22cc88', defaultAbility: 'strike', hp: 100, elo: 1720, wins: 8, losses: 2, registered: true },
       { userId: '202', username: 'bex', displayName: 'Bex Prime', avatar: 'soldier', color: '#cc88ff', defaultAbility: 'heavy', hp: 100, elo: 1690, wins: 7, losses: 3, registered: true },
@@ -95,6 +96,10 @@ try {
     ],
   }));
   await page.waitForFunction(() => window.__arenaDebug?.().revision === 3);
+  const live = await page.evaluate(() => window.__arenaDebug());
+  assert.equal(live.announce, 'top', 'the channel setting in the snapshot turns the banner on without a new link');
+  assert.equal(live.build, 'build-1');
+  assert.equal(live.staleBuild, false, 'the first build seen is the one this page runs');
 
   const ircMessage = '@id=test-1;user-id=101;display-name=Chat Override;color=#ff0000 :aria!aria@aria.tmi.twitch.tv PRIVMSG #nesszerra :!color #ff0000\r\n';
   await page.evaluate(message => window.__sendIrc(message), ircMessage);

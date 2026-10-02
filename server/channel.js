@@ -493,6 +493,7 @@ export class ChannelRoom extends DurableObject {
       players: state.players.map((profile) => ({ ...profile })),
       duels: state.duels.map((duel) => ({ ...duel })),
       events: state.events.slice(-50).map((event) => ({ ...event })),
+      build: String(this.env?.CF_VERSION_METADATA?.id || ""),   // overlays reload themselves when a new deploy lands
       serverNow: Date.now(),   // lets overlays on a PC with a wrong clock convert event times (arena-client.js)
     };
   }

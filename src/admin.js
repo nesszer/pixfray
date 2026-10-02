@@ -137,6 +137,17 @@ $("#toggle-duels").addEventListener("click", (e) => {
   act("config", { patch: { enabled }, baseVersion: S.admin.configVersion, note: enabled ? "duels enabled" : "duels paused" },
     { button: e.currentTarget, confirmText: !enabled && open ? "Pause duels? The " + open + " open duel" + (open === 1 ? "" : "s") + " will be cancelled without scoring." : undefined, done: enabled ? "Duels are on." : "Duels are paused. Open duels were cancelled without scoring." });
 });
+// Duel announcements live in the channel config: every open overlay picks the change up from its next snapshot.
+$("#announce").addEventListener("change", async (e) => {
+  const select = e.currentTarget, status = $("#announce-status");
+  select.disabled = true;
+  setStatus(status, "Saving…");
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: "config", payload: { patch: { announce: select.value }, baseVersion: S.admin.configVersion, note: "announcements " + select.value } } });
+  select.disabled = false;
+  if (!r.ok) { setStatus(status, "Couldn't save: " + errorText(r) + ".", "error"); select.value = S.admin.config.announce || "off"; return; }
+  setStatus(status, select.value === "off" ? "Announcements hidden on every overlay." : "Saved. Overlays show announcements within seconds.", "ok");
+  await load();
+});
 $("#open-chat-setup").addEventListener("click", () => selectTab($("#tab-chat"), true));
 $("#reset-health").addEventListener("click", (e) => act("resetHealth", undefined, { button: e.currentTarget, confirmText: "Put every viewer in the arena back to full health?", done: "Everyone in the arena is back to full health." }));
 $("#reset-round").addEventListener("click", (e) => act("resetRound", undefined, { button: e.currentTarget, confirmText: "Cancel every open duel without scoring and restart rounds at 1?", done: "Open duels cancelled; rounds restart at 1." }));
@@ -166,6 +177,7 @@ function renderAll() {
     stat("Round", a.round),
     stat("In the arena", a.players.length),
     stat("Rules version", "v" + a.configVersion));
+  if (document.activeElement !== $("#announce")) $("#announce").value = a.config.announce || "off";
   renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe();
 }
 function stat(label, value, cls, delta) {

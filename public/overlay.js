@@ -41,8 +41,12 @@ async function start() {
   const debug = params.get('debug') === '1';
   const cap = Math.max(1, Math.min(100, Number(params.get('cap')) || 100));
   const size = Math.max(24, Math.min(96, Number(params.get('size')) || 60));
-  // Duel announcement banner: hidden unless the OBS link asks for it (?announce=top or bottom); the streamers found it noisy.
-  const announce = ['top', 'bottom'].includes(params.get('announce')) ? params.get('announce') : 'off';
+  // Duel announcement banner: off, top or bottom. The channel setting (mod controls) arrives with every snapshot and wins;
+  // the ?announce= link parameter only covers the demo and the moment before the first snapshot.
+  const ANNOUNCE = ['off', 'top', 'bottom'];
+  let announce = ANNOUNCE.includes(params.get('announce')) ? params.get('announce') : 'off';
+  // A new deploy changes the snapshot's build id; the overlay reloads itself between duels so OBS never needs a manual refresh.
+  let firstBuild = '', staleBuild = false;
   const sound = params.get('sound') === '1';   // quiet duel sounds, off unless asked for
   const status = document.querySelector('#status');
   const storageKey = 'mini-chat:cosmetics:' + channel;
@@ -207,6 +211,11 @@ async function start() {
     if (!snapshot || typeof snapshot !== 'object') return;
     arenaChat = snapshot.chat && typeof snapshot.chat === 'object' ? snapshot.chat : null;
     if (snapshot.config && typeof snapshot.config === 'object') arenaConfig = snapshot.config;
+    if (ANNOUNCE.includes(arenaConfig.announce)) announce = arenaConfig.announce;
+    if (typeof snapshot.build === 'string' && snapshot.build) {
+      if (!firstBuild) firstBuild = snapshot.build;
+      else if (snapshot.build !== firstBuild) staleBuild = true;
+    }
     arenaPaused = snapshot.paused === true;
     arenaRevision = Number.isFinite(Number(metadata.revision)) ? Number(metadata.revision)
       : Number.isFinite(Number(snapshot.revision)) ? Number(snapshot.revision) : arenaRevision;
@@ -237,6 +246,16 @@ async function start() {
     for (const id of meetPoints.keys()) if (!replays.has(id) && !arenaDuels.some(duel => duel.id === id && duel.status === 'active')) meetPoints.delete(id);
     updateStatus();
   }
+  setInterval(() => {
+    if (!staleBuild || replays.size) return;
+    // At most one reload a minute, in case a rollout serves two versions side by side.
+    try {
+      const last = Number(sessionStorage.getItem('mini-chat-reload')) || 0;
+      if (Date.now() - last < 60_000) return;
+      sessionStorage.setItem('mini-chat-reload', String(Date.now()));
+    } catch { return; }   // without storage there's no loop guard, so keep running the old code
+    location.reload();
+  }, 5000);
   // Two duels at once each keep their own line; a newer message for the same duel replaces its line.
   function announceArena(text, color = '#fde68a', key = 'arena') {
     if (!text) return;
@@ -990,6 +1009,7 @@ async function start() {
       players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
         x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '',
         grow: Math.round((p.grow || 1) * 100) / 100, die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '' })),
+      announce, build: firstBuild, staleBuild,
       announcement: liveAnnouncements().map(a => a.text).join(' | '),
       meets: [...meetPoints.values()].map(m => Math.round(m.x)),
       banners: banners.filter(b => Date.now() < b.until).map(b => b.text),

@@ -292,6 +292,15 @@ try {
     await page.locator('#history tbody tr').nth(1).getByRole('button', { name: /Revert to v2/ }).click();
     await page.waitForTimeout(200);
     assert.deepEqual(posts.at(-1), { action: 'rollbackConfig', payload: { version: 2 } });
+    if (s.name === '1280') {
+      await page.click('#tab-chat');
+      // Duel announcements save to the channel config (live overlays follow it); the link stays the same.
+      assert.equal(await page.locator('#announce').inputValue(), 'off');
+      await page.selectOption('#announce', 'top');
+      await page.waitForFunction(() => /within seconds/.test(document.querySelector('#announce-status').textContent) && !document.querySelector('#announce').disabled);
+      assert.deepEqual(posts.at(-1).payload.patch, { announce: 'top' });
+      assert.match(await page.locator('#obs-url').inputValue(), /cap=50&arena=1$/, 'the setting is not in the link');
+    }
     await context.close();
   }
   // 6. StreamElements is the chat source but no command has reached this site: the Stream setup tab warns.

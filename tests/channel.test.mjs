@@ -468,3 +468,11 @@ test('profiles save upgrades and hats within the points and unlocks the saved wi
   const state = (await r.call('/state')).body;
   assert.equal(state.players.find((p) => p.userId === 'u1')?.hat, 'tophat');
 });
+
+test('snapshots carry the deploy build id and the announce setting so open overlays follow them', () => {
+  const r = room({ CF_VERSION_METADATA: { id: 'build-42' } });
+  const snap = r.publicState(r.readState('nesszerra'));
+  assert.equal(snap.build, 'build-42');
+  assert.equal(snap.config.announce, 'off');
+  assert.equal(room().publicState(createInitialState('nesszerra')).build, '');
+});

@@ -1,14 +1,13 @@
 // OBS Browser Source link for this channel (mod controls, Stream setup tab).
+// Duel announcements are a channel setting (src/admin.js), not part of the link, so they change without touching OBS.
 import { CHANNEL } from "./ui.js";
 const size = document.querySelector("#size");
 const cap = document.querySelector("#cap");
-const announce = document.querySelector("#announce");
 function update() {
   const url = new URL("/overlay.html", location.href);
   url.searchParams.set("channel", CHANNEL);
   url.searchParams.set("size", size.value);
   url.searchParams.set("cap", cap.value);
-  if (announce.value !== "off") url.searchParams.set("announce", announce.value);
   url.searchParams.set("arena", "1"); // shared duels from the server; remove for the chat-only v1 overlay
   document.querySelector("#obs-url").value = url.href;
   document.querySelector("#preview-link").href = url.href;
@@ -16,7 +15,7 @@ function update() {
   document.querySelector("#demo").href = url.href;
   document.querySelector("#size-label").value = size.value + "px";
 }
-for (const field of [size, cap, announce]) field.addEventListener("input", update);
+for (const field of [size, cap]) field.addEventListener("input", update);
 document.querySelector("#copy").addEventListener("click", async () => {
   const input = document.querySelector("#obs-url");
   const status = document.querySelector("#copy-status");

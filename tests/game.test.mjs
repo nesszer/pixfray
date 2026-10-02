@@ -589,6 +589,10 @@ test('quick duels are the default and work through a mutual challenge too', () =
   w.say('alice', '!challenge @bob');
   assert.equal(w.say('bob', '!challenge @alice').reason, 'quick_duel');
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: 'yes' } } }).reason, 'invalid_config_quickDuel');
+  assert.equal(w.state.config.announce, 'off', 'the duel banner is hidden until a mod turns it on');
+  assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { announce: 'left' } } }).reason, 'invalid_config_announce');
+  assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { announce: 'top' } } }).ok, true);
+  assert.equal(w.state.config.announce, 'top');
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: false } } }).ok, true);
 });
 

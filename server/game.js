@@ -6,6 +6,8 @@ const DEFAULT_CONFIG = {
   // Off = the HP fight with !attack/!strike/!heavy/!heal. StreamElements has no attack commands, so its duels
   // always settle quickly (commands marked quick: true).
   quickDuel: true,
+  // Overlay duel banner: "off", "top" or "bottom". Live overlays read it from the snapshot, so mods change it without a new OBS link.
+  announce: "off",
   maxHp: 100,
   maxDuels: 5,
   challengeTimeoutMs: 30_000,
@@ -25,6 +27,7 @@ const DEFAULT_CONFIG = {
 // The first preset (10/25 damage) made duels drag on for 10+ hits. Channels that never edited it move to the current one.
 const LEGACY_CONFIG = { ...DEFAULT_CONFIG, inactivityMs: 60_000, abilities: { strike: { damage: 10, cooldownMs: 3_000 }, heavy: { damage: 25, cooldownMs: 8_000 }, heal: { amount: 15, cooldownMs: 10_000 } } };
 
+const ANNOUNCE = ["off", "top", "bottom"];
 const MAX_ACTIVE_PLAYERS = 100;
 const MAX_RECENT_EVENTS = 100;
 const MAX_APPLIED_MESSAGE_IDS = 1_000;
@@ -85,6 +88,7 @@ function normalizeConfig(config) {
   for (const [key, value] of Object.entries(DEFAULT_CONFIG)) {
     if (key === "abilities") continue;
     if (typeof value === "boolean") merged[key] = Boolean(merged[key]);
+    else if (key === "announce") merged[key] = ANNOUNCE.includes(merged[key]) ? merged[key] : value;
     else if (!Number.isInteger(merged[key])) merged[key] = value;
   }
   for (const [name, defaults] of Object.entries(DEFAULT_CONFIG.abilities)) {
@@ -560,6 +564,9 @@ function validateConfigPatch(patch) {
   for (const key of Object.keys(patch)) {
     if (key === "enabled" || key === "quickDuel") {
       if (typeof patch[key] !== "boolean") return { ok: false, reason: "invalid_config_" + key };
+      out[key] = patch[key];
+    } else if (key === "announce") {
+      if (!ANNOUNCE.includes(patch[key])) return { ok: false, reason: "invalid_config_announce" };
       out[key] = patch[key];
     } else if (key === "relayLeaseMs") {
       continue;   // removed with the relay; old history versions may still carry it, so rollbacks skip it
