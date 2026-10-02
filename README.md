@@ -21,7 +21,7 @@ Query options: channel, demo=1, debug=1, cap=1..100, size=32..96.
 The working tree also holds v2. It adds:
 - Twitch sign-in profiles and a viewer dashboard (`/`).
 - Mod controls with a versioned balance editor (`/admin/`).
-- An owner-only live-fix page (`/admin/dev/`).
+- An owner page (`/admin/dev/`): invite streamers, follow their setup, read error logs, and folded developer tools.
 - Shared server-decided duels on the overlay (add `arena=1`).
 - 15 Kenney CC0 characters and custom character uploads.
 - Chat through a Twitch EventSub webhook to the Worker, so nothing runs on the OBS PC. The owner

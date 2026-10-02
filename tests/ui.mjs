@@ -224,6 +224,12 @@ try {
     assert.match(await page.locator('#history tbody tr').nth(1).textContent(), /Heavy strike damage 35 HP → 30 HP/);
     assert.match(await page.locator('#usage-title').textContent(), /1 of 24/);
     assert.equal(await page.locator('#dev-open').isVisible(), role === 'owner');   // on the Live tab, shown first
+    assert.equal(await page.locator('#dev-link').textContent(), 'Owner');
+    const liveText = await page.locator('#panel-live').textContent(), headline = await page.locator('#stats, #summary-text, #meta').allTextContents();
+    for (const jargon of ['state revision', 'Rules version', 'Live-fix']) assert.ok(!liveText.includes(jargon), 'no "' + jargon + '" on the Live tab');
+    assert.ok(!/round/i.test(headline.join(' ')), 'no global round number in the summary');
+    assert.match(await page.locator('#stats').textContent(), /Twitch chat\s*Connected/);
+    assert.match(await page.locator('#meta').textContent(), /^Signed in as (the broadcaster|a moderator)\.$/);
     assert.equal(await page.locator('#panel-chat').isHidden(), true, 'only the Live tab shows at first');
     await page.click('#tab-chat');
     assert.equal(new URL(page.url()).hash, '#chat');
@@ -247,7 +253,7 @@ try {
       assert.equal(posts.at(-1).action, 'disconnectChat');
       // chat offline: the Live tab points at the fix instead of offering to pause
       await page.click('#tab-live');
-      await page.waitForFunction(() => document.querySelector('#summary-title').textContent === 'Waiting for Twitch chat');
+      await page.waitForFunction(() => document.querySelector('#summary-title').textContent === 'Waiting for chat');
       assert.equal(await page.locator('#open-chat-setup').isVisible(), true);
       assert.equal(await page.locator('#toggle-duels.btn-primary').count(), 0, 'one primary action');
       await page.click('#open-chat-setup');
@@ -325,6 +331,7 @@ try {
     if (s.name === '1280') {
       await page.click('#tab-chat');
       // Duel announcements save to the channel config (live overlays follow it); the link stays the same.
+      await page.click('#obs-setup details > summary');   // overlay options start folded
       assert.equal(await page.locator('#announce').inputValue(), 'off');
       await page.selectOption('#announce', 'top');
       await page.waitForFunction(() => /within seconds/.test(document.querySelector('#announce-status').textContent) && !document.querySelector('#announce').disabled);
@@ -340,9 +347,9 @@ try {
     await context.close();
   }
   // 6. StreamElements is the chat source but no command has reached this site: the Stream setup tab warns.
-  for (const se of [{ lastCommandAt: 0, rejectedAt: 0, expect: /No StreamElements command has reached \S+ with this key yet.*test site.*!no/, warn: true },
-    { lastCommandAt: now - 120000, rejectedAt: 0, expect: /Last StreamElements command reached \S+ 2 min ago/, warn: false },
-    { lastCommandAt: now - 120000, rejectedAt: now - 30000, expect: /old key and was refused/, warn: true }]) {
+  for (const se of [{ lastCommandAt: 0, rejectedAt: 0, expect: /No StreamElements command has reached \S+ with this key yet.*test site.*!no/, warn: true, live: 'Waiting for the first chat command', stat: 'No commands yet' },
+    { lastCommandAt: now - 120000, rejectedAt: 0, expect: /Last StreamElements command reached \S+ 2 min ago/, warn: false, live: 'Duels are live', stat: 'Working' },
+    { lastCommandAt: now - 120000, rejectedAt: now - 30000, expect: /old key and was refused/, warn: true, live: 'StreamElements is sending an old key', stat: 'Old key' }]) {
     const { context, page } = await newPage(sizes[0]);
     const chatStatus = { connected: true, source: 'streamelements', status: 'enabled', subscriptionId: 'se-streamelements', createdAt: now - 86400000, lastNotificationAt: se.lastCommandAt, lastRevocationReason: '', checkedAt: 0 };
     const streamelements = { key: 'k'.repeat(48), names: { challenge: '!challenge', accept: '!fight', decline: '!no' }, origin: base, lastCommandAt: se.lastCommandAt, rejectedAt: se.rejectedAt,
@@ -357,6 +364,13 @@ try {
     await page.waitForSelector('#se-health:not([hidden])');
     assert.match(await page.locator('#se-health').textContent(), se.expect);
     assert.equal(await page.locator('#se-health').evaluate((n) => n.classList.contains('warning')), se.warn);
+    // the Live tab tells the same story as Stream setup
+    assert.equal(await page.locator('#summary-title').textContent(), se.live);
+    assert.match(await page.locator('#stats').textContent(), new RegExp('StreamElements\\s*' + se.stat));
+    // the reply column never shows the key; Copy reply still copies the whole line
+    const previews = await page.locator('#se-table code.reply-preview').allTextContents();
+    assert.equal(previews.length, 3);
+    for (const p of previews) { assert.match(p, /^\$\(customapi \/api\/se\/nesszerra\/\w+\?k=…\)$/); assert.ok(!p.includes('kkkk')); }
     if (se.warn && !se.rejectedAt) { await page.locator('#se-health').scrollIntoViewIfNeeded(); await page.screenshot({ path: shots + '/admin-se-warning-1280.png' }); }
     await context.close();
   }
@@ -385,9 +399,9 @@ try {
     assert.equal(await page.locator('#panel-chat').isVisible(), true);
     assert.equal(await page.evaluate(() => document.activeElement.id), 'check-overlay');
     assert.equal(await page.locator('#check-title').textContent(), 'Stream setup: 0 of 3 steps done');
-    assert.match(await page.locator('#check-overlay').textContent(), /To do.*No overlay is open/);
+    assert.match(await page.locator('#check-overlay').textContent(), /To do.*No overlay is open/s);
     assert.match(await page.locator('#check-commands').textContent(), /2 of 6 commands have reached Mini Chat\. Not used yet: !accept, !top, !elo, !help\./);
-    assert.match(await page.locator('#check-mods').textContent(), /Done.*moderators of nesszerra can sign in/);
+    assert.match(await page.locator('#check-mods').textContent(), /Done.*moderators of nesszerra can sign in/s);
     assert.deepEqual(await page.locator('#se-table [data-seen]').allTextContents(), ['Working · 2 min ago', 'Not used yet', 'Working · 2 min ago', 'Not used yet', 'Not used yet', 'Not used yet']);
     await noOverflow(page, 'setup checklist ' + s.name);
     await page.locator('#setup-check').screenshot({ path: shots + '/admin-checklist-' + s.name + '.png' });
@@ -395,7 +409,7 @@ try {
     await page.check('#duel-module-off');
     await page.waitForFunction(() => /Duel module is off/.test(document.querySelector('#check-status').textContent));
     assert.deepEqual(posts.at(-1), { action: 'setDuelModuleOff', value: true });
-    assert.match(await page.locator('#check-duel').textContent(), /^Done/);
+    await page.waitForFunction(() => /^\s*Done/.test(document.querySelector('#check-duel').textContent));   // after the reload
     overlays = 1; seen = { ...seen, accept: now };
     await page.waitForFunction(() => document.querySelector('#check-title').textContent === 'Stream setup is done', null, { timeout: 15000 });
     assert.match(await page.locator('#check-overlay').textContent(), /1 overlay is connected right now/);
@@ -463,6 +477,10 @@ try {
     await page.waitForFunction(() => /permission was cancelled/.test(document.querySelector('#check-status').textContent));
     assert.equal(new URL(page.url()).search, '?channel=newstreamer', 'the mods flag is dropped from the URL');
     assert.equal(await page.locator('#check-mods a').getAttribute('href'), '/auth/login?channel=newstreamer&connect=mods');
+    assert.equal(await page.locator('#chat-box').isHidden(), true, 'Twitch chat connection is for nesszerra only');
+    assert.equal(await page.locator('#troubleshoot').isVisible(), true);
+    assert.deepEqual(await page.locator('#checklist > li h3').allTextContents(), ['Add the overlay to OBS', 'Turn off the StreamElements Duel module', 'Add the chat commands to StreamElements', 'Let your moderators help']);
+    assert.equal(await page.locator('#summary-title').textContent(), 'Waiting for chat');
     assert.equal(await page.locator('#channel-power').isVisible(), true);
     assert.equal(await page.locator('#paused-note').isHidden(), true);
     await page.click('#power-toggle');

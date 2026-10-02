@@ -1,14 +1,15 @@
-# Live-fix space and deploy flow
+# Owner page developer tools and deploy flow
 
-Who reads this: the owner (nesszerra) setting up and using `/admin/dev/` to fix the live game
-without a laptop build. What's needed: which secrets to add, how a fix reaches production, and how
+Who reads this: the owner (nesszerra) setting up and using the **Developer tools** section of the
+owner page (`/admin/dev/`) to fix the live game without a laptop build. The top of that page is
+for inviting streamers and following their setup; the tools below are folded until opened. What's needed: which secrets to add, how a fix reaches production, and how
 to undo it.
 
 **Status on 2026-10-01:** the code is written and tested locally, but nothing has been deployed.
 No GitHub repo, `GITHUB_TOKEN`, Cloudflare API token or Actions secrets exist yet. Until they do,
 the GitHub and Cloudflare routes answer `501` with `reason: github_not_configured` or
 `cloudflare_not_configured`, and the page disables those buttons. Diagnostics, the error log, live
-settings and the Codex toggle work without any of them.
+settings work without any of them.
 
 ## The flow
 
@@ -84,12 +85,6 @@ to `production` for a second confirmation. The jobs already use `environment: <t
   workflow also checks that the commit is on the branch it names.
 - Mutating `/api/dev/*` requests must be same-origin, and every route returns `403` to anyone but
   the owner.
-
-## Codex toggle
-
-**Codex assistance** is off by default. Turning it on stores `{authorized, note, updatedBy,
-updatedAt}` in the nesszerra room (`dev_settings` table). It's an authorization record only:
-nothing on the page or in the Worker calls a model.
 
 ## Unverified
 

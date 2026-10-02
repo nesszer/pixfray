@@ -69,7 +69,7 @@ try {
   const env = { MINI_BASE_URL: base };
   run('smoke (v1 overlay)', 'node tests/smoke.mjs', env);
   run('ui (dashboard/admin)', 'node tests/ui.mjs', env);
-  run('dev-ui (live-fix)', 'node tests/dev-ui.mjs', env);
+  run('dev-ui (owner page)', 'node tests/dev-ui.mjs', env);
   run('arena browser', 'node tests/arena-browser.mjs', env);
   run('e2e local', 'node tests/e2e-local.mjs', { ...env, MINI_AUTH_SECRET: devVar('AUTH_SECRET') });
 } catch (error) {

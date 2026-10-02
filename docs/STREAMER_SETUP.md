@@ -1,8 +1,9 @@
 # Streamer setup
 
-This guide is for a streamer adding Mini Chat to their Twitch channel. It follows the **Stream
-setup** checklist on the mod controls page (`/admin/?channel=<you>#chat`), which ticks each step off
-as it starts working. Setup takes about 10 minutes.
+This guide is for a streamer adding Mini Chat to their Twitch channel. After you sign in (step 1),
+steps 2 to 5 match the 4 numbered steps of **Stream setup** on the mod controls page
+(`/admin/?channel=<you>#chat`). Each step holds its own buttons and turns Done by itself once it
+works. Setup takes about 10 minutes.
 
 ## 1. Sign in with your invite
 
@@ -35,14 +36,16 @@ In StreamElements go to Chat bot, then Modules, and switch off Duel, or type
 
 ## 4. Add the commands to StreamElements
 
-The table under "StreamElements commands" lists 6 commands: `!challenge`, `!fight`, `!decline`,
+The table in step 3, "Add the chat commands to StreamElements", lists 6 commands: `!challenge`, `!fight`, `!decline`,
 `!elo`, `!ranks` and `!minichat`. You can rename them first and click **Save names**.
 
 For each row, in StreamElements go to Chat bot, then Commands, then Custom commands, and click Add
 new command:
 
 - Command name: the name without the `!`.
-- Reply: click **Copy reply** in that row and paste the whole line.
+- Reply: click **Copy reply** in that row and paste the whole line. The table shows only where the
+  reply points (`/api/se/<you>/challenge?k=…`), so the page is safe to show on stream; the key is
+  only in what Copy reply puts on the clipboard.
 - Advanced settings: set the user and global cooldowns to 0.
 
 Add commands in the StreamElements dashboard, not with `!command add` in chat: the reply contains
@@ -57,10 +60,12 @@ message**, so new viewers learn how to join. Mini Chat never posts on its own.
 
 ## 5. Let your moderators help (optional)
 
-The row **Moderators can help** is Done when the moderator-list permission is stored. If you skipped
+Step 4, **Let your moderators help**, is Done when the moderator-list permission is stored. If you skipped
 it, click **Connect mod access** and approve the permission while signed in to Twitch as yourself.
 
 ## If something doesn't work
+
+The same answers are under "If something doesn't work" at the bottom of Stream setup.
 
 - **The overlay is blank in OBS:** paste the full link again, check 1920 × 1080, turn off "Shutdown
   source when not visible", then right-click the source and choose Refresh.

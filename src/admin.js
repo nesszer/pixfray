@@ -86,9 +86,9 @@ async function init() {
     return gate((CHANNEL === "nesszerra" ? "Only nesszerra and current channel moderators can use mod controls" : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) + why + ".", [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")]);
   }
   $("#gate").hidden = true; $("#app").hidden = false;
-  $("#dev-link").hidden = $("#dev-open").hidden = !S.access.owner;
+  $("#dev-link").hidden = $("#dev-section").hidden = !S.access.owner;
   $("#owner-chat").hidden = !S.access.owner || CHANNEL !== "nesszerra";
-  $("#connect-chat").hidden = CHANNEL !== "nesszerra";   // other channels get chat through StreamElements only
+  $("#chat-box").hidden = CHANNEL !== "nesszerra";   // other channels get chat through StreamElements only
   await Promise.all([load(), loadLeaderboard(), loadCustom()]);
   if (S.admin?.channelState !== "paused") connectLive();
   // Back from "Connect mod access" (/auth/login?connect=mods)
@@ -177,13 +177,13 @@ $("#reset-all").addEventListener("click", (e) => act("resetAll", undefined, { bu
 function renderAll() {
   collectNames();
   const a = S.admin, c = a.config, open = a.duels.filter((d) => OPEN.has(d.status));
-  const chat = a.chatStatus || a.chat || {}, live = !!chat.connected;
-  $("#meta").textContent = "Rules version " + a.configVersion + " · state revision " + a.revision + " · signed in as " + (S.access.owner || S.access.broadcaster ? "broadcaster" : "moderator");
-  const waiting = c.enabled && !live;
-  $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : waiting ? "Waiting for Twitch chat" : "Duels are live";
+  const chat = a.chatStatus || a.chat || {}, health = chatHealth();
+  $("#meta").textContent = "Signed in as " + (S.access.owner && CHANNEL === "nesszerra" || S.access.broadcaster ? "the broadcaster" : S.access.owner ? "the site owner" : "a moderator") + ".";
+  const waiting = c.enabled && !health.ok;
+  $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : waiting ? health.title : "Duels are live";
   $("#summary-text").textContent = !c.enabled ? "Chat commands are ignored until duels are turned back on." :
-    waiting ? "Duels start when chat is connected" + (chat.lastRevocationReason ? " (Twitch revoked access: " + chat.lastRevocationReason + ")" : "") + ". Connect Twitch chat or StreamElements on the Stream setup tab." :
-    open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena, round " + a.round + ".";
+    waiting ? health.text + (chat.lastRevocationReason ? " Twitch revoked access: " + chat.lastRevocationReason + "." : "") :
+    open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena.";
   const toggle = $("#toggle-duels");
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
   // while chat is offline the fix is on the Stream setup tab, so that becomes the main action
@@ -191,14 +191,29 @@ function renderAll() {
   toggle.classList.toggle("btn-primary", !waiting);
   $("#stats").replaceChildren(
     stat("Duels", c.enabled ? "On" : "Paused", waiting ? "" : c.enabled ? "up" : "down", waiting ? "waiting for chat" : c.enabled ? "accepting commands" : "commands ignored"),
-    stat(chat.source === "streamelements" ? "StreamElements" : "Twitch chat", live ? "Connected" : "Offline", live ? "up" : "down", (chat.lastNotificationAt ?? chat.lastSeen) ? "last message " + timeAgo(chat.lastNotificationAt ?? chat.lastSeen) : "no messages yet"),
+    stat(health.label, health.value, health.ok ? "up" : "down", health.note),
     stat("Open duels", open.length + " / " + c.maxDuels),
-    stat("Round", a.round),
-    stat("In the arena", a.players.length),
-    stat("Rules version", "v" + a.configVersion));
+    stat("In the arena", a.players.length));
   if (document.activeElement !== $("#announce")) $("#announce").value = a.config.announce || "off";
   if (document.activeElement !== $("#cap")) $("#cap").value = a.config.maxOnStream || 50;
   renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe(); renderChecklist(); renderPower();
+}
+// Where chat comes from and whether it works. StreamElements counts as working only once a command has
+// arrived with this site's key; choosing it as the source isn't enough. The Stream setup tab uses the same rules.
+function chatHealth() {
+  const a = S.admin, c = a.chatStatus || a.chat || {}, se = a.streamelements;
+  const fix = " Finish step 3, Add the chat commands to StreamElements, on the Stream setup tab.";
+  if (!c.connected) return { ok: false, label: "Chat", value: "Not connected", note: "no chat source", title: "Waiting for chat",
+    text: CHANNEL === "nesszerra" ? "Duels start when chat is connected. Connect Twitch chat or set up StreamElements on the Stream setup tab." : "Duels start when chat commands reach Mini Chat." + fix };
+  if (c.source === "streamelements") {
+    if (se && se.rejectedAt > (se.lastCommandAt || 0)) return { ok: false, label: "StreamElements", value: "Old key", note: "a command was refused " + timeAgo(se.rejectedAt),
+      title: "StreamElements is sending an old key", text: "A command arrived " + timeAgo(se.rejectedAt) + " with a key that no longer works, so it was refused. Copy every response again from the Stream setup tab and paste it into StreamElements." };
+    if (!se?.lastCommandAt) return { ok: false, label: "StreamElements", value: "No commands yet", note: "none has reached Mini Chat", title: "Waiting for the first chat command",
+      text: "StreamElements is the chat source, but no command has reached Mini Chat yet." + fix };
+    return { ok: true, label: "StreamElements", value: "Working", note: "last command " + timeAgo(se.lastCommandAt) };
+  }
+  const last = c.lastNotificationAt ?? c.lastSeen;
+  return { ok: true, label: "Twitch chat", value: "Connected", note: last ? "last message " + timeAgo(last) : "no messages yet" };
 }
 function stat(label, value, cls, delta) {
   return h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), delta ? h("div", { class: "delta " + (cls || "") }, delta) : null);
@@ -459,6 +474,7 @@ function renderSe() {
   health.hidden = !(warn || note);
   health.className = warn ? "callout warning small" : "small muted";
   health.textContent = warn || note;
+  $("#se-setup").hidden = !se;   // no key on this site: an empty table and dead buttons only confuse
   if (!se) return;
   const tbody = $("#se-table tbody");
   if (tbody.dataset.key !== se.key || !tbody.children.length) drawSeTable(se, tbody);   // otherwise keep unsaved name edits
@@ -476,13 +492,16 @@ function drawSeTable(se, tbody) {
     Object.assign(input, { value: cmd.name, name: "se-" + cmd.action, maxLength: 25, spellcheck: false });
     input.setAttribute("aria-label", "Command name for " + (SE_LABELS[cmd.action] || cmd.action));
     input.dataset.action = cmd.action; nameCell.append(input);
-    const reply = document.createElement("td"), code = document.createElement("code"); code.textContent = cmd.response; code.className = "wrap-anywhere"; reply.append(code);
-    const copyCell = document.createElement("td"), copy = document.createElement("button");
-    Object.assign(copy, { type: "button", className: "btn", textContent: "Copy reply" });
+    // The cell shows where the command points but not the key, so the page is safe to show on stream; Copy reply copies the whole line.
+    const reply = document.createElement("td"), code = document.createElement("code"), copy = document.createElement("button");
+    code.textContent = cmd.response.replace(/https?:\/\/[^/]+/, "").replace(/\?k=.*$/, "?k=…)");
+    code.className = "reply-preview";
+    Object.assign(copy, { type: "button", className: "btn btn-small", textContent: "Copy reply" });
+    copy.setAttribute("aria-label", "Copy reply for " + cmd.name);
     copy.addEventListener("click", async () => { await navigator.clipboard.writeText(cmd.response); setStatus($("#se-status"), "Copied the reply for " + input.value + ". Paste it as the response of that StreamElements command.", "ok"); });
-    copyCell.append(copy);
+    reply.append(copy, " ", code);
     const seen = document.createElement("td"); seen.dataset.seen = cmd.action;
-    tr.append(label, nameCell, seen, reply, copyCell);
+    tr.append(label, nameCell, seen, reply);
     return tr;
   }));
 }
@@ -538,7 +557,7 @@ function renderChecklist() {
   }
   const detail = (id, text) => { $("#" + id + " [data-detail]").textContent = text; };
   const n = a.overlays || 0;
-  detail("check-overlay", n ? n + " overlay" + (n === 1 ? " is" : "s are") + " connected right now." : "No overlay is open. Copy the link under \"Add the overlay to OBS\" below into an OBS Browser Source.");
+  detail("check-overlay", n ? n + " overlay" + (n === 1 ? " is" : "s are") + " connected right now." : "No overlay is open right now. It turns Done while OBS shows the overlay.");
   const box = $("#duel-module-off");
   if (document.activeElement !== box) box.checked = !!se?.duelModuleOff;
   box.disabled = !se;

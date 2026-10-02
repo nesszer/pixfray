@@ -98,7 +98,7 @@ export async function handleAuth(request,env){
       if(!await channelState(env,channel))return Response.json({error:'Mini Chat is not enabled for this channel'},{status:403});
       const connect=url.searchParams.get('connect')==='1', connectMods=url.searchParams.get('connect')==='mods';
       if(connect&&channel!=='nesszerra')return Response.json({error:'Chat for this channel comes through StreamElements; no Twitch connection needed'},{status:403});
-      const next=url.searchParams.get('next')==='/admin/'||connectMods?'/admin/':'/';
+      const asked=url.searchParams.get('next'),next=connectMods?'/admin/':['/admin/','/admin/dev/'].includes(asked)?asked:'/';
       pending={channel,connect,...(connectMods?{connectMods:true}:{}),next};scope=connect?CONNECT_SCOPES.join(' '):connectMods?'moderation:read':'';
     }
     await record(env,'oauth:'+nonce,pending,Date.now()+600000);
@@ -147,7 +147,7 @@ export async function handleAuth(request,env){
     await record(env,'broadcaster:'+pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}),Date.now()+90*86400000);
   }
   const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);
-  const back=(pending.next==='/admin/'?'/admin/':'/')+'?'+(pending.channel&&pending.channel!=='nesszerra'?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectMods?'&mods=connected':'')+(pending.invite||pending.connectMods?'#chat':'');
+  const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel&&pending.channel!=='nesszerra'?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectMods?'&mods=connected':'')+(pending.invite||pending.connectMods?'#chat':'');
   const response=new Response(null,{status:303,headers:{Location:back}});
   response.headers.append('Set-Cookie',cookie('mini_session',key,21600));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
 }

@@ -1,6 +1,7 @@
-// Live-fix space (/admin/dev/, Lane E). Owner-only page over /api/dev/* (server/developer.js). No framework.
+// Owner page (/admin/dev/, Lane E). Owner-only page over /api/dev/* (server/developer.js). No framework.
 const $ = (s) => document.querySelector(s);
-const S = { session: null, diag: null, config: null, configVersion: 0, fileSha: '', fileRef: '' };
+const S = { session: null, diag: null, config: null, configVersion: 0, fileSha: '', fileRef: '', progress: {} };
+const LOGIN = '/auth/login?next=%2Fadmin%2Fdev%2F';   // come back here after signing in, not to the viewer page
 
 async function api(path, { method = 'GET', body } = {}) {
   const init = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
@@ -22,6 +23,7 @@ function h(tag, attrs = {}, ...children) {
 function status(id, msg, kind = '') { const n = $(id); n.textContent = msg || ''; n.className = 'status' + (kind ? ' ' + kind : ''); }
 const fmtTime = (v) => { if (!v) return '–'; const d = new Date(v); return isNaN(d) ? '–' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); };
 const fmtNum = (n) => Number(n).toLocaleString('en-US');
+const ago = (t) => { if (!t) return 'never'; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 2880 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago'; };
 const short = (id) => (id ? String(id).slice(0, 8) : '–');
 function rows(tbody, list, empty, cols) {
   const t = $(tbody); t.replaceChildren();
@@ -36,10 +38,10 @@ async function start() {
   S.session = s.data;
   const who = $('#who'); who.replaceChildren();
   if (s.data?.user) who.append(h('span', {}, 'Signed in as ' + s.data.user.displayName), h('button', { class: 'btn btn-small', type: 'button', onclick: signOut }, 'Sign out'));
-  else who.append(h('a', { class: 'btn btn-small', href: '/auth/login' }, 'Sign in with Twitch'));
+  else who.append(h('a', { class: 'btn btn-small', href: LOGIN }, 'Sign in with Twitch'));
   if (!s.ok) return gate(errorText(s, 'The server is unreachable'), []);
-  if (!s.data.user) return gate('Sign in with the nesszerra Twitch account to open the live-fix space.', [h('a', { class: 'btn btn-primary', href: '/auth/login' }, 'Sign in with Twitch')]);
-  if (!s.data.owner) return gate('The live-fix space is limited to the nesszerra account. Moderators can use Mod controls.', [h('a', { class: 'btn', href: '/admin/' }, 'Open mod controls')]);
+  if (!s.data.user) return gate('Sign in with the nesszerra Twitch account to open the owner page.', [h('a', { class: 'btn btn-primary', href: LOGIN }, 'Sign in with Twitch')]);
+  if (!s.data.owner) return gate('The owner page is limited to the nesszerra account. Moderators can use Mod controls.', [h('a', { class: 'btn', href: '/admin/' }, 'Open mod controls')]);
   $('#gate').hidden = true; $('#app').hidden = false;
   if (!$('#branch').value) $('#branch').value = 'live-fix/' + new Date().toISOString().slice(0, 10);
   await Promise.all([loadDiagnostics(), loadConfig(), loadLogs(), loadChannels()]);
@@ -52,10 +54,14 @@ async function signOut() { await api('/auth/logout', { method: 'POST', body: {} 
 async function loadDiagnostics() {
   const r = await api('/api/dev/diagnostics');
   if (!r.ok) { $('#summary-title').textContent = 'Diagnostics unavailable'; $('#summary-text').textContent = errorText(r); return; }
-  const d = S.diag = r.data, room = d.room || {}, use = d.usage || {}, chat = room.chatStatus || {}, chatOn = !!chat.connected;
-  $('#s-chat').textContent = chatOn ? 'Connected' : 'Offline';
+  const d = S.diag = r.data, room = d.room || {}, use = d.usage || {}, chat = room.chatStatus || {};
+  // StreamElements counts as working only once a command has arrived; picking it as the source isn't enough.
+  const se = chat.connected && chat.source === 'streamelements', chatOn = chat.connected && (!se || room.seLastCommandAt > 0);
+  $('#s-chat').textContent = !chat.connected ? 'Offline' : se ? 'StreamElements' : 'Twitch chat';
   $('#s-chat').className = 'value ' + (chatOn ? 'up' : 'down');
-  $('#s-chat-note').textContent = chat.lastRevocationReason ? 'Revoked: ' + chat.lastRevocationReason : chat.lastNotificationAt ? 'Last message ' + fmtTime(chat.lastNotificationAt) : chatOn ? 'No chat message yet' : 'Connect chat in admin';
+  $('#s-chat-note').textContent = chat.lastRevocationReason ? 'Revoked: ' + chat.lastRevocationReason
+    : se ? (room.seLastCommandAt ? 'Last command ' + ago(room.seLastCommandAt) : 'No command has arrived yet')
+    : chat.lastNotificationAt ? 'Last message ' + ago(chat.lastNotificationAt) : chatOn ? 'No chat message yet' : 'Connect chat in Mod controls';
   if (use.configured && Number.isFinite(use.requests)) {
     $('#s-requests').textContent = fmtNum(use.requests);
     $('#s-requests-note').textContent = use.percent + '% used, resets ' + fmtTime(use.resetsAt);
@@ -68,12 +74,11 @@ async function loadDiagnostics() {
   $('#s-sockets-note').textContent = `${room.players ?? 0} players, ${room.openDuels ?? 0} open duels`;
   const ver = d.worker?.deployedVersion;
   $('#meta').textContent = `Worker ${d.worker?.version || ''}` + (ver ? ` · version ${short(ver.id)}${ver.tag ? ' (' + ver.tag + ')' : ''}` : ' · version id unavailable') + ` · checked ${fmtTime(Date.now())}`;
-  const parts = [chatOn ? 'Twitch chat is connected' : 'Twitch chat is not connected, so combat is paused', room.errors ? `${room.errors} errors are logged` : 'no errors are logged'];
+  const parts = [chatOn ? 'nesszerra chat is connected' : se ? 'nesszerra uses StreamElements, but no command has arrived yet; fix it on the Stream setup tab of Mod controls' : 'nesszerra chat is not connected, so duels are paused', room.errors ? `${room.errors} errors are logged` : 'no errors are logged'];
   if (use.configured && Number.isFinite(use.requests)) parts.push(`${fmtNum(use.requests)} of 100,000 daily requests are used (${use.percent}%)`);
-  $('#summary-title').textContent = !chatOn ? 'Combat is paused: chat offline' : room.errors ? `Running, with ${room.errors} logged errors` : 'Running normally';
+  $('#summary-title').textContent = !chatOn ? 'Site is up; nesszerra chat offline' : room.errors ? `Site is up, with ${room.errors} logged errors` : 'Site is running normally';
   $('#summary-text').textContent = parts.join('; ') + '.';
   renderIntegrations(d.integrations || {});
-  renderCodex(d.codex || { authorized: false });
 }
 
 function renderIntegrations(i) {
@@ -212,7 +217,8 @@ $('#save-config').addEventListener('click', (e) => busy(e.currentTarget, async (
 // ---------- channels (server/channels.js) ----------
 async function loadChannels() {
   const r = await api('/api/dev/channels');
-  if (!r.ok) { rows('#channels', [], errorText(r, 'Channels unavailable'), 4); rows('#invites', [], '–', 4); return; }
+  if (!r.ok) { rows('#channels', [], errorText(r, 'Channels unavailable'), 7); rows('#invites', [], '–', 4); return; }
+  S.progress = r.data.progress || {};
   renderChannels(r.data);
 }
 function channelAction(action, login, button) {
@@ -233,16 +239,37 @@ async function revoke(invite, button) {
     renderChannels(r.data);
   });
 }
+// The same three steps as the Stream setup checklist in Mod controls (src/admin.js setupSteps).
+function setupOf(p) {
+  if (!p) return null;
+  const twitch = p.source === 'twitch';
+  return [p.overlays > 0, twitch || p.duelModuleOff, twitch || p.duelCommands].filter(Boolean).length;
+}
+function chatCell(p) {
+  if (!p) return '–';
+  if (p.source === 'twitch') return 'Twitch chat';
+  if (p.rejectedAt > p.lastCommandAt) return h('span', { class: 'badge warning' }, 'Old key: copy replies again');
+  return p.commandsWorking + ' of ' + p.commands + ' commands working';
+}
 function renderChannels(d) {
   $('#channels-max').textContent = d.max;
-  const admin = (login) => h('a', { href: '/admin/?channel=' + login }, login);
-  rows('#channels', [
-    ...d.builtin.map((login) => h('tr', {}, h('td', {}, admin(login)), h('td', {}, h('span', { class: 'badge' }, 'Built in')), h('td', {}, '–'), h('td', {}, '–'))),
-    ...d.channels.map((c) => h('tr', {}, h('td', {}, admin(c.login)),
-      h('td', {}, h('span', { class: 'badge ' + (c.pausedAt ? 'warning' : 'positive') }, c.pausedAt ? 'Off' : 'On')),
-      h('td', {}, fmtTime(c.pausedAt || c.enabledAt)),
-      h('td', {}, h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => channelAction(c.pausedAt ? 'resume' : 'pause', c.login, e.currentTarget) }, c.pausedAt ? 'Turn on' : 'Turn off')))),
-  ], 'No channels.', 4);
+  const admin = (login) => h('a', { href: '/admin/?channel=' + login + '#chat' }, login);
+  const row = (login, state, c) => {
+    const p = state === 'off' ? null : S.progress[login], steps = setupOf(p);
+    return h('tr', {}, h('td', {}, admin(login)),
+      h('td', {}, h('span', { class: 'badge ' + (state === 'off' ? 'warning' : state === 'on' ? 'positive' : '') }, { builtin: 'Built in', on: 'On', off: 'Off' }[state])),
+      h('td', {}, steps === null ? '–' : h('span', { class: 'badge ' + (steps === 3 ? 'positive' : '') }, steps === 3 ? 'Done' : steps + ' of 3 steps')),
+      h('td', {}, p ? (p.overlays ? p.overlays + ' open' : 'Not open') : '–'),
+      h('td', {}, chatCell(p)),
+      h('td', {}, p ? ago(Math.max(p.lastCommandAt, p.lastChatAt)) : c?.pausedAt ? 'Off since ' + fmtTime(c.pausedAt) : '–'),
+      h('td', {}, c ? h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => channelAction(c.pausedAt ? 'resume' : 'pause', c.login, e.currentTarget) }, c.pausedAt ? 'Turn on' : 'Turn off') : null));
+  };
+  rows('#channels', [...d.builtin.map((login) => row(login, 'builtin')), ...d.channels.map((c) => row(c.login, c.pausedAt ? 'off' : 'on', c))], 'No channels.', 7);
+  const on = d.builtin.length + d.channels.filter((c) => !c.pausedAt).length;
+  const done = Object.values(S.progress).filter((p) => setupOf(p) === 3).length, waiting = d.invites.filter((i) => i.status === 'valid').length;
+  $('#channels-title').textContent = on + (on === 1 ? ' channel is on' : ' channels are on') + ', ' + done + ' with setup done right now';
+  $('#channels-text').textContent = (waiting ? waiting + (waiting === 1 ? ' invite is' : ' invites are') + ' waiting to be used. ' : '') +
+    'Setup counts as done while the overlay is open in OBS and the duel commands work, so streamers who are live right now show up as done.';
   const label = { valid: 'Waiting', used: 'Used', expired: 'Expired' };
   rows('#invites', d.invites.map((i) => h('tr', {}, h('td', {}, i.login),
     h('td', {}, h('span', { class: 'badge' + (i.status === 'used' ? ' positive' : i.status === 'expired' ? ' warning' : '') }, label[i.status] || i.status)),
@@ -291,22 +318,8 @@ $('#clear-logs').addEventListener('click', (e) => busy(e.currentTarget, async ()
   const r = await api('/api/dev/logs?channel=' + $('#log-channel').value, { method: 'DELETE' });
   if (r.ok) { loadLogs(); loadDiagnostics(); }
 }));
-$('#refresh').addEventListener('click', (e) => busy(e.currentTarget, async () => { await Promise.all([loadDiagnostics(), loadLogs()]); loadRuns(); loadVersions(); }));
+$('a[href="#dev-tools"]').addEventListener('click', () => { $('#dev-tools').open = true; });
+$('#refresh').addEventListener('click', (e) => busy(e.currentTarget, async () => { await Promise.all([loadDiagnostics(), loadLogs(), loadChannels()]); loadRuns(); loadVersions(); }));
 
-// ---------- codex ----------
-function renderCodex(c) {
-  $('#codex-toggle').checked = !!c.authorized;
-  $('#codex-state').textContent = c.authorized ? 'on' : 'off';
-  if (c.note) $('#codex-note').value = c.note;
-  status('#codex-status', c.updatedAt ? `${c.authorized ? 'Authorized' : 'Turned off'} by ${c.updatedBy || 'owner'} ${fmtTime(c.updatedAt)}.` : 'Off by default; never authorized.');
-}
-$('#codex-toggle').addEventListener('change', async (e) => {
-  const box = e.currentTarget, authorized = box.checked; // currentTarget is null after the await
-  box.disabled = true;
-  const r = await api('/api/dev/codex', { method: 'POST', body: { authorized, note: $('#codex-note').value.trim() } });
-  box.disabled = false;
-  if (!r.ok) { box.checked = !authorized; return status('#codex-status', errorText(r, 'Could not save'), 'error'); }
-  renderCodex(r.data);
-});
 
 start();

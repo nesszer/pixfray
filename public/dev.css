@@ -1,4 +1,4 @@
-/* Live-fix space (/admin/dev/). Page-specific rules on top of /dashboard.css; tokens only. */
+/* Owner page (/admin/dev/). Page-specific rules on top of /dashboard.css; tokens only. */
 textarea.code { font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.5; tab-size: 2; white-space: pre; overflow: auto; resize: vertical; }
 ol.steps { padding-left: var(--space-5); margin: var(--space-4) 0 var(--space-5); }
 ol.steps > li { max-width: none; padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }

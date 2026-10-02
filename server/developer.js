@@ -1,5 +1,6 @@
 import { chatStatus } from './game.js';
 import { channelState, overview, createInvite, revokeInvite, setPaused } from './channels.js';
+import { SE_ACTIONS } from './streamelements.js';
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // nesszerra Twitch account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -44,10 +45,9 @@ export async function handleDeveloper(request, env, c) {
 
 const ROUTES = {
   diagnostics: { GET: diagnostics },
-  channels: { GET: async ({ env }) => json(await overview(env)), POST: channelsAction },
+  channels: { GET: channelsList, POST: channelsAction },
   logs: { GET: ({ room, query }) => room('/dev/logs?' + logQuery(query)), DELETE: ({ room }) => room('/dev/logs', { method: 'DELETE' }) },
   settings: { GET: ({ room }) => room('/admin'), POST: settings },
-  codex: { GET: ({ room }) => room('/dev/codex'), POST: codex },
   usage: { GET: async ({ env }) => json(await usage(env)) },
   versions: { GET: versions },
   'code/tree': { GET: withGithub(codeTree) },
@@ -60,6 +60,16 @@ const ROUTES = {
   hotfix: { POST: withGithub(hotfix) },
   rollback: { POST: withGithub(rollback) },
 };
+
+// Owner Channels table with each channel's setup progress. One room read per channel that is on, capped
+// so the page stays inside the Workers subrequest limit; channels past the cap show no progress.
+const PROGRESS_MAX = 40;
+async function channelsList({ env, c }) {
+  const data = await overview(env);
+  const logins = [...data.builtin, ...data.channels.filter((x) => !x.pausedAt).map((x) => x.login)].slice(0, PROGRESS_MAX);
+  const reads = await Promise.all(logins.map((login) => c.roomFetch(login, '/dev/progress').then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+  return json({ ...data, progress: Object.fromEntries(logins.map((login, i) => [login, reads[i]]).filter(([, p]) => p)) });
+}
 
 // Owner Channels box: invite a streamer, revoke an invite, turn a channel off or on.
 async function channelsAction({ env, c, body }) {
@@ -77,7 +87,7 @@ async function channelsAction({ env, c, body }) {
 }
 
 async function diagnostics({ env, room }) {
-  const [r, codexRes, use] = await Promise.all([room('/dev/diagnostics'), room('/dev/codex'), usage(env)]);
+  const [r, use] = await Promise.all([room('/dev/diagnostics'), usage(env)]);
   const meta = env.CF_VERSION_METADATA;
   return json({
     worker: { version: VERSION, twitchConfigured: !!(env.TWITCH_CLIENT_ID && env.TWITCH_CLIENT_SECRET), productionEnabled: false,
@@ -85,7 +95,6 @@ async function diagnostics({ env, room }) {
     room: r.ok ? await r.json() : { error: 'Room unavailable', status: r.status },
     integrations: { github: githubPublic(env), cloudflare: cloudflarePublic(env) },
     usage: use,
-    codex: codexRes.ok ? await codexRes.json() : { authorized: false },
   });
 }
 
@@ -108,13 +117,6 @@ async function settings({ body, c, room }) {
   const payload = body.payload;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return fail(400, 'payload object required', 'invalid_payload');
   return room('/admin', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Mini-User-Id': c.user.id }, body: JSON.stringify({ action, payload, actorId: c.user.id, actorName: c.user.displayName || c.user.login }) });
-}
-
-// Codex assistance is off until the owner turns it on. This only records the decision; no model is called.
-async function codex({ body, c, room }) {
-  if (typeof body.authorized !== 'boolean') return fail(400, 'authorized must be true or false', 'invalid_authorized');
-  if (body.note !== undefined && typeof body.note !== 'string') return fail(400, 'note must be a string', 'invalid_note');
-  return room('/dev/codex', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ authorized: body.authorized, note: clean(body.note || '', 200), by: c.user.login }) });
 }
 
 // ---------- Cloudflare (read-only) ----------
@@ -353,6 +355,7 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
       revision: state.revision,
       chat: { connected: Boolean(state.chat?.connected), lastSeen: Number(state.chat?.lastSeen) || 0, status: String(state.chat?.status || 'disconnected') },
       chatStatus: chatStatus(state),
+      seLastCommandAt: Number(sql.exec('SELECT last_command_at FROM se_settings WHERE id = 1').toArray()[0]?.last_command_at) || 0,
       paused: !state.chat?.connected || !state.config?.enabled,
       configVersion: state.configVersion,
       players: state.players.length,
@@ -379,21 +382,21 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
     insertLog(sql, 'worker', body?.message, body?.context);
     return json({ ok: true });
   }
-  if (path === '/dev/codex' && method === 'GET') return json(readCodex(sql));
-  if (path === '/dev/codex' && method === 'POST') {
-    const body = await request.json().catch(() => null);
-    if (typeof body?.authorized !== 'boolean') return json({ error: 'authorized must be boolean' }, 400);
-    const value = { authorized: body.authorized, note: String(body.note || '').slice(0, 200), updatedBy: String(body.by || '').slice(0, 25), updatedAt: Date.now() };
-    sql.exec('INSERT INTO dev_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', 'codex', JSON.stringify(value));
-    return json(value);
+  // Setup progress for the owner's Channels table: read only, so it never creates a StreamElements key.
+  if (path === '/dev/progress' && method === 'GET') {
+    const state = room.readState(channel), chat = chatStatus(state);
+    const se = sql.exec("SELECT last_command_at, rejected_at, seen_json, duel_module_off FROM se_settings WHERE id = 1").toArray()[0];
+    const seen = se ? safeParse(se.seen_json) || {} : {};
+    return json({
+      overlays: room.ctx.getWebSockets('overlay').length,
+      source: chat.connected ? chat.source : '',
+      commandsWorking: SE_ACTIONS.filter((a) => Number(seen[a]) > 0).length, commands: SE_ACTIONS.length,
+      duelCommands: ['challenge', 'accept', 'decline'].every((a) => Number(seen[a]) > 0), duelModuleOff: se?.duel_module_off === 1,
+      lastCommandAt: Number(se?.last_command_at) || 0, rejectedAt: Number(se?.rejected_at) || 0,
+      lastChatAt: Number(chat.lastNotificationAt) || 0, players: state.players.length,
+    });
   }
   return json({ error: 'Not found' }, 404);
-}
-
-function readCodex(sql) {
-  const row = sql.exec('SELECT value FROM dev_settings WHERE key = ?', 'codex').toArray()[0];
-  const v = row ? safeParse(row.value) : null;
-  return { authorized: v?.authorized === true, note: v?.note || '', updatedBy: v?.updatedBy || '', updatedAt: v?.updatedAt || 0 };
 }
 
 // Called from ChannelRoom's constructor.

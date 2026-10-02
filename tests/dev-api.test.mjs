@@ -29,6 +29,7 @@ function environment(extra = {}) {
     AUTH_SECRET: 'test-only-auth-key', INTERNAL_SECRET: SECRET, TWITCH_CLIENT_ID: 'test-app', TWITCH_CLIENT_SECRET: 'test-secret',
     AUTH: { idFromName: (x) => x, get: () => ({ async fetch(url, options) {
       const u = new URL(url), key = u.searchParams.get('key');
+      if (u.pathname === '/list') return Response.json([...entries].filter(([k]) => k.startsWith(key)).map(([k, value]) => ({ key: k, value })));
       if (u.pathname === '/consume') { const v = entries.get(key) ?? null; entries.delete(key); return Response.json(v); }
       if (options.method === 'GET') return Response.json(entries.get(key) ?? null);
       if (options.method === 'DELETE') { entries.delete(key); return Response.json({ ok: true }); }
@@ -76,8 +77,8 @@ function stubFetch(t, routes) {
   return calls;
 }
 
-const ROUTES = ['diagnostics', 'logs', 'settings', 'codex', 'usage', 'versions', 'code/tree', 'code/file?path=README.md', 'runs'];
-const POSTS = ['settings', 'codex', 'code/save', 'code/pr', 'deploy', 'promote', 'hotfix', 'rollback'];
+const ROUTES = ['diagnostics', 'logs', 'settings', 'channels', 'usage', 'versions', 'code/tree', 'code/file?path=README.md', 'runs'];
+const POSTS = ['settings', 'channels', 'code/save', 'code/pr', 'deploy', 'promote', 'hotfix', 'rollback'];
 
 test('every developer route returns 401 signed out and 403 for a non-owner', async () => {
   const f = environment(GITHUB), viewer = await cookieFor(f, false);
@@ -93,12 +94,13 @@ test('every developer route returns 401 signed out and 403 for a non-owner', asy
 
 test('mutations must be same-origin, unknown routes 404, wrong methods 405', async () => {
   const f = environment(GITHUB), owner = await cookieFor(f, true);
-  assert.equal((await call(f, '/api/dev/codex', 'POST', { authorized: true }, owner, { Origin: 'https://evil.example' })).status, 403);
+  assert.equal((await call(f, '/api/dev/channels', 'POST', { action: 'invite', login: 'someone' }, owner, { Origin: 'https://evil.example' })).status, 403);
   assert.equal((await call(f, '/api/dev/nope', 'GET', undefined, owner)).status, 404);
+  assert.equal((await call(f, '/api/dev/codex', 'GET', undefined, owner)).status, 404, 'the Codex switch is gone');
   assert.equal((await call(f, '/api/dev/deploy', 'GET', undefined, owner)).status, 405);
   assert.equal((await call(f, '/api/dev/diagnostics', 'POST', {}, owner)).status, 405);
-  assert.equal((await call(f, '/api/dev/codex', 'POST', '[1]', owner)).status, 400);
-  assert.equal((await call(f, '/api/dev/codex', 'POST', '{bad', owner)).status, 400);
+  assert.equal((await call(f, '/api/dev/channels', 'POST', '[1]', owner)).status, 400);
+  assert.equal((await call(f, '/api/dev/channels', 'POST', '{bad', owner)).status, 400);
 });
 
 test('GitHub and Cloudflare routes answer 501 not configured when their secrets are missing', async (t) => {
@@ -121,7 +123,7 @@ test('GitHub and Cloudflare routes answer 501 not configured when their secrets 
   assert.equal(u.body.limit, 100000);
 });
 
-test('diagnostics keeps the contract shape and reports integrations, usage and codex', async (t) => {
+test('diagnostics keeps the contract shape and reports integrations and usage', async (t) => {
   stubFetch(t, []);
   const f = environment({ CF_VERSION_METADATA: { id: 'v-1', tag: 'gh-abc', timestamp: '2026-10-01T00:00:00Z' } }), owner = await cookieFor(f, true);
   const r = await call(f, '/api/dev/diagnostics', 'GET', undefined, owner);
@@ -137,24 +139,21 @@ test('diagnostics keeps the contract shape and reports integrations, usage and c
   assert.equal(r.body.integrations.github.configured, false);
   assert.equal(r.body.integrations.cloudflare.configured, false);
   assert.equal(r.body.usage.configured, false);
-  assert.equal(r.body.codex.authorized, false);
+  assert.equal('codex' in r.body, false);
+  assert.equal(r.body.room.seLastCommandAt, 0);
 });
 
-test('codex authorization defaults off, is recorded server-side, and validates input', async () => {
+test('channels lists setup progress for the built-in channels', async () => {
   const f = environment(), owner = await cookieFor(f, true);
-  assert.equal((await call(f, '/api/dev/codex', 'GET', undefined, owner)).body.authorized, false);
-  assert.equal((await call(f, '/api/dev/codex', 'POST', { authorized: 'yes' }, owner)).status, 400);
-  assert.equal((await call(f, '/api/dev/codex', 'POST', {}, owner)).status, 400);
-  assert.equal((await call(f, '/api/dev/codex', 'POST', { authorized: true, note: 5 }, owner)).status, 400);
-  const on = await call(f, '/api/dev/codex', 'POST', { authorized: true, note: 'fix overlay\nbug' }, owner);
-  assert.equal(on.status, 200);
-  assert.equal(on.body.updatedBy, 'nesszerra');
-  assert.equal(on.body.note, 'fix overlay bug');
-  const read = await call(f, '/api/dev/codex', 'GET', undefined, owner);
-  assert.equal(read.body.authorized, true);
-  assert.equal((await call(f, '/api/dev/diagnostics', 'GET', undefined, owner)).body.codex.authorized, true);
-  await call(f, '/api/dev/codex', 'POST', { authorized: false }, owner);
-  assert.equal((await call(f, '/api/dev/codex', 'GET', undefined, owner)).body.authorized, false);
+  const r = await call(f, '/api/dev/channels', 'GET', undefined, owner);
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body.progress).sort(), [...r.body.builtin].sort());
+  const p = r.body.progress.nesszerra;
+  assert.deepEqual(Object.keys(p).sort(), ['commands', 'commandsWorking', 'duelCommands', 'duelModuleOff', 'lastChatAt', 'lastCommandAt', 'overlays', 'players', 'rejectedAt', 'source'].sort());
+  assert.equal(p.overlays, 0);
+  assert.equal(p.source, '');
+  assert.equal(p.commands, 6);
+  assert.equal(p.commandsWorking, 0);
 });
 
 test('error log: worker errors land in the room, can be filtered, and cleared', async () => {

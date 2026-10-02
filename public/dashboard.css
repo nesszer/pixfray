@@ -292,10 +292,19 @@ details.history[open] > summary { margin-bottom: var(--space-4); }
 .checklist .badge { justify-self: start; align-self: start; margin-top: 2px; }
 .checklist p { margin: var(--space-1) 0 0; max-width: var(--measure); }
 .checklist .check { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2) 0 0; font-weight: 600; }
-#setup-check details { border-top: 1px solid var(--border); padding: var(--space-2) 0; }
-#setup-check details > summary { cursor: pointer; font-weight: 600; padding: var(--space-1) 0; }
-#setup-check details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-#setup-check details ol, #setup-check details p { margin: var(--space-2) 0 0; max-width: var(--measure); }
+/* numbered setup steps: each step holds its own actions */
+.setup-steps { counter-reset: step; }
+.setup-steps > li { counter-increment: step; padding: var(--space-5) 0; }
+.setup-steps > li > div { min-width: 0; }
+.setup-steps h3 { margin: 0; }
+.setup-steps h3::before { content: counter(step) ". "; }
+.setup-steps .stack, .setup-steps details { margin-top: var(--space-3); }
+.setup-steps ol, .setup-steps ul { margin: 0; padding-left: var(--space-5); max-width: var(--measure); }
+.setup-steps details > summary, #troubleshoot details > summary { cursor: pointer; font-weight: 600; padding: var(--space-1) 0; }
+.setup-steps details > summary:focus-visible, #troubleshoot details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.setup-steps details[open] > summary { margin-bottom: var(--space-3); }
+#troubleshoot details { border-top: 1px solid var(--border); padding: var(--space-2) 0; }
+#troubleshoot details ol, #troubleshoot details p { margin: var(--space-2) 0 0; max-width: var(--measure); }
 @media (max-width: 480px) { .checklist > li { grid-template-columns: 1fr; gap: var(--space-1); } }
 
 /* admin */
@@ -379,8 +388,8 @@ html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused fie
 #leaderboard tr.empty td { white-space: normal; color: var(--text-2); padding: var(--space-4) var(--space-3); }
 #leaderboard tr.empty strong { color: var(--text); }
 
-/* StreamElements replies are long URLs: let them wrap inside their cell */
-.wrap-anywhere { overflow-wrap: anywhere; word-break: break-all; font-size: var(--text-xs); }
+/* StreamElements responses: a short preview without the key, next to the button that copies the whole line */
+.reply-preview { font-size: var(--text-xs); color: var(--text-2); white-space: nowrap; }
 #se-table input { width: 9rem; }
 #se-table .btn { white-space: nowrap; }
 

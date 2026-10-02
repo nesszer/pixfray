@@ -164,13 +164,14 @@ Fixed in this pass:
 - Limits: PNG only, 24 frames max, 128×128 per frame, 1.5 MB per atlas, 24 custom characters per channel.
 - Validate the limits on the server as well as in the browser.
 
-### Live-fix space (`/admin/dev`)
+### Owner page (`/admin/dev`)
+- Channels first: invite links and per-channel setup progress (overlay, Duel module, commands).
 - Live settings editor, error logs and diagnostics (chat status, request usage, DO errors).
 - Code editor, restricted to the `nesszerra` account (`isOwner`):
   - GitHub-backed flow: save → deploy test version (`test.chat.miolaf.xyz`) → check in OBS → promote.
   - Immediate hotfix path.
   - Rollback to the previous version.
-  - Codex assists only when the owner explicitly authorizes it.
+  - These sit in a folded "Developer tools" section. The Codex toggle was removed on 2026-10-03.
 
 ### Chat source (Cloudflare only)
 - Twitch EventSub `channel.chat.message` delivered by webhook to `POST /api/eventsub`. Nothing

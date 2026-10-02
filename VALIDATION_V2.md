@@ -148,7 +148,7 @@ Status values:
 | GitHub flow: save → test deploy → check in OBS → promote | unverified | `dev-api.test.mjs` and `dev-release.test.mjs` against mocked GitHub/Cloudflare. No repo or secrets exist; nothing was deployed |
 | Immediate hotfix path | unverified | Route and workflow tested with mocks only |
 | Rollback to the previous version | unverified | `dev-release.test.mjs` rollback plan with mocks only |
-| Codex assists only when the owner authorizes it | verified | `tests/dev-ui.mjs` toggle; `dev-api.test.mjs`. Off by default, and the route only records the decision |
+| Codex toggle | removed 2026-10-03 | `dev-api.test.mjs` checks `/api/dev/codex` answers 404 |
 | Chat runs only on Cloudflare: EventSub `channel.chat.message` webhook to the Worker | unverified | The real Worker handled signed webhooks in e2e. No real Twitch delivery: that needs the deployed https site, a Twitch app and the chat scopes |
 | Webhook security: HMAC signature, 10 min age, 64 KB limit, replay dedupe | verified | `worker.test.mjs` "eventsub: bad signatures, stale or future timestamps, missing headers and oversized bodies are refused"; `channel.test.mjs` "replayed EventSub messages are ignored ..."; e2e bad signature, stale timestamp and replay checks |
 | Emote-heavy chat can't break delivery: only needed fields reach the room; a room 4xx is acknowledged | verified | `worker.test.mjs` "eventsub: an emote-heavy message (~30 KB) is forwarded as a few hundred bytes; a room 4xx is acknowledged" |
