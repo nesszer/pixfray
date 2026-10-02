@@ -863,7 +863,7 @@ async function start() {
         // Sources face right; mirror left walking.
         ctx.scale(p.direction / squash, squash);
         ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
-        if (p.hat) drawHat(ctx, p.hat, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
+        if (p.hat) drawHat(ctx, p.hat, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, sprite.head);
       } else {
         if (ko) ctx.globalAlpha = .5;
         ctx.translate(p.x + offset, y); ctx.scale(p.grow, p.grow);

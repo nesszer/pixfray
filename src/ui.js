@@ -117,7 +117,7 @@ export function drawFrame(canvas, entry, frame, hat = "") {
   const room = hat && hats ? 0.8 : 1;
   const dw = Math.round(w * room), dh = Math.round(h2 * room), dx = Math.round((canvas.width - dw) / 2), dy = canvas.height - dh;
   ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
-  if (hat && hats) hats.drawHat(ctx, hat, img, frame, dx, dy, dw, dh);
+  if (hat && hats) hats.drawHat(ctx, hat, img, frame, dx, dy, dw, dh, entry.head);
   return true;
 }
 // sprite = {canvas, entry, anim, active()} ; returns a handle with .set(entry) and .destroy()

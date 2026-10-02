@@ -130,6 +130,16 @@ repeatable.
 | `dog` | Dog | `dog.png` | https://opengameart.org/content/cat-dog-free-sprites | https://opengameart.org/sites/default/files/CatnDog.zip | 124 x 104 | 10 / 10 / none / 1 (hurt) | effects for attack |
 | `dino` | Dino | `dino.png` | https://opengameart.org/content/free-dino-sprites | https://opengameart.org/sites/default/files/FreeDinoSprite.zip | 128 x 60 | 10 / 10 / none / 4 | effects for attack |
 
+## Animated turtle by Sogomn on OpenGameArt (1 character)
+
+- Author: Sogomn, https://opengameart.org/users/sogomn; license CC0-1.0 (the page lists "License(s): CC0", checked 2026-10-02)
+- The source is one 128 x 32 sprite sheet with four 32 x 32 walk frames. The license record is `public/assets/OGA_SOGOMN_LICENSE.txt`, written for this project.
+- `node scripts/build-characters.mjs --download` fetches the sheet into `.asset-src/` and checks its SHA-256. Frames are scaled up 4x with nearest neighbour (pixel art).
+
+| Catalog id | Label | File | Source page | Archive | Cell | Walk / idle / attack / ko frames | Combat |
+|---|---|---|---|---|---|---|---|
+| `turtle` | Turtle | `turtle.png` | https://opengameart.org/content/animated-turtle | https://opengameart.org/sites/default/files/turtle_4.png | 112 x 56 | 4 / 1 / none / none | effects |
+
 ## Combat fallback flag
 
 Entries without an `attack` animation carry `"combatFallback": "effects"` in `characters.json`.

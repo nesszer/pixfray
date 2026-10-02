@@ -49,6 +49,9 @@ const PACKS = {
   'oga-adventure-girl': { source: 'https://opengameart.org/content/adventurer-girl-free-sprite', file: 'oga_AdventureGirl.zip', sha256: 'dee3c944f21cac7475d9f107d7055c07a7acdc4f2eb7612be48c2842417749d5', url: OGA + 'Adventure%20Girl.zip' },
   'oga-cat-dog': { source: 'https://opengameart.org/content/cat-dog-free-sprites', file: 'oga_CatnDog.zip', sha256: 'e60f863e5abdce6fcded54f6b82bbda752ba0b555bc69c76c7da42d692e7b47c', url: OGA + 'CatnDog.zip' },
   'oga-temple-run': { source: 'https://opengameart.org/content/temple-run-free-sprite', file: 'oga_TempleRun.zip', sha256: 'd6d005f32e6d64c4187c911be2e3f19ceab7ef915d70be432ce9cd8ef52abb33', url: OGA + 'TempleRun.zip' },
+  // A single sprite sheet rather than an archive: `sheet` gives the tile size, and frames are named "tile <n>" (left to right).
+  // The CC0 statement is on the OpenGameArt page, recorded in public/assets/OGA_SOGOMN_LICENSE.txt (written by hand).
+  'oga-turtle': { source: 'https://opengameart.org/content/animated-turtle', file: 'oga_turtle_4.png', sha256: 'acc903a48fbfc3277ee5ffbea8a85682965c8ba728f21f799e17798aca4126d8', url: OGA + 'turtle_4.png', sheet: { w: 32, h: 32 } },
   'oga-dino': { source: 'https://opengameart.org/content/free-dino-sprites', file: 'oga_FreeDinoSprite.zip', sha256: 'a0b84c84bb0ab08d2f8d6eab7e998efa10a54c5866fc782865c442bb46073173', url: OGA + 'FreeDinoSprite.zip' },
 };
 
@@ -143,6 +146,11 @@ const CHARACTERS = [
   blob('Blue', 'blob-blue', 'Blue Blob'),
   blob('Green', 'blob-green', 'Green Blob'),
   blob('Red', 'blob-red', 'Red Blob'),
+  {
+    id: 'turtle', label: 'Turtle', pack: 'oga-turtle', fps: 6, scale: { pixel: 4 },
+    walk: ['tile 0', 'tile 1', 'tile 2', 'tile 3'], idle: ['tile 0'], jump: ['tile 1'], cheer: ['tile 0', 'tile 2'],
+    head: { top: 0, left: 0.73, right: 0.98 },   // the head pokes out on the right; the top of the figure is shell
+  },
 ];
 
 // ---------------------------------------------------------------- helpers
@@ -169,13 +177,17 @@ function archive(pack) {
     const buf = fs.readFileSync(file);
     const want = PACKS[pack].sha256;
     if (want && sha256(buf) !== want) throw new Error(PACKS[pack].file + ' sha256 ' + sha256(buf) + ' does not match the pinned ' + want);
-    archives.set(pack, readZip(buf));
+    if (PACKS[pack].sheet) {
+      const { w, h } = PACKS[pack].sheet, img = decodePng(buf);
+      archives.set(pack, { tile: (n) => crop(img, { x: (n % (img.width / w)) * w, y: Math.floor(n / (img.width / w)) * h, w, h }) });
+    } else archives.set(pack, readZip(buf));
   }
   return archives.get(pack);
 }
 
 function loadFrame(pack, name) {
-  const img = decodePng(archive(pack).read(name));
+  const tile = /^tile (\d+)$/.exec(name);
+  const img = tile && PACKS[pack].sheet ? archive(pack).tile(Number(tile[1])) : decodePng(archive(pack).read(name));
   const box = alphaBounds(img);
   if (!box) throw new Error(pack + ': ' + name + ' is empty');
   return { name, canvas: { w: img.width, h: img.height }, box, img };
@@ -230,6 +242,7 @@ function buildCharacter(c) {
     id: c.id, label: c.label, url: '/assets/' + c.id + '.png', frames: rects(c.walk), fps: c.fps, animations,
     anchor: { x: 0.5, y: 1 }, license: 'CC0-1.0', source: PACKS[c.pack].source,
   };
+  if (c.head) entry.head = c.head;   // where hats go (public/hats.js), when it isn't the top of the figure
   if (!c.attack) entry.combatFallback = 'effects';
   return { entry, png: encodePng(atlas), cell: cw + ' x ' + ch, frames: order.length };
 }

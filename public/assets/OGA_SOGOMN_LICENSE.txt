@@ -1,0 +1,15 @@
+OpenGameArt "Animated turtle" by Sogomn - license record
+
+The sprite sheet (turtle_4.png) contains no license file. This notice was written for this project (it is
+not a copy of a file from the source). It records what the OpenGameArt page showed when it was checked on
+2026-10-02: author "Sogomn", License(s): CC0, notice "Do whatever you want with it. Credit would be nice,
+though."
+
+License: Creative Commons Zero 1.0 Universal (CC0-1.0)
+https://creativecommons.org/publicdomain/zero/1.0/
+You may use, modify and redistribute this asset in personal and commercial projects. Credit is not
+required; it is given here because the author asked nicely.
+
+  Animated turtle    https://opengameart.org/content/animated-turtle    turtle
+
+Author profile: https://opengameart.org/users/sogomn

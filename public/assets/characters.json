@@ -4996,5 +4996,107 @@
     "license": "CC0-1.0",
     "source": "https://kenney.nl/assets/abstract-platformer",
     "combatFallback": "effects"
+  },
+  {
+    "id": "turtle",
+    "label": "Turtle",
+    "url": "/assets/turtle.png",
+    "frames": [
+      {
+        "x": 0,
+        "y": 0,
+        "w": 112,
+        "h": 56
+      },
+      {
+        "x": 112,
+        "y": 0,
+        "w": 112,
+        "h": 56
+      },
+      {
+        "x": 224,
+        "y": 0,
+        "w": 112,
+        "h": 56
+      },
+      {
+        "x": 336,
+        "y": 0,
+        "w": 112,
+        "h": 56
+      }
+    ],
+    "fps": 6,
+    "animations": {
+      "idle": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 112,
+          "h": 56
+        }
+      ],
+      "walk": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 112,
+          "h": 56
+        },
+        {
+          "x": 112,
+          "y": 0,
+          "w": 112,
+          "h": 56
+        },
+        {
+          "x": 224,
+          "y": 0,
+          "w": 112,
+          "h": 56
+        },
+        {
+          "x": 336,
+          "y": 0,
+          "w": 112,
+          "h": 56
+        }
+      ],
+      "jump": [
+        {
+          "x": 112,
+          "y": 0,
+          "w": 112,
+          "h": 56
+        }
+      ],
+      "cheer": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 112,
+          "h": 56
+        },
+        {
+          "x": 224,
+          "y": 0,
+          "w": 112,
+          "h": 56
+        }
+      ]
+    },
+    "anchor": {
+      "x": 0.5,
+      "y": 1
+    },
+    "license": "CC0-1.0",
+    "source": "https://opengameart.org/content/animated-turtle",
+    "head": {
+      "top": 0,
+      "left": 0.73,
+      "right": 0.98
+    },
+    "combatFallback": "effects"
   }
 ]

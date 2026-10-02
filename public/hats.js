@@ -127,11 +127,15 @@ function headOf(image, frame) {
   return head;
 }
 
+// A catalog entry may say where the head is ({top, left, right} as fractions of the cell) when the top of the figure
+// isn't the head, like the turtle's shell.
+const validHead = (h) => h && ["top", "left", "right"].every((k) => Number.isFinite(h[k]) && h[k] >= 0 && h[k] <= 1) && h.right > h.left;
+
 // Draws hat `id` on a sprite frame drawn at (dx, dy, dw, dh) in the current transform. Unknown ids draw nothing.
-export function drawHat(ctx, id, image, frame, dx, dy, dw, dh) {
+export function drawHat(ctx, id, image, frame, dx, dy, dw, dh, headHint = null) {
   const hat = HATS[id];
   if (!hat || !image || !frame) return;
-  const head = headOf(image, frame);
+  const head = validHead(headHint) ? headHint : headOf(image, frame);
   const px = (head.right - head.left) * dw / (hat.span[1] - hat.span[0]);
   const x0 = dx + head.left * dw - hat.span[0] * px;
   const y0 = dy + head.top * dh + hat.sink * px - hat.rows.length * px;
