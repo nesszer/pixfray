@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import worker from '../server/worker.js';
 import { digest } from '../server/auth.js';
 import { ChannelRoom } from '../server/channel.js';
-import { validPath, usage } from '../server/developer.js';
+import { validPath, usage, logRoomEvent } from '../server/developer.js';
 
 const ORIGIN = 'https://chat.miolaf.xyz';
 const SECRET = 'test-only-internal-secret-0123456789';
@@ -297,8 +297,12 @@ test('error log: worker errors land in the room, can be filtered, and cleared', 
   assert.equal(logs.body[0].message, 'boom');
   assert.equal(typeof logs.body[0].context.truncated, 'string');
   assert.equal((await call(f, '/api/dev/logs?source=room', 'GET', undefined, owner)).body.length, 0);
+  // Chat command lines and warnings share the log but don't count as errors.
+  logRoomEvent(f.rooms.get('nesszerra'), 'command', 'alice challenge @bob -> challenge');
+  logRoomEvent(f.rooms.get('nesszerra'), 'warn', 'slow');
   const d = await call(f, '/api/dev/diagnostics', 'GET', undefined, owner);
   assert.equal(d.body.room.errors, 1);
+  assert.equal(d.body.room.errorsBySource.command, 1);
   assert.equal(d.body.room.errorsBySource.worker, 1);
   assert.equal(d.body.room.lastError.message, 'boom');
   assert.equal((await call(f, '/api/dev/logs', 'DELETE', undefined, owner)).status, 200);

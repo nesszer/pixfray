@@ -163,6 +163,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     case 'target_not_found': return noFighter(target, false, origin, ch);
     case 'self_duel': return `${me}, you can't fight your own shadow! Name a rival: ${n('challenge')} @name`;
     case 'player_busy': return 'One of you is already fighting! Wait for the bell, then try again.';
+    case 'result_hidden': return 'That fight is still playing on stream. Give it a few seconds!';
     case 'respawning': {
       const down = result.userId || actorId;
       // The loser of a quick duel is down before the stream has shown the fight, so don't name them yet.

@@ -16,6 +16,8 @@ const DEFAULT_CONFIG = {
   inactivityMs: 45_000,
   respawnMs: 3_000,
   rematchDelayMs: 30_000,
+  // How far the stream runs behind chat. Chat keeps a quick duel's result hidden this long after the overlay shows it.
+  streamDelayMs: 6_000,
   sharedCooldownMs: 1_000,
   initialElo: 1_000,
   eloK: 24,
@@ -296,10 +298,13 @@ function createChallenge(state, actor, target, now) {
   if (hasOpenDuel(state, actor.userId) || hasOpenDuel(state, target.userId)) {
     return { ok: false, reason: "player_busy" };
   }
+  const lock = state.rematchLocks.find((item) => item.pair === pairKey(actor.userId, target.userId) && item.until > now);
+  // Until the stream has shown a fight, both fighters get the same answer, so a challenge can't tell who lost.
+  const hidden = hiddenResults(state, now);
+  if (!lock && (hidden.has(actor.userId) || hidden.has(target.userId))) return { ok: false, reason: "result_hidden" };
   const down = actor.respawnAt > now ? actor : target.respawnAt > now ? target : null;
   if (down) return { ok: false, reason: "respawning", userId: down.userId, retryAt: down.respawnAt };   // name who is knocked out, not who asked
   if (openDuels(state).length >= state.config.maxDuels) return { ok: false, reason: "channel_full" };
-  const lock = state.rematchLocks.find((item) => item.pair === pairKey(actor.userId, target.userId) && item.until > now);
   if (lock) return { ok: false, reason: "rematch_cooldown", retryAt: lock.until };
   const duel = {
     id: "duel-" + state.nextDuelId++,
@@ -355,11 +360,10 @@ function beginDuel(state, duel, now) {
 // rolls are numbers in [0, 1) from the room; missing ones come from a hash so the reducer stays pure.
 const QUICK_MAX_ROLLS = 12;
 // A quick duel is settled at once, but the overlay plays it out over seconds and viewers see the stream a few
-// seconds behind chat. Until revealAt, chat replies, !elo, !ranks and the leaderboard keep the pre-fight
+// seconds behind chat (config.streamDelayMs). Until revealAt, chat replies, !elo, !ranks and the leaderboard keep the pre-fight
 // numbers (hiddenResults), so the stream shows the winner first. Pacing mirrors public/overlay.js: a walk-in
 // of up to 2.2 s, then about 1.8 s per roll before the result banner.
 const REPLAY_WALK_MS = 2200, REPLAY_ROLL_MS = 1800;
-export const STREAM_DELAY_MS = 6000;
 export const replayMs = (rolls) => REPLAY_WALK_MS + REPLAY_ROLL_MS * Math.max(1, rolls);
 const QUICK_FLAWLESS_BONUS = 3;
 const LUCK_ROLLS = 24;
@@ -405,7 +409,7 @@ function settleQuickDuel(state, duel, rolls, now) {
   }
   const flawless = duel.hp[winnerId] === maxHp;
   finishDuel(state, duel, winnerId, now, { decision, bonus: flawless ? QUICK_FLAWLESS_BONUS : 0 });
-  duel.revealAt = now + replayMs(swings.length) + STREAM_DELAY_MS;
+  duel.revealAt = now + replayMs(swings.length) + state.config.streamDelayMs;
   return { ok: true, reason: "quick_duel", duelId: duel.id, winnerId, loserId, swings, winnerHp: duel.hp[winnerId], flawless, decision };
 }
 
@@ -520,8 +524,10 @@ function applyCommand(state, event, now) {
   if (parsed.action === "duel" || parsed.action === "rematch") {
     let target;
     if (parsed.action === "rematch") {
-      // Challenge the last opponent of a finished duel; the room passes their saved profile as targetProfile.
-      const lastId = actor.lastOpponentId;
+      // Answer a waiting challenge, or challenge the last opponent of a finished duel (the room passes their saved
+      // profile as targetProfile). A player has at most one open duel, so there is at most one waiting challenge.
+      const incoming = openDuels(state).find((item) => item.status === "pending" && item.b === actor.userId);
+      const lastId = incoming ? incoming.a : actor.lastOpponentId;
       target = lastId && (player(state, lastId) || (normalizeUserId(event.targetProfile?.userId) === lastId ? recentProfile(state, event.targetProfile, now) : null));
       if (!target) return { ok: false, reason: "no_previous_opponent" };
     } else {
@@ -582,6 +588,7 @@ function validateConfigPatch(patch) {
     inactivityMs: [10_000, 600_000],
     respawnMs: [0, 60_000],
     rematchDelayMs: [0, 600_000],
+    streamDelayMs: [0, 60_000],
     sharedCooldownMs: [250, 60_000],
     initialElo: [0, 10_000],
     eloK: [1, 100],

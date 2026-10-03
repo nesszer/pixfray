@@ -436,12 +436,19 @@ test('StreamElements quick duel: !fight settles it at once, but chat sees the re
   assert.match((await cmd('u2', 'bob', 'top')).body.reply, /^Top 2: 1\. alice 1000 · 2\. bob 1000\./);
   assert.equal((await r.call('/profile?userId=u2')).body.wins, 0);
   assert.equal((await r.call('/looks?u=alice')).body.alice.elo, 1000);
+  // The loser's knockout (hp 0, respawnAt) would name them, so public reads leave it out; so does a website save.
+  assert.ok(before.every((p) => p.hp === 100 && !(p.respawnAt > Date.now())), 'leaderboard shows nobody knocked out');
+  for (const id of ['u1', 'u2']) { const p = (await r.call('/profile?userId=' + id)).body; assert.ok(p.hp !== 0 && !(p.respawnAt > Date.now()), id); }
+  assert.deepEqual((({ elo, wins, losses }) => [elo, wins, losses])((await r.save('u1', 'alice')).body.profile), [1000, 0, 0], 'a save answers with the shown numbers');
+  // A third viewer challenging either fighter hears the same thing, so the reply can't tell the winner from the loser.
+  await r.save('u3', 'cara');
+  for (const target of ['alice', 'bob']) assert.equal((await cmd('u3', 'cara', 'challenge', target)).body.reply, 'That fight is still playing on stream. Give it a few seconds!');
   const realNow = Date.now;
   Date.now = () => duel.revealAt + 1;
   try {
     const after = (await r.call('/leaderboard')).body;
-    assert.deepEqual([after[0].wins, after[1].losses, after[0].elo > 1000, after[1].elo < 1000], [1, 1, true, true], 'shown once the stream has shown it');
-    assert.match((await cmd('u1', 'alice', 'elo')).body.reply, new RegExp(`^alice: ${after.find((p) => p.username === 'alice').elo} Elo, rank ${after.findIndex((p) => p.username === 'alice') + 1} of 2`));
+    assert.deepEqual([after[0].wins, after.at(-1).losses, after[0].elo > 1000, after.at(-1).elo < 1000], [1, 1, true, true], 'shown once the stream has shown it');
+    assert.match((await cmd('u1', 'alice', 'elo')).body.reply, new RegExp(`^alice: ${after.find((p) => p.username === 'alice').elo} Elo, rank ${after.findIndex((p) => p.username === 'alice') + 1} of 3`));
   } finally { Date.now = realNow; }
   // The result is saved, so the next command (which reloads the stored profile) keeps it.
   const saved = Object.fromEntries(r.ctx.storage.sql.exec('SELECT user_id, elo, wins, losses FROM profiles').toArray().map((x) => [x.user_id, x]));
@@ -449,7 +456,7 @@ test('StreamElements quick duel: !fight settles it at once, but chat sees the re
   assert.notEqual(saved.u1.elo, 1000);
   // Every command lands in the dev log with what came in, the game's decision and the reply.
   const log = (await r.call('/dev/logs?source=command')).body;
-  assert.deepEqual(log.map((x) => x.context.reason).reverse(), ['challenge', 'quick_duel', 'challenge_not_found', 'elo', 'top', 'elo']);
+  assert.deepEqual(log.map((x) => x.context.reason).reverse(), ['challenge', 'quick_duel', 'challenge_not_found', 'elo', 'top', 'result_hidden', 'result_hidden', 'elo']);
   const quick = log.find((x) => x.context.reason === 'quick_duel');
   assert.match(quick.context.swings, /^([1-6][hxcm] ?)+$/);
   assert.equal((await r.call('/dev/logs?source=warn')).body.length, 0);

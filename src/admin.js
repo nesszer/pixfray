@@ -14,6 +14,7 @@ const GROUPS = [
     { key: "inactivityMs", label: "Idle duel cancelled after", unit: "s", ms: true, min: 10000, max: 600000 },
     { key: "respawnMs", label: "Respawn after knockout", unit: "s", ms: true, min: 0, max: 60000 },
     { key: "rematchDelayMs", label: "Rematch wait", unit: "s", ms: true, min: 0, max: 600000 },
+    { key: "streamDelayMs", label: "Stream delay", unit: "s", ms: true, min: 0, max: 60000 },
   ] },
   { title: "Ranking", fields: [
     { key: "initialElo", label: "Starting Elo", unit: "Elo", min: 0, max: 10000 },

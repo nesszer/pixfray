@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reduceGame, createInitialState, parseGameCommand, defaultConfig, hiddenResults, shownProfile, replayMs, STREAM_DELAY_MS } from '../server/game.js';
+import { reduceGame, createInitialState, parseGameCommand, defaultConfig, hiddenResults, shownProfile, replayMs } from '../server/game.js';
 
 const T0 = 1_800_000_000_000;
 let seq = 0;
@@ -618,7 +618,7 @@ test('quick duels hide the result until the stream has played it out (revealAt)'
   const duel = w.duel(w.fight('alice', 'bob'));
   const rolls = w.last.result.swings.length;
   assert.equal(duel.status, 'completed');
-  assert.equal(duel.revealAt, w.now + replayMs(rolls) + STREAM_DELAY_MS);
+  assert.equal(duel.revealAt, w.now + replayMs(rolls) + w.state.config.streamDelayMs);
   assert.equal(replayMs(0), replayMs(1), 'at least one roll is replayed');
   const hidden = hiddenResults(w.state, w.now);
   const winner = duel.winnerId, loser = winner === 'id-alice' ? 'id-bob' : 'id-alice';
@@ -630,12 +630,22 @@ test('quick duels hide the result until the stream has played it out (revealAt)'
   const cara = { userId: 'id-cara', elo: 1000, wins: 0, losses: 0 };
   assert.equal(shownProfile(cara, hidden), cara, 'fighters with nothing hidden are unchanged');
   assert.equal(hiddenResults(w.state, duel.revealAt).size, 0, 'shown once the stream has played it');
-  // A second duel before the first is shown stacks, and the Elo shown is the one before the first.
+  // Until then a challenge touching either fighter gets one answer, so it can't tell the winner from the loser.
   w.advance(3_500);
-  w.fight('alice', 'cara');
-  const both = hiddenResults(w.state, w.now).get('id-alice');
-  assert.equal(both.wins + both.losses, 2);
-  assert.equal(both.elo, 1000);
+  assert.ok(w.now < duel.revealAt);
+  for (const [a, b] of [['cara', 'alice'], ['cara', 'bob'], ['alice', 'cara'], ['bob', 'cara']]) assert.equal(w.say(a, '!challenge @' + b).reason, 'result_hidden', a + ' vs ' + b);
+  assert.equal(w.say('alice', '!challenge @bob').reason, 'rematch_cooldown', 'the same pair still hears the rematch wait');
+  w.now = duel.revealAt;
+  assert.equal(w.say('cara', '!challenge @' + winner.slice(3)).ok, true, 'open again once the stream has shown it');
+});
+
+test('the stream delay is a channel setting (0 to 60 s) that moves revealAt', () => {
+  const w = arena({ quick: true });
+  assert.equal(w.state.config.streamDelayMs, 6000);
+  for (const bad of [-1, 60_001, 1.5, '9000']) assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { streamDelayMs: bad } } }).reason, 'invalid_config_streamDelayMs');
+  assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { streamDelayMs: 20_000 } } }).ok, true);
+  const duel = w.duel(w.fight('alice', 'bob'));
+  assert.equal(duel.revealAt, w.now + replayMs(w.last.result.swings.length) + 20_000);
 });
 
 
@@ -653,6 +663,14 @@ test('!rematch challenges the last finished duel\'s opponent, with the rematch l
   assert.equal(c.ok, true, c.reason);
   assert.deepEqual([w.duel(c.duelId).a, w.duel(c.duelId).b, w.duel(c.duelId).status], ['id-bob', 'id-alice', 'pending']);
   assert.equal(w.say('alice', '!rematch').reason, 'quick_duel', 'answering !rematch with !rematch starts the duel');
+  // !rematch answers a waiting challenge even when the answerer's own last opponent is someone else.
+  w.advance(31_000);
+  w.fight('alice', 'cara');
+  w.advance(31_000);
+  assert.equal(w.say('bob', '!rematch').ok, true, 'bob rematches alice');
+  assert.equal(w.player('alice').lastOpponentId, 'id-cara');
+  assert.equal(w.say('alice', '!rematch').reason, 'quick_duel', 'alice answers bob, not cara');
+  assert.equal(w.player('alice').lastOpponentId, 'id-bob');
   // A cancelled or declined duel doesn't count as a fight: the last opponent stays the same.
   w.advance(31_000);
   w.say('alice', '!challenge @cara'); w.say('cara', '!decline');

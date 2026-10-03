@@ -199,9 +199,11 @@ export class ChannelRoom extends DurableObject {
       const userId = validUserId(url.searchParams.get("userId"));
       if (!userId) return json({ error: "valid userId required" }, 400);
       const state = this.readState(channel);
-      const profile = shownProfile(this.getProfile(userId, state.config), hiddenResults(state, Date.now()));
+      const hidden = hiddenResults(state, Date.now());
+      const profile = shownProfile(this.getProfile(userId, state.config), hidden);
       if (!profile) return json(null);
-      const active = state.players.find((item) => item.userId === userId);
+      // A knocked-out fighter (hp 0, respawnAt) would give away a result the stream hasn't shown yet.
+      const active = !hidden.has(userId) && state.players.find((item) => item.userId === userId);
       return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins) });
     }
 
@@ -215,7 +217,8 @@ export class ChannelRoom extends DurableObject {
       if (!result.ok) return json({ error: result.reason }, result.status || 400);
       this.broadcast(result.state);
       await this.scheduleAlarm(result.state);
-      return json({ profile: { ...result.profile, upgrades: upgradeRules(result.profile.wins) }, revision: result.state.revision });
+      const shown = shownProfile(result.profile, hiddenResults(result.state, Date.now()));
+      return json({ profile: { ...shown, upgrades: upgradeRules(shown.wins) }, revision: result.state.revision });
     }
 
     if (path === "/admin" && request.method === "POST") {
@@ -510,7 +513,7 @@ export class ChannelRoom extends DurableObject {
     const hidden = hiddenResults(state, Date.now());
     const out = rows.map((row) => {
       const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
-      const active = state.players.find((item) => item.userId === profile.userId);
+      const active = !hidden.has(profile.userId) && state.players.find((item) => item.userId === profile.userId);
       return active ? { ...profile, hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : profile;
     });
     return hidden.size ? out.sort(boardOrder) : out;   // same order as the SQL, on the numbers shown

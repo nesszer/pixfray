@@ -10,7 +10,7 @@ Requires Node 22.18+. Run `npm install` then `npm run dev`. Open http://127.0.0.
 
 Commands:
 - `!jump` — jump with a 3-second cooldown.
-- `!avatar adventurer` — IDs: adventurer, female, player, soldier, zombie (the five characters of this first overlay; the dashboard offers all 56).
+- `!avatar adventurer` — any character ID the overlay has loaded, for example adventurer, female, player, soldier or zombie (the dashboard lists them all).
 - `!color #ff8844` — nameplate color.
 
 First chat message spawns a character; 10 minutes of inactivity hides it. Appearance persists in that OBS browser's localStorage, not across devices.
@@ -38,7 +38,7 @@ Chat commands for v2 duels:
   the next blow wins. A winner who took no damage gets +3 Elo on top. The bot replies only "Fight on: A vs B! Watch
   the stream for the winner.", and the overlay replays the duel in about 8-25 s and then announces
   the winner and the Elo change. `!elo`, `!ranks` and the website show the old numbers until the
-  replay has played on stream (plus 6 s of stream delay), so chat never spoils the result. The default ability only changes how blows look. Each win earns an upgrade point
+  replay has played on stream (plus the channel's stream delay, 6 s by default and set in the admin Rules tab), so chat replies and ranks don't spoil the stream. The overlay itself gets the result at once, so someone who opens the overlay page can see it early. The default ability only changes how blows look. Each win earns an upgrade point
   (power, guard, luck) and unlocks hats; see CONTRACTS.md section 6. The HP fight with `!strike`,
   `!heavy` and `!heal` runs only if a mod's config sets `quickDuel` to false.
 - Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).

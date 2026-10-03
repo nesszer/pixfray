@@ -385,7 +385,8 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
   if (path === '/dev/diagnostics' && method === 'GET') {
     const state = room.readState(channel);
     const counts = Object.fromEntries(sql.exec('SELECT source, COUNT(*) AS n FROM error_log GROUP BY source').toArray().map((r) => [r.source, r.n]));
-    const last = sql.exec('SELECT at, source, message FROM error_log ORDER BY id DESC LIMIT 1').toArray()[0] || null;
+    // Chat command lines and warnings share the log but aren't errors; the health summary counts room and Worker errors only.
+    const last = sql.exec("SELECT at, source, message FROM error_log WHERE source IN ('room', 'worker') ORDER BY id DESC LIMIT 1").toArray()[0] || null;
     return json({
       channel,
       revision: state.revision,
@@ -397,7 +398,7 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
       players: state.players.length,
       openDuels: state.duels.filter((d) => d.status === 'pending' || d.status === 'active').length,
       sockets: { live: room.ctx.getWebSockets('live').length },
-      errors: Object.values(counts).reduce((a, b) => a + b, 0),
+      errors: (counts.room || 0) + (counts.worker || 0),
       errorsBySource: counts,
       lastError: last,
     });
@@ -436,8 +437,8 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
   // which would create a key in a room that has none). Custom characters: metadata, not the atlas images.
   if (path === '/dev/export' && method === 'GET') {
     const state = room.readState(channel);
-    const profiles = sql.exec('SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC').toArray()
-      .map((p) => ({ userId: p.user_id, username: p.username, displayName: p.display_name, avatar: p.avatar, color: p.color, defaultAbility: p.default_ability, elo: p.elo, wins: p.wins, losses: p.losses, lastSeen: p.last_seen, power: p.power, guard: p.guard, luck: p.luck, hat: p.hat }));
+    const profiles = sql.exec('SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, last_opponent FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC').toArray()
+      .map((p) => ({ userId: p.user_id, username: p.username, displayName: p.display_name, avatar: p.avatar, color: p.color, defaultAbility: p.default_ability, elo: p.elo, wins: p.wins, losses: p.losses, lastSeen: p.last_seen, power: p.power, guard: p.guard, luck: p.luck, hat: p.hat, lastOpponentId: p.last_opponent }));
     const history = sql.exec('SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC').toArray()
       .map((h) => ({ version: h.version, config: safeParse(h.config) || {}, actorId: h.actor_id, actorName: h.actor_name, at: h.at, note: h.note }));
     const characters = sql.exec('SELECT id, meta, bytes, created_by, created_at FROM custom_characters ORDER BY created_at').toArray()
