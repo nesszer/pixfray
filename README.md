@@ -59,10 +59,13 @@ Tests: `npm run test:all` runs these in order:
 `npm run test:live` is separate and runs against prod through real Twitch chat and the StreamElements
 bot. It needs two headed Chromes with remote debugging, each signed in to Twitch and Mini Chat with a
 saved fighter: the broadcaster on port 9333 and a second account on 9334 (`LIVE_A_CDP`, `LIVE_B_CDP`).
-It refuses to post while the channel (`LIVE_CHANNEL`, default nesszerra) is live. It sends every
-command, plays one challenge-decline and one full duel, then checks the replies against the
-leaderboard and the Stream setup page. The duel changes both accounts' Elo, wins and losses.
-The log and an overlay screenshot go to `../../work/live-e2e/` (`LIVE_OUT`).
+It refuses to post while the channel (`LIVE_CHANNEL`, default nesszerra) is live. Both accounts send
+every command and every refusal (no name, self, no fighter, busy, wrong challenger, rematch lock,
+expired challenge), and play two duels (a named `!fight` and a mutual challenge). Each bot reply must
+show in both chat tabs, each duel must match the leaderboard, and the overlay must show the second
+account's saved look and play both duels. The duels change both accounts' Elo, wins and losses. It
+takes about 5 minutes. The log and screenshots of the overlay and both chats go to
+`../../work/live-e2e/` (`LIVE_OUT`).
 
 VALIDATION_V2.md has the commands and the spec audit. `MINI_PORT` and `MINI_PERSIST` change the dev
 port and the local state folder.

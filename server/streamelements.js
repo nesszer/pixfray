@@ -162,7 +162,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     case 'target_not_found': return noFighter(target, false, origin, ch);
     case 'self_duel': return `${me}, you can't fight your own shadow! Name a rival: ${n('challenge')} @name`;
     case 'player_busy': return 'One of you is already fighting! Wait for the bell, then try again.';
-    case 'respawning': return `${me} is still seeing stars. Give it a few seconds!`;
+    case 'respawning': return `${result.userId ? nameOf(state, result.userId) : me} is still seeing stars. Give it a few seconds!`;
     case 'channel_full': return 'Every ring is taken! Try again in a moment.';
     case 'rematch_cooldown': return `Rematch in ${secs((result.retryAt || now) - now)} s! Catch your breath first.`;
     case 'challenge_not_found': return `${me}, nobody has challenged you yet. Start one: ${n('challenge')} @name`;

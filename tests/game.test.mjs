@@ -218,6 +218,9 @@ test('KO completes the duel; the loser respawns at full health after respawnMs',
   assert.ok(w.player('bob').respawnAt > w.now);
   assert.equal(w.player('alice').hp, 100);
   assert.equal(w.say('bob', '!challenge @cara').reason, 'respawning');
+  const winnerAsks = w.say('alice', '!challenge @bob');   // the winner re-challenging hears that the loser is down
+  assert.equal(winnerAsks.reason, 'respawning');
+  assert.equal(winnerAsks.userId, 'id-bob');
   w.tick(defaultConfig().respawnMs);
   assert.equal(w.player('bob').hp, 100);
   assert.equal(w.player('bob').respawnAt, 0);
@@ -639,6 +642,15 @@ test('StreamElements sign-up link names the channel, except for nesszerra', asyn
   const reply = (channel) => seReplyText({ result: { ok: false, reason: 'target_not_found' }, state: createInitialState(channel), actorId: 'u1', action: 'challenge', target: 'bob', origin: 'https://chat.example' });
   assert.equal(reply('miolafff'), '@bob has no fighter in the arena yet! Send them to https://chat.example/?channel=miolafff');
   assert.equal(reply('nesszerra'), '@bob has no fighter in the arena yet! Send them to https://chat.example/');
+});
+
+test('StreamElements "seeing stars" names the knocked-out fighter, not the one who asked', async () => {
+  const { seReplyText } = await import('../server/streamelements.js');
+  const state = createInitialState('nesszerra');
+  state.players.push({ userId: 'u1', username: 'alice', displayName: 'Alice' }, { userId: 'u2', username: 'bob', displayName: 'Bob' });
+  const reply = (result) => seReplyText({ result: { ok: false, reason: 'respawning', ...result }, state, actorId: 'u1', action: 'challenge', target: 'bob' });
+  assert.equal(reply({ userId: 'u2' }), 'Bob is still seeing stars. Give it a few seconds!');
+  assert.equal(reply({}), 'Alice is still seeing stars. Give it a few seconds!');
 });
 
 // ---------- upgrades (server/upgrades.js) ----------

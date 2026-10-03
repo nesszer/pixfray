@@ -294,7 +294,8 @@ function createChallenge(state, actor, target, now) {
   if (hasOpenDuel(state, actor.userId) || hasOpenDuel(state, target.userId)) {
     return { ok: false, reason: "player_busy" };
   }
-  if (actor.respawnAt > now || target.respawnAt > now) return { ok: false, reason: "respawning" };
+  const down = actor.respawnAt > now ? actor : target.respawnAt > now ? target : null;
+  if (down) return { ok: false, reason: "respawning", userId: down.userId, retryAt: down.respawnAt };   // name who is knocked out, not who asked
   if (openDuels(state).length >= state.config.maxDuels) return { ok: false, reason: "channel_full" };
   const lock = state.rematchLocks.find((item) => item.pair === pairKey(actor.userId, target.userId) && item.until > now);
   if (lock) return { ok: false, reason: "rematch_cooldown", retryAt: lock.until };
