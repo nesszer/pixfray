@@ -56,6 +56,14 @@ Tests: `npm run test:all` runs these in order:
    its own state folder, seeded test sessions and `MINI_LOCAL_TEST=1`. The end-to-end test sends
    signed EventSub webhooks, using the `AUTH_SECRET` from `.dev.vars` (or `MINI_AUTH_SECRET`).
 
+`npm run test:live` is separate and runs against prod through real Twitch chat and the StreamElements
+bot. It needs two headed Chromes with remote debugging, each signed in to Twitch and Mini Chat with a
+saved fighter: the broadcaster on port 9333 and a second account on 9334 (`LIVE_A_CDP`, `LIVE_B_CDP`).
+It refuses to post while the channel (`LIVE_CHANNEL`, default nesszerra) is live. It sends every
+command, plays one challenge-decline and one full duel, then checks the replies against the
+leaderboard and the Stream setup page. The duel changes both accounts' Elo, wins and losses.
+The log and an overlay screenshot go to `../../work/live-e2e/` (`LIVE_OUT`).
+
 VALIDATION_V2.md has the commands and the spec audit. `MINI_PORT` and `MINI_PERSIST` change the dev
 port and the local state folder.
 

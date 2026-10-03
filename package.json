@@ -16,7 +16,8 @@
     "test:e2e": "node tests/e2e-local.mjs",
     "seed:local": "node tests/seed-local.mjs",
     "build:characters": "node scripts/build-characters.mjs",
-    "test:all": "node scripts/test-all.mjs"
+    "test:all": "node scripts/test-all.mjs",
+    "test:live": "node scripts/live-chat-e2e.mjs"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "beta",
