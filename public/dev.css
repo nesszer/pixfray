@@ -18,3 +18,4 @@ td code, td.ctx { font-size: var(--text-xs); }
 
 /* site health values are words ("StreamElements", "Unknown"), not short numbers: keep them inside 4 narrow columns */
 #sec-health .stat .value { font-size: var(--text-lg); overflow-wrap: break-word; }
+@media (max-width: 480px) { #sec-health .stat-strip { grid-template-columns: 1fr; } }
