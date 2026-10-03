@@ -19,7 +19,8 @@ const GROUPS = [
     { key: "initialElo", label: "Starting Elo", unit: "Elo", min: 0, max: 10000 },
     { key: "eloK", label: "Elo K-factor", unit: "K", min: 1, max: 100 },
   ] },
-  { title: "HP fight abilities (used when quick duels are off)", fields: [
+  // Only used when config.quickDuel is false, and no screen turns that off, so the group stays hidden (but in the form, so saving keeps its values).
+  { title: "HP fight abilities", visible: (c) => c.quickDuel === false, fields: [
     { key: "abilities.strike.damage", label: "Strike damage", unit: "HP", min: 1, max: 1000 },
     { key: "abilities.strike.cooldownMs", label: "Strike cooldown", unit: "s", ms: true, min: 250, max: 600000 },
     { key: "abilities.heavy.damage", label: "Heavy strike damage", unit: "HP", min: 1, max: 1000 },
@@ -190,7 +191,7 @@ function renderAll() {
   $("#open-chat-setup").hidden = !waiting;
   toggle.classList.toggle("btn-primary", !waiting);
   $("#stats").replaceChildren(
-    stat("Duels", c.enabled ? "On" : "Paused", waiting ? "" : c.enabled ? "up" : "down", waiting ? "waiting for chat" : c.enabled ? "accepting commands" : "commands ignored"),
+    stat("Duels", !c.enabled ? "Paused" : waiting ? "Waiting" : "On", !c.enabled ? "down" : waiting ? "" : "up", !c.enabled ? "commands ignored" : waiting ? "for chat" : "accepting commands"),
     stat(health.label, health.value, health.ok ? "up" : "down", health.note),
     stat("Open duels", open.length + " / " + c.maxDuels),
     stat("In the arena", a.players.length));
@@ -282,7 +283,7 @@ function renderConfig() {
     return;
   }
   editedBase = S.admin.configVersion; editedConfig = config;
-  box.replaceChildren(...GROUPS.map((g) => h("fieldset", { class: "config-group" }, h("legend", {}, g.title),
+  box.replaceChildren(...GROUPS.map((g) => h("fieldset", { class: "config-group", hidden: g.visible ? !g.visible(config) : false }, h("legend", {}, g.title),
     h("div", { class: "config-grid" }, g.fields.map((f) => {
       const id = "cfg-" + f.key.replace(/\./g, "-"), value = get(config, f.key);
       const input = h("input", { id, type: "number", inputmode: "decimal", required: true, "data-key": f.key,
@@ -387,14 +388,14 @@ function renderUsage() {
   const bar = (label, value, max, text, key) => [h("div", { class: "bar-label" }, label),
     h("div", { class: "bar" + (key ? " is-key" : ""), style: { "--v": Math.min(100, (value / max) * 100) + "%" } }, h("span"), h("b", {}, text))];
   $("#usage-bars").replaceChildren(...bar("Characters", u.count, limit, u.count + " / " + limit, true),
-    ...bar("Atlas storage (max " + limit + " × 1.5 MB)", u.bytes, budget, formatBytes(u.bytes) + " / " + formatBytes(budget)));
+    ...bar("Atlas storage", u.bytes, budget, formatBytes(u.bytes) + " / " + formatBytes(budget)));
 }
 async function loadCustom() {
   const r = await api("/api/assets/" + CHANNEL);
   const box = $("#custom-list");
   if (!r.ok) { box.replaceChildren(h("p", {}, "Couldn't list custom characters: " + errorText(r))); return; }
   customItems = r.data.items || []; customLimits = r.data.limits || null;
-  if (!customItems.length) { box.replaceChildren(h("p", {}, "No custom characters yet. The 24 slots are shared by the broadcaster and all moderators.")); return; }
+  if (!customItems.length) { box.replaceChildren(h("p", {}, "No custom characters yet. The slots are shared by the broadcaster and all moderators.")); return; }
   box.replaceChildren(h("div", { class: "table-wrap" }, h("table", { class: "data" },
     h("thead", {}, h("tr", {}, h("th", {}, "Character"), h("th", { class: "num" }, "Frames"), h("th", { class: "num" }, "Size"), h("th", {}, "Added"))),
     h("tbody", {}, customItems.map((x) => h("tr", {}, h("td", {}, x.label || x.id), h("td", { class: "num" }, (x.frames || []).length + Object.values(x.animations || {}).reduce((n, f) => n + f.length, 0)),
@@ -544,7 +545,7 @@ function setupSteps() {
     { id: "check-overlay", done: a.overlays > 0, next: "open the overlay in OBS" },
     { id: "check-duel", done: twitch || !!se?.duelModuleOff, next: "turn off the StreamElements Duel module" },
     { id: "check-commands", done: twitch || (!!se && DUEL_ACTIONS.every((x) => seen[x])), next: "test the commands in chat" },
-    { id: "check-mods", done: !!a.modsReady, optional: true },
+    { id: "check-mods", done: !!a.modsReady && !a.modsLapsed, optional: true },
   ];
 }
 function renderChecklist() {
@@ -568,14 +569,24 @@ function renderChecklist() {
     detail("check-commands", (se.commands.length - missing.length) + " of " + se.commands.length + " commands have reached Mini Chat." +
       (missing.length ? " Not used yet: " + missing.map((x) => x.name).join(", ") + ". Type each one in your chat; any reply from the bot counts." : ""));
   }
-  const mods = $("#check-mods [data-detail]");
-  if (a.modsReady) mods.textContent = "Twitch moderators of " + CHANNEL + " can sign in and use this page.";
-  else mods.replaceChildren("Only " + CHANNEL + " can open this page. To let your Twitch moderators in, Mini Chat needs permission to read your moderator list. ",
-    S.access?.broadcaster ? h("a", { href: "/auth/login?" + new URLSearchParams({ channel: CHANNEL, connect: "mods" }) }, "Connect mod access") : "Only " + CHANNEL + " can connect it.");
+  $("#check-mods [data-detail]").replaceChildren(...modsDetail());
+  if (a.modsLapsed && !a.modsReady) { const b = $("#check-mods [data-badge]"); b.textContent = "Expired"; b.className = "badge warning"; }
   $("#check-title").textContent = done === required.length ? "Stream setup is done" : "Stream setup: " + done + " of " + required.length + " steps done";
   const next = required.find((s) => !s.done), pointer = $("#setup-next");
   pointer.hidden = !next;
   if (next) pointer.replaceChildren("Stream setup: " + done + " of " + required.length + " steps done. Next: ", h("a", { href: "#chat", onclick: (e) => { e.preventDefault(); goToStep(next.id); } }, next.next), ".");
+}
+// Step 4 reads differently for the broadcaster (who can connect), the site owner looking at another channel, and a moderator.
+function modsDetail() {
+  const a = S.admin, ready = !!a.modsReady && !a.modsLapsed, lapsed = !!a.modsLapsed;
+  if (ready) return ["Twitch moderators of " + CHANNEL + " can sign in and use this page."];
+  const broadcaster = !!S.access?.broadcaster || (!!S.access?.owner && CHANNEL === "nesszerra");
+  if (broadcaster) {
+    const link = h("a", { href: "/auth/login?" + new URLSearchParams({ channel: CHANNEL, connect: "mods" }) }, lapsed ? "Reconnect mod access" : "Connect mod access");
+    return [lapsed ? "Mod access expired, so your Twitch moderators can't sign in until you reconnect it. " : "Your Twitch moderators can't sign in yet. Mini Chat needs permission to read your moderator list. ", link];
+  }
+  const state = lapsed ? "Mod access expired" : "Mod access isn't connected";
+  return [state + ". " + (S.access?.owner ? CHANNEL + " has to " + (lapsed ? "reconnect" : "connect") + " it from their own Stream setup page." : "Ask " + CHANNEL + " to " + (lapsed ? "reconnect" : "connect") + " it.")];
 }
 function goToStep(id) {
   selectTab($("#tab-chat"));

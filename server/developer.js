@@ -1,6 +1,7 @@
 import { chatStatus } from './game.js';
-import { channelState, overview, createInvite, revokeInvite, setPaused } from './channels.js';
-import { SE_ACTIONS } from './streamelements.js';
+import { CHANNELS } from './auth.js';
+import { channelState, overview, listRecords, inviteStatus, createInvite, revokeInvite, setPaused, LOGIN } from './channels.js';
+import { SE_ACTIONS, DEFAULT_SE_NAMES } from './streamelements.js';
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // nesszerra Twitch account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -46,6 +47,8 @@ export async function handleDeveloper(request, env, c) {
 const ROUTES = {
   diagnostics: { GET: diagnostics },
   channels: { GET: channelsList, POST: channelsAction },
+  progress: { GET: progress },
+  export: { GET: exportData },
   logs: { GET: ({ room, query }) => room('/dev/logs?' + logQuery(query)), DELETE: ({ room }) => room('/dev/logs', { method: 'DELETE' }) },
   settings: { GET: ({ room }) => room('/admin'), POST: settings },
   usage: { GET: async ({ env }) => json(await usage(env)) },
@@ -61,14 +64,47 @@ const ROUTES = {
   rollback: { POST: withGithub(rollback) },
 };
 
-// Owner Channels table with each channel's setup progress. One room read per channel that is on, capped
-// so the page stays inside the Workers subrequest limit; channels past the cap show no progress.
+// Owner Channels table. Setup progress is a separate route (below), read in batches by the page, because each
+// channel's progress is one room read and a Worker request may make at most 50 subrequests (Free plan).
 const PROGRESS_MAX = 40;
-async function channelsList({ env, c }) {
-  const data = await overview(env);
-  const logins = [...data.builtin, ...data.channels.filter((x) => !x.pausedAt).map((x) => x.login)].slice(0, PROGRESS_MAX);
+async function channelsList({ env }) {
+  return json({ ...await overview(env), progressBatch: PROGRESS_MAX });
+}
+
+// GET /api/dev/progress?logins=a,b,c: setup progress for up to 40 channels that are on (built in or enabled).
+// One AuthStore read plus one room read per login, so 41 subrequests at most.
+async function progress({ env, c, query }) {
+  const raw = String(query.get('logins') || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean), logins = [...new Set(raw)];
+  if (!logins.length) return fail(400, 'logins is required: up to ' + PROGRESS_MAX + ' comma-separated channel logins', 'logins_required');
+  if (logins.length > PROGRESS_MAX) return fail(400, 'At most ' + PROGRESS_MAX + ' logins per request', 'too_many_logins', { max: PROGRESS_MAX });
+  const on = new Set([...CHANNELS, ...(await listRecords(env, 'channel:')).filter((r) => !r.value.pausedAt).map((r) => r.value.login)]);
+  const invalid = logins.filter((login) => !LOGIN.test(login) || !on.has(login));
+  if (invalid.length) return fail(400, 'Not a channel that is on: ' + invalid.slice(0, 5).join(', '), 'unknown_channel', { invalid });
   const reads = await Promise.all(logins.map((login) => c.roomFetch(login, '/dev/progress').then((r) => (r.ok ? r.json() : null)).catch(() => null)));
-  return json({ ...data, progress: Object.fromEntries(logins.map((login, i) => [login, reads[i]]).filter(([, p]) => p)) });
+  return json({ progress: Object.fromEntries(logins.map((login, i) => [login, reads[i]]).filter(([, p]) => p)) });
+}
+
+// Backups. GET /api/dev/export?channel=<login> downloads one room's data; ?registry=1 downloads the channel list.
+// Neither contains the StreamElements key, Twitch tokens or invite tokens.
+function download(data, filename) {
+  return new Response(JSON.stringify(data, null, 2), { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+}
+async function exportData({ env, c, query }) {
+  const now = new Date(), day = now.toISOString().slice(0, 10), head = { format: 'mini-chat-export', version: 1, exportedAt: now.toISOString() };
+  if (query.get('registry') === '1') {
+    const [channels, invites] = await Promise.all([listRecords(env, 'channel:'), listRecords(env, 'invite:')]);
+    return download({ ...head, kind: 'registry', builtin: CHANNELS,
+      channels: channels.map((r) => ({ id: r.value.id, login: r.value.login, enabledAt: r.value.enabledAt, pausedAt: r.value.pausedAt || 0 })),
+      // invite tokens are left out: a backup has no use for a link that works once, and it would be a live credential in a file
+      invites: invites.map((r) => ({ login: r.value.login, createdAt: r.value.createdAt, usedAt: r.value.usedAt || 0, by: r.value.by || '', status: inviteStatus(r.value) })) }, `mini-chat-channels-${day}.json`);
+  }
+  const login = String(query.get('channel') || '').toLowerCase();
+  if (!login) return fail(400, 'Use ?channel=<login> or ?registry=1', 'export_target_required');
+  const state = await channelState(env, login);
+  if (!state) return fail(404, login + ' is not set up', 'unknown_channel');
+  const r = await c.roomFetch(login, '/dev/export');
+  if (!r.ok) return fail(502, 'The channel room could not be read', 'room_unavailable', { status: r.status });
+  return download({ ...head, kind: 'channel', channel: login, status: state, ...await r.json() }, `mini-chat-${login}-${day}.json`);
 }
 
 // Owner Channels box: invite a streamer, revoke an invite, turn a channel off or on.
@@ -396,13 +432,28 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
       lastChatAt: Number(chat.lastNotificationAt) || 0, players: state.players.length,
     });
   }
+  // Backup of this room (read only). StreamElements: command names only, never the key (and not seSettings(),
+  // which would create a key in a room that has none). Custom characters: metadata, not the atlas images.
+  if (path === '/dev/export' && method === 'GET') {
+    const state = room.readState(channel);
+    const profiles = sql.exec('SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC').toArray()
+      .map((p) => ({ userId: p.user_id, username: p.username, displayName: p.display_name, avatar: p.avatar, color: p.color, defaultAbility: p.default_ability, elo: p.elo, wins: p.wins, losses: p.losses, lastSeen: p.last_seen, power: p.power, guard: p.guard, luck: p.luck, hat: p.hat }));
+    const history = sql.exec('SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC').toArray()
+      .map((h) => ({ version: h.version, config: safeParse(h.config) || {}, actorId: h.actor_id, actorName: h.actor_name, at: h.at, note: h.note }));
+    const characters = sql.exec('SELECT id, meta, bytes, created_by, created_at FROM custom_characters ORDER BY created_at').toArray()
+      .map((x) => ({ id: x.id, meta: safeParse(x.meta) || {}, bytes: x.bytes, createdBy: x.created_by, createdAt: x.created_at }));
+    const stored = safeParse(sql.exec('SELECT names FROM se_settings WHERE id = 1').toArray()[0]?.names) || {}, names = { ...DEFAULT_SE_NAMES, ...stored };
+    if (names.accept === '!accept') names.accept = DEFAULT_SE_NAMES.accept;
+    if (names.top === '!top') names.top = DEFAULT_SE_NAMES.top;
+    return json({ counts: { profiles: profiles.length, configVersions: history.length, customCharacters: characters.length },
+      profiles, config: state.config, configVersion: state.configVersion, configHistory: history, customCharacters: characters, streamelements: { commandNames: names } });
+  }
   return json({ error: 'Not found' }, 404);
 }
 
 // Called from ChannelRoom's constructor.
 export function ensureDeveloperSchema(sql) {
   sql.exec('CREATE TABLE IF NOT EXISTS error_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, source TEXT NOT NULL, message TEXT NOT NULL, context TEXT NOT NULL)');
-  sql.exec('CREATE TABLE IF NOT EXISTS dev_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 }
 
 // Called by ChannelRoom when one of its handlers throws. Must never throw.

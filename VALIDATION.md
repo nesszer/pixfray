@@ -1,3 +1,5 @@
+> v1-era record (2026-10-01), kept for history. It describes the first overlay, before v2 was deployed. For the current state read VALIDATION_V2.md (checks and spec audit) and HANDOFF.md.
+
 # Validation — 2026-10-01
 
 Deployed: https://chat.miolaf.xyz

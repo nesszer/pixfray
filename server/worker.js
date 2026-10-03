@@ -1,5 +1,5 @@
 import { ChannelRoom } from './channel.js';
-import { AuthStore,record,session,isOwner,configured,handleAuth,access,CHANNELS } from './auth.js';
+import { AuthStore,record,session,isOwner,configured,handleAuth,access,CHANNELS,touchBroadcaster,markModsConnected } from './auth.js';
 import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './eventsub.js';
@@ -147,8 +147,13 @@ export default {async fetch(request,env,ctx){
         const r=await internal(request,env,channel,'/admin');if(!r.ok)return r;
         const data=await r.json();
         // modsReady: the broadcaster's token is stored, so moderators can be checked and open this page too.
-        const modsReady=!!(await record(env,'broadcaster:'+channel));
-        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',modsReady,channelState:state});
+        // modsLapsed: mod access was connected once (modsconnected:<login>, never expires) but the token has expired since.
+        // Viewing this page keeps a stored token alive, and a token seen without its marker (connected before the marker
+        // existed) gets one.
+        const [broadcaster,marker]=await Promise.all([record(env,'broadcaster:'+channel),record(env,'modsconnected:'+channel)]);
+        const modsReady=!!broadcaster,modsLapsed=!modsReady&&!!marker;
+        if(broadcaster)await Promise.all([touchBroadcaster(env,channel,broadcaster),marker?null:markModsConnected(env,channel)]).catch(e=>console.warn('mods record refresh failed',e?.message));   // rare writes: weekly, and once per channel
+        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',modsReady,modsLapsed,channelState:state});
       }
       const data=await bodyJson(request,12000);
       // Turn Mini Chat off or back on: the broadcaster or the owner, never a mod. Fighters and ranks are kept.

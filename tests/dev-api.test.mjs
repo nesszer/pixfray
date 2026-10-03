@@ -77,7 +77,7 @@ function stubFetch(t, routes) {
   return calls;
 }
 
-const ROUTES = ['diagnostics', 'logs', 'settings', 'channels', 'usage', 'versions', 'code/tree', 'code/file?path=README.md', 'runs'];
+const ROUTES = ['diagnostics', 'logs', 'settings', 'channels', 'progress?logins=nesszerra', 'export?channel=nesszerra', 'export?registry=1', 'usage', 'versions', 'code/tree', 'code/file?path=README.md', 'runs'];
 const POSTS = ['settings', 'channels', 'code/save', 'code/pr', 'deploy', 'promote', 'hotfix', 'rollback'];
 
 test('every developer route returns 401 signed out and 403 for a non-owner', async () => {
@@ -143,17 +143,148 @@ test('diagnostics keeps the contract shape and reports integrations and usage', 
   assert.equal(r.body.room.seLastCommandAt, 0);
 });
 
-test('channels lists setup progress for the built-in channels', async () => {
-  const f = environment(), owner = await cookieFor(f, true);
-  const r = await call(f, '/api/dev/channels', 'GET', undefined, owner);
+test('channels lists the registry without reading any room, and progress answers per channel', async () => {
+  const f = environment(), owner = await cookieFor(f, true), reads = [];
+  const get = f.env.ROOMS.get; f.env.ROOMS.get = (name) => { reads.push(name); return get(name); };
+  const list = await call(f, '/api/dev/channels', 'GET', undefined, owner);
+  assert.equal(list.status, 200);
+  assert.equal('progress' in list.body, false, 'progress comes from /api/dev/progress');
+  assert.equal(list.body.progressBatch, 40);
+  assert.deepEqual(list.body.builtin, ['nesszerra', 'miolafff']);
+  assert.equal(reads.length, 0);
+  const r = await call(f, '/api/dev/progress?logins=nesszerra,MIOLAFFF', 'GET', undefined, owner);
   assert.equal(r.status, 200);
-  assert.deepEqual(Object.keys(r.body.progress).sort(), [...r.body.builtin].sort());
+  assert.deepEqual(Object.keys(r.body.progress).sort(), [...list.body.builtin].sort());
   const p = r.body.progress.nesszerra;
   assert.deepEqual(Object.keys(p).sort(), ['commands', 'commandsWorking', 'duelCommands', 'duelModuleOff', 'lastChatAt', 'lastCommandAt', 'overlays', 'players', 'rejectedAt', 'source'].sort());
   assert.equal(p.overlays, 0);
   assert.equal(p.source, '');
   assert.equal(p.commands, 6);
   assert.equal(p.commandsWorking, 0);
+});
+
+test('progress covers more than 40 channels across batched calls, 40 room reads at most per call', async () => {
+  const f = environment(), owner = await cookieFor(f, true), reads = [];
+  const logins = Array.from({ length: 95 }, (_, i) => 'streamer_' + String(i).padStart(3, '0'));
+  logins.forEach((login, i) => f.entries.set('channel:' + login, { id: String(100 + i), login, enabledAt: 1000 + i, ...(i === 94 ? { pausedAt: 5 } : {}) }));
+  const get = f.env.ROOMS.get; f.env.ROOMS.get = (name) => { reads.push(name); return get(name); };
+  const list = await call(f, '/api/dev/channels', 'GET', undefined, owner);
+  const on = [...list.body.builtin, ...list.body.channels.filter((c) => !c.pausedAt).map((c) => c.login)];
+  assert.equal(on.length, 96);
+  assert.equal(list.body.channels.length, 95);
+  const seen = {};
+  for (let i = 0; i < on.length; i += list.body.progressBatch) {
+    reads.length = 0;
+    const r = await call(f, '/api/dev/progress?logins=' + on.slice(i, i + list.body.progressBatch).join(','), 'GET', undefined, owner);
+    assert.equal(r.status, 200);
+    assert.ok(reads.length <= 40, 'room reads in one call: ' + reads.length);
+    Object.assign(seen, r.body.progress);
+  }
+  assert.deepEqual(Object.keys(seen).sort(), [...on].sort());
+  assert.equal(seen.streamer_050.commands, 6);
+});
+
+test('progress validates logins: required, at most 40, only channels that are on', async () => {
+  const f = environment(), owner = await cookieFor(f, true);
+  f.entries.set('channel:oldone', { id: '7', login: 'oldone', enabledAt: 1, pausedAt: 2 });
+  f.entries.set('channel:newone', { id: '8', login: 'newone', enabledAt: 1 });
+  const get = (q) => call(f, '/api/dev/progress' + q, 'GET', undefined, owner);
+  assert.equal((await get('')).body.reason, 'logins_required');
+  assert.equal((await get('?logins=,,')).status, 400);
+  const many = await get('?logins=' + Array.from({ length: 41 }, (_, i) => 'channel' + i).join(','));
+  assert.deepEqual([many.status, many.body.reason, many.body.max], [400, 'too_many_logins', 40]);
+  const unknown = await get('?logins=nesszerra,nobody_here');
+  assert.deepEqual([unknown.status, unknown.body.reason, unknown.body.invalid], [400, 'unknown_channel', ['nobody_here']]);
+  assert.equal((await get('?logins=oldone')).body.reason, 'unknown_channel', 'a channel that is off has no progress');
+  assert.equal((await get('?logins=../x,a')).status, 400);
+  const dup = await get('?logins=newone,newone, NewOne');
+  assert.equal(dup.status, 200);
+  assert.deepEqual(Object.keys(dup.body.progress), ['newone']);
+  assert.equal((await call(f, '/api/dev/progress?logins=nesszerra', 'POST', {}, owner)).status, 405);
+});
+
+test('progress and export answer 401 signed out and 403 for a non-owner', async () => {
+  const f = environment(), viewer = await cookieFor(f, false);
+  for (const p of ['progress?logins=nesszerra', 'export?channel=nesszerra', 'export?registry=1']) {
+    assert.equal((await call(f, '/api/dev/' + p)).status, 401, p);
+    const r = await call(f, '/api/dev/' + p, 'GET', undefined, viewer);
+    assert.deepEqual([r.status, r.body.reason], [403, 'owner_only'], p);
+  }
+});
+
+test('export downloads one room as JSON: fighters, ranks, config, history, characters, command names, no key', async () => {
+  const f = environment(), owner = await cookieFor(f, true);
+  f.env.ROOMS.get('nesszerra');
+  const room = f.rooms.get('nesszerra'), sql = room.ctx.storage.sql;
+  const secret = room.seSettings().secret;
+  assert.match(secret, /^[a-f0-9]{16,}$/);
+  sql.exec("INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat) VALUES ('11', 'fighter1', 'Fighter1', 'player', '#ff0000', 'strike', 1234, 9, 3, 5, 1, 2, 3, 'crown')");
+  sql.exec("INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen) VALUES ('12', 'fighter2', 'Fighter2', 'player', '#00ff00', 'heal', 900, 1, 8, 6)");
+  sql.exec('INSERT INTO custom_characters (id, meta, atlas, bytes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)', 'c-orc-abc123', JSON.stringify({ label: 'Orc', fps: 8 }), new Uint8Array([137, 80, 78, 71]), 4, '11', 99);
+  await call(f, '/api/dev/settings', 'POST', { action: 'config', payload: { patch: { maxHp: 120 }, baseVersion: 1, note: 'tankier' } }, owner);
+
+  const res = await worker.fetch(req('/api/dev/export?channel=NessZerra', 'GET', undefined, owner), f.env, { waitUntil() {} });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('Content-Disposition'), /^attachment; filename="mini-chat-nesszerra-\d{4}-\d{2}-\d{2}\.json"$/);
+  assert.match(res.headers.get('Content-Type'), /^application\/json/);
+  const text = await res.text(), data = JSON.parse(text);
+  assert.deepEqual([data.format, data.version, data.kind, data.channel, data.status], ['mini-chat-export', 1, 'channel', 'nesszerra', 'builtin']);
+  assert.deepEqual(data.profiles.map((p) => [p.username, p.elo, p.wins, p.losses]), [['fighter1', 1234, 9, 3], ['fighter2', 900, 1, 8]]);
+  assert.deepEqual([data.profiles[0].power, data.profiles[0].hat, data.profiles[0].defaultAbility, data.profiles[0].userId], [1, 'crown', 'strike', '11']);
+  assert.equal(data.config.maxHp, 120);
+  assert.equal(data.configVersion, 2);
+  assert.deepEqual(data.configHistory.map((h) => [h.version, h.note]), [[2, 'tankier'], [1, 'initial']]);
+  assert.deepEqual(data.customCharacters, [{ id: 'c-orc-abc123', meta: { label: 'Orc', fps: 8 }, bytes: 4, createdBy: '11', createdAt: 99 }]);
+  assert.equal('atlas' in data.customCharacters[0], false);
+  assert.deepEqual(Object.keys(data.streamelements), ['commandNames']);
+  assert.ok(Object.keys(data.streamelements.commandNames).length >= 6);
+  assert.deepEqual(data.counts, { profiles: 2, configVersions: 2, customCharacters: 1 });
+  assert.ok(!text.includes(secret), 'the StreamElements key is not exported');
+  assert.doesNotMatch(text, /secret|subscriptionId|token/i);
+});
+
+test('export does not create a StreamElements key or change the room', async () => {
+  const f = environment(), owner = await cookieFor(f, true);
+  f.env.ROOMS.get('miolafff');
+  const sql = f.rooms.get('miolafff').ctx.storage.sql, count = () => sql.exec('SELECT COUNT(*) AS n FROM se_settings').toArray()[0].n;
+  assert.equal(count(), 0);
+  const r = await call(f, '/api/dev/export?channel=miolafff', 'GET', undefined, owner);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.profiles.length, 0);
+  assert.equal(count(), 0);
+});
+
+test('export of an unknown channel is 404, a paused channel still exports, and a target is required', async () => {
+  const f = environment(), owner = await cookieFor(f, true);
+  f.entries.set('channel:paused_one', { id: '9', login: 'paused_one', enabledAt: 1, pausedAt: 2 });
+  const miss = await call(f, '/api/dev/export?channel=nobody_here', 'GET', undefined, owner);
+  assert.deepEqual([miss.status, miss.body.reason], [404, 'unknown_channel']);
+  assert.equal((await call(f, '/api/dev/export?channel=../etc', 'GET', undefined, owner)).status, 404);
+  assert.equal((await call(f, '/api/dev/export', 'GET', undefined, owner)).status, 400);
+  const ok = await call(f, '/api/dev/export?channel=paused_one', 'GET', undefined, owner);
+  assert.deepEqual([ok.status, ok.body.channel, ok.body.status], [200, 'paused_one', 'paused']);
+});
+
+test('export of the channel list has channels and invites but no invite tokens', async () => {
+  const f = environment(), owner = await cookieFor(f, true);
+  f.entries.set('channel:oldone', { id: '7', login: 'oldone', enabledAt: 1000, pausedAt: 2000 });
+  const made = await call(f, '/api/dev/channels', 'POST', { action: 'invite', login: 'latecomer' }, owner);
+  assert.equal(made.status, 200);
+  const res = await worker.fetch(req('/api/dev/export?registry=1', 'GET', undefined, owner), f.env, { waitUntil() {} });
+  assert.match(res.headers.get('Content-Disposition'), /^attachment; filename="mini-chat-channels-\d{4}-\d{2}-\d{2}\.json"$/);
+  const text = await res.text(), data = JSON.parse(text);
+  assert.deepEqual([data.kind, data.builtin], ['registry', ['nesszerra', 'miolafff']]);
+  assert.deepEqual(data.channels, [{ id: '7', login: 'oldone', enabledAt: 1000, pausedAt: 2000 }]);
+  assert.equal(data.invites.length, 1);
+  assert.deepEqual([data.invites[0].login, data.invites[0].status], ['latecomer', 'valid']);
+  assert.ok(!text.includes(made.body.token), 'invite tokens are not exported');
+  assert.equal('token' in data.invites[0], false);
+});
+
+test('rooms no longer create the leftover dev_settings table', () => {
+  const ctx = fakeCtx();
+  new ChannelRoom(ctx, { INTERNAL_SECRET: SECRET });
+  assert.equal(ctx.storage.sql.exec("SELECT name FROM sqlite_master WHERE name = 'dev_settings'").toArray().length, 0);
 });
 
 test('error log: worker errors land in the room, can be filtered, and cleared', async () => {

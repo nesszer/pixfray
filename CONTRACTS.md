@@ -16,7 +16,8 @@ can still sign in and turn it back on.
 - Request bodies must be a JSON object. Malformed JSON, `null` or an array returns 400; a body
   over the route's limit returns 413.
 - Auth uses the `mini_session` cookie (HttpOnly), set by `/auth/callback`.
-- Roles come from `GET /api/access/:channel`: `owner` (the nesszerra account), `broadcaster` (the
+- Roles come from `GET /api/access/:channel`: `owner` (the nesszerra account: its Twitch id must equal
+  `OWNER_TWITCH_ID` when that binding is set, otherwise the `owner:nesszerra` record), `broadcaster` (the
   channel's own account), `moderator` (Helix moderator check, needs the stored broadcaster token) and
   `canManage = owner || broadcaster || moderator`.
 - Unknown errors return 503 `{error:"Service unavailable; check owner diagnostics"}` and are
@@ -31,17 +32,17 @@ can still sign in and turn it back on.
 | GET | `/auth/callback` | none | Twitch `code` and `state` | 302 to `/` (or `next`), sets the cookie. An invite signup turns the channel on, stores the broadcaster token when the scope was granted, and lands on `/admin/?channel=<login>&signed_in=1#chat`. A failed signup goes back to `/start/?invite=..&error=wrong_account\|full\|denied\|failed` with no session | 400, 403 |
 | GET | `/api/invite/:token` | none | 32 hex chars | `{status:"valid"\|"used"\|"expired"\|"invalid", login?}` | 404 malformed token |
 | POST | `/auth/logout` | cookie | none | clears the cookie | 403 when cross-origin |
-| GET | `/api/session` | optional | none | `{user:{id,login,displayName}\|null, owner, configured, channels:["nesszerra"], productionEnabled:false}` | 503 when secrets are missing |
-| GET | `/api/health` | none | none | `{ok:true, version, twitchConfigured, productionEnabled:false}` | |
+| GET | `/api/session` | optional | none | `{user:{id,login,displayName}\|null, owner, configured, channels:["nesszerra","miolafff"] (the built-ins), productionEnabled:false}`. `productionEnabled` is a constant `false` left from the first rollout, when production stayed closed until the broadcaster was onboarded. Nothing reads it; use `channelState` instead. | 503 when secrets are missing |
+| GET | `/api/health` | none | none | `{ok:true, version, twitchConfigured, productionEnabled:false}` (same constant) | |
 | GET | `/api/access/:channel` | optional | none | `{owner, broadcaster, moderator, canManage, reason}` | 403 for a channel that isn't set up |
 | GET | `/api/state/:channel` | none | none | Snapshot (section 3) | 403, 405 |
 | GET | `/api/leaderboard/:channel` | none | none | Up to 100 `Profile` rows, ordered by elo desc, then wins desc, then username | 403 |
 | GET | `/api/looks/:channel?u=login1,login2` | none | at most 20 logins | `{login:{avatar, color, hat, displayName, elo}}` for viewers with a saved fighter only. The overlay uses it for chat-only viewers, batched and cached for 5 min. | 403 |
-| GET | `/api/se/:channel/:action?k=..&id=..&u=..&d=..&t=..&m=..` | the channel's StreamElements key `k` | `action` is `challenge`, `accept`, `decline`, `top` (default name `!ranks`), `elo` or `help` (default name `!minichat`). The first command with the right key makes StreamElements the chat source (and deletes a Twitch EventSub subscription), unless a mod used Disconnect chat. Each action's last arrival is recorded (at most once a minute) for the admin badges; New key clears them. | always 200 `text/plain`: the one-line chat reply for the bot to post (empty for a repeated message id) | 405, 404 unknown channel |
+| GET | `/api/se/:channel/:action?k=..&id=..&u=..&d=..&t=..&m=..` | the channel's StreamElements key `k` | `action` is `challenge`, `accept`, `decline`, `top` (default name `!ranks`), `elo` or `help` (default name `!minichat`). The first command with the right key makes StreamElements the chat source (and deletes a Twitch EventSub subscription), unless a mod used Disconnect chat. Each action's last arrival is recorded (at most once a minute) for the admin badges; New key clears them. The Worker checks the request before any Durable Object call ("StreamElements route checks" below). | always 200 `text/plain`: the one-line chat reply for the bot to post (empty for a repeated message id) | 405 not GET, 404 path doesn't match or a well-formed key on a channel that isn't set up, 429 from the edge rate limit, 503 `INTERNAL_SECRET` missing |
 | GET | `/api/catalog/:channel` | none | none | `[...static characters.json, ...custom entries]` (section 5) | 403 |
 | GET | `/api/profile/:channel` | cookie | none | `Profile` or `null` | 401 |
-| POST | `/api/profile/:channel` | cookie | `{avatar, color:"#rrggbb", defaultAbility:"strike"\|"heavy"\|"heal"}`, max 4000 bytes | `{profile, revision}` | 400 invalid field or unknown character, 401, 413 |
-| GET | `/api/admin/:channel` | canManage | none | Snapshot plus `{chatStatus (section 4), history:[{version,config,actorId,actorName,at,note}] (newest first, 50 max; actorName is the Twitch display name at save time, empty for older rows), customUsage:{count,limit,bytes}, access:{owner,moderator,canManage,reason}, overlays (open role=overlay sockets), modsReady (broadcaster token stored), channelState ("builtin"\|"on"\|"paused"), streamelements:{key,names,commands,seen:{action:ms},duelModuleOff,lastCommandAt,rejectedAt,timerText}}` | 401 signed out, 403 not a mod |
+| POST | `/api/profile/:channel` | cookie | `{avatar, color:"#rrggbb", defaultAbility:"strike"\|"heavy"\|"heal", stats?:{power,guard,luck}, hat?}`, max 4000 bytes. `stats` and `hat` are checked against the saved wins (server/upgrades.js); a stats change while the fighter is in a duel is refused (`in_duel`). | `{profile, revision}` | 400 invalid field or unknown character, 401, 413 |
+| GET | `/api/admin/:channel` | canManage | none | Snapshot plus `{chatStatus (section 4), history:[{version,config,actorId,actorName,at,note}] (newest first, 50 max; actorName is the Twitch display name at save time, empty for older rows), customUsage:{count,limit,bytes}, access:{owner,moderator,canManage,reason}, overlays (open role=overlay sockets), modsReady (broadcaster token stored), modsLapsed (see 2a), seOnly (test site: chat comes from StreamElements only), channelState ("builtin"\|"on"\|"paused"), streamelements:{key,names,commands,seen:{action:ms},duelModuleOff,lastCommandAt,rejectedAt,timerText}}` | 401 signed out, 403 not a mod |
 | POST | `/api/admin/:channel` | canManage | `{action, payload?}`, max 12000 bytes. Any `actorId` you send is replaced by the session user. | `{ok:true, reason, revision, ...}` | 400 / 403 / 404 / 409 with `{ok:false, reason, error}` |
 | WS | `/api/live/:channel[?role=overlay]` | none | Upgrade | Read-only overlay socket (section 3). OBS overlays send `role=overlay` so the admin setup checklist can count them. | 426 without an upgrade, 429 over 64 sockets |
 | POST | `/api/eventsub` | Twitch EventSub HMAC signature (section 4) | Twitch webhook body, max 64 KB | verification: 200 `text/plain` challenge; notification, revocation, unknown types and duplicates: 204 | 400 missing headers or bad JSON, 403 bad signature or stale timestamp, 405, 413, 503 secrets missing or room failure (Twitch retries) |
@@ -52,9 +53,29 @@ can still sign in and turn it back on.
 | GET | `/api/dev/diagnostics` | owner | none | `{worker:{version,twitchConfigured,productionEnabled,deployedVersion}, room:{channel,revision,chat:{connected,lastSeen,status},chatStatus,paused,configVersion,players,openDuels,sockets:{live},errors,errorsBySource,lastError}, integrations:{github:{configured,missing[],repo,base,workflow}, cloudflare:{configured,missing[],versionMetadata}}, usage}`; `room` also has `seLastCommandAt` (0 until a StreamElements command arrives with the current key) | 401, 403 |
 | GET, DELETE | `/api/dev/logs[?source=room\|worker&limit=1..100]` | owner | none | GET: error rows `[{id,at,source,message,context}]`, newest first. DELETE clears them. | 401, 403 |
 | GET, POST | `/api/dev/settings` | owner | POST `{action:"config"\|"rollbackConfig", payload}` or `{action:"connectChat"\|"disconnectChat", takeover?:true}` | The same versioned config as `/api/admin` (history rows carry the owner's actorName); chat actions answer like the admin ones | 400, 403 `reconnect`, 409, 502 |
-| GET, POST | `/api/dev/channels` | owner | POST `{action:"invite", login}`, `{action:"revoke", token}`, `{action:"pause"\|"resume", login}` | `{builtin:[login], max, channels:[{login,enabledAt,pausedAt?}], invites:[{token,login,createdAt,usedAt?,status}]}`. GET adds `progress:{login:{overlays,source,commandsWorking,commands,duelCommands,duelModuleOff,lastCommandAt,rejectedAt,lastChatAt,players}}` for built-in and turned-on channels (at most 40 rooms read; `source` is `""` while chat isn't connected); `invite` adds `{token, link}` | 400 `bad_login`/`invalid`/`builtin` (pause), 404 `not_found`, 409 `exists`/`builtin` (invite), 403 `full` (200 channels on) |
+| GET, POST | `/api/dev/channels` | owner | POST `{action:"invite", login}`, `{action:"revoke", token}`, `{action:"pause"\|"resume", login}` | `{builtin:[login], max, channels:[{login,enabledAt,pausedAt}], invites:[{token,login,createdAt,usedAt,status}], progressBatch:40}`. GET no longer returns setup progress; the owner page reads it from `/api/dev/progress` in batches of `progressBatch` after the list renders. `invite` adds `{token, link}` | 400 `bad_login`/`invalid`/`builtin` (pause), 404 `not_found`, 409 `exists`/`builtin` (invite), 403 `full` (200 channels on) |
+| GET | `/api/dev/progress?logins=a,b,c` | owner | `logins`: comma-separated, lowercased and de-duplicated, at most 40 (one room read each, within the Free plan's 50 subrequests per request). Each must be a built-in or a turned-on channel (a paused one is `unknown_channel`). POST gets 405. | `{progress:{login:{overlays,source,commandsWorking,commands,duelCommands,duelModuleOff,lastCommandAt,rejectedAt,lastChatAt,players}}}`. `source` is `""` while chat isn't connected. A login whose room read fails is left out. Read only: it never creates a StreamElements key. | 400 `logins_required`, 400 `too_many_logins` `{max:40}`, 400 `unknown_channel` `{invalid:[...]}`, 401, 403 |
+| GET | `/api/dev/export?channel=<login>` or `?registry=1` | owner | none | A JSON download (`Content-Disposition: attachment`). `channel`: `mini-chat-<login>-<YYYY-MM-DD>.json` = `{format:"mini-chat-export", version:1, exportedAt, kind:"channel", channel, status:"builtin"\|"on"\|"paused", counts:{profiles,configVersions,customCharacters}, profiles[], config, configVersion, configHistory[], customCharacters[], streamelements:{commandNames}}`. Profiles carry elo, wins, losses, looks, upgrade stats and hat. `customCharacters` holds metadata only, no atlas images. `registry`: `mini-chat-channels-<date>.json` = `{format, version, exportedAt, kind:"registry", builtin, channels:[{id,login,enabledAt,pausedAt}], invites:[{login,createdAt,usedAt,by,status}]}`. Neither includes StreamElements keys, Twitch tokens or invite tokens. A paused channel still exports. The Worker reads one room through its internal, read-only `GET /dev/export` (`server/developer.js`). | 400 `export_target_required`, 404 `unknown_channel`, 502 `room_unavailable`, 401, 403 |
 | GET | `/api/dev/usage`, `/api/dev/versions` | owner | none | Request usage and Worker versions from the Cloudflare API, or `{configured:false, error}` / `missing[]` when `CF_API_TOKEN`/`CF_ACCOUNT_ID` are unset | 401, 403 |
 | GET/POST | `/api/dev/code/tree`, `code/file`, `code/save`, `code/pr`, `runs`, `deploy`, `promote`, `hotfix`, `rollback` | owner | See docs/LIVE_FIX.md | GitHub-backed flow | 501 `{reason:"github_not_configured", missing:[...]}` until `GITHUB_TOKEN`/`GITHUB_REPO` are set; 404 `unknown_route`, 405 `method_not_allowed` |
+
+### StreamElements route checks (`/api/se/...`)
+
+`handleStreamElements` (server/streamelements.js) answers these before any room is called, in order:
+1. Method must be GET (405).
+2. The path must match `/api/se/<channel>/<action>` (404 "Unknown command").
+3. The action must be one of the six above. Anything else (an old `!attack` command, say) answers 200 "Lost in the arena? Type !minichat".
+4. The key `k` must be present and at most 128 characters, or the reply is 200 "Mini Chat: missing key. Copy the commands again from the admin page."
+5. The key must match `/^[a-f0-9]{48}$/`, or 200 "Mini Chat: wrong key. Copy the commands again from the admin page."
+6. A refused (channel, key) pair is answered with the same wrong-key text from a per-isolate cache for 60 s, with no Durable Object request. The first refusal still reaches the room, which records `rejected_at` for the admin badge. A pair enters the cache when the room answers 403 with a reply. The cache holds 2000 pairs.
+7. Channel state: paused answers 200 "Mini Chat is off on this channel right now."; not set up answers 404.
+8. Then the room checks the key and runs the command.
+
+Steps 3 to 5 come before the channel lookup, so an unknown channel with a bad action or a malformed or missing key gets the 200 text, not 404. A well-formed key on an unknown channel is still 404.
+
+Edge rate limit (Cloudflare WAF, zone `miolaf.xyz`, so it covers prod and `test.chat`): ruleset "Mini Chat rate limit" (id `c14d229ed8534be9b8d10168bcfc664d`), rule id `fe8ed08e99ee49e3ac1732c97fb75a30`. Expression `starts_with(http.request.uri.path, "/api/se/")`, 100 requests per 10 s per IP and colo, then block for 10 s. The limit is generous because StreamElements' servers share IPs across channels. It lives in Cloudflare, not in this repo. To undo it, put the ruleset for phase `http_ratelimit` with an empty rules list.
+
+Security: StreamElements passes the viewer's id and login in the query (`id=$(sender.twitchid)`, `u=$(sender.name)`), so anyone who holds a channel's key can send commands as any viewer of that channel. The key is the only secret. Keep the admin page's key off stream, and press New key if it leaks (docs/STREAMER_SETUP.md).
 
 ### 2a. Channel registry (server/channels.js)
 
@@ -70,6 +91,10 @@ Durable Object:
 - `channelState(env, ch)` is cached per isolate (60 s for a hit, 10 s for a miss), so pausing reaches
   every isolate within about a minute. EventSub and `/api/session` still use the built-ins only;
   invited channels use StreamElements.
+- `modsconnected:<login>` = `{at}`. Written when mod access is connected (`connect=mods`, an invite signup that grants `moderation:read`, or `connect=1`), and also by an admin page view that finds a stored token without one. Expires after 20 years (the AuthStore accepts expiries up to 21 years for `channel:` and `modsconnected:` keys, 100 days for everything else).
+- `broadcaster:<login>` = the sealed Twitch token plus `touched` (ms). It is kept 90 days from its last use: every save refreshes the expiry, the hourly token validation re-saves it, and an admin page view re-saves it when `touched` is more than 7 days old. A 401 from Twitch renews the access token with the stored refresh token. If the record expires or the refresh fails, mod checks stop (`modsReady:false`).
+- `GET /api/admin/:channel` adds `modsReady` (the `broadcaster:<login>` record exists) and `modsLapsed` (`modsconnected:<login>` exists but `broadcaster:<login>` is gone). They are never both true. `modsLapsed` makes the admin page show "Expired" and "Reconnect mod access" instead of "Connect mod access" in Stream setup.
+- `OWNER_TWITCH_ID` is a text binding, nesszerra's public Twitch id `445610108`, declared for prod and test in `cloudflare.config.ts`. When it is set, `isOwner` compares the session user's id to it and ignores the `owner:nesszerra` record (which expires 90 days after the last sign-in). It is not declared when `cf dev` runs with `MINI_LOCAL_TEST=1` (the test server), where seeded sessions use owner id 900001 and the `owner:nesszerra` record decides. A plain `cf dev` without that flag does declare it.
 - An overlay on a paused or unknown channel draws nothing and reloads every 5 minutes. One that was
   already open when the channel was paused keeps running until OBS reloads it. StreamElements
   commands on a paused channel answer "Mini Chat is off on this channel right now."
@@ -209,9 +234,9 @@ chat action responses):
 
 Command grammar:
 ```
-/^!(duel|challenge|accept|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i
+/^!(duel|challenge|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i
 ```
-`challenge` is an alias of `duel`, and duel needs a target. `attack` uses the player's
+`challenge` is an alias of `duel`, `fight` is an alias of `accept`, and duel needs a target. `attack` uses the player's
 `defaultAbility`. The optional target is allowed on every command.
 
 Local testing: `cf dev` started with `MINI_LOCAL_TEST=1` (scripts/test-all.mjs does this) makes
@@ -243,24 +268,26 @@ Custom characters:
 
 ## 6. Game rules (game.js)
 
-- A duel starts with `!duel @user`. The target must `!accept` within `challengeTimeoutMs`, or the
-  challenge expires. Either side may `!decline`.
+- A duel starts with `!duel @user` (or `!challenge`). The target must `!accept` (or `!fight`) within `challengeTimeoutMs`, or the
+  challenge expires. Either side may `!decline`. Challenging someone who already challenged you accepts their challenge.
 - A player can be in at most 1 open duel, and the channel holds at most `maxDuels` open duels.
-- Abilities: `strike` and `heavy` deal `damage`; `heal` restores `amount`, capped at maxHp. Each
+- Quick duels are the default (`quickDuel:true`): accepting settles the duel at once (see the quick duel rule below). The HP fight described next runs only when a config sets `quickDuel:false`; no screen does that, so it takes an admin config call. StreamElements has no attack commands, so its duels are always quick.
+- HP fight abilities: `strike` and `heavy` deal `damage`; `heal` restores `amount`, capped at maxHp. Each
   ability has its own `cooldownMs`, plus a shared cooldown of `sharedCooldownMs` after any action.
 - The first player to reach 0 hp loses. The winner returns to maxHp. The loser is KO'd until
   `respawnAt = now + respawnMs`. Elo uses K=`eloK` from `initialElo`. The same pair cannot duel again
   for `rematchDelayMs`.
-- A quick duel (StreamElements `!fight`) is rolled at once: turns alternate, challenger first; a d6 per swing gives a crit of 50% maxHp on 6, a hit of 34% on 5, a miss on 3-4 and a defender counter of 34% on 1-2. After 12 rolls more hp wins; equal hp goes to sudden death (the next blow wins). A winner at full hp gets +3 Elo (flawless).
+- A quick duel (the default, and always the case for StreamElements commands) is rolled at once: turns alternate, challenger first; a d6 per swing gives a crit of 50% maxHp on 6, a hit of 34% on 5, a miss on 3-4 and a defender counter of 34% on 1-2. After 12 rolls more hp wins; equal hp goes to sudden death (the next blow wins). A winner at full hp gets +3 Elo (flawless).
 - An active duel with no action for `inactivityMs` is cancelled without scoring. Cancelled duels
   return both players to maxHp.
+- Upgrades (server/upgrades.js): every win earns one point, at most 10, spent on power (+4% damage dealt per point), guard (-4% damage taken) and luck (4% per point that a quick-duel miss lands as a hit), at most 5 each. Points can be moved while the fighter is not in a duel. Hats are cosmetic; some unlock at a number of wins.
 - Ranked play needs a saved profile (`ranked_sign_in_required`).
 - Reason codes: `active_player_cap`, `challenge_not_found`, `channel_full`,
   `config_version_conflict`, `config_version_not_found`, `cooldown` (+`retryAt`), `duel_not_found`,
   `duels_disabled`, `duplicate`, `invalid_ability`, `invalid_config*`, `invalid_event`,
   `missing_message_id`, `not_game_command`, `not_in_active_duel`, `not_in_duel`, `player_busy`,
   `profile_not_found`, `ranked_sign_in_required`, `chat_offline`, `rematch_cooldown` (+`retryAt`),
-  `respawning`, `self_duel`, `stale_command`, `target_not_found`, `unknown_subscription`,
+  `respawning`, `self_duel`, `stale_command`, `target_not_found`, `unknown_subscription`, `in_duel`, `invalid_profile`,
   `target_required`, `unauthorized`, `unknown_admin_action`, `unknown_config_field`, `wrong_opponent`.
 
 ## 7. Config and balance
@@ -268,22 +295,26 @@ Custom characters:
 | field | default | range |
 |---|---|---|
 | enabled | true | boolean |
+| quickDuel | true | boolean (true: accepting settles the duel at once; false: the HP fight) |
+| announce | "off" | "off", "top" or "bottom" (overlay duel banner) |
+| maxOnStream | 50 | 15 to 100 (characters walking on the overlay) |
 | maxHp | 100 | 1 to 1000 |
 | maxDuels | 5 | 1 to 5 |
 | challengeTimeoutMs | 30000 | 5000 to 300000 |
-| inactivityMs | 60000 | 10000 to 600000 |
+| inactivityMs | 45000 | 10000 to 600000 |
 | respawnMs | 3000 | 0 to 60000 |
 | rematchDelayMs | 30000 | 0 to 600000 |
 | sharedCooldownMs | 1000 | 250 to 60000 |
 | initialElo | 1000 | 0 to 10000 |
 | eloK | 24 | 1 to 100 |
-| abilities.strike | `{damage:10, cooldownMs:3000}` | damage 1 to 1000, cooldownMs 250 to 600000 |
-| abilities.heavy | `{damage:25, cooldownMs:8000}` | same as strike |
-| abilities.heal | `{amount:15, cooldownMs:10000}` | amount 1 to 1000, cooldownMs 250 to 600000 |
+| abilities.strike | `{damage:20, cooldownMs:2000}` | damage 1 to 1000, cooldownMs 250 to 600000 |
+| abilities.heavy | `{damage:35, cooldownMs:5000}` | same as strike |
+| abilities.heal | `{amount:15, cooldownMs:12000}` | amount 1 to 1000, cooldownMs 250 to 600000 |
 
-Values must be integers (except `enabled`). Unknown fields are rejected, except `relayLeaseMs`,
-which older history versions still carry; it is ignored so they can be rolled back. A patch may contain any
+Values must be integers (except `enabled` and `quickDuel`, which are booleans, and `announce`, which is text). Unknown fields are rejected, except `relayLeaseMs`,
+which belonged to the removed chat relay and which older history versions still carry; it is ignored (and dropped when a config is read) so those versions can still be rolled back. A patch may contain any
 subset of fields. Versioning works like this:
+- The first preset was strike 10 / heavy 25 / heal 15 with `inactivityMs` 60000. A channel still at `configVersion` 1 with exactly that config moves to the current defaults when its room loads; a channel whose config was edited keeps its values.
 - `configVersion` starts at 1. Each successful change increments it and stores a history row, and
   the last 200 versions are kept.
 - The dashboard should send `baseVersion` and, on a 409, reload and show the conflict.
@@ -342,7 +373,7 @@ npm run test:all           # everything below, in order (scripts/test-all.mjs)
   without printing it) and drives the overlay, dashboard, admin and dev pages.
 - The overlay draws the arena only with `arena=1` (the OBS URL from the setup page adds it).
 - Bindings: ASSETS, ROOMS, AUTH, `CF_VERSION_METADATA` (version metadata), `PUBLIC_ORIGIN`
-  (the EventSub callback and OAuth redirect origin) and the secrets
+  (the EventSub callback and OAuth redirect origin), `OWNER_TWITCH_ID` (text, nesszerra's Twitch id; left out under `MINI_LOCAL_TEST=1`) and the secrets
   `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET`, `INTERNAL_SECRET`. `GITHUB_TOKEN`,
   `GITHUB_REPO`, `CF_API_TOKEN` and `CF_ACCOUNT_ID` are optional secrets set with
   `wrangler secret put` (docs/LIVE_FIX.md); they are not declared, because declared secrets are

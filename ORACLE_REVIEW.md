@@ -1,3 +1,5 @@
+> v1-era record, kept for history. It advised on the first overlay, before v2 was built. For the current state read HANDOFF.md and VALIDATION_V2.md.
+
 # Temporary Oracle consultation
 Oracle skill + oracle-temporary-chat MCP; prompt-only temporary browser chat, no attached files. Session twitch-mini-v1-review completed with GPT-5.6 Sol, Extra High requested.
 

@@ -30,6 +30,10 @@ return {
       // and set with `wrangler secret put` once the repo exists; declaring them here would make them required (docs/LIVE_FIX.md).
       CF_VERSION_METADATA: bindings.versionMetadata(),
       PUBLIC_ORIGIN: bindings.text(origin),
+      // nesszerra's Twitch user id (public, not a secret): owner access no longer depends on the owner:nesszerra record,
+      // which expires 90 days after the last sign-in. Sign-in still refreshes that record. Not declared for the local
+      // test server, whose seeded sessions use their own owner id (tests/seed-local.mjs).
+      ...(localTest ? {} : { OWNER_TWITCH_ID: bindings.text('445610108') }),
       // Test site only: owner access for scripts/devtools.mjs (docs/DEVTOOLS.md). Production never declares it.
       ...(testing ? { DEV_TOOLS_TOKEN: bindings.secret() } : {}),
       // Test site only: chat comes from StreamElements alone; Connect chat (EventSub) is refused.

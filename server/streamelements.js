@@ -14,6 +14,16 @@ const MAX_REPLY = 380;   // StreamElements cuts responses at 400 bytes
 
 const reply = (body, status = 200) => new Response(String(body).slice(0, MAX_REPLY), { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 
+// Keys are 24 random bytes as hex (randomHex in server/channel.js). Anything else is refused without waking the room.
+export const SE_KEY = /^[a-f0-9]{48}$/;
+export const WRONG_KEY_TEXT = 'Mini Chat: wrong key. Copy the commands again from the admin page.';
+// Per-isolate memory of refused (channel, key) pairs: the first refusal reaches the room (it records rejected_at for the
+// admin page), repeats within REFUSED_MS are answered here with no Durable Object request (Free plan quota).
+const REFUSED_MS = 60000, REFUSED_MAX = 2000;
+const refused = new Map();
+export function forgetRefused() { refused.clear(); }
+const keyHash = async key => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))).slice(0, 16), x => x.toString(16).padStart(2, '0')).join('');
+
 // GET /api/se/<channel>/<action>. The per-channel key is the authentication; the room checks it.
 // channelState(channel) -> 'builtin' | 'on' | 'paused' | null (server/channels.js); tests may pass a channels list.
 export async function handleStreamElements(request, env, { url, origin, channels = [], channelState, roomFetch, dropSubscription }) {
@@ -21,13 +31,17 @@ export async function handleStreamElements(request, env, { url, origin, channels
   const m = SE_PATH.exec(url.pathname);
   if (!m) return reply('Unknown command', 404);
   const [, channel, action] = m;
-  const state = channelState ? await channelState(channel) : channels.includes(channel) ? 'builtin' : null;
-  if (state === 'paused') return reply(OFF_TEXT);
-  if (state !== 'builtin' && state !== 'on') return reply('Mini Chat is not enabled for this channel', 404);
+  // Cheap checks first: none of these touches AuthStore or a room.
   if (!SE_ACTIONS.includes(action)) return reply(LOST_TEXT);   // e.g. an old !attack/!strike/!heavy/!heal
   const q = name => (url.searchParams.get(name) || '').trim();
   const key = q('k');
   if (!key || key.length > 128) return reply('Mini Chat: missing key. Copy the commands again from the admin page.');
+  if (!SE_KEY.test(key)) return reply(WRONG_KEY_TEXT);
+  const now = Date.now(), pair = channel + ':' + await keyHash(key), hit = refused.get(pair);
+  if (hit && now - hit < REFUSED_MS) return reply(WRONG_KEY_TEXT);
+  const state = channelState ? await channelState(channel) : channels.includes(channel) ? 'builtin' : null;
+  if (state === 'paused') return reply(OFF_TEXT);
+  if (state !== 'builtin' && state !== 'on') return reply('Mini Chat is not enabled for this channel', 404);
   const body = {
     key,
     action,
@@ -40,6 +54,10 @@ export async function handleStreamElements(request, env, { url, origin, channels
   };
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
+  if (r.status === 403 && typeof data.reply === 'string') {   // the room refused the key: remember the pair
+    if (refused.size >= REFUSED_MAX) refused.clear();
+    refused.set(pair, Date.now());
+  }
   if (data.switchedFrom && dropSubscription) dropSubscription(data.switchedFrom);
   // always 200 so the bot shows the text; '' (a repeated message id) means post nothing
   return reply(typeof data.reply === 'string' ? data.reply : MISSED_TEXT);

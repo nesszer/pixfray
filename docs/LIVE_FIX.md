@@ -5,9 +5,11 @@ owner page (`/admin/dev/`) to fix the live game without a laptop build. The top 
 for inviting streamers and following their setup; the tools below are folded until opened. What's needed: which secrets to add, how a fix reaches production, and how
 to undo it.
 
-**Status on 2026-10-01:** the code is written and tested locally, but nothing has been deployed.
-No GitHub repo, `GITHUB_TOKEN`, Cloudflare API token or Actions secrets exist yet. Until they do,
-the GitHub and Cloudflare routes answer `501` with `reason: github_not_configured` or
+**Status on 2026-10-03:** the site is deployed (https://chat.miolaf.xyz), and the project's git
+`origin` is https://github.com/Finesssee/mini-chat.git. The flow below has only been tested
+against mocked APIs, and this file doesn't record whether `GITHUB_TOKEN`, the Cloudflare API
+token or the Actions secrets are set. Wherever one is missing, the GitHub and Cloudflare
+routes answer `501` with `reason: github_not_configured` or
 `cloudflare_not_configured`, and the page disables those buttons. Diagnostics, the error log, live
 settings work without any of them.
 
@@ -35,6 +37,18 @@ Merge that PR afterwards, or the next promote from `main` will undo the hotfix.
 
 Recent runs and the versions now serving are listed on the page. Every run name ends with a
 request id (`r` + 10 hex digits), so a click can be matched to its run.
+
+## Backups
+
+There is no automatic backup. Before a risky change, open the owner page (`/admin/dev/`) and
+download the data:
+- **Export** on a channel row: that channel's fighters, ranks, config and config history, the
+  metadata of its custom characters (not their images) and the names of its StreamElements
+  commands (`mini-chat-<login>-<date>.json`).
+- **Export channel list**: the channels that are on and the invites (`mini-chat-channels-<date>.json`).
+  Invite tokens are left out.
+
+Neither file holds StreamElements keys or Twitch tokens. A paused channel can still be exported.
 
 ## Settings to add
 

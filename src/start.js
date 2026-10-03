@@ -6,6 +6,16 @@ const params = new URLSearchParams(location.search);
 const token = params.get("invite") || "";
 const error = params.get("error") || "";
 
+// The overlay lays fighters out in the pixels it gets. Below 640px wide the stage renders it at 640 and scales it down,
+// so the nameplates keep the room they need instead of piling up.
+const stage = $(".stage"), frame = stage.querySelector("iframe");
+function fitStage() {
+  const w = stage.clientWidth, v = Math.max(w, 640);
+  Object.assign(frame.style, { width: v + "px", height: Math.round(v * 9 / 16) + "px", transform: "scale(" + w / v + ")", transformOrigin: "0 0" });
+}
+new ResizeObserver(fitStage).observe(stage);
+fitStage();
+
 const PROBLEMS = {
   invalid: () => "This invite link isn't valid. Check that you copied the whole link, or ask nesszerra for a new one.",
   expired: () => "This invite has expired. Invites work for 7 days; ask nesszerra for a new one.",

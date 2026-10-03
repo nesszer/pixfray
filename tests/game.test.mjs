@@ -521,14 +521,14 @@ test('StreamElements: a bare command sends t=- and reaches the room with no targ
   const { handleStreamElements, seCommandLines } = await import('../server/streamelements.js');
   assert.match(seCommandLines('https://x', 'nesszerra', 'k1')[1].response, /t=\$\(queryescape \$\(1\|-\)\)/);
   let sent;
-  const url = new URL('https://x/api/se/nesszerra/accept?k=k1&id=2&u=bob&d=bob&t=-&m=1');
+  const url = new URL('https://x/api/se/nesszerra/accept?k=' + 'b2'.repeat(24) + '&id=2&u=bob&d=bob&t=-&m=1');
   await handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async (c, p, init) => { sent = JSON.parse(init.body); return Response.json({ reply: 'ok' }); } });
   assert.equal(sent.target, '');
 });
 
 test('StreamElements: an empty room reply (repeated message id) posts nothing; a missing one says something went wrong', async () => {
   const { handleStreamElements } = await import('../server/streamelements.js');
-  const url = new URL('https://x/api/se/nesszerra/accept?k=k1&id=2&u=bob&d=bob&t=-&m=1');
+  const url = new URL('https://x/api/se/nesszerra/accept?k=' + 'b2'.repeat(24) + '&id=2&u=bob&d=bob&t=-&m=1');
   const call = (body) => handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async () => Response.json(body) }).then((r) => r.text());
   assert.equal(await call({ reply: '' }), '');
   assert.equal(await call({}), "That move didn't land. Try again in a moment!");
@@ -536,7 +536,7 @@ test('StreamElements: an empty room reply (repeated message id) posts nothing; a
 
 test('StreamElements: when the room switches over from a Twitch subscription, the Worker is asked to delete it', async () => {
   const { handleStreamElements } = await import('../server/streamelements.js');
-  const url = new URL('https://x/api/se/nesszerra/decline?k=k1&id=2&u=bob&d=bob&t=-&m=1');
+  const url = new URL('https://x/api/se/nesszerra/decline?k=' + 'b2'.repeat(24) + '&id=2&u=bob&d=bob&t=-&m=1');
   const dropped = [];
   const call = (body) => handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async () => Response.json(body), dropSubscription: (id) => dropped.push(id) }).then((r) => r.text());
   assert.equal(await call({ reply: 'hi', switchedFrom: 'sub-1' }), 'hi');

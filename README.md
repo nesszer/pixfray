@@ -1,7 +1,7 @@
 # Mini Chat
-Open-source Twitch mini-character overlay for nesszerra. Transparent Canvas rendering, five free Kenney characters, local appearance preferences, reconnect, and demo mode.
+Open-source Twitch mini-character overlay for nesszerra and other channels. Transparent Canvas rendering, 56 free CC0 characters, chat duels with Elo ranks, and demo mode.
 
-Live: https://chat.miolaf.xyz
+Live: https://chat.miolaf.xyz (deployed on Cloudflare Workers Free; the test site is test.chat.miolaf.xyz)
 
 OBS: https://chat.miolaf.xyz/overlay.html?channel=nesszerra&size=64&cap=50
 
@@ -10,31 +10,34 @@ Requires Node 22.18+. Run `npm install` then `npm run dev`. Open http://127.0.0.
 
 Commands:
 - `!jump` — jump with a 3-second cooldown.
-- `!avatar adventurer` — IDs: adventurer, female, player, soldier, zombie.
+- `!avatar adventurer` — IDs: adventurer, female, player, soldier, zombie (the five characters of this first overlay; the dashboard offers all 56).
 - `!color #ff8844` — nameplate color.
 
 First chat message spawns a character; 10 minutes of inactivity hides it. Appearance persists in that OBS browser's localStorage, not across devices.
 
 Query options: channel, demo=1, debug=1, cap=1..100, size=32..96.
 
-## V2 (local, not deployed yet)
-The working tree also holds v2. It adds:
+## V2 (deployed)
+V2 replaced v1 on https://chat.miolaf.xyz on 2026-10-01. The commands above are the v1 overlay; v2 adds:
 - Twitch sign-in profiles and a viewer dashboard (`/`).
 - Mod controls with a versioned balance editor (`/admin/`).
 - An owner page (`/admin/dev/`): invite streamers, follow their setup, read error logs, and folded developer tools.
 - Shared server-decided duels on the overlay (add `arena=1`).
-- 15 Kenney CC0 characters and custom character uploads.
-- Chat through a Twitch EventSub webhook to the Worker, so nothing runs on the OBS PC. The owner
-  signs in with `/auth/login?connect=1` and clicks Connect chat on `/admin/` (TWITCH_SETUP.md).
+- 56 CC0 characters (Kenney, pzUH, Sogomn) and custom character uploads (up to 24 per channel).
+- Chat through a Twitch EventSub webhook to the Worker (nesszerra only) or through StreamElements custom
+  commands (every other channel), so nothing runs on the OBS PC. The owner signs in with
+  `/auth/login?connect=1` and clicks Connect chat on `/admin/` (TWITCH_SETUP.md).
 
 Chat commands for v2 duels:
 - `!challenge @viewer`, then `!fight` (or `!accept`) or `!decline`. Use `!fight` with StreamElements, whose Duel module owns `!accept`.
-- Accepting rolls the duel at once. Fighters take turns, challenger first, and each swing is a d6:
+- Accepting rolls the duel at once (quick duels, the default). Fighters take turns, challenger first, and each swing is a d6:
   6 crits for 50, 5 hits for 34, 3-4 misses, and on 1-2 the defender counters for 34. Both start
   at 100 HP. After 12 rolls the fighter with more HP wins; equal HP goes to sudden death, where
   the next blow wins. A winner who took no damage gets +3 Elo on top. The bot replies at once, for
   example "A beats B in 4 rolls (66 HP left). Elo: A 1012, B 988.", and the overlay replays the
-  duel in about 8-12 s. The default ability only changes how blows look.
+  duel in about 8-12 s. The default ability only changes how blows look. Each win earns an upgrade point
+  (power, guard, luck) and unlocks hats; see CONTRACTS.md section 6. The HP fight with `!strike`,
+  `!heavy` and `!heal` runs only if a mod's config sets `quickDuel` to false.
 - Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).
 
 Adding a streamer: on `/admin/dev` (Channels), type their Twitch login and send them the invite
@@ -58,14 +61,14 @@ port and the local state folder.
 
 ## Cloudflare
 `cf auth login`, `npm run build`, `npm run deploy`.
-Live v1 is an assets-only Worker on Workers Free. V2 adds two SQLite Durable Objects (ChannelRoom, AuthStore), still on Workers Free with no paid products.
+The live site is one Worker on Workers Free with two SQLite Durable Objects (ChannelRoom, AuthStore) and no paid products. Prod is `nesszerra-mini-chat`; the test site is `nesszerra-mini-chat-test` (`npm run deploy -- --mode test`).
 
 ## Alpha boundary
 Uses anonymous read-only Twitch IRC over WebSocket. Real anonymous connection to #nesszerra was verified during development. Twitch documents token-based IRC authentication and recommends EventSub/API; anonymous access may change. public/chat.js isolates that adapter for later replacement.
 
-The live v1 has no shared viewer editor, moderator dashboard or combat. Those are in v2 above, which uses SQLite Durable Objects on Workers Free.
+The overlay still joins chat over anonymous read-only IRC (unless `demo=1`) to show who is chatting. Duels, ranks and the commands for them go through the Worker.
 
 ## License
 MIT software; CC0 character artwork. See ASSET_LICENSES.md. No Twitch/OBS credentials are included.
 
-See VALIDATION.md for verification and ORACLE_REVIEW.md for second-model consultation.
+VALIDATION_V2.md is the current verification record and HANDOFF.md the current state. VALIDATION.md and ORACLE_REVIEW.md are v1-era records kept for history.

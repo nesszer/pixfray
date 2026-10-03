@@ -38,17 +38,20 @@
       <section class="summary" aria-live="polite">
         <h2 id="summary-title">Loading arena state…</h2>
         <p id="summary-text"></p>
-        <div class="toolbar">
-          <button class="btn btn-primary" id="open-chat-setup" type="button" hidden>Open stream setup</button>
-          <button class="btn btn-primary" id="toggle-duels" type="button">Pause duels</button>
-          <button class="btn" id="reset-health" type="button">Reset everyone's health</button>
-          <button class="btn" id="reset-round" type="button">Cancel open duels and restart rounds</button>
-        </div>
-        <p class="status" id="action-status" role="status"></p>
+        <div class="toolbar"><button class="btn btn-primary" id="open-chat-setup" type="button" hidden>Open stream setup</button></div>
         <p class="small" id="setup-next" hidden></p>
       </section>
       <section class="section" aria-label="Arena numbers">
         <div class="stat-strip" id="stats"></div>
+      </section>
+      <section class="section moderation" aria-labelledby="moderation-title">
+        <h2 id="moderation-title">Moderation</h2>
+        <div class="toolbar">
+          <button class="btn" id="toggle-duels" type="button">Pause duels</button>
+          <button class="btn" id="reset-health" type="button">Reset everyone's health</button>
+          <button class="btn" id="reset-round" type="button">Cancel open duels and restart rounds</button>
+        </div>
+        <p class="status" id="action-status" role="status"></p>
       </section>
       <section class="section" aria-labelledby="duels-title">
         <h2 id="duels-title">Open duels</h2>
@@ -86,7 +89,7 @@
     <div role="tabpanel" id="panel-rules" aria-labelledby="tab-rules" tabindex="0" hidden>
       <section class="section" aria-labelledby="config-title">
         <h2 id="config-title">Rules: every save becomes a new version you can revert</h2>
-        <p class="muted small">Duels already running keep the rules they started with. Quick duels use only max health, timing and ranking; the ability values apply to the HP fight.</p>
+        <p class="muted small">Duels already running keep the rules they started with. Quick duels use max health, timing and ranking.</p>
         <form id="config-form" novalidate>
           <div id="config-fields"></div>
           <div class="section"><label for="config-note">Note for the history (optional)</label><input id="config-note" maxlength="200" placeholder="Why this change"></div>
@@ -112,7 +115,6 @@
           <figure class="chart">
             <div class="title" id="usage-title">Custom character usage</div>
             <div class="bars" id="usage-bars"></div>
-            <figcaption>Limits: PNG only, 24 frames, 128 × 128 px per frame, 1.5 MB per atlas, 24 characters per channel.</figcaption>
           </figure>
           <div class="small muted" id="custom-list"></div>
         </div>

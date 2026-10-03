@@ -26,8 +26,8 @@ export class AuthStore extends DurableObject {
     }
     if(request.method==='POST'){
       const {value,expires}=await request.json();
-      // Channel registry rows live ~20 years; everything else at most 100 days.
-      if(!Number.isFinite(expires)||expires>Date.now()+(key.startsWith('channel:')?21*365:100)*86400000)return Response.json({error:'Invalid expiry'},{status:400});
+      // Channel registry rows and the modsconnected markers live ~20 years; everything else at most 100 days.
+      if(!Number.isFinite(expires)||expires>Date.now()+(/^(channel|modsconnected):/.test(key)?21*365:100)*86400000)return Response.json({error:'Invalid expiry'},{status:400});
       if(JSON.stringify(value).length>20000)return Response.json({error:'Record too large'},{status:413});
       sql.exec('INSERT INTO entries(key,value,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,expires=excluded.expires',key,JSON.stringify(value),expires);
       await this.ctx.storage.setAlarm(Date.now()+3600000);
@@ -45,6 +45,14 @@ export async function record(env,key,value,expires){
   const res=await stub.fetch('https://auth/entry?key='+encodeURIComponent(key),{method:value===undefined?'GET':value===null?'DELETE':'POST',headers:{'X-Mini-Internal':env.INTERNAL_SECRET,'Content-Type':'application/json'},...(value!==undefined&&value!==null?{body:JSON.stringify({value,expires})}:{})});
   if(!res.ok)throw new Error('Auth storage unavailable');return res.json();
 }
+// Broadcaster token (Helix moderator checks): kept 90 days from its last use. `touched` sits beside the sealed fields, so
+// a successful check or an admin page view can push the expiry out without opening the token.
+const TOKEN_MS=90*86400000, TOUCH_MS=7*86400000, MARKER_MS=20*365*86400000;
+export const keepBroadcaster=(env,channel,sealed)=>record(env,'broadcaster:'+channel,{...sealed,touched:Date.now()},Date.now()+TOKEN_MS);
+export const touchBroadcaster=(env,channel,sealed)=>Date.now()-(sealed?.touched||0)>TOUCH_MS?keepBroadcaster(env,channel,sealed):null;
+// modsconnected:<login> = {at}: written whenever mod access is connected and never expires, so the admin page can tell
+// "never connected" from "connected, but the token lapsed" (modsLapsed).
+export const markModsConnected=(env,channel)=>record(env,'modsconnected:'+channel,{at:Date.now()},Date.now()+MARKER_MS);
 export async function consume(env,key){
   const stub=env.AUTH.get(env.AUTH.idFromName('auth'));
   const r=await stub.fetch('https://auth/consume?key='+encodeURIComponent(key),{method:'POST',headers:{'X-Mini-Internal':env.INTERNAL_SECRET}});
@@ -133,18 +141,18 @@ export async function handleAuth(request,env){
     if(user.id!==owner.id)return Response.json({error:'Only nesszerra can connect broadcaster authorization'},{status:403});
     const missing=CONNECT_SCOPES.filter(x=>!validation.scopes?.includes(x));
     if(missing.length)return Response.json({error:'Twitch permissions were not granted: '+missing.join(', ')+'. Restart at /auth/login?connect=1.'},{status:403});
-    await record(env,'broadcaster:nesszerra',await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}),Date.now()+90*86400000);
+    await keepBroadcaster(env,'nesszerra',await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,'nesszerra');
   }
   const modScope=validation.scopes?.includes('moderation:read');
   if(pending.invite){
     try{await claimInvite(env,pending.invite,user);}
     catch(e){if(!e.reason)throw e;return startPage(pending.invite,e.reason);}
-    if(pending.mods&&modScope)await record(env,'broadcaster:'+pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}),Date.now()+90*86400000);
+    if(pending.mods&&modScope){await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);}
   }
   if(pending.connectMods){
     if(String(user.login).toLowerCase()!==pending.channel)return adminPage(pending.channel,'mods=wrong_account');
     if(!modScope)return adminPage(pending.channel,'mods=denied');
-    await record(env,'broadcaster:'+pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}),Date.now()+90*86400000);
+    await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);
   }
   const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);
   const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel&&pending.channel!=='nesszerra'?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectMods?'&mods=connected':'')+(pending.invite||pending.connectMods?'#chat':'');
@@ -178,11 +186,11 @@ export async function access(env,user,channel){
     if(r.status===401){await renew();r=await fetch('https://id.twitch.tv/oauth2/validate',{headers:{Authorization:'OAuth '+token.access_token}});}
     if(!r.ok)throw new Error('Twitch authorization unavailable');
     const v=await r.json();if(v.user_id!==token.userId||v.client_id!==env.TWITCH_CLIENT_ID||!v.scopes?.includes('moderation:read'))throw new Error('Broadcaster authorization is invalid');
-    token.validatedAt=Date.now();await record(env,'broadcaster:'+channel,await seal(env,token),Date.now()+90*86400000);
+    token.validatedAt=Date.now();await keepBroadcaster(env,channel,await seal(env,token));
   }
   const checkMod=()=>fetch('https://api.twitch.tv/helix/moderation/moderators?broadcaster_id='+token.userId+'&user_id='+encodeURIComponent(user.id),{headers:authHeaders()});
   let r=await checkMod();
-  if(r.status===401){await renew();await record(env,'broadcaster:'+channel,await seal(env,token),Date.now()+90*86400000);r=await checkMod();}
+  if(r.status===401){await renew();await keepBroadcaster(env,channel,await seal(env,token));r=await checkMod();}
   if(!r.ok)throw new Error('Current moderator role cannot be verified');
   const moderator=(await r.json()).data?.some(x=>x.user_id===user.id)||false;
   await record(env,cacheKey,moderator,Date.now()+60000);

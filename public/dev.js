@@ -218,8 +218,26 @@ $('#save-config').addEventListener('click', (e) => busy(e.currentTarget, async (
 async function loadChannels() {
   const r = await api('/api/dev/channels');
   if (!r.ok) { rows('#channels', [], errorText(r, 'Channels unavailable'), 7); rows('#invites', [], '–', 4); return; }
-  S.progress = r.data.progress || {};
+  S.progress = {};
   renderChannels(r.data);
+  loadProgress(r.data);
+}
+// Setup progress is one room read per channel, so the server answers for 40 channels at a time (the Free plan
+// allows 50 subrequests per request). Rows fill in as each batch arrives; a newer load cancels an older one.
+async function loadProgress(d, only) {
+  const size = d.progressBatch || 40, run = only ? S.progressRun : S.progressRun = (S.progressRun || 0) + 1;
+  const logins = only || [...d.builtin, ...d.channels.filter((c) => !c.pausedAt).map((c) => c.login)];
+  if (!only) { S.progressTotal = logins.length; S.progressSeen = 0; S.progressLoading = true; }
+  for (let i = 0; i < logins.length; i += size) {
+    const r = await api('/api/dev/progress?logins=' + logins.slice(i, i + size).join(','));
+    if (run !== S.progressRun) return;
+    if (r.ok) Object.assign(S.progress, r.data.progress);
+    else status('#invite-status', errorText(r, 'Could not read setup progress'), 'error');
+    if (!only) S.progressSeen = Math.min(i + size, logins.length);
+    if (i + size < logins.length) renderChannels(S.channels);
+  }
+  if (!only) S.progressLoading = false;
+  renderChannels(S.channels);
 }
 function channelAction(action, login, button) {
   if (action === 'pause' && !confirm('Turn Mini Chat off on ' + login + '? The overlay, commands and viewer page stop; fighters and ranks are kept.')) return;
@@ -228,6 +246,7 @@ function channelAction(action, login, button) {
     if (!r.ok) return status('#invite-status', errorText(r, 'Could not change ' + login), 'error');
     status('#invite-status', login + (action === 'pause' ? ' is off.' : ' is on.'), 'ok');
     renderChannels(r.data);
+    if (action === 'resume') loadProgress(r.data, [login]);
   });
 }
 async function revoke(invite, button) {
@@ -252,6 +271,7 @@ function chatCell(p) {
   return p.commandsWorking + ' of ' + p.commands + ' commands working';
 }
 function renderChannels(d) {
+  S.channels = d;
   $('#channels-max').textContent = d.max;
   const admin = (login) => h('a', { href: '/admin/?channel=' + login + '#chat' }, login);
   const row = (login, state, c) => {
@@ -262,12 +282,14 @@ function renderChannels(d) {
       h('td', {}, p ? (p.overlays ? p.overlays + ' open' : 'Not open') : '–'),
       h('td', {}, chatCell(p)),
       h('td', {}, p ? ago(Math.max(p.lastCommandAt, p.lastChatAt)) : c?.pausedAt ? 'Off since ' + fmtTime(c.pausedAt) : '–'),
-      h('td', {}, c ? h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => channelAction(c.pausedAt ? 'resume' : 'pause', c.login, e.currentTarget) }, c.pausedAt ? 'Turn on' : 'Turn off') : null));
+      h('td', {}, h('div', { class: 'toolbar' },
+        c ? h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => channelAction(c.pausedAt ? 'resume' : 'pause', c.login, e.currentTarget) }, c.pausedAt ? 'Turn on' : 'Turn off') : null,
+        h('a', { class: 'btn btn-small', href: '/api/dev/export?channel=' + encodeURIComponent(login), download: '', 'aria-label': 'Export ' + login }, 'Export'))));
   };
   rows('#channels', [...d.builtin.map((login) => row(login, 'builtin')), ...d.channels.map((c) => row(c.login, c.pausedAt ? 'off' : 'on', c))], 'No channels.', 7);
   const on = d.builtin.length + d.channels.filter((c) => !c.pausedAt).length;
   const done = Object.values(S.progress).filter((p) => setupOf(p) === 3).length, waiting = d.invites.filter((i) => i.status === 'valid').length;
-  $('#channels-title').textContent = on + (on === 1 ? ' channel is on' : ' channels are on') + ', ' + done + ' with setup done right now';
+  $('#channels-title').textContent = on + (on === 1 ? ' channel is on' : ' channels are on') + ', ' + done + ' with setup done right now' + (S.progressLoading ? ' (checked ' + S.progressSeen + ' of ' + S.progressTotal + ' so far)' : '');
   $('#channels-text').textContent = (waiting ? waiting + (waiting === 1 ? ' invite is' : ' invites are') + ' waiting to be used. ' : '') +
     'Setup counts as done while the overlay is open in OBS and the duel commands work, so streamers who are live right now show up as done.';
   const label = { valid: 'Waiting', used: 'Used', expired: 'Expired' };

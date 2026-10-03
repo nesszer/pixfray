@@ -178,14 +178,14 @@ try {
     const { context, page } = await newPage(s);
     page.on('dialog', (d) => d.accept());
     const posts = [];
-    let version = 3, conflictNext = false, reconnectNext = true;
+    let version = 3, conflictNext = false, reconnectNext = true, quickOff = false;   // quickOff: the HP-fight abilities only matter when config.quickDuel is false
     let chatStatus = { connected: true, status: 'enabled', subscriptionId: 'sub-1', createdAt: now - 86400000, lastNotificationAt: now - 4000, lastRevocationReason: '', checkedAt: now - 600000 };
     const history = () => [
       { version: 3, config: { ...config, abilities: { ...config.abilities, heavy: { damage: 35, cooldownMs: 5000 } } }, actorId: mod.id, at: now - 600000, note: 'back to preset' },
       { version: 2, config: { ...config, abilities: { ...config.abilities, heavy: { damage: 30, cooldownMs: 5000 } } }, actorId: '3003', at: now - 3600000, note: 'heavier heavy' },
       { version: 1, config, actorId: 'system', at: now - 86400000, note: '' },
     ];
-    const snapshot = () => ({ type: 'snapshot', channel: 'nesszerra', revision: 40 + posts.length, paused: false, chat: { connected: true, lastSeen: now - 4000, status: 'enabled' }, config, configVersion: version, round: 7,
+    const snapshot = () => ({ type: 'snapshot', channel: 'nesszerra', revision: 40 + posts.length, paused: false, chat: { connected: true, lastSeen: now - 4000, status: 'enabled' }, config: quickOff ? { ...config, quickDuel: false } : config, configVersion: version, round: 7,
       players: [
         { ...board[0], hp: 62, lastSeen: now - 20000, registered: true, respawnAt: 0 },
         { ...board[1], hp: 85, lastSeen: now - 5000, registered: true, respawnAt: 0 },
@@ -229,6 +229,13 @@ try {
     for (const jargon of ['state revision', 'Rules version', 'Live-fix']) assert.ok(!liveText.includes(jargon), 'no "' + jargon + '" on the Live tab');
     assert.ok(!/round/i.test(headline.join(' ')), 'no global round number in the summary');
     assert.match(await page.locator('#stats').textContent(), /Twitch chat\s*Connected/);
+    assert.match(await page.locator('#stats').textContent(), /Duels\s*On\s*accepting commands/);
+    // the summary holds at most the one primary action; the moderation buttons sit in their own section below the stats
+    assert.equal(await page.locator('.summary #toggle-duels, .summary #reset-health, .summary #reset-round').count(), 0, 'moderation buttons are not in the summary');
+    assert.equal(await page.locator('.summary .btn-primary:visible').count(), 0, 'no primary action while chat works');
+    assert.deepEqual(await page.locator('#panel-live .moderation button').evaluateAll((b) => b.map((x) => x.id)), ['toggle-duels', 'reset-health', 'reset-round']);
+    assert.equal(await page.locator('#moderation-title').textContent(), 'Moderation');
+    assert.ok(await page.locator('.moderation').evaluate((n) => n.getBoundingClientRect().top > document.querySelector('#stats').getBoundingClientRect().bottom), 'Moderation comes after the stats');
     assert.match(await page.locator('#meta').textContent(), /^Signed in as (the broadcaster|a moderator)\.$/);
     assert.equal(await page.locator('#panel-chat').isHidden(), true, 'only the Live tab shows at first');
     await page.click('#tab-chat');
@@ -256,6 +263,8 @@ try {
       await page.waitForFunction(() => document.querySelector('#summary-title').textContent === 'Waiting for chat');
       assert.equal(await page.locator('#open-chat-setup').isVisible(), true);
       assert.equal(await page.locator('#toggle-duels.btn-primary').count(), 0, 'one primary action');
+      assert.equal(await page.locator('.summary .btn-primary:visible').count(), 1, 'the summary holds just the primary action');
+      assert.match(await page.locator('#stats').textContent(), /Duels\s*Waiting\s*for chat/, 'Duels are not "On" while chat is down');
       await page.click('#open-chat-setup');
       assert.equal(await page.locator('#tab-chat').getAttribute('aria-selected'), 'true');
     }
@@ -268,6 +277,18 @@ try {
       await page.click('#tab-' + tab);
       assert.equal(await page.locator('#panel-' + tab).isVisible(), true, tab + ' panel shows');
       assert.equal(await page.locator('[role=tabpanel]:visible').count(), 1, 'one panel at a time');
+      if (tab === 'characters') {
+        const text = await page.locator('#panel-characters').innerText(), count = (re) => (text.match(re) || []).length;
+        assert.equal(count(/custom character slots used/g), 1, 'slot usage appears once on the Characters tab');
+        assert.ok(count(/PNG only/g) <= 1 && count(/characters per channel/g) <= 1, 'upload limits appear once');
+        assert.ok(count(/1.5 MB|1.50 MB/g) <= 1, 'the atlas size limit appears once');
+      }
+      if (tab === 'rules') {
+        assert.equal(await page.locator('#config-fields .config-group:visible').count(), 2, 'only the groups that apply show');
+        assert.equal(await page.locator('#cfg-abilities-strike-damage').count(), 1, 'the HP fight inputs stay in the form');
+        assert.equal(await page.locator('#cfg-abilities-strike-damage').isVisible(), false, 'HP fight abilities are hidden unless quick duels are off');
+        assert.ok(!/ability values apply/.test(await page.locator('#panel-rules').innerText()));
+      }
       await noOverflow(page, 'admin ' + role + ' ' + s.name + ' ' + tab);
       await page.screenshot({ path: shots + '/admin-' + role + '-' + s.name + (tab === 'live' ? '' : '-' + tab) + '.png', fullPage: true });
     }
@@ -306,6 +327,18 @@ try {
     // config: invalid value blocks save, valid value saves only the changed field
     await page.click('#tab-rules');
     assert.equal(await page.locator('#history').isVisible(), false, 'version history starts collapsed');
+    // hidden HP-fight inputs still round trip: saving another field sends only that field
+    await page.locator('#cfg-maxHp').fill('120');
+    await page.locator('#config-save').click();
+    await page.waitForFunction(() => document.querySelector('#config-status').textContent.startsWith('Saved as version'));
+    assert.deepEqual(posts.at(-1).payload.patch, { maxHp: 120 });
+    // with quick duels off the HP-fight group shows
+    quickOff = true;
+    await page.reload();
+    await page.waitForSelector('#app:not([hidden])');
+    await page.click('#tab-rules');
+    assert.equal(await page.locator('#config-fields .config-group:visible').count(), 3);
+    assert.match(await page.locator('#config-fields .config-group:visible').last().locator('legend').textContent(), /HP fight abilities/);
     const strike = page.locator('#cfg-abilities-strike-damage');
     await strike.fill('5000');
     assert.equal(await page.locator('#config-save').isDisabled(), true);
@@ -403,6 +436,19 @@ try {
     assert.match(await page.locator('#check-commands').textContent(), /2 of 6 commands have reached Mini Chat\. Not used yet: !accept, !top, !elo, !help\./);
     assert.match(await page.locator('#check-mods').textContent(), /Done.*moderators of nesszerra can sign in/s);
     assert.deepEqual(await page.locator('#se-table [data-seen]').allTextContents(), ['Working · 2 min ago', 'Not used yet', 'Working · 2 min ago', 'Not used yet', 'Not used yet', 'Not used yet']);
+    // the command table uses the full step width: badges stay on one line, nothing is cut off, narrow screens scroll inside the wrap
+    const wrap = page.locator('#se-table').locator('xpath=..'), wrapBox = await wrap.boundingBox();
+    for (const b of await page.locator('#se-table [data-seen] .badge').all()) assert.ok((await b.boundingBox()).height < 28, 'status badge on one line at ' + s.name);
+    const lastCell = await page.locator('#se-table tbody tr').first().locator('td').last().boundingBox();
+    if (s.name === '1280') {
+      assert.ok(wrapBox.width > 800, 'table is wider than the reading column, got ' + wrapBox.width);
+      assert.ok(await wrap.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), 'table is not clipped at 1280');
+      assert.ok(lastCell.x + lastCell.width <= wrapBox.x + wrapBox.width + 1, 'Response to paste column fits');
+      const prose = await page.locator('#se-setup > ol').boundingBox();
+      assert.ok(prose.width <= 720, 'step prose stays at reading width, got ' + prose.width);
+    } else {
+      assert.ok(await wrap.evaluate((n) => n.scrollWidth > n.clientWidth), 'table scrolls inside its wrap at 390');
+    }
     await noOverflow(page, 'setup checklist ' + s.name);
     await page.locator('#setup-check').screenshot({ path: shots + '/admin-checklist-' + s.name + '.png' });
     // tick the Duel module box; then an overlay connects and !fight arrives, and the next refresh finishes setup
@@ -415,6 +461,51 @@ try {
     assert.match(await page.locator('#check-overlay').textContent(), /1 overlay is connected right now/);
     assert.equal(await page.locator('#setup-next').isHidden(), true);
     await context.close();
+  }
+  // 7b. Step 4 "Let your moderators help" reads differently for the broadcaster, the site owner on another channel, and a moderator.
+  {
+    const owner = { id: '9009', login: 'nesszerra', displayName: 'nesszerra' }, newstreamer = { id: '5505', login: 'newstreamer', displayName: 'NewStreamer' };
+    const ownerAccess = { owner: true, moderator: false, canManage: true }, broadcasterAccess = { owner: false, broadcaster: true, moderator: false, canManage: true };
+    const reconnect = '/auth/login?channel=newstreamer&connect=mods';
+    const cases = [
+      { name: 'owner, not connected', channel: 'miolafff', session: owner, owner: true, access: ownerAccess, extra: { modsReady: false },
+        text: /^Mod access isn't connected\. miolafff has to connect it from their own Stream setup page\.$/, badge: 'Optional', link: null },
+      { name: 'owner, connected', channel: 'miolafff', session: owner, owner: true, access: ownerAccess, extra: { modsReady: true },
+        text: /^Twitch moderators of miolafff can sign in and use this page\.$/, badge: 'Done', link: null },
+      { name: 'owner, expired', channel: 'miolafff', session: owner, owner: true, access: ownerAccess, extra: { modsReady: false, modsLapsed: true },
+        text: /^Mod access expired\. miolafff has to reconnect it from their own Stream setup page\.$/, badge: 'Expired', link: null },
+      { name: 'broadcaster, not connected', channel: 'newstreamer', session: newstreamer, owner: false, access: broadcasterAccess, extra: { modsReady: false },
+        text: /^Your Twitch moderators can't sign in yet\. Mini Chat needs permission to read your moderator list\. Connect mod access$/, badge: 'Optional', link: ['Connect mod access', reconnect] },
+      { name: 'broadcaster, expired', channel: 'newstreamer', session: newstreamer, owner: false, access: broadcasterAccess, extra: { modsReady: false, modsLapsed: true },
+        text: /^Mod access expired, so your Twitch moderators can't sign in until you reconnect it\. Reconnect mod access$/, badge: 'Expired', link: ['Reconnect mod access', reconnect] },
+      { name: 'moderator, not connected, duels paused', channel: 'miolafff', session: mod, owner: false, access: { owner: false, moderator: true, canManage: true }, extra: { modsReady: false }, paused: true,
+        text: /^Mod access isn't connected\. Ask miolafff to connect it\.$/, badge: 'Optional', link: null },
+    ];
+    for (const c of cases) for (const s of sizes) {
+      const { context, page } = await newPage(s);
+      const ch = c.channel;
+      await page.route('**/api/session', (r) => json(r, { user: c.session, owner: c.owner, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+      await page.route('**/api/access/' + ch, (r) => json(r, c.access));
+      await page.route('**/api/leaderboard/' + ch, (r) => json(r, []));
+      await page.route('**/api/assets/' + ch, (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
+      await page.route('**/api/admin/' + ch, (r) => json(r, { type: 'snapshot', channel: ch, revision: 1, paused: false, chat: { connected: false, lastSeen: 0, status: 'disconnected' }, config: { ...config, enabled: !c.paused }, configVersion: 1, round: 1, players: [], duels: [], events: [],
+        chatStatus: { connected: false, status: 'disconnected', subscriptionId: '', createdAt: 0 }, history: [{ version: 1, config, actorId: 'system', at: now, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 },
+        streamelements: null, overlays: 0, channelState: 'on', ...c.extra, access: c.access }));
+      await page.goto(base + '/admin/?channel=' + ch + '#chat');
+      await page.waitForSelector('#app:not([hidden])');
+      await page.waitForFunction(() => document.querySelector('#check-mods [data-detail]').textContent.length > 0);
+      const detail = (await page.locator('#check-mods [data-detail]').textContent()).trim();
+      assert.match(detail, c.text, c.name + ' ' + s.name);
+      assert.ok(!/Only \w+ can open this page/.test(detail), c.name + ': the old wording is gone');
+      assert.equal(await page.locator('#check-mods [data-badge]').textContent(), c.badge, c.name + ' badge');
+      if (c.link) {
+        assert.equal(await page.locator('#check-mods a').textContent(), c.link[0]);
+        assert.equal(await page.locator('#check-mods a').getAttribute('href'), c.link[1]);
+      } else assert.equal(await page.locator('#check-mods a').count(), 0, c.name + ': no connect link for this viewer');
+      if (c.paused) { await page.click('#tab-live'); assert.match(await page.locator('#stats').textContent(), /Duels\s*Paused\s*commands ignored/); }
+      if (s.name === '1280' && /owner, not/.test(c.name)) await page.locator('#check-mods').screenshot({ path: shots + '/admin-step4-owner-1280.png' });
+      await context.close();
+    }
   }
   // 8. /start: an invite link in each state (stubbed /api/invite), at 1280/390.
   const tok = 'ab'.repeat(16);
@@ -431,6 +522,12 @@ try {
     assert.equal(await page.locator('#invite-actions a.btn-primary').getAttribute('href'), '/auth/login?invite=' + tok);
     assert.equal(await page.locator('#invite-actions a').count(), 1);
     assert.equal(await page.locator('#invite-problem').isHidden(), true);
+    const stage = await page.locator('.stage').boundingBox(), frame = await page.locator('.stage iframe').boundingBox();
+    assert.ok(Math.abs(stage.width / stage.height - 16 / 9) < 0.03, 'demo stage is 16:9, got ' + stage.width + 'x' + stage.height);
+    if (s.name === '1280') assert.ok(stage.width > 900, 'demo stage spans the page at 1280, got ' + stage.width);
+    assert.ok(Math.abs(frame.width - stage.width) < 4 && Math.abs(frame.height - stage.height) < 4, 'overlay frame fills the stage');
+    assert.ok(await page.locator('.stage iframe').evaluate((f) => f.offsetWidth >= 640), 'overlay lays out at 640px or wider');
+    await page.waitForTimeout(5000);   // let the demo fighters walk in before the screenshot
     await noOverflow(page, 'start valid ' + s.name);
     await page.screenshot({ path: shots + '/start-valid-' + s.name + '.png', fullPage: true });
     // back from Twitch after cancelling the permission: offer setup without mod access, and drop ?error from the URL
@@ -481,6 +578,7 @@ try {
     assert.equal(await page.locator('#troubleshoot').isVisible(), true);
     assert.deepEqual(await page.locator('#checklist > li h3').allTextContents(), ['Add the overlay to OBS', 'Turn off the StreamElements Duel module', 'Add the chat commands to StreamElements', 'Let your moderators help']);
     assert.equal(await page.locator('#summary-title').textContent(), 'Waiting for chat');
+    assert.match(await page.locator('#stats').textContent(), /Duels\s*Waiting\s*for chat/);
     assert.equal(await page.locator('#channel-power').isVisible(), true);
     assert.equal(await page.locator('#paused-note').isHidden(), true);
     await page.click('#power-toggle');

@@ -62,7 +62,8 @@
             <thead><tr><th>Channel</th><th>Status</th><th>Setup</th><th>Overlay in OBS</th><th>Chat</th><th>Last chat activity</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody id="channels"></tbody>
           </table></div>
-          <p class="caveat">Overlay in OBS counts overlays open right now, so it reads "not open" whenever the streamer is offline. Chat shows how many of the StreamElements commands have reached Mini Chat. A channel that's off keeps its fighters and ranks; its overlay, commands and viewer page stop until it's turned back on. Up to <span id="channels-max">200</span> channels can be on.</p>
+          <p class="caveat">Overlay in OBS counts overlays open right now, so it reads "not open" whenever the streamer is offline. Chat shows how many of the StreamElements commands have reached Mini Chat. A channel that's off keeps its fighters and ranks; its overlay, commands and viewer page stop until it's turned back on. Up to <span id="channels-max">200</span> channels can be on. Export downloads one channel's fighters, ranks, settings and StreamElements command names as a JSON file; keys and tokens are never included.</p>
+          <p class="toolbar"><a class="btn" id="export-registry" href="/api/dev/export?registry=1" download>Export channel list</a></p>
           <h3>Invites</h3>
           <div class="table-wrap"><table class="data">
             <thead><tr><th>For</th><th>Status</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead>

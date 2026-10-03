@@ -206,6 +206,8 @@ input[type="color"] { padding: 2px; width: 56px; cursor: pointer; }
 .stage-figure { margin: 0; }
 .stage { aspect-ratio: 16 / 9; background: var(--topbar); border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
 .stage iframe { display: block; width: 100%; height: 100%; border: 0; color-scheme: normal; }   /* matching the overlay's scheme keeps the frame transparent */
+/* wide screens: the demo runs under the copy and the sign-in card across the full width; fighters and nameplates need the room */
+.hero-grid:has(.invite-card) { grid-template-areas: "copy card" "pick pick"; }
 .invite-card { grid-area: card; }
 .invite-card h2 { margin: 0; }
 .hero-card { grid-area: card; position: sticky; top: var(--space-4); }
@@ -393,3 +395,16 @@ html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused fie
 #se-table input { width: 9rem; }
 #se-table .btn { white-space: nowrap; }
 
+
+/* Stream setup steps: the step list spans the content width so tables can use it; prose and fields stay at reading width */
+.checklist > li { max-width: none; }
+.setup-steps .stack > :not(.table-wrap) { max-width: var(--measure); }
+.badge { white-space: nowrap; }
+#se-table th, #se-table td { white-space: nowrap; }
+#se-table td:first-child { white-space: normal; min-width: 9rem; }
+#se-table td:nth-child(2) { min-width: 10rem; }
+
+
+/* Characters: the uploader's slot line repeats the usage figure above it; the limits line stays in the form */
+#upload-root .upload-usage { display: none; }
+.summary .toolbar + .small { margin-top: var(--space-3); }

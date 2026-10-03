@@ -52,6 +52,10 @@ Add commands in the StreamElements dashboard, not with `!command add` in chat: t
 your channel's key, and chat would show it to everyone. If the key leaks, click **New key** and
 paste the replies again.
 
+The key is the only secret. StreamElements sends the viewer's id and name with each command, so
+anyone who holds your key can send commands as any viewer of your channel. Don't show the copied replies on stream,
+and click **New key** if you think the key has leaked.
+
 Type `!decline` in your chat to test. Each row shows **Working** once its command arrives, and the
 first command switches the channel to StreamElements on its own.
 
@@ -63,6 +67,13 @@ message**, so new viewers learn how to join. Mini Chat never posts on its own.
 Step 4, **Let your moderators help**, is Done when the moderator-list permission is stored. If you skipped
 it, click **Connect mod access** and approve the permission while signed in to Twitch as yourself.
 
+The step reads differently depending on who looks at it. You, the broadcaster, get the button.
+A moderator, or the site owner looking at your channel, is told that you have to connect it.
+
+Mod access can lapse: the stored permission is dropped after 90 days without use, and using
+the mod controls keeps it alive. A lapsed step shows an "Expired" badge and the button reads
+**Reconnect mod access**. Until you click it, your moderators can't sign in to your mod controls.
+
 ## If something doesn't work
 
 The same answers are under "If something doesn't work" at the bottom of Stream setup.
@@ -71,6 +82,8 @@ The same answers are under "If something doesn't work" at the bottom of Stream s
   source when not visible", then right-click the source and choose Refresh.
 - **Two bots answer the same command:** the StreamElements Duel module is still on.
 - **A command answers "wrong key":** copy that row's reply again and replace the old one.
+- **Mod access expired:** your moderators can't open the mod controls. Click **Reconnect mod
+  access** in step 4 of Stream setup while signed in to Twitch as yourself.
 
 ## Turning Mini Chat off
 

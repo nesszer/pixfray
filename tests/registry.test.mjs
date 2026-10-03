@@ -166,7 +166,7 @@ test('turning a channel off keeps its admin page; overlay feed, viewer page and 
   assert.equal(off.status, 403);
   assert.deepEqual(await off.json(), { error: 'Mini Chat is off on this channel right now', off: 'paused' });
   assert.equal((await worker.fetch(req('/api/looks/newstreamer?u=a'), env)).status, 403);
-  assert.equal(await (await worker.fetch(req('/api/se/newstreamer/help?k=key'), env)).text(), OFF_TEXT);
+  assert.equal(await (await worker.fetch(req('/api/se/newstreamer/help?k=' + 'a1'.repeat(24)), env)).text(), OFF_TEXT);
   assert.equal((await worker.fetch(req('/api/leaderboard/newstreamer'), env)).status, 200);
   const admin = await worker.fetch(req('/api/admin/newstreamer', 'GET', undefined, streamer), env);
   assert.equal(admin.status, 200);
@@ -175,12 +175,12 @@ test('turning a channel off keeps its admin page; overlay feed, viewer page and 
   assert.equal((await login(env, 'channel=newstreamer&next=/admin/')).r.status, 302);
   await worker.fetch(req('/api/admin/newstreamer', 'POST', { action: 'resumeChannel' }, streamer), env);
   assert.equal((await worker.fetch(req('/api/state/newstreamer'), env)).status, 200);
-  assert.equal(await (await worker.fetch(req('/api/se/newstreamer/help?k=key'), env)).text(), 'room answered');
+  assert.equal(await (await worker.fetch(req('/api/se/newstreamer/help?k=' + 'a1'.repeat(24)), env)).text(), 'room answered');
   // built-ins are always on; channels never set up stay closed
   const owner = await signIn(env, OWNER);
   assert.equal((await worker.fetch(req('/api/admin/miolafff', 'POST', { action: 'pauseChannel' }, owner), env)).status, 400);
   assert.deepEqual(await (await worker.fetch(req('/api/state/nobodyhere'), env)).json(), { error: 'Mini Chat is not enabled for this channel', off: 'not_enabled' });
-  assert.equal((await worker.fetch(req('/api/se/nobodyhere/help?k=key'), env)).status, 404);
+  assert.equal((await worker.fetch(req('/api/se/nobodyhere/help?k=' + 'a1'.repeat(24)), env)).status, 404);
   assert.equal((await login(env, 'channel=nobodyhere')).r.status, 403);
 });
 

@@ -1,8 +1,15 @@
 # Mini Chat v2 validation
 
 Local validation on 2026-10-01 (Windows 11, Node 22.22.0, installed Chrome, `cf` 1.0.0-beta.9).
-Nothing was deployed, committed or pushed. No real Twitch, GitHub or Cloudflare API was called,
+Nothing had been deployed, committed or pushed when this run was written; v2 went live on
+https://chat.miolaf.xyz later that day. No real Twitch, GitHub or Cloudflare API was called,
 except that `tests/smoke.mjs` joins the public #nesszerra IRC anonymously, read-only.
+
+The tables below record that run. The code has changed since (quick duels are the default,
+the balance preset and `inactivityMs` 45 s, 56 characters, StreamElements chat for invited
+channels, the owner export and progress routes), so test counts and the audit evidence are not
+re-measured here. `npm run test:all` is the current check; `tests/e2e-local.mjs` sets
+`quickDuel:false` for its HP-fight steps and puts the config back at the end.
 
 ## Result
 
@@ -11,7 +18,7 @@ EventSub webhook):
 
 | Stage | Command | Result |
 |---|---|---|
-| Unit tests | `npm run test:unit` | 122 tests, 122 pass, 0 fail, 0 skipped |
+| Unit tests | `npm run test:unit` | 122 tests, 122 pass, 0 fail, 0 skipped (2026-10-01; the suite has grown since) |
 | Production build | `npx cf build` | "Build complete" |
 | Test build | `npx cf build --mode test` | "Build complete" |
 | Uploads in workerd | `node tests/upload-workerd.mjs` | 5 of 5 checks pass |
@@ -49,7 +56,7 @@ only to the e2e process environment; nothing prints it.
 1. **Clean start.** `resetAll` and `resetAllRanks` as the owner.
 2. **Profiles.** Alice (toon-ranger, strike) and Bob (alien-blue, heavy) save profiles through
    `POST /api/profile`. A POST without `Origin` gets 403.
-3. **Config.** The owner saves maxHp 60 and inactivity 10 s with `baseVersion`. A stale
+3. **Config.** The owner saves maxHp 60, inactivity 10 s and `quickDuel:false` (the HP fight) with `baseVersion`. A stale
    `baseVersion` gets 409. A viewer gets 403 on `/api/admin`. History shows the note and
    `actorName: nesszerra`.
 4. **Overlay before chat is connected.** The overlay (`?channel=nesszerra&arena=1&debug=1`) opens
@@ -94,9 +101,10 @@ only to the e2e process environment; nothing prints it.
     - After reconnecting, a `revocation` (`authorization_revoked`) pauses the game again and the
       reason shows in `chatStatus`.
 11. **Screenshots.** Overlay, dashboard (signed in as alice), admin and dev pages (owner) at 1280
-    and 390, saved to `screenshots/e2e-*.png`. Duel and KO frames are in
-    `e2e-overlay-duel-1280.png` and `e2e-overlay-ko-1280.png`.
-12. **Restore.** Config goes back to maxHp 100 and inactivity 60 s.
+    and 390, written to `screenshots/e2e-*.png` by the test run. They are not in the repo
+    (`screenshots/` is gitignored); duel and KO frames are `e2e-overlay-duel-1280.png` and
+    `e2e-overlay-ko-1280.png`. `tests/arena-browser.mjs` writes the quick-duel and two-duel overlay frames there too.
+12. **Restore.** Config goes back to maxHp 100, inactivity 45 s and `quickDuel:true`.
 
 To rerun only the browser parts against a running, seeded server:
 
@@ -114,13 +122,13 @@ Status values:
 
 | Spec item | Status | Evidence |
 |---|---|---|
-| One ChannelRoom per channel; profiles, Elo and settings separate | unverified | `worker.js` routes every channel to `ROOMS.idFromName(channel)`. Only one channel is enabled, so separation was not exercised |
-| nesszerra enabled, miolafff disabled | verified | `npm run test:unit`: "production is inaccessible before broadcaster onboarding", "unknown routes and the disabled production channel" |
+| One ChannelRoom per channel; profiles, Elo and settings separate | unverified | `worker.js` routes every channel to `ROOMS.idFromName(channel)`. Only one channel was enabled in that run, so separation was not exercised |
+| nesszerra enabled, miolafff disabled | superseded | This was true on the 2026-10-01 run. Both are now built in and enabled (`CHANNELS` in `server/auth.js`), and other channels join by invite (`tests/registry.test.mjs`) |
 | Twitch sign-in | unverified | OAuth state checks pass in `auth.test.mjs`. No Twitch app exists; local runs use seeded sessions |
 | Profiles saved server-side, follow the viewer across devices | verified | `e2e-local.mjs`: the profile saved by API shows in a fresh browser context (dashboard 1012 and Ranger). `channel.test.mjs` "profiles are saved server-side" |
-| Dashboard: character cards, live preview, color, default ability, compact leaderboard | verified | `tests/ui.mjs`, `screenshots/e2e-dashboard-1280.png` and `-390.png` |
+| Dashboard: character cards, live preview, color, default ability, compact leaderboard | verified | `tests/ui.mjs`; `e2e-dashboard-1280.png` and `-390.png` in `screenshots/` after a run |
 | Character appears after first chat message and loads the saved profile | verified | `e2e-local.mjs` step 6: presence leads to 2 overlay characters with saved avatar and color |
-| Duels where characters stand, health bars, hit effects | verified | `e2e-overlay-duel-1280.png` (35/60 bars, -25 floaters, facing duelists), `arena-browser.mjs` |
+| Duels where characters stand, health bars, hit effects | verified | `e2e-overlay-duel-1280.png` (generated by the run: 35/60 bars, -25 floaters, facing duelists), `arena-browser.mjs` |
 | Heal effect on the overlay | unverified | `overlay.js` draws +N and particles for `duel_action` heal. Heal math is in `game.test.mjs`, but no browser run used `!heal` |
 | Server decides combat; every OBS source renders the same state | verified | `e2e-local.mjs`: two overlay pages on the live socket both follow server state (debug and plain status); all outcomes come from server acks and events |
 | Opt-in challenge and accept; challenges expire after 30 s | verified | `game.test.mjs` "duels are opt-in", "challenges expire after 30 s"; e2e challenge and accept |
@@ -129,23 +137,23 @@ Status values:
 | Up to 5 duels per channel, one per viewer | verified | `game.test.mjs` "at most 5 simultaneous duels", "only one duel at a time"; e2e `player_busy` |
 | Each accepted duel is one round; KO'd characters respawn | verified | `game.test.mjs` round and respawn tests; e2e "Round N" announcement, KO, then respawn before the next duel |
 | Elo start 1000, K=24, wins/losses; rematch waits 30 s | verified | e2e leaderboard 1012/988 and 1-0/0-1, `rematch_cooldown`; `game.test.mjs` |
-| 60 s inactivity cancels unscored | verified | `game.test.mjs` "60 s of inactivity cancels a duel without scoring"; e2e with a 10 s setting gives `inactivity` and no rank change |
+| Inactivity cancels unscored (now 45 s) | verified | `game.test.mjs` "45 s of inactivity cancels a duel without scoring"; e2e with a 10 s setting gives `inactivity` and no rank change |
 | Ranked duels require a signed-in profile | verified | e2e: dave gets `ranked_sign_in_required` |
 | Chat loss pauses combat and cancels duels unscored | verified | e2e step 10 (disconnect and revocation); `channel.test.mjs` "chat disconnect cancels open duels without scoring" |
-| Balance preset (HP 100, 10/3 s, 25/8 s, 15/10 s, 1 s shared) | verified | `game.test.mjs` "balance preset matches the approved defaults"; admin screenshot |
+| Balance preset (now HP 100, strike 20/2 s, heavy 35/5 s, heal 15/12 s, 1 s shared; the first preset was 10/3 s, 25/8 s, 15/10 s) | verified | `game.test.mjs` "balance preset matches the approved defaults" and the legacy-preset migration test |
 | Admin access for the broadcaster and current mods via Helix | unverified | Owner allowed and viewer 403 are verified (e2e, `worker.test.mjs`). The Helix moderator lookup needs a broadcaster token and was not run |
 | Admin controls: enable/disable, cancel, reset health, rounds, rank resets, versioned editor with history | verified | `tests/ui.mjs` (actions, save, 409, revert); e2e config, 409 and history `actorName`, `resetAll`, `resetAllRanks`; `game.test.mjs` admin tests |
-| Admin shows custom-character usage against the limits | verified | `e2e-admin-1280.png` ("0 of 8 custom character slots used", 12 MB atlas budget) |
-| Launch with 10–15 characters | verified | 15 entries in `public/assets/characters.json`, each listed in `ASSET_LICENSES.md`; the dashboard shows "15 available" |
+| Admin shows custom-character usage against the limits | verified | `e2e-admin-1280.png` (written by the run; "0 of 24 custom character slots used" and an atlas storage bar against 24 x 1.5 MB, from `UPLOAD_LIMITS` in `server/uploads.js`) |
+| Launch with 10–15 characters | verified | 15 entries at launch, each listed in `ASSET_LICENSES.md`. `public/assets/characters.json` now has 56 entries and the dashboard counts them ("(56 available)") |
 | Reserve of 30+ vetted characters | verified | `docs/CHARACTER_RESERVE.md` (about 45 rows with licenses) |
 | Characters without combat animations use effects | verified | Launch characters have no attack frames; the e2e duel screenshot shows lunge, knockback, particles and floaters |
 | Uploads: one PNG or frames for idle, walk, attack, knockout | verified | `upload.test.mjs`, `tests/upload-workerd.mjs` |
 | Frames aligned and packed in the browser, with a preview before saving | unverified | Packer logic is tested in Node (`planAtlas`, `drawAtlas`, "packed plan passes server validation"). The preview UI renders (admin screenshots) but was not driven with real files in Chrome |
-| Limits: PNG, 24 frames, 128×128, 1.5 MB, 8 per channel | verified | `upload.test.mjs` limit tests; `tests/upload-workerd.mjs` |
+| Limits: PNG, 24 frames, 128×128, 1.5 MB, 24 custom characters per channel | verified | `upload.test.mjs` limit tests; `tests/upload-workerd.mjs` |
 | Limits checked on the server too | verified | `upload.test.mjs` "the room re-validates uploads even from an internal caller", "browser limits match the server limits" |
 | Live-fix: settings editor, error logs, diagnostics | verified | `tests/dev-ui.mjs` (with a real owner run), `dev-api.test.mjs`, `e2e-dev-1280.png` |
 | Code editor restricted to nesszerra (`isOwner`) | verified | `worker.test.mjs` "developer routes are owner-only"; `auth.test.mjs` "a viewer cannot grant themselves mod or developer permissions" |
-| GitHub flow: save → test deploy → check in OBS → promote | unverified | `dev-api.test.mjs` and `dev-release.test.mjs` against mocked GitHub/Cloudflare. No repo or secrets exist; nothing was deployed |
+| GitHub flow: save → test deploy → check in OBS → promote | unverified | `dev-api.test.mjs` and `dev-release.test.mjs` against mocked GitHub/Cloudflare. No GitHub secrets or Cloudflare API token were available to the run |
 | Immediate hotfix path | unverified | Route and workflow tested with mocks only |
 | Rollback to the previous version | unverified | `dev-release.test.mjs` rollback plan with mocks only |
 | Codex toggle | removed 2026-10-03 | `dev-api.test.mjs` checks `/api/dev/codex` answers 404 |

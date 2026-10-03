@@ -1,9 +1,10 @@
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 const browser = await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
 const base=process.env.MINI_BASE_URL||'http://127.0.0.1:5173';
-const out='D:/code/2026-10-01/i-ne/outputs/mini-chat';
+const out=fileURLToPath(new URL('../screenshots', import.meta.url)); fs.mkdirSync(out,{recursive:true});
 const errors=[];
 try {
  const page=await browser.newPage({viewport:{width:1920,height:1080}});
