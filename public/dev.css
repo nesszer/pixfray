@@ -17,4 +17,4 @@ td.wrap { max-width: 420px; overflow-wrap: anywhere; }
 td code, td.ctx { font-size: var(--text-xs); }
 
 /* site health values are words ("StreamElements", "Unknown"), not short numbers: keep them inside 4 narrow columns */
-#sec-health .stat .value { font-size: var(--text-xl); overflow-wrap: anywhere; }
+#sec-health .stat .value { font-size: var(--text-lg); overflow-wrap: break-word; }
