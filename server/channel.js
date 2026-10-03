@@ -4,9 +4,11 @@ import {
   chatStatus,
   createInitialState,
   defaultConfig,
+  hiddenResults,
   normalizeGameState,
   parseGameCommand,
   reduceGame,
+  shownProfile,
 } from "./game.js";
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
@@ -56,6 +58,12 @@ function validUserId(value) {
 
 function normalizeUsername(value) {
   return String(value || "").trim().replace(/^@/, "").toLowerCase().slice(0, 25);
+}
+
+// Leaderboard order, as in the SQL: Elo, then wins, then name.
+function boardOrder(a, b) {
+  const x = a.username.toLowerCase(), y = b.username.toLowerCase();
+  return b.elo - a.elo || b.wins - a.wins || (x < y ? -1 : x > y ? 1 : 0);
 }
 
 function normalizeProfileRow(row, config) {
@@ -176,10 +184,10 @@ export class ChannelRoom extends DurableObject {
     if (path === "/looks" && request.method === "GET") {
       const logins = [...new Set(String(url.searchParams.get("u") || "").split(",").map(normalizeUsername).filter((u) => /^[a-z0-9_]+$/.test(u)))].slice(0, MAX_LOOKS);
       if (!logins.length) return json({});
-      const config = this.readState(channel).config, out = {};
+      const state = this.readState(channel), config = state.config, hidden = hiddenResults(state, Date.now()), out = {};
       const rows = this.ctx.storage.sql.exec(`SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`, ...logins).toArray();
       for (const row of rows) {
-        const p = normalizeProfileRow(row, config);
+        const p = shownProfile(normalizeProfileRow(row, config), hidden);
         out[p.username.toLowerCase()] = { avatar: p.avatar, color: p.color, hat: p.hat || "", displayName: p.displayName, elo: p.elo };
       }
       return json(out);
@@ -189,7 +197,7 @@ export class ChannelRoom extends DurableObject {
       const userId = validUserId(url.searchParams.get("userId"));
       if (!userId) return json({ error: "valid userId required" }, 400);
       const state = this.readState(channel);
-      const profile = this.getProfile(userId, state.config);
+      const profile = shownProfile(this.getProfile(userId, state.config), hiddenResults(state, Date.now()));
       if (!profile) return json(null);
       const active = state.players.find((item) => item.userId === userId);
       return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins) });
@@ -494,11 +502,13 @@ export class ChannelRoom extends DurableObject {
     const rows = this.ctx.storage.sql.exec(
       "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC LIMIT 100",
     ).toArray();
-    return rows.map((row) => {
-      const profile = normalizeProfileRow(row, state.config);
+    const hidden = hiddenResults(state, Date.now());
+    const out = rows.map((row) => {
+      const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
       const active = state.players.find((item) => item.userId === profile.userId);
       return active ? { ...profile, hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : profile;
     });
+    return hidden.size ? out.sort(boardOrder) : out;   // same order as the SQL, on the numbers shown
   }
 
   // One saved profile with its leaderboard place (same order as leaderboard()), or null.
@@ -508,12 +518,22 @@ export class ChannelRoom extends DurableObject {
       ? sql.exec("SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE user_id = ?", userId)
       : sql.exec("SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE username = ? COLLATE NOCASE", username)).toArray()[0];
     if (!row) return null;
-    const ahead = sql.exec(
-      "SELECT COUNT(*) AS n FROM profiles WHERE elo > ? OR (elo = ? AND wins > ?) OR (elo = ? AND wins = ? AND username COLLATE NOCASE < ?)",
-      row.elo, row.elo, row.wins, row.elo, row.wins, row.username,
-    ).toArray()[0].n;
+    const state = this.readState(channel), hidden = hiddenResults(state, Date.now());
+    const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
+    let ahead = Number(sql.exec(
+      "SELECT COUNT(*) AS n FROM profiles WHERE user_id != ? AND (elo > ? OR (elo = ? AND wins > ?) OR (elo = ? AND wins = ? AND username COLLATE NOCASE < ?))",
+      profile.userId, profile.elo, profile.elo, profile.wins, profile.elo, profile.wins, row.username,
+    ).toArray()[0].n);
+    // The count used everyone's saved numbers; swap in the shown ones for fighters whose result is still hidden.
+    for (const id of hidden.keys()) {
+      if (id === profile.userId) continue;
+      const other = sql.exec("SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE user_id = ?", id).toArray()[0];
+      if (!other) continue;
+      const saved = normalizeProfileRow(other, state.config);
+      ahead += (boardOrder(shownProfile(saved, hidden), profile) < 0) - (boardOrder(saved, profile) < 0);
+    }
     const total = sql.exec("SELECT COUNT(*) AS n FROM profiles").toArray()[0].n;
-    return { profile: normalizeProfileRow(row, this.readState(channel).config), rank: Number(ahead) + 1, total: Number(total) };
+    return { profile, rank: ahead + 1, total: Number(total) };
   }
 
   publicState(state) {

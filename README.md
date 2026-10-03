@@ -33,9 +33,10 @@ Chat commands for v2 duels:
 - Accepting rolls the duel at once (quick duels, the default). Fighters take turns, challenger first, and each swing is a d6:
   6 crits for 50, 5 hits for 34, 3-4 misses, and on 1-2 the defender counters for 34. Both start
   at 100 HP. After 12 rolls the fighter with more HP wins; equal HP goes to sudden death, where
-  the next blow wins. A winner who took no damage gets +3 Elo on top. The bot replies at once, for
-  example "A beats B in 4 rolls (66 HP left). Elo: A 1012, B 988.", and the overlay replays the
-  duel in about 8-12 s. The default ability only changes how blows look. Each win earns an upgrade point
+  the next blow wins. A winner who took no damage gets +3 Elo on top. The bot replies only "Fight on: A vs B! Watch
+  the stream for the winner.", and the overlay replays the duel in about 8-25 s and then announces
+  the winner and the Elo change. `!elo`, `!ranks` and the website show the old numbers until the
+  replay has played on stream (plus 6 s of stream delay), so chat never spoils the result. The default ability only changes how blows look. Each win earns an upgrade point
   (power, guard, luck) and unlocks hats; see CONTRACTS.md section 6. The HP fight with `!strike`,
   `!heavy` and `!heal` runs only if a mod's config sets `quickDuel` to false.
 - Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).
@@ -62,7 +63,8 @@ saved fighter: the broadcaster on port 9333 and a second account on 9334 (`LIVE_
 It refuses to post while the channel (`LIVE_CHANNEL`, default nesszerra) is live. Both accounts send
 every command and every refusal (no name, self, no fighter, busy, wrong challenger, rematch lock,
 expired challenge), and play two duels (a named `!fight` and a mutual challenge). Each bot reply must
-show in both chat tabs, each duel must match the leaderboard, and the overlay must show the second
+show in both chat tabs, each duel reply must hide the result, the leaderboard must not change until
+the stream has played the duel and must then match it, and the overlay must show the second
 account's saved look and play both duels. The duels change both accounts' Elo, wins and losses. It
 takes about 5 minutes. The log and screenshots of the overlay and both chats go to
 `../../work/live-e2e/` (`LIVE_OUT`).

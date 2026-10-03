@@ -3,6 +3,7 @@
 //   A = the broadcaster (LIVE_A_CDP, default :9333), B = a second account (LIVE_B_CDP, default :9334).
 // Both accounts type every command in the channel's popout chat; each bot reply must show in both tabs.
 // It refuses to run while the channel is live. The test duels change both accounts' Elo, wins and losses.
+// Duel replies must not give the result away: the leaderboard may change only after the overlay announced the winner.
 // Run: npm run test:live   (env: LIVE_CHANNEL, LIVE_ORIGIN, LIVE_A_CDP, LIVE_B_CDP, LIVE_SECRETS, LIVE_OUT)
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
@@ -120,13 +121,13 @@ async function say(who, text, expect) {
 // Open a challenge from `from` to `to`, waiting out a rematch lock, a knocked-out fighter or a stale challenge.
 // `texts` are spellings of the same challenge, so a retry never repeats the text Twitch just saw.
 async function openChallenge(from, to, texts) {
-  const want = new RegExp(`challenges @${esc(to.login)}!|Rematch in (\\d+) s|still seeing stars|already fighting`, 'i');
+  const want = new RegExp(`challenges @${esc(to.login)}!|Rematch in (\\d+) s|still seeing stars|still playing on stream|already fighting`, 'i');
   for (const text of texts) {
     const reply = await say(from, text, want);
     if (/challenges @/i.test(reply)) return reply;
     const wait = /Rematch in (\d+) s/i.exec(reply);
     if (wait) { note(`  waiting ${wait[1]} s for the rematch lock`); await sleep((+wait[1] + 2) * 1000); }
-    else if (/seeing stars/i.test(reply)) await sleep(6000);
+    else if (/seeing stars|still playing on stream/i.test(reply)) await sleep(6000);
     else { await say(to, '!decline', /backs out|nobody has challenged/); await say(from, '!decline', /backs out|nobody has challenged/); }   // clear an old challenge
   }
   throw new Error(`could not open a challenge from ${from.login} to ${to.login}`);
@@ -135,18 +136,41 @@ async function openChallenge(from, to, texts) {
 const board = async () => (await (await fetch(`${ORIGIN}/api/leaderboard/${CHANNEL}`)).json());
 const row = (rows, name) => rows.find((r) => r.username === name.toLowerCase() || r.displayName === name);
 
-// The duel line must match the leaderboard: Elo as quoted, winner up a win, loser up a loss.
-async function checkDuel(result, pre) {
-  const m = /^(\S+) beats (\S+) .*Elo: \S+ (\d+), \S+ (\d+)\./.exec(result);
-  check(m, 'could not read the result line: ' + result);
-  const [, wn, ln, we, le] = m;
-  const post = await board();
-  const w = row(post, wn), l = row(post, ln), w0 = row(pre, wn), l0 = row(pre, ln);
-  check(w && l && w0 && l0, `${wn} or ${ln} missing from the leaderboard`);
-  check(w.elo === +we && l.elo === +le, `leaderboard Elo ${w.elo}/${l.elo}, reply says ${we}/${le}`);
-  check(w.elo > w0.elo && l.elo < l0.elo, `Elo did not move: winner ${w0.elo}→${w.elo}, loser ${l0.elo}→${l.elo}`);
-  check(w.wins === w0.wins + 1 && l.losses === l0.losses + 1, 'wins/losses not counted');
-  return `${result} Leaderboard: ${w.username} ${w0.elo}→${w.elo}, ${l.username} ${l0.elo}→${l.elo}`;
+// The duel reply names both fighters, challenger first, and never the winner: the stream shows that first.
+const FIGHT_ON = /^Fight on: (\S+) vs (\S+)! Watch the stream for the winner\.$/;
+const nums = (rows, name) => { const r = row(rows, name); return r ? [r.elo, r.wins, r.losses].join('/') : 'missing'; };
+
+function checkFightOn(result, pre, challenger, accepter) {
+  const m = FIGHT_ON.exec(result);
+  check(m, 'not a no-spoiler duel reply: ' + result);
+  check(m[1].toLowerCase() === challenger.login && m[2].toLowerCase() === accepter.login, `expected ${challenger.login} vs ${accepter.login}: ${result}`);
+}
+
+// Right after the reply the board must still show the numbers from before the fight.
+async function checkHidden(pre, a, b) {
+  const now = await board();
+  for (const who of [a, b]) check(nums(now, who.login) === nums(pre, who.login), `${who.login} moved before the stream showed the fight: ${nums(pre, who.login)} → ${nums(now, who.login)}`);
+  return `board still ${a.login} ${nums(now, a.login)}, ${b.login} ${nums(now, b.login)}`;
+}
+
+// Then it must move once the stream has played the duel: winner up Elo and a win, loser down Elo and a loss,
+// and only after the overlay announced the winner.
+async function checkReveal(pre, a, b, banners, since) {
+  let post, shownAt = 0;
+  for (let i = 0; i < 120 && !shownAt; i++) {
+    await sleep(500);
+    post = await board();
+    if (nums(post, a.login) !== nums(pre, a.login)) shownAt = Date.now();
+  }
+  check(shownAt, 'the leaderboard did not change within 60 s');
+  const [w, l] = row(post, a.login).wins > row(pre, a.login).wins ? [a, b] : [b, a];
+  const w0 = row(pre, w.login), l0 = row(pre, l.login), w1 = row(post, w.login), l1 = row(post, l.login);
+  check(w1.elo > w0.elo && l1.elo < l0.elo, `Elo did not move: winner ${w0.elo}→${w1.elo}, loser ${l0.elo}→${l1.elo}`);
+  check(w1.wins === w0.wins + 1 && w1.losses === w0.losses && l1.losses === l0.losses + 1 && l1.wins === l0.wins, 'wins/losses not counted once');
+  const banner = (await banners()).find((x) => x.t >= since && x.text.toLowerCase().includes(w.login) && / wins/.test(x.text));
+  check(banner, `the overlay never announced ${w.login} as the winner`);
+  check(banner.t <= shownAt, `the board showed the result ${banner.t - shownAt} ms before the overlay did`);
+  return `overlay "${banner.text}" ${((shownAt - banner.t) / 1000).toFixed(1)} s before the board: ${w.login} ${w0.elo}→${w1.elo}, ${l.login} ${l0.elo}→${l1.elo}`;
 }
 
 let local;
@@ -166,20 +190,38 @@ try {
   const overlay = await local.newPage({ viewport: { width: 1280, height: 720 } });
   const overlayErrors = [];
   overlay.on('pageerror', (e) => overlayErrors.push(e.message));
+  // The overlay reads chat over anonymous Twitch IRC; watch its frames to tell a slow join from a missed message.
+  const irc = { joined: false, lines: [] };
+  overlay.on('websocket', (ws) => {
+    if (!/irc-ws\.chat\.twitch\.tv/.test(ws.url())) return;
+    ws.on('framereceived', (f) => { const s = String(f.payload); if (/ JOIN #/.test(s)) irc.joined = true; if (/ PRIVMSG #/.test(s)) irc.lines.push(s); });
+  });
   await overlay.goto(`${ORIGIN}/overlay.html?channel=${CHANNEL}&arena=1&debug=1`);
   await overlay.waitForFunction(() => typeof window.__arenaDebug === 'function', null, { timeout: 20_000 });
   const arena = () => overlay.evaluate(() => window.__arenaDebug());
   // Replays leave the debug list once played, so note every duel id the overlay starts.
-  await overlay.evaluate(() => { window.__e2eReplays = new Set(); setInterval(() => window.__arenaDebug().replays.forEach((r) => window.__e2eReplays.add(r.id)), 100); });
+  // Winner banners also last only seconds, so keep each one with the time it first showed.
+  await overlay.evaluate(() => {
+    window.__e2eReplays = new Set(); window.__e2eBanners = [];
+    setInterval(() => {
+      const d = window.__arenaDebug();
+      d.replays.forEach((r) => window.__e2eReplays.add(r.id));
+      for (const text of d.banners) if (!window.__e2eBanners.some((b) => b.text === text && Date.now() - b.t < 5000)) window.__e2eBanners.push({ text, t: Date.now() });
+    }, 100);
+  });
+  const banners = () => overlay.evaluate(() => window.__e2eBanners);
   const { config } = await (await fetch(`${ORIGIN}/api/state/${CHANNEL}`)).json();
 
   // Chatting brings the fighter onto the overlay, in the saved look.
   await step(`${B.login} chats and walks onto the overlay in their saved look`, async () => {
+    for (let i = 0; i < 40 && !irc.joined; i++) await sleep(500);
+    check(irc.joined, 'the overlay did not join Twitch chat within 20 s');
     await post(B, `e2e check ${stamp.slice(11, 19)}`);
     const saved = row(start, B.login);
     let p;
     for (let i = 0; i < 30 && !p; i++) { await sleep(500); p = (await arena()).players.find((x) => x.label?.toLowerCase().includes(B.login)); }
-    check(p, 'not on the overlay after 15 s');
+    const heard = irc.lines.some((s) => s.includes(`:${B.login}!`));
+    check(p, `not on the overlay after 15 s (the overlay ${heard ? 'got' : 'never got'} the chat line; on screen: ${(await arena()).players.map((x) => x.label).join(', ') || 'nobody'})`);
     check(p.avatar === saved.avatar && p.color?.toLowerCase() === saved.color.toLowerCase(), `shows ${p.avatar} ${p.color}, saved ${saved.avatar} ${saved.color}`);
     return `${p.avatar} ${p.color}`;
   });
@@ -212,38 +254,39 @@ try {
     return say(B, `!decline @${A.login}`, new RegExp(`^${esc(B.login)} backs out of the duel\\.$`, 'i'));
   });
 
-  // Duel 1: B challenges, A accepts by naming the challenger.
-  let duels = 0, loser = '';
-  await step(`${B.login} challenges, ${A.login} answers !fight @${B.login}`, async () => {
-    const pre = await board();
+  // Duel 1: B challenges, A accepts by naming the challenger. Chat gets no result until the stream has shown it.
+  let duels = 0, pre1, since1;
+  await step(`${B.login} challenges, ${A.login} answers !fight @${B.login}, and chat gets no result`, async () => {
+    pre1 = await board(); since1 = Date.now();
     await openChallenge(B, A, [`!challenge @${A.login}`, `!challenge ${A.login}`, `!challenge @${A.login.toUpperCase()}`]);
-    const result = await say(A, `!fight @${B.login}`, /beats .+ Elo: /);
+    const result = await say(A, `!fight @${B.login}`, FIGHT_ON);
     duels++;
-    loser = /^\S+ beats (\S+)/.exec(result)?.[1] || '';
-    return checkDuel(result, pre);
+    checkFightOn(result, pre1, B, A);
+    return `${result} — ${await checkHidden(pre1, A, B)}`;
   });
-  // Right after the duel the loser may still be knocked out (respawnMs); the reply must name the loser.
-  await step('an instant re-challenge names the knocked-out fighter or the rematch wait', async () => {
-    const r = await say(A, `!challenge ${B.login}`, /is still seeing stars|^Rematch in \d+ s/);
-    check(!/seeing stars/.test(r) || r.startsWith(loser + ' '), `expected ${loser} to be named: ${r}`);
-    return r;
-  });
+  await step(`${B.login}: !elo before the stream shows the fight gives the old Elo`, () =>
+    say(B, '!elo', new RegExp(`^${esc(B.login)}: ${row(pre1, B.login).elo} Elo, rank \\d+ of \\d+, ${row(pre1, B.login).wins} wins? and ${row(pre1, B.login).losses} loss(es)?\\.$`, 'i')));
+  // Right after the duel the loser may still be knocked out (respawnMs); naming them would give the result away.
+  await step('an instant re-challenge names nobody as knocked out', () =>
+    say(A, `!challenge ${B.login}`, /^That fight is still playing on stream\. Give it a few seconds!$|^Rematch in \d+ s/));
   await step('a rematch inside the lock is held back', async () => {
     await sleep(config.respawnMs + 1000);
     return say(A, `!challenge @${B.login}`, /^Rematch in \d+ s! Catch your breath first\.$/);
   });
+  await step('duel 1: the board shows the result only after the overlay announced it', () => checkReveal(pre1, A, B, banners, since1));
 
   // Duel 2: both name each other, which starts the duel without !fight.
-  await step(`${A.login} and ${B.login} challenge each other`, async () => {
-    const pre = await board();
+  await step(`${A.login} and ${B.login} challenge each other, and chat gets no result`, async () => {
+    const pre = await board(), since = Date.now();
     await openChallenge(A, B, [`!challenge @${B.login.toUpperCase()}`, `!challenge ${B.login.toUpperCase()}`, `!challenge @${B.login}`]);
-    const result = await say(B, `!challenge @${A.login}`, /beats .+ Elo: /);
+    const result = await say(B, `!challenge @${A.login}`, FIGHT_ON);
     duels++;
-    return checkDuel(result, pre);
+    checkFightOn(result, pre, A, B);
+    const hidden = await checkHidden(pre, A, B);
+    return `${result} — ${hidden}; ${await checkReveal(pre, A, B, banners, since)}`;
   });
 
   await step('the overlay played every duel without page errors', async () => {
-    await sleep(6000);   // the last duel's rolls
     await overlay.screenshot({ path: path.join(OUT, `${stamp}-overlay.png`) });
     const shown = await overlay.evaluate(() => window.__e2eReplays.size);
     check(shown >= duels, `${shown} replays for ${duels} duels`);

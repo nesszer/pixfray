@@ -352,6 +352,13 @@ function beginDuel(state, duel, now) {
 // second roll at LUCK_ROLLS + i.
 // rolls are numbers in [0, 1) from the room; missing ones come from a hash so the reducer stays pure.
 const QUICK_MAX_ROLLS = 12;
+// A quick duel is settled at once, but the overlay plays it out over seconds and viewers see the stream a few
+// seconds behind chat. Until revealAt, chat replies, !elo, !ranks and the leaderboard keep the pre-fight
+// numbers (hiddenResults), so the stream shows the winner first. Pacing mirrors public/overlay.js: a walk-in
+// of up to 2.2 s, then about 1.8 s per roll before the result banner.
+const REPLAY_WALK_MS = 2200, REPLAY_ROLL_MS = 1800;
+export const STREAM_DELAY_MS = 6000;
+export const replayMs = (rolls) => REPLAY_WALK_MS + REPLAY_ROLL_MS * Math.max(1, rolls);
 const QUICK_FLAWLESS_BONUS = 3;
 const LUCK_ROLLS = 24;
 function settleQuickDuel(state, duel, rolls, now) {
@@ -396,6 +403,7 @@ function settleQuickDuel(state, duel, rolls, now) {
   }
   const flawless = duel.hp[winnerId] === maxHp;
   finishDuel(state, duel, winnerId, now, { decision, bonus: flawless ? QUICK_FLAWLESS_BONUS : 0 });
+  duel.revealAt = now + replayMs(swings.length) + STREAM_DELAY_MS;
   return { ok: true, reason: "quick_duel", duelId: duel.id, winnerId, loserId, swings, winnerHp: duel.hp[winnerId], flawless, decision };
 }
 
@@ -713,6 +721,27 @@ function applyAdmin(state, event, now) {
   }
 
   return { ok: false, reason: "unknown_admin_action" };
+}
+
+// Results the stream hasn't shown yet: userId -> { elo before the first hidden duel, hidden wins, hidden losses }.
+export function hiddenResults(state, now) {
+  const out = new Map();
+  for (const duel of state.duels) {
+    if (duel.status !== "completed" || !(duel.revealAt > now) || !duel.ratings) continue;
+    for (const id of [duel.a, duel.b]) {
+      const h = out.get(id) || { elo: duel.ratings[id]?.before, wins: 0, losses: 0 };   // duels are in order, so the first is the pre-fight Elo
+      if (duel.winnerId === id) h.wins += 1; else h.losses += 1;
+      out.set(id, h);
+    }
+  }
+  return out;
+}
+
+// A profile as the stream has shown it so far.
+export function shownProfile(profile, hidden) {
+  const h = profile && hidden.get(profile.userId);
+  if (!h || !Number.isInteger(h.elo)) return profile;
+  return { ...profile, elo: h.elo, wins: Math.max(0, profile.wins - h.wins), losses: Math.max(0, profile.losses - h.losses) };
 }
 
 export function parseGameCommand(text) {

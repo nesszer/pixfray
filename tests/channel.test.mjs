@@ -361,7 +361,7 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.equal((await cmd('u1', 'alice', 'challenge', 'alice')).body.reply, "alice, you can't fight your own shadow! Name a rival: !challenge @name");
   assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, 'alice challenges @bob! @bob, type !fight to fight or !decline to back out within 30 s.');
   // Quick duels are off in this room, but StreamElements has no attack commands, so !fight settles the duel at once.
-  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^(alice|bob) beats (alice|bob) /);
+  assert.equal((await cmd('u2', 'bob', 'accept')).body.reply, 'Fight on: alice vs bob! Watch the stream for the winner.');
   assert.equal(r.readState('nesszerra').duels.filter((d) => d.status === 'active').length, 0);
   assert.equal((await cmd('u1', 'alice', 'heavy')).body.reply, 'Lost in the arena? Type !minichat');
   // Renamed commands show up in replies; duplicates and bad names are refused.
@@ -417,7 +417,7 @@ test('SE_ONLY: a StreamElements command with the right key makes StreamElements 
   assert.equal((await r.call('/admin')).body.chatStatus.source, 'streamelements');
 });
 
-test('StreamElements quick duel: !fight rolls the dice and settles it in one reply', async () => {
+test('StreamElements quick duel: !fight settles it at once, but chat sees the result only after the stream shows it', async () => {
   const r = room({}, { quick: true });
   const se = (await r.call('/admin')).body.streamelements;
   await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
@@ -425,21 +425,38 @@ test('StreamElements quick duel: !fight rolls the dice and settles it in one rep
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 'q' + (++m) } });
   await cmd('u1', 'alice', 'challenge', 'bob');
-  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^(alice|bob) beats (alice|bob) (in \d+ rolls?( \(sudden death\))?|on HP after 12 rolls) \((\d+ HP left|100 HP left, flawless, \+3 bonus)\)\. Elo: \w+ (1012|1015), \w+ 988\.$/);
+  assert.equal((await cmd('u2', 'bob', 'accept')).body.reply, 'Fight on: alice vs bob! Watch the stream for the winner.');
   assert.equal((await cmd('u2', 'bob', 'accept')).body.reply, 'bob, nobody has challenged you yet. Start one: !challenge @name');
+  // Until the overlay has played the duel (plus stream delay), every read shows the pre-fight numbers.
+  const duel = r.readState('nesszerra').duels.find((d) => d.status === 'completed');
+  assert.ok(duel.revealAt - Date.now() > 6000 && duel.revealAt - Date.now() < 40_000, 'revealed after the replay and the stream delay');
+  const before = (await r.call('/leaderboard')).body;
+  assert.deepEqual(before.map((p) => [p.elo, p.wins, p.losses]), [[1000, 0, 0], [1000, 0, 0]], 'leaderboard holds the result back');
+  assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, 'alice: 1000 Elo, rank 1 of 2, 0 wins and 0 losses.');
+  assert.match((await cmd('u2', 'bob', 'top')).body.reply, /^Top 2: 1\. alice 1000 · 2\. bob 1000\./);
+  assert.equal((await r.call('/profile?userId=u2')).body.wins, 0);
+  assert.equal((await r.call('/looks?u=alice')).body.alice.elo, 1000);
+  const realNow = Date.now;
+  Date.now = () => duel.revealAt + 1;
+  try {
+    const after = (await r.call('/leaderboard')).body;
+    assert.deepEqual([after[0].wins, after[1].losses, after[0].elo > 1000, after[1].elo < 1000], [1, 1, true, true], 'shown once the stream has shown it');
+    assert.match((await cmd('u1', 'alice', 'elo')).body.reply, new RegExp(`^alice: ${after.find((p) => p.username === 'alice').elo} Elo, rank ${after.findIndex((p) => p.username === 'alice') + 1} of 2`));
+  } finally { Date.now = realNow; }
   // The result is saved, so the next command (which reloads the stored profile) keeps it.
   const saved = Object.fromEntries(r.ctx.storage.sql.exec('SELECT user_id, elo, wins, losses FROM profiles').toArray().map((x) => [x.user_id, x]));
   assert.deepEqual([saved.u1.wins + saved.u2.wins, saved.u1.losses + saved.u2.losses, [2000, 2003].includes(saved.u1.elo + saved.u2.elo)], [1, 1, true]);   // +3 if flawless
   assert.notEqual(saved.u1.elo, 1000);
   // Every command lands in the dev log with what came in, the game's decision and the reply.
   const log = (await r.call('/dev/logs?source=command')).body;
-  assert.deepEqual(log.map((x) => x.context.reason).reverse(), ['challenge', 'quick_duel', 'challenge_not_found']);
-  assert.match(log[1].context.swings, /^([1-6][hxcm] ?)+$/);
+  assert.deepEqual(log.map((x) => x.context.reason).reverse(), ['challenge', 'quick_duel', 'challenge_not_found', 'elo', 'top', 'elo']);
+  const quick = log.find((x) => x.context.reason === 'quick_duel');
+  assert.match(quick.context.swings, /^([1-6][hxcm] ?)+$/);
   assert.equal((await r.call('/dev/logs?source=warn')).body.length, 0);
   // A result that didn't reach the stored profile is flagged.
   const state = r.readState('nesszerra');
   state.players.find((p) => p.userId === 'u1').wins += 5;
-  r.checkSavedProfiles(state, log[1].context.duelId);
+  r.checkSavedProfiles(state, quick.context.duelId);
   assert.match((await r.call('/dev/logs?source=warn')).body[0].message, /profile for alice not saved/);
 });
 
@@ -494,8 +511,8 @@ test('dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   assert.equal(ch.body.ok, true);
   const fight = await say('b2', 'testbot_b', '!fight');
   assert.equal(fight.body.reason, 'quick_duel');
-  assert.match(fight.body.reply, /testbot_[ab] beats testbot_[ab]/);
-  assert.equal((await r.call('/leaderboard')).body.filter((p) => p.wins + p.losses === 1).length, 2, 'Elo and records are saved');
+  assert.equal(fight.body.reply, 'Fight on: testbot_a vs testbot_b! Watch the stream for the winner.');
+  assert.equal(r.ctx.storage.sql.exec('SELECT wins, losses FROM profiles').toArray().filter((p) => p.wins + p.losses === 1).length, 2, 'Elo and records are saved');
 });
 
 test('overlay sockets: one network is capped, and a full room drops an old socket instead of refusing', async () => {

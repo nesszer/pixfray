@@ -1,6 +1,8 @@
 // StreamElements chat source. Each game action is a StreamElements custom command whose reply is
 // $(customapi <url>): the bot GETs /api/se/<channel>/<action>?k=..&id=..&u=..&d=..&t=..&m=.. and posts our reply.
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
+import { hiddenResults } from './game.js';
+
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
 export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'top', 'elo', 'help'];   // quick duels need no attack commands
@@ -130,12 +132,10 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     const duel = state.duels.find(d => d.id === result.duelId);
     const other = duel ? (duel.a === actorId ? duel.b : duel.a) : '';
     if (reason === 'quick_duel') {
-      const w = state.players.find(p => p.userId === result.winnerId), l = state.players.find(p => p.userId === result.loserId);
-      // One line; the overlay plays the rolls. "A beats B in 4 rolls (66 HP left). Elo: A 1012, B 988."
-      const n = (result.swings || []).length, wn = nameOf(state, result.winnerId), ln = nameOf(state, result.loserId);
-      const how = result.decision === 'hp' ? ` on HP after ${n} rolls` : ` in ${n} roll${n === 1 ? '' : 's'}` + (result.decision === 'sudden_death' ? ' (sudden death)' : '');
-      const left = ` (${result.winnerHp} HP left${result.flawless ? ', flawless, +3 bonus' : ''})`;
-      return `${wn} beats ${ln}${how}${left}.` + (w && l ? ` Elo: ${wn} ${w.elo}, ${ln} ${l.elo}.` : '');
+      // No result here: chat is ahead of the stream, so the overlay shows the winner first. Challenger first,
+      // never winner first, so the order gives nothing away.
+      const [a, b] = duel ? [duel.a, duel.b] : [actorId, other];
+      return `Fight on: ${nameOf(state, a)} vs ${nameOf(state, b)}! Watch the stream for the winner.`;
     }
     if (!duel) return MISSED_TEXT;   // ok but no duel = the text didn't parse as a command
     if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}!`;
@@ -162,7 +162,12 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     case 'target_not_found': return noFighter(target, false, origin, ch);
     case 'self_duel': return `${me}, you can't fight your own shadow! Name a rival: ${n('challenge')} @name`;
     case 'player_busy': return 'One of you is already fighting! Wait for the bell, then try again.';
-    case 'respawning': return `${result.userId ? nameOf(state, result.userId) : me} is still seeing stars. Give it a few seconds!`;
+    case 'respawning': {
+      const down = result.userId || actorId;
+      // The loser of a quick duel is down before the stream has shown the fight, so don't name them yet.
+      if (hiddenResults(state, now).has(down)) return 'That fight is still playing on stream. Give it a few seconds!';
+      return `${nameOf(state, down)} is still seeing stars. Give it a few seconds!`;
+    }
     case 'channel_full': return 'Every ring is taken! Try again in a moment.';
     case 'rematch_cooldown': return `Rematch in ${secs((result.retryAt || now) - now)} s! Catch your breath first.`;
     case 'challenge_not_found': return `${me}, nobody has challenged you yet. Start one: ${n('challenge')} @name`;

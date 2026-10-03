@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reduceGame, createInitialState, parseGameCommand, defaultConfig } from '../server/game.js';
+import { reduceGame, createInitialState, parseGameCommand, defaultConfig, hiddenResults, shownProfile, replayMs, STREAM_DELAY_MS } from '../server/game.js';
 
 const T0 = 1_800_000_000_000;
 let seq = 0;
@@ -613,6 +613,32 @@ test('quick duels are the default and work through a mutual challenge too', () =
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { quickDuel: false } } }).ok, true);
 });
 
+test('quick duels hide the result until the stream has played it out (revealAt)', () => {
+  const w = arena({ quick: true });
+  const duel = w.duel(w.fight('alice', 'bob'));
+  const rolls = w.last.result.swings.length;
+  assert.equal(duel.status, 'completed');
+  assert.equal(duel.revealAt, w.now + replayMs(rolls) + STREAM_DELAY_MS);
+  assert.equal(replayMs(0), replayMs(1), 'at least one roll is replayed');
+  const hidden = hiddenResults(w.state, w.now);
+  const winner = duel.winnerId, loser = winner === 'id-alice' ? 'id-bob' : 'id-alice';
+  assert.deepEqual(hidden.get(winner), { elo: 1000, wins: 1, losses: 0 });
+  assert.deepEqual(hidden.get(loser), { elo: 1000, wins: 0, losses: 1 });
+  const saved = { userId: winner, elo: duel.ratings[winner].after, wins: 1, losses: 0 };
+  assert.deepEqual(shownProfile(saved, hidden), { userId: winner, elo: 1000, wins: 0, losses: 0 });
+  assert.equal(shownProfile(null, hidden), null);
+  const cara = { userId: 'id-cara', elo: 1000, wins: 0, losses: 0 };
+  assert.equal(shownProfile(cara, hidden), cara, 'fighters with nothing hidden are unchanged');
+  assert.equal(hiddenResults(w.state, duel.revealAt).size, 0, 'shown once the stream has played it');
+  // A second duel before the first is shown stacks, and the Elo shown is the one before the first.
+  w.advance(3_500);
+  w.fight('alice', 'cara');
+  const both = hiddenResults(w.state, w.now).get('id-alice');
+  assert.equal(both.wins + both.losses, 2);
+  assert.equal(both.elo, 1000);
+});
+
+
 test('a command marked quick (StreamElements, no attack commands) settles at once even with quick duels off', () => {
   const w = arena({ viewers: ['alice', 'bob', 'cara', 'dan', 'eve', 'fin'] });
   const quickSay = (login, text) => w.apply({ type: 'command', messageId: 'm' + (++seq), userId: 'id-' + login, username: login, displayName: login, text, timestamp: w.now, quick: true });
@@ -651,6 +677,9 @@ test('StreamElements "seeing stars" names the knocked-out fighter, not the one w
   const reply = (result) => seReplyText({ result: { ok: false, reason: 'respawning', ...result }, state, actorId: 'u1', action: 'challenge', target: 'bob' });
   assert.equal(reply({ userId: 'u2' }), 'Bob is still seeing stars. Give it a few seconds!');
   assert.equal(reply({}), 'Alice is still seeing stars. Give it a few seconds!');
+  // Right after a quick duel the knocked-out fighter is the loser, and the stream hasn't shown that yet.
+  state.duels.push({ id: 'd1', status: 'completed', a: 'u1', b: 'u2', winnerId: 'u1', revealAt: Date.now() + 10_000, ratings: { u1: { before: 1000, after: 1012 }, u2: { before: 1000, after: 988 } } });
+  assert.equal(reply({ userId: 'u2' }), 'That fight is still playing on stream. Give it a few seconds!');
 });
 
 // ---------- upgrades (server/upgrades.js) ----------
