@@ -159,7 +159,7 @@ test('channels lists the registry without reading any room, and progress answers
   assert.deepEqual(Object.keys(p).sort(), ['commands', 'commandsWorking', 'duelCommands', 'duelModuleOff', 'lastChatAt', 'lastCommandAt', 'overlays', 'players', 'rejectedAt', 'source'].sort());
   assert.equal(p.overlays, 0);
   assert.equal(p.source, '');
-  assert.equal(p.commands, 6);
+  assert.equal(p.commands, 7);
   assert.equal(p.commandsWorking, 0);
 });
 
@@ -181,7 +181,7 @@ test('progress covers more than 40 channels across batched calls, 40 room reads 
     Object.assign(seen, r.body.progress);
   }
   assert.deepEqual(Object.keys(seen).sort(), [...on].sort());
-  assert.equal(seen.streamer_050.commands, 6);
+  assert.equal(seen.streamer_050.commands, 7);
 });
 
 test('progress validates logins: required, at most 40, only channels that are on', async () => {

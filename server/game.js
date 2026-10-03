@@ -182,6 +182,8 @@ function recentProfile(state, profile, now) {
   // hp/respawnAt only seed a new player, so a later chat message can never undo a KO.
   if (!existing && Number.isInteger(profile.hp) && profile.registered) merged.hp = Math.min(state.config.maxHp, Math.max(0, profile.hp));
   if (!existing && Number.isInteger(profile.respawnAt)) merged.respawnAt = profile.respawnAt;
+  // !rematch: the last finished duel's opponent. The game's own value is newer than a saved one.
+  if (profile.registered && !merged.lastOpponentId && normalizeUserId(profile.lastOpponentId)) merged.lastOpponentId = normalizeUserId(profile.lastOpponentId);
   if (existing) Object.assign(existing, merged);
   else {
     if (state.players.length >= MAX_ACTIVE_PLAYERS) {
@@ -439,6 +441,8 @@ function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } =
   winner.respawnAt = 0;
   loser.hp = 0;
   loser.respawnAt = now + duel.rules.respawnMs;
+  a.lastOpponentId = b.userId;
+  b.lastOpponentId = a.userId;
   duel.status = "completed";
   duel.winnerId = winnerId;
   duel.endedAt = now;
@@ -513,11 +517,19 @@ function applyCommand(state, event, now) {
   if (!actor) return { ok: false, reason: "ranked_sign_in_required" };
   const quick = state.config.quickDuel || event.quick === true;
 
-  if (parsed.action === "duel") {
-    const username = normalizeUsername(parsed.target);
-    if (!username) return { ok: false, reason: "target_required" };
-    const target = findTargetProfile(state, event, username, now);
-    if (!target) return { ok: false, reason: "target_not_found" };
+  if (parsed.action === "duel" || parsed.action === "rematch") {
+    let target;
+    if (parsed.action === "rematch") {
+      // Challenge the last opponent of a finished duel; the room passes their saved profile as targetProfile.
+      const lastId = actor.lastOpponentId;
+      target = lastId && (player(state, lastId) || (normalizeUserId(event.targetProfile?.userId) === lastId ? recentProfile(state, event.targetProfile, now) : null));
+      if (!target) return { ok: false, reason: "no_previous_opponent" };
+    } else {
+      const username = normalizeUsername(parsed.target);
+      if (!username) return { ok: false, reason: "target_required" };
+      target = findTargetProfile(state, event, username, now);
+      if (!target) return { ok: false, reason: "target_not_found" };
+    }
     if (!target.registered) return { ok: false, reason: "ranked_sign_in_required" };
     // Challenging someone who already challenged you accepts their challenge.
     const mutual = openDuels(state).find((item) => item.status === "pending" && item.a === target.userId && item.b === actor.userId);
@@ -748,12 +760,12 @@ export function parseGameCommand(text) {
   if (typeof text !== "string") return null;
   // Chat clients append invisible characters (U+E0000 tag chars, U+034F, zero-width spaces) to repeated messages.
   const clean = text.replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF]/gu, "").trim();
-  const match = /^!(duel|challenge|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i.exec(clean);
+  const match = /^!(duel|challenge|rematch|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i.exec(clean);
   if (!match) return null;
   let action = match[1].toLowerCase();
   if (action === "challenge") action = "duel";
   if (action === "fight") action = "accept";
-  const target = match[2] ? normalizeUsername(match[2]) : "";
+  const target = match[2] && action !== "rematch" ? normalizeUsername(match[2]) : "";   // !rematch always means the last opponent
   if (action === "duel" && !target) return null;
   return { action, target };
 }

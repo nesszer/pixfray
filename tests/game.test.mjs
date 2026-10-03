@@ -639,6 +639,48 @@ test('quick duels hide the result until the stream has played it out (revealAt)'
 });
 
 
+test('!rematch challenges the last finished duel\'s opponent, with the rematch lock; a name after it is ignored', async () => {
+  assert.deepEqual(parseGameCommand('!rematch'), { action: 'rematch', target: '' });
+  assert.deepEqual(parseGameCommand('!REMATCH @cara'), { action: 'rematch', target: '' });
+  const w = arena({ quick: true });
+  assert.equal(w.say('alice', '!rematch').reason, 'no_previous_opponent');
+  w.fight('alice', 'bob');
+  assert.equal(w.player('alice').lastOpponentId, 'id-bob');
+  assert.equal(w.player('bob').lastOpponentId, 'id-alice');
+  assert.match(w.say('bob', '!rematch').reason, /^(respawning|rematch_cooldown)$/);
+  w.advance(31_000);
+  const c = w.say('bob', '!rematch @cara');
+  assert.equal(c.ok, true, c.reason);
+  assert.deepEqual([w.duel(c.duelId).a, w.duel(c.duelId).b, w.duel(c.duelId).status], ['id-bob', 'id-alice', 'pending']);
+  assert.equal(w.say('alice', '!rematch').reason, 'quick_duel', 'answering !rematch with !rematch starts the duel');
+  // A cancelled or declined duel doesn't count as a fight: the last opponent stays the same.
+  w.advance(31_000);
+  w.say('alice', '!challenge @cara'); w.say('cara', '!decline');
+  assert.equal(w.player('alice').lastOpponentId, 'id-bob');
+  // A fighter who left the arena still has the saved opponent; the room passes it as targetProfile.
+  const v = arena({ quick: true, viewers: ['alice'] });
+  const r = v.apply({ type: 'command', messageId: 'm' + (++seq), userId: 'id-alice', username: 'alice', displayName: 'alice', text: '!rematch', timestamp: v.now,
+    profile: { userId: 'id-alice', username: 'alice', registered: true, lastOpponentId: 'id-dan' },
+    targetProfile: { userId: 'id-dan', username: 'dan', displayName: 'dan', registered: true } });
+  assert.equal(r.ok, true, r.reason);
+  const { seReplyText, seHelpText } = await import('../server/streamelements.js');
+  assert.equal(seReplyText({ result: r, state: v.state, actorId: 'id-alice', action: 'rematch', target: '' }), 'alice wants a rematch with @dan! @dan, type !rematch or !fight to fight, or !decline to back out within 30 s.');
+  assert.equal(seReplyText({ result: { ok: false, reason: 'no_previous_opponent' }, state: v.state, actorId: 'id-alice', action: 'rematch', target: '' }), 'alice, you have nobody to rematch yet. Start one: !challenge @name');
+  assert.match(seHelpText({ names: { rematch: '!again' } }), / Again\? !again$/);
+});
+
+test('!rematch works in the HP fight too', () => {
+  const w = arena();
+  w.fight('alice', 'bob');
+  for (let i = 0; i < 20 && w.duel(w.state.duels.at(-1).id).status === 'active'; i++) { w.now += 13_000; w.say('alice', '!heavy'); }
+  assert.equal(w.state.duels.at(-1).status, 'completed');
+  w.advance(31_000);
+  assert.equal(w.say('alice', '!rematch').ok, true);
+  assert.equal(w.say('bob', '!accept').reason, undefined, 'a plain accept starts it');
+  assert.equal(w.state.duels.at(-1).status, 'active');
+});
+
+
 test('a command marked quick (StreamElements, no attack commands) settles at once even with quick duels off', () => {
   const w = arena({ viewers: ['alice', 'bob', 'cara', 'dan', 'eve', 'fin'] });
   const quickSay = (login, text) => w.apply({ type: 'command', messageId: 'm' + (++seq), userId: 'id-' + login, username: login, displayName: login, text, timestamp: w.now, quick: true });

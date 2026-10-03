@@ -38,7 +38,7 @@ can still sign in and turn it back on.
 | GET | `/api/state/:channel` | none | none | Snapshot (section 3) | 403, 405 |
 | GET | `/api/leaderboard/:channel` | none | none | Up to 100 `Profile` rows, ordered by elo desc, then wins desc, then username (quick-duel results still on stream are not shown yet; see Game rules) | 403 |
 | GET | `/api/looks/:channel?u=login1,login2` | none | at most 20 logins | `{login:{avatar, color, hat, displayName, elo}}` for viewers with a saved fighter only. The overlay uses it for chat-only viewers, batched and cached for 5 min. | 403 |
-| GET | `/api/se/:channel/:action?k=..&id=..&u=..&d=..&t=..&m=..` | the channel's StreamElements key `k` | `action` is `challenge`, `accept`, `decline`, `top` (default name `!ranks`), `elo` or `help` (default name `!minichat`). The first command with the right key makes StreamElements the chat source (and deletes a Twitch EventSub subscription), unless a mod used Disconnect chat. Each action's last arrival is recorded (at most once a minute) for the admin badges; New key clears them. The Worker checks the request before any Durable Object call ("StreamElements route checks" below). | always 200 `text/plain`: the one-line chat reply for the bot to post (empty for a repeated message id) | 405 not GET, 404 path doesn't match or a well-formed key on a channel that isn't set up, 429 from the edge rate limit, 503 `INTERNAL_SECRET` missing |
+| GET | `/api/se/:channel/:action?k=..&id=..&u=..&d=..&t=..&m=..` | the channel's StreamElements key `k` | `action` is `challenge`, `accept`, `decline`, `rematch` (challenges the sender's last finished-duel opponent), `top` (default name `!ranks`), `elo` or `help` (default name `!minichat`). The first command with the right key makes StreamElements the chat source (and deletes a Twitch EventSub subscription), unless a mod used Disconnect chat. Each action's last arrival is recorded (at most once a minute) for the admin badges; New key clears them. The Worker checks the request before any Durable Object call ("StreamElements route checks" below). | always 200 `text/plain`: the one-line chat reply for the bot to post (empty for a repeated message id) | 405 not GET, 404 path doesn't match or a well-formed key on a channel that isn't set up, 429 from the edge rate limit, 503 `INTERNAL_SECRET` missing |
 | GET | `/api/catalog/:channel` | none | none | `[...static characters.json, ...custom entries]` (section 5) | 403 |
 | GET | `/api/profile/:channel` | cookie | none | `Profile` or `null` | 401 |
 | POST | `/api/profile/:channel` | cookie | `{avatar, color:"#rrggbb", defaultAbility:"strike"\|"heavy"\|"heal", stats?:{power,guard,luck}, hat?}`, max 4000 bytes. `stats` and `hat` are checked against the saved wins (server/upgrades.js); a stats change while the fighter is in a duel is refused (`in_duel`). | `{profile, revision}` | 400 invalid field or unknown character, 401, 413 |
@@ -234,10 +234,10 @@ chat action responses):
 
 Command grammar:
 ```
-/^!(duel|challenge|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i
+/^!(duel|challenge|rematch|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i
 ```
 `challenge` is an alias of `duel`, `fight` is an alias of `accept`, and duel needs a target. `attack` uses the player's
-`defaultAbility`. The optional target is allowed on every command.
+`defaultAbility`. The optional target is allowed on every command. `rematch` ignores it and challenges the opponent of the sender's last finished duel (`lastOpponentId` on the player, saved as `profiles.last_opponent`), with the same rules as a challenge; with no such duel the reason is `no_previous_opponent`. A rematch answered by `!rematch` is a mutual challenge, so the duel starts.
 
 Local testing: `cf dev` started with `MINI_LOCAL_TEST=1` (scripts/test-all.mjs does this) makes
 `connectChat` record a `local-<16 hex>` subscription without calling Twitch, only when

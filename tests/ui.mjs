@@ -410,7 +410,7 @@ try {
   // 7. Setup checklist: live states from /api/admin, the Live tab points at the first unfinished step, the Duel-module tick saves.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    const actions = ['challenge', 'accept', 'decline', 'top', 'elo', 'help'];
+    const actions = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help'];
     let overlays = 0, duelModuleOff = false, seen = { challenge: now - 120000, decline: now - 120000 };
     const posts = [];
     const chatStatus = { connected: true, source: 'streamelements', status: 'enabled', subscriptionId: 'se-streamelements', createdAt: now - 86400000, lastNotificationAt: now - 120000, lastRevocationReason: '', checkedAt: 0 };
@@ -433,9 +433,9 @@ try {
     assert.equal(await page.evaluate(() => document.activeElement.id), 'check-overlay');
     assert.equal(await page.locator('#check-title').textContent(), 'Stream setup: 0 of 3 steps done');
     assert.match(await page.locator('#check-overlay').textContent(), /To do.*No overlay is open/s);
-    assert.match(await page.locator('#check-commands').textContent(), /2 of 6 commands have reached Mini Chat\. Not used yet: !accept, !top, !elo, !help\./);
+    assert.match(await page.locator('#check-commands').textContent(), /2 of 7 commands have reached Mini Chat\. Not used yet: !accept, !rematch, !top, !elo, !help\./);
     assert.match(await page.locator('#check-mods').textContent(), /Done.*moderators of nesszerra can sign in/s);
-    assert.deepEqual(await page.locator('#se-table [data-seen]').allTextContents(), ['Working · 2 min ago', 'Not used yet', 'Working · 2 min ago', 'Not used yet', 'Not used yet', 'Not used yet']);
+    assert.deepEqual(await page.locator('#se-table [data-seen]').allTextContents(), ['Working · 2 min ago', 'Not used yet', 'Working · 2 min ago', 'Not used yet', 'Not used yet', 'Not used yet', 'Not used yet']);
     // the command table uses the full step width: badges stay on one line, nothing is cut off, narrow screens scroll inside the wrap
     const wrap = page.locator('#se-table').locator('xpath=..'), wrapBox = await wrap.boundingBox();
     for (const b of await page.locator('#se-table [data-seen] .badge').all()) assert.ok((await b.boundingBox()).height < 28, 'status badge on one line at ' + s.name);

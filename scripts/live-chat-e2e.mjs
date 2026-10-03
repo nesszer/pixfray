@@ -121,10 +121,10 @@ async function say(who, text, expect) {
 // Open a challenge from `from` to `to`, waiting out a rematch lock, a knocked-out fighter or a stale challenge.
 // `texts` are spellings of the same challenge, so a retry never repeats the text Twitch just saw.
 async function openChallenge(from, to, texts) {
-  const want = new RegExp(`challenges @${esc(to.login)}!|Rematch in (\\d+) s|still seeing stars|still playing on stream|already fighting`, 'i');
+  const want = new RegExp(`(challenges|wants a rematch with) @${esc(to.login)}!|Rematch in (\\d+) s|still seeing stars|still playing on stream|already fighting`, 'i');
   for (const text of texts) {
     const reply = await say(from, text, want);
-    if (/challenges @/i.test(reply)) return reply;
+    if (/challenges @|wants a rematch with @/i.test(reply)) return reply;
     const wait = /Rematch in (\d+) s/i.exec(reply);
     if (wait) { note(`  waiting ${wait[1]} s for the rematch lock`); await sleep((+wait[1] + 2) * 1000); }
     else if (/seeing stars|still playing on stream/i.test(reply)) await sleep(6000);
@@ -222,13 +222,16 @@ try {
     for (let i = 0; i < 30 && !p; i++) { await sleep(500); p = (await arena()).players.find((x) => x.label?.toLowerCase().includes(B.login)); }
     const heard = irc.lines.some((s) => s.includes(`:${B.login}!`));
     check(p, `not on the overlay after 15 s (the overlay ${heard ? 'got' : 'never got'} the chat line; on screen: ${(await arena()).players.map((x) => x.label).join(', ') || 'nobody'})`);
-    check(p.avatar === saved.avatar && p.color?.toLowerCase() === saved.color.toLowerCase(), `shows ${p.avatar} ${p.color}, saved ${saved.avatar} ${saved.color}`);
+    // A viewer the arena doesn't list yet walks in random, then the batched /api/looks answer (~1 s) dresses them.
+    const dressed = (x) => x?.avatar === saved.avatar && x.color?.toLowerCase() === saved.color.toLowerCase();
+    for (let i = 0; i < 12 && !dressed(p); i++) { await sleep(500); p = (await arena()).players.find((x) => x.label?.toLowerCase().includes(B.login)) || p; }
+    check(dressed(p), `shows ${p.avatar} ${p.color} after 6 s, saved ${saved.avatar} ${saved.color}`);
     return `${p.avatar} ${p.color}`;
   });
 
   // Every read command from both accounts.
   for (const who of [A, B]) {
-    await step(`${who.login}: !minichat`, () => say(who, '!minichat', /^Mini Chat duels: gear up at \S+, then name your rival with !challenge @name\. They answer !fight\.$/));
+    await step(`${who.login}: !minichat`, () => say(who, '!minichat', /^Mini Chat duels: gear up at \S+, then name your rival with !challenge @name\. They answer !fight\. Again\? !rematch$/));
     await step(`${who.login}: !elo`, () => say(who, '!elo', new RegExp(`^${esc(who.login)}: \\d+ Elo, rank \\d+ of \\d+`, 'i')));
     await step(`${who.login}: !elo @${other(who).login}`, () => say(who, `!elo @${other(who).login}`, new RegExp(`^${esc(other(who).login)}: \\d+ Elo, rank`, 'i')));
     await step(`${who.login}: !ranks lists both accounts`, async () => {
@@ -286,6 +289,17 @@ try {
     return `${result} — ${hidden}; ${await checkReveal(pre, A, B, banners, since)}`;
   });
 
+  // Duel 3: !rematch names nobody; it finds the last opponent, and a !rematch back starts the duel.
+  await step(`${B.login} and ${A.login} both type !rematch, and chat gets no result`, async () => {
+    const pre = await board(), since = Date.now();
+    await openChallenge(B, A, ['!rematch', '!rematch now', `!rematch @${A.login}`]);
+    const result = await say(A, '!rematch', FIGHT_ON);
+    duels++;
+    checkFightOn(result, pre, B, A);
+    const hidden = await checkHidden(pre, A, B);
+    return `${result} — ${hidden}; ${await checkReveal(pre, A, B, banners, since)}`;
+  });
+
   await step('the overlay played every duel without page errors', async () => {
     await overlay.screenshot({ path: path.join(OUT, `${stamp}-overlay.png`) });
     const shown = await overlay.evaluate(() => window.__e2eReplays.size);
@@ -315,9 +329,9 @@ try {
       const snap = await admin.evaluate((u) => fetch(u).then((r) => (r.ok ? r.json() : { status: r.status })), `/api/admin/${CHANNEL}`);
       check(snap.streamelements, `admin answered ${snap.status || 'without streamelements'} (is Chrome A signed in to Mini Chat?)`);
       const seen = snap.streamelements.seen || {};
-      const stale = ['challenge', 'accept', 'decline', 'top', 'elo', 'help'].filter((a) => !(Date.now() - (seen[a] || 0) < 3600_000));
+      const stale = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help'].filter((a) => !(Date.now() - (seen[a] || 0) < 3600_000));
       check(!stale.length, 'not seen in the last hour: ' + stale.join(', '));
-      return 'all 6 seen';
+      return 'all 7 seen';
     } finally { await admin.close(); }
   });
 } catch (e) {

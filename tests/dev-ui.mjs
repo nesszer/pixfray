@@ -24,7 +24,7 @@ const diag = (configured) => ({
     cloudflare: { configured, missing: configured ? [] : ['CF_API_TOKEN', 'CF_ACCOUNT_ID'], versionMetadata: configured } },
   usage: configured ? { configured: true, limit: 100000, requests: 18234, percent: 18.2, resetsAt: new Date(Date.UTC(2026, 9, 2)).toISOString() } : { configured: false, limit: 100000, error: 'Set CF_API_TOKEN and CF_ACCOUNT_ID to read request usage' },
 });
-const progress = (p) => ({ overlays: 0, source: 'streamelements', commandsWorking: 0, commands: 6, duelCommands: false, duelModuleOff: false, lastCommandAt: 0, rejectedAt: 0, lastChatAt: 0, players: 0, ...p });
+const progress = (p) => ({ overlays: 0, source: 'streamelements', commandsWorking: 0, commands: 7, duelCommands: false, duelModuleOff: false, lastCommandAt: 0, rejectedAt: 0, lastChatAt: 0, players: 0, ...p });
 async function stub(page, { configured, calls = { progress: [] } }) {
   const tok = 'cd'.repeat(16);
   const reg = { builtin: ['nesszerra', 'miolafff'], max: 200, channels: [{ login: 'oldstreamer', enabledAt: now - 86400000 }],
@@ -104,7 +104,7 @@ for (const size of sizes) {
   await page.waitForFunction(() => document.querySelector('#channels-title').textContent === '3 channels are on, 1 with setup done right now');
   assert.deepEqual(calls.progress, [['nesszerra', 'miolafff'], ['oldstreamer']], 'progress is read in batches of progressBatch');
   assert.match(await page.textContent('#channels'), /nesszerra.*Built in.*Done.*1 open.*Twitch chat.*1 min ago/s);
-  assert.match(await page.textContent('#channels'), /miolafff.*2 of 3 steps.*Not open.*4 of 6 commands working.*2 min ago/s);
+  assert.match(await page.textContent('#channels'), /miolafff.*2 of 3 steps.*Not open.*4 of 7 commands working.*2 min ago/s);
   assert.match(await page.textContent('#channels'), /oldstreamer.*On.*0 of 3 steps.*Old key: copy replies again.*never/s);
   assert.equal(await page.getAttribute('#channels tr:nth-child(3) a >> nth=0', 'href'), '/admin/?channel=oldstreamer#chat');
   assert.deepEqual(await page.$$eval('#channels a:has-text("Export")', (a) => a.map((x) => x.getAttribute('href'))),

@@ -30,6 +30,8 @@ V2 replaced v1 on https://chat.miolaf.xyz on 2026-10-01. The commands above are 
 
 Chat commands for v2 duels:
 - `!challenge @viewer`, then `!fight` (or `!accept`) or `!decline`. Use `!fight` with StreamElements, whose Duel module owns `!accept`.
+- `!rematch` challenges the last viewer you fought; if they answer `!rematch` (or `!fight`), the duel starts. The 30 s
+  rematch lock still applies.
 - Accepting rolls the duel at once (quick duels, the default). Fighters take turns, challenger first, and each swing is a d6:
   6 crits for 50, 5 hits for 34, 3-4 misses, and on 1-2 the defender counters for 34. Both start
   at 100 HP. After 12 rolls the fighter with more HP wins; equal HP goes to sudden death, where

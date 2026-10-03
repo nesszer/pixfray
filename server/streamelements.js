@@ -5,10 +5,10 @@ import { hiddenResults } from './game.js';
 
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
-export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'top', 'elo', 'help'];   // quick duels need no attack commands
+export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help'];   // quick duels need no attack commands
 export const SE_READ_ACTIONS = ['top', 'elo', 'help'];   // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', top: '!ranks', elo: '!elo', help: '!minichat' };
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!minichat' };
 export const LOST_TEXT = 'Lost in the arena? Type !minichat';
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
 export const OFF_TEXT = 'Mini Chat is off on this channel right now.';
@@ -101,7 +101,7 @@ const noFighter = (who, self, origin, channel) => self ? `@${who}, you have no f
 export function seHelpText({ names = {}, origin = '', channel = '' } = {}) {
   const n = a => names[a] || DEFAULT_SE_NAMES[a];
   const link = siteLink(origin, channel);
-  return `Mini Chat duels: gear up${link ? ' at ' + link : ' on the Mini Chat site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}.`;
+  return `Mini Chat duels: gear up${link ? ' at ' + link : ' on the Mini Chat site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}. Again? ${n('rematch')}`;
 }
 
 // !top: the first five of the leaderboard (rows in leaderboard order) on one line.
@@ -139,6 +139,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     }
     if (!duel) return MISSED_TEXT;   // ok but no duel = the text didn't parse as a command
     if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}!`;
+    if (action === 'rematch') { const o = nameOf(state, other); return `${me} wants a rematch with @${o}! @${o}, type ${n('rematch')} or ${n('accept')} to fight, or ${n('decline')} to back out within ${secs(state.config.challengeTimeoutMs || 30000)} s.`; }
     if (action === 'challenge') return `${me} challenges @${target}! @${target}, type ${n('accept')} to fight or ${n('decline')} to back out within ${secs(state.config.challengeTimeoutMs || 30000)} s.`;
     if (reason === 'challenge_declined') return `${me} backs out of the duel.`;
     if (reason === 'duel_completed') {
@@ -170,6 +171,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     }
     case 'channel_full': return 'Every ring is taken! Try again in a moment.';
     case 'rematch_cooldown': return `Rematch in ${secs((result.retryAt || now) - now)} s! Catch your breath first.`;
+    case 'no_previous_opponent': return `${me}, you have nobody to rematch yet. Start one: ${n('challenge')} @name`;
     case 'challenge_not_found': return `${me}, nobody has challenged you yet. Start one: ${n('challenge')} @name`;
     case 'not_in_active_duel': case 'not_in_duel': return `${me}, you're not in a fight. Start one: ${n('challenge')} @name`;
     case 'wrong_opponent': return `${me}, that's not your rival!`;

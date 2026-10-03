@@ -460,13 +460,41 @@ test('StreamElements quick duel: !fight settles it at once, but chat sees the re
   assert.match((await r.call('/dev/logs?source=warn')).body[0].message, /profile for alice not saved/);
 });
 
+test('StreamElements !rematch challenges the last opponent, saved with the profile; two !rematch start the duel', async () => {
+  const r = room({}, { quick: true });
+  const se = (await r.call('/admin')).body.streamelements;
+  await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
+  await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
+  let m = 0;
+  const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 'r' + (++m) } });
+  assert.equal((await cmd('u1', 'alice', 'rematch')).body.reply, 'alice, you have nobody to rematch yet. Start one: !challenge @name');
+  await cmd('u1', 'alice', 'challenge', 'bob');
+  assert.match((await cmd('u2', 'bob', 'accept')).body.reply, /^Fight on: alice vs bob!/);
+  assert.deepEqual(r.ctx.storage.sql.exec('SELECT user_id, last_opponent FROM profiles ORDER BY user_id').toArray().map((x) => [x.user_id, x.last_opponent]), [['u1', 'u2'], ['u2', 'u1'], ['u3', '']]);
+  assert.match((await cmd('u2', 'bob', 'rematch')).body.reply, /^Rematch in \d+ s! Catch your breath first\.$|^That fight is still playing on stream/);
+  // A website save carries no opponent and must not clear it; the game state forgetting the players must not either.
+  await r.save('u2', 'bob', { color: '#445566' });
+  const s = r.readState('nesszerra'); s.players = []; s.rematchLocks = []; r.writeState(s);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 60_000;   // past the respawn and the stream reveal
+  try {
+    assert.equal((await cmd('u2', 'bob', 'rematch', 'cara')).body.reply, 'bob wants a rematch with @alice! @alice, type !rematch or !fight to fight, or !decline to back out within 30 s.', 'a name after !rematch is ignored');
+    assert.equal((await cmd('u3', 'cara', 'challenge', 'alice')).body.reply, 'One of you is already fighting! Wait for the bell, then try again.');
+    assert.equal((await cmd('u1', 'alice', 'rematch')).body.reply, 'Fight on: bob vs alice! Watch the stream for the winner.', 'answering !rematch with !rematch starts it');
+  } finally { Date.now = realNow; }
+  const reasons = (await r.call('/dev/logs?source=command')).body.map((x) => x.context.reason).reverse();
+  assert.deepEqual([...reasons.slice(0, 3), ...reasons.slice(4)], ['no_previous_opponent', 'challenge', 'quick_duel', 'rematch', 'player_busy', 'quick_duel']);
+  assert.match(reasons[3], /^(rematch_cooldown|respawning)$/);
+});
+
+
 test('StreamElements !ranks, !elo and !minichat work even while duels are paused', async () => {
   const r = room();
   const se = (await r.call('/admin')).body.streamelements;
   assert.deepEqual([se.names.top, se.names.elo, se.names.help], ['!ranks', '!elo', '!minichat']);
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 't' + (++m) } });
-  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'Mini Chat duels: gear up at https://test.example/, then name your rival with !challenge @name. They answer !fight.');
+  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'Mini Chat duels: gear up at https://test.example/, then name your rival with !challenge @name. They answer !fight. Again? !rematch');
   assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'The arena has no champions yet! Gear up at https://test.example/ and win a duel.');
   assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/');
   await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
@@ -482,7 +510,7 @@ test('StreamElements !ranks, !elo and !minichat work even while duels are paused
   assert.equal((await r.call('/admin')).body.streamelements.names.top, '!ranks');
   // Renamed commands show up in !minichat.
   await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { challenge: '!duel', accept: '!yes' } } });
-  assert.match((await cmd('u1', 'alice', 'help')).body.reply, /!duel @name\. They answer !yes\.$/);
+  assert.match((await cmd('u1', 'alice', 'help')).body.reply, /!duel @name\. They answer !yes\. Again\? !rematch$/);
 });
 
 test('/looks returns saved looks by login for the overlay: saved profiles only, at most 20 logins', async () => {

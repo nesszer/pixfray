@@ -84,6 +84,7 @@ function normalizeProfileRow(row, config) {
     respawnAt: 0,
     stats: cleanStats({ power: row.power, guard: row.guard, luck: row.luck }),
     hat: knownHat(row.hat) ? row.hat : "",
+    ...(row.last_opponent ? { lastOpponentId: String(row.last_opponent) } : {}),   // only getProfile reads it
   };
 }
 
@@ -119,6 +120,7 @@ export class ChannelRoom extends DurableObject {
     const profileColumns = sql.exec("PRAGMA table_info(profiles)").toArray().map((c) => c.name);
     for (const column of ["power", "guard", "luck"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("hat")) sql.exec("ALTER TABLE profiles ADD COLUMN hat TEXT NOT NULL DEFAULT ''");
+    if (!profileColumns.includes("last_opponent")) sql.exec("ALTER TABLE profiles ADD COLUMN last_opponent TEXT NOT NULL DEFAULT ''");   // !rematch
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
     sql.exec("CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')");
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
@@ -447,7 +449,7 @@ export class ChannelRoom extends DurableObject {
 
   getProfile(userId, config) {
     const row = this.ctx.storage.sql.exec(
-      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE user_id = ?",
+      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, last_opponent FROM profiles WHERE user_id = ?",
       userId,
     ).toArray()[0];
     return normalizeProfileRow(row, config);
@@ -471,9 +473,11 @@ export class ChannelRoom extends DurableObject {
       profile.userId,
     );
     this.ctx.storage.sql.exec(
-      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, last_opponent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, avatar = excluded.avatar, color = excluded.color, default_ability = excluded.default_ability, elo = excluded.elo, wins = excluded.wins, losses = excluded.losses, last_seen = excluded.last_seen, " +
-      "power = excluded.power, guard = excluded.guard, luck = excluded.luck, hat = excluded.hat",
+      "power = excluded.power, guard = excluded.guard, luck = excluded.luck, hat = excluded.hat, " +
+      // A website save carries no opponent; keep the stored one.
+      "last_opponent = CASE WHEN excluded.last_opponent <> '' THEN excluded.last_opponent ELSE profiles.last_opponent END",
       profile.userId,
       profile.username,
       profile.displayName,
@@ -486,6 +490,7 @@ export class ChannelRoom extends DurableObject {
       Number.isInteger(profile.lastSeen) ? profile.lastSeen : 0,
       ...(({ power, guard, luck }) => [power, guard, luck])(cleanStats(profile.stats)),
       knownHat(profile.hat) ? profile.hat : "",
+      String(profile.lastOpponentId || "").slice(0, 32),
     );
   }
 
@@ -719,7 +724,8 @@ export class ChannelRoom extends DurableObject {
         const profile = userProfile ? { ...userProfile, username, displayName } : { userId, username, displayName, ...(color ? { color } : {}) };
         const parsed = parseGameCommand(textValue);
         if (parsed) {
-          const targetProfile = parsed.target ? this.getProfileByUsername(parsed.target, state.config) : null;
+          const lastId = parsed.action === "rematch" ? state.players.find((p) => p.userId === userId)?.lastOpponentId || userProfile?.lastOpponentId : "";
+          const targetProfile = parsed.target ? this.getProfileByUsername(parsed.target, state.config) : lastId ? this.getProfile(lastId, state.config) : null;
           main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, quick: subscriptionId === SE_SUBSCRIPTION_ID, rolls: Array.from({ length: 48 }, () => Math.random()) });
           if (!main.result.ok && main.result.reason !== "duplicate") step({ type: "command_rejected", userId, command: parsed.action, reason: main.result.reason, retryAt: main.result.retryAt });
         } else {
