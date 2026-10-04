@@ -13,8 +13,9 @@ import {
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription, liveStream } from "./eventsub.js";
-import { cleanStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS } from "./upgrades.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText, seWalletText, seGiveText, seAmount } from "./streamelements.js";
+import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
+import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -41,7 +42,7 @@ const MAX_BONUS = 1_000;                   // stored check-in points; only MAX_P
 const MAX_DOLLARS = 1_000_000;             // a wallet never holds more
 const MAX_GIFT = 10_000;                   // the most a mod can add or take back in one gift
 // Every query that builds a profile with normalizeProfileRow reads these columns.
-const PROFILE_COLUMNS = "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak, dollars";
+const PROFILE_COLUMNS = "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak, dollars, pet, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom";
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -96,8 +97,15 @@ function normalizeProfileRow(row, config) {
     checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
     streak: Number.isInteger(row.streak) ? row.streak : 0,
     dollars: Number.isInteger(row.dollars) ? row.dollars : 0,   // Mini Chat dollars (payDuels, give, giftDollars)
+    ...petFieldsOf(row),
     ...(row.last_opponent ? { lastOpponentId: String(row.last_opponent) } : {}),   // only getProfile reads it
   };
+}
+
+// The active pet (server/pets.js): its id, tier and boost; none when it's gone (a deleted upload).
+function petFieldsOf(row) {
+  const pet = petOf(row.pet, row.pet_custom);
+  return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };
 }
 
 function safeJsonParse(value, fallback) {
@@ -139,6 +147,9 @@ export class ChannelRoom extends DurableObject {
     // v2.7: Mini Chat dollars, and what each viewer gave away in which stream (!give). upsertProfile never writes them either.
     for (const column of ["dollars", "given_in_stream"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("give_stream")) sql.exec("ALTER TABLE profiles ADD COLUMN give_stream TEXT NOT NULL DEFAULT ''");
+    // v2.8: the active pet, plus bought items and uploaded pets (server/pets.js). PROFILE_COLUMNS reads custom_pets.
+    if (!profileColumns.includes("pet")) sql.exec("ALTER TABLE profiles ADD COLUMN pet TEXT NOT NULL DEFAULT ''");
+    ensurePetSchema(sql);
     // Streams with at least one check-in, numbered in order: a streak counts these, so a gap of one seq is one missed stream.
     sql.exec("CREATE TABLE IF NOT EXISTS streams (seq INTEGER PRIMARY KEY, stream_id TEXT NOT NULL UNIQUE, started_at INTEGER NOT NULL)");
     // Test site only (DEV_TOOLS_TOKEN): a pretend live stream for !checkin. stream_id '' = pretend offline.
@@ -191,6 +202,27 @@ export class ChannelRoom extends DurableObject {
 
     if (path === "/catalog" || path === "/asset" || path.startsWith("/asset/")) return handleRoomAssets(this, request, { path, channel, url });
     if (path.startsWith("/dev/")) return handleRoomDeveloper(this, request, { path, channel, url });
+    if (path === "/pets" || path.startsWith("/pets/")) {
+      // A deleted upload leaves the fighters using it with no pet; the stored profiles are cleared by handleRoomPets.
+      let cleared = null;
+      const response = await handleRoomPets(this, request, { path, channel, config: this.readState(channel).config, onDelete: (id) => {
+        const state = this.readState(channel);
+        let hit = false;
+        for (const p of state.players) if (p.pet === id) { Object.assign(p, { pet: "", petTier: "", petBoost: emptyStats() }); hit = true; }
+        if (hit) { state.revision += 1; this.writeState(state); cleared = state; }
+      } });
+      if (cleared) this.broadcast(cleared);
+      return response;
+    }
+    // Buy a pet or a hat with Mini Chat dollars (signed-in viewer; the Worker sets the user header).
+    if (path === "/shop" && request.method === "POST") {
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      const userId = validUserId(request.headers.get(USER_HEADER));
+      if (!userId || userId !== validUserId(body.value.userId)) return json({ error: "profile identity mismatch" }, 403);
+      const bought = this.buy(channel, userId, body.value);
+      return json(bought.ok ? bought : { ...bought, error: bought.reason }, bought.ok ? 200 : bought.reason === "no_fighter" ? 404 : bought.reason === "not_enough" || bought.reason === "owned" ? 409 : 400);
+    }
 
     if (path === "/admin" && request.method === "GET") {
       const state = this.readState(channel);
@@ -212,7 +244,7 @@ export class ChannelRoom extends DurableObject {
       const rows = this.ctx.storage.sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`, ...logins).toArray();
       for (const row of rows) {
         const p = shownProfile(normalizeProfileRow(row, config), hidden);
-        out[p.username.toLowerCase()] = { avatar: p.avatar, color: p.color, hat: p.hat || "", displayName: p.displayName, elo: p.elo };
+        out[p.username.toLowerCase()] = { avatar: p.avatar, color: p.color, hat: p.hat || "", pet: p.pet || "", petTier: p.petTier || "", displayName: p.displayName, elo: p.elo };
       }
       return json(out);
     }
@@ -226,7 +258,7 @@ export class ChannelRoom extends DurableObject {
       if (!profile) return json(null);
       // A knocked-out fighter (hp 0, respawnAt) would give away a result the stream hasn't shown yet.
       const active = !hidden.has(userId) && state.players.find((item) => item.userId === userId);
-      return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins, profile.bonus) });
+      return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins, profile.bonus), owned: this.owned(userId) });
     }
 
     if (path === "/profile" && request.method === "POST") {
@@ -240,7 +272,7 @@ export class ChannelRoom extends DurableObject {
       this.broadcast(result.state);
       await this.scheduleAlarm(result.state);
       const shown = shownProfile(result.profile, hiddenResults(result.state, Date.now()));
-      return json({ profile: { ...shown, upgrades: upgradeRules(shown.wins, shown.bonus) }, revision: result.state.revision });
+      return json({ profile: { ...shown, upgrades: upgradeRules(shown.wins, shown.bonus), owned: this.owned(actorId) }, revision: result.state.revision });
     }
 
     if (path === "/admin" && request.method === "POST") {
@@ -323,9 +355,13 @@ export class ChannelRoom extends DurableObject {
       if (result.changed) await this.scheduleAlarm(result.state);
       const r = result.result || {};
       if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
-      const devGive = /^!(wallet|give|pay)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(String(line || "").trim());
+      const devGive = /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(String(line || "").trim());
       if (devGive) {   // the reply is the line a StreamElements bot would post
         const who = displayName || username, uid = validUserId(userId), devTarget = normalizeUsername(String(devGive[2] || "").replace(/^@/, ""));
+        if (devGive[1].toLowerCase() === "pet") {
+          const self = !devTarget || devTarget === normalizeUsername(username), info = this.petInfo(channel, self ? { userId: uid } : { username: devTarget });
+          return json({ pet: info, reply: sePetText(info, { who, target: self ? "" : devTarget, origin: "", channel }) });
+        }
         if (devGive[1].toLowerCase() === "wallet") { const wallet = this.wallet(channel, uid); return json({ wallet, reply: seWalletText(wallet, { who, origin: "", channel, maxPoints: MAX_POINTS }) }); }
         const given = await this.give(channel, { userId: uid, target: devTarget, amount: seAmount(devGive[3]) }, now);
         return json({ ...given, reply: seGiveText(given, { who, target: devTarget, origin: "", channel, names: this.seSettings().names }) });
@@ -463,7 +499,14 @@ export class ChannelRoom extends DurableObject {
       const stats = input.stats === undefined ? existing?.stats : validStats(input.stats, wins, existing?.bonus || 0);
       if (stats === null) return { ok: false, reason: "invalid_upgrades" };
       const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
-      if (hat !== (existing?.hat || "") && !hatUnlocked(hat, wins)) return { ok: false, reason: knownHat(hat) ? "hat_locked" : "invalid_profile" };
+      const owns = (kind, id) => this.ctx.storage.sql.exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id).toArray().length > 0;
+      if (hat !== (existing?.hat || "") && !hatUnlocked(hat, wins) && !(knownHat(hat) && owns("hat", hat))) return { ok: false, reason: knownHat(hat) ? "hat_locked" : "invalid_profile" };
+      // Pet: "" (none) or one the fighter bought that still exists.
+      const petId = input.pet === undefined ? existing?.pet || "" : typeof input.pet === "string" ? input.pet : null;
+      if (petId === null) return { ok: false, reason: "invalid_profile" };
+      const custom = petId ? this.ctx.storage.sql.exec("SELECT tier || ':' || stat || ':' || stat2 AS c FROM custom_pets WHERE id = ?", petId).toArray()[0]?.c : "";
+      const pet = petId ? petOf(petId, custom) : null;
+      if (petId && (!pet || !owns("pet", petId))) return { ok: false, reason: "pet_locked" };
       const profile = {
         ...(existing || {
           userId,
@@ -488,6 +531,9 @@ export class ChannelRoom extends DurableObject {
         defaultAbility,
         stats: stats || cleanStats(),
         hat,
+        pet: pet ? pet.id : "",
+        petTier: pet ? pet.tier : "",
+        petBoost: pet ? pet.boost : emptyStats(),
         registered: true,
       };
       const result = reduceGame(state, { type: "profile_saved", profile }, now);
@@ -527,9 +573,11 @@ export class ChannelRoom extends DurableObject {
       profile.userId,
     );
     this.ctx.storage.sql.exec(
-      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, last_opponent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, last_opponent, pet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '')) " +
       "ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, avatar = excluded.avatar, color = excluded.color, default_ability = excluded.default_ability, elo = excluded.elo, wins = excluded.wins, losses = excluded.losses, last_seen = excluded.last_seen, " +
       "power = excluded.power, guard = excluded.guard, luck = excluded.luck, hat = excluded.hat, " +
+      // A game state player from before pets has no pet field; keep the stored one then.
+      "pet = CASE WHEN ? IS NULL THEN profiles.pet ELSE excluded.pet END, " +
       // A website save carries no opponent; keep the stored one.
       "last_opponent = CASE WHEN excluded.last_opponent <> '' THEN excluded.last_opponent ELSE profiles.last_opponent END",
       profile.userId,
@@ -545,11 +593,14 @@ export class ChannelRoom extends DurableObject {
       ...(({ power, guard, luck }) => [power, guard, luck])(cleanStats(profile.stats)),
       knownHat(profile.hat) ? profile.hat : "",
       String(profile.lastOpponentId || "").slice(0, 32),
+      typeof profile.pet === "string" ? profile.pet : null,
+      typeof profile.pet === "string" ? profile.pet : null,
     );
   }
 
   deleteProfile(userId) {
     this.ctx.storage.sql.exec("DELETE FROM profiles WHERE user_id = ?", userId);
+    this.ctx.storage.sql.exec("DELETE FROM owned_items WHERE user_id = ?", userId);
   }
 
   resetAllRanks(initialElo) {
@@ -728,6 +779,10 @@ export class ChannelRoom extends DurableObject {
       const wallet = this.wallet(channel, userId);
       return done(seWalletText(wallet, { who: input.displayName || username, origin, channel, maxPoints: MAX_POINTS }), wallet ? "wallet" : "no_fighter");
     }
+    if (action === "pet") {   // like !wallet, it works while duels are paused
+      const self = !target || target === username, info = this.petInfo(channel, self ? { userId } : { username: target });
+      return done(sePetText(info, { who: input.displayName || username, target: self ? "" : target, origin, channel }), info ? (info.pet ? "pet" : "no_pet") : "no_fighter");
+    }
     if (action === "give") {
       const given = await this.give(channel, { userId, target, amount: seAmount(input.amount) }, now);
       return done(seGiveText(given, { who: input.displayName || username, target, origin, channel, names }), given.reason, given.reason === "given" ? { amount: given.amount } : {});
@@ -825,6 +880,51 @@ export class ChannelRoom extends DurableObject {
       sql.exec("UPDATE profiles SET dollars = MIN(?, dollars + ?) WHERE user_id = ?", MAX_DOLLARS, amount, to.userId);
       return { reason: "given", amount, to: to.displayName || to.username, dollars: dollars - amount, left: left - amount };
     });
+  }
+
+  // What a fighter bought: { pets: [ids], hats: [ids] }.
+  owned(userId) {
+    const out = { pets: [], hats: [] };
+    for (const r of this.ctx.storage.sql.exec("SELECT kind, item_id FROM owned_items WHERE user_id = ? ORDER BY bought_at", userId).toArray()) {
+      if (r.kind === "pet") out.pets.push(r.item_id); else if (r.kind === "hat") out.hats.push(r.item_id);
+    }
+    return out;
+  }
+
+  // Shop: a pet (price by tier, config) or a hat before its wins unlock it (hatPrice). Pays with the dollars the
+  // stream has shown, like give(). Buying doesn't equip; the dashboard selects it and the viewer saves.
+  buy(channel, userId, { kind, id }) {
+    return this.ctx.storage.transactionSync(() => {
+      const sql = this.ctx.storage.sql, state = this.readState(channel), config = state.config, now = Date.now();
+      const row = sql.exec("SELECT wins, dollars FROM profiles WHERE user_id = ?", userId).toArray()[0];
+      if (!row) return { ok: false, reason: "no_fighter" };
+      const h = hiddenResults(state, now).get(userId) || { wins: 0, dollars: 0 };
+      let price = null;
+      if (kind === "pet") price = petCatalog(sql, channel, config).find((p) => p.id === id)?.price ?? null;
+      else if (kind === "hat") {
+        const hat = HATS.find((x) => x.id && x.id === id);
+        if (hat && hatUnlocked(hat.id, row.wins - h.wins)) return { ok: false, reason: "already_unlocked" };
+        if (hat && hatPrice(hat, config) === null) return { ok: false, reason: "hats_not_for_sale" };
+        price = hat ? hatPrice(hat, config) : null;
+      }
+      if (price === null) return { ok: false, reason: "unknown_item" };
+      if (sql.exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id).toArray().length) return { ok: false, reason: "owned" };
+      const dollars = Math.max(0, row.dollars - h.dollars);
+      if (price > dollars) return { ok: false, reason: "not_enough", price, dollars };
+      sql.exec("UPDATE profiles SET dollars = dollars - ? WHERE user_id = ?", price, userId);
+      sql.exec("INSERT INTO owned_items (user_id, kind, item_id, price, bought_at) VALUES (?, ?, ?, ?, ?)", userId, kind, id, price, now);
+      logRoomEvent(this, "command", userId + " bought " + kind + " " + id + " for " + price, { channel, action: "buy", userId, kind, id, price });
+      return { ok: true, reason: "bought", kind, id, price, dollars: dollars - price, owned: this.owned(userId) };
+    });
+  }
+
+  // !pet [@name]: a saved fighter's active pet as the catalog names it, or null when there's no such fighter.
+  petInfo(channel, { userId, username }) {
+    const config = this.readState(channel).config;
+    const profile = userId ? this.getProfile(userId, config) : this.getProfileByUsername(username, config);
+    if (!profile) return null;
+    const item = profile.pet ? petCatalog(this.ctx.storage.sql, channel, config).find((p) => p.id === profile.pet) : null;
+    return { name: profile.displayName || profile.username, pet: item ? { label: item.label, tier: item.tier, boost: item.boost } : null };
   }
 
   // Mod gift from the admin page: adds dollars to a saved fighter, or takes them back with a negative amount (never below 0).

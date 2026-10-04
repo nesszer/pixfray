@@ -108,7 +108,24 @@ export const framesFor = (entry, anim) => {
 let hats = null;
 const HATS_URL = new URL("/hats.js", location.href).href;   // a full URL, so the Vite dev server serves the public file as-is
 import(/* @vite-ignore */ HATS_URL).then((m) => { hats = m; for (const s of sprites) s.drawn = ""; start(); }).catch(() => {});
-export function drawFrame(canvas, entry, frame, hat = "") {
+// Pets come from public/pets.js the same way. A pet is { id, tier, url? }; uploaded pets have a url to their PNG.
+let pets = null;
+const petDraws = new Set();
+const PETS_URL = new URL("/pets.js", location.href).href;
+import(/* @vite-ignore */ PETS_URL).then((m) => { pets = m; for (const s of sprites) s.drawn = ""; start(); for (const d of petDraws) d(); }).catch(() => {});
+const petArg = (pet) => pet?.url ? { image: image(pet.url) } : pet?.id || "";
+// A still pet on its own canvas (the dashboard's pet list).
+export function addPet(canvas, pet) {
+  const draw = () => {
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (pets && pet?.id) pets.drawPet(ctx, petArg(pet), canvas.width / 2, canvas.height - 2, canvas.height * 0.62, { tier: pet.tier, still: true });
+  };
+  petDraws.add(draw);
+  if (pet?.url) image(pet.url).addEventListener("load", draw, { once: true });
+  draw();
+}
+export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const img = entry && image(entry.url);
@@ -119,18 +136,22 @@ export function drawFrame(canvas, entry, frame, hat = "") {
   // With a hat, the figure is shrunk a little so the hat stays inside the canvas.
   const room = hat && hats ? 0.8 : 1;
   const dw = Math.round(w * room), dh = Math.round(h2 * room), dx = Math.round((canvas.width - dw) / 2), dy = canvas.height - dh;
+  // A pet stands behind the fighter, on its left, like on stream.
+  if (pet?.id && pets) pets.drawPet(ctx, petArg(pet), canvas.width * 0.2, canvas.height - 1, canvas.height * 0.3, { tier: pet.tier, t, moving: t > 0, still: !t });
   ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
   if (hat && hats) hats.drawHat(ctx, hat, img, frame, dx, dy, dw, dh, entry.head);
   return true;
 }
 // sprite = {canvas, entry, anim, active()} ; returns a handle with .set(entry) and .destroy()
-export function addSprite(canvas, entry, { anim = "walk", active = () => true, hat = "" } = {}) {
-  const s = { canvas, entry, anim, active, hat, drawn: "" };
+export function addSprite(canvas, entry, { anim = "walk", active = () => true, hat = "", pet = null } = {}) {
+  const s = { canvas, entry, anim, active, hat, pet, drawn: "" };
   sprites.add(s);
   const img = entry && image(entry.url);
   img?.addEventListener("load", () => { s.drawn = ""; start(); }, { once: true });
   start();
-  return { hat(id) { s.hat = id || ""; s.drawn = ""; start(); }, set(next) { s.entry = next; s.drawn = ""; if (next) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); }, destroy() { sprites.delete(s); } };
+  return { hat(id) { s.hat = id || ""; s.drawn = ""; start(); },
+    pet(next) { s.pet = next?.id ? next : null; s.drawn = ""; if (next?.url) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); },
+    set(next) { s.entry = next; s.drawn = ""; if (next) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); }, destroy() { sprites.delete(s); } };
 }
 let running = false;
 function start() { if (!running) { running = true; requestAnimationFrame(tick); } }
@@ -140,8 +161,10 @@ function tick(now) {
     const moving = !reducedMotion.matches && s.active();
     const frames = framesFor(s.entry, moving ? s.anim : "idle");
     const index = moving && frames.length ? Math.floor(now / (1000 / (s.entry?.fps || 8))) % frames.length : 0;
-    const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index + ":" + s.hat;
-    if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index], s.hat)) s.drawn = key;
+    // A pet animates on its own clock (hop, hover, wings), so a moving sprite with a pet redraws every frame.
+    const petT = s.pet && moving ? Math.round(now) : 0;
+    const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index + ":" + s.hat + ":" + (s.pet?.id || "") + ":" + petT;
+    if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index], s.hat, s.pet, petT)) s.drawn = key;
   }
   // With reduced motion every sprite is a still frame, so the loop sleeps until something needs redrawing.
   if (sprites.size && !reducedMotion.matches) requestAnimationFrame(tick); else running = false;

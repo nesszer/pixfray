@@ -9,7 +9,7 @@ scripted duels, and an alt account that types in real Twitch chat. Production ha
   (`cloudflare.config.ts`). The production Worker has no such binding, so no token can match there.
   `tests/worker.test.mjs` checks both configs.
 - A request with `Authorization: Bearer <token>` acts as the owner for `/api/dev/*` and
-  `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live)`. A wrong or short
+  `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live|shop)`. A wrong or short
   token gets 401; an owner session without the token gets 404 from `/api/devtools`.
 - The token lives in `.secrets.local.json` (gitignored) next to the Twitch app credentials, so the
   normal test deploy uploads it:
@@ -31,6 +31,10 @@ node scripts/devtools.mjs live on
 node scripts/devtools.mjs say a "!checkin" --via se
 node scripts/devtools.mjs say a "!wallet"
 node scripts/devtools.mjs say a "!pay @testbot_b 10" --via se
+node scripts/devtools.mjs gift a 300
+node scripts/devtools.mjs buy a pet fox
+node scripts/devtools.mjs equip a fox
+node scripts/devtools.mjs say a "!pet" --via se
 node scripts/devtools.mjs clean
 ```
 
@@ -42,6 +46,8 @@ node scripts/devtools.mjs clean
 - `live on` makes `!checkin` see a live stream with a new stream id, so each `live on` is the next
   stream for streaks (`--stream <id>` reuses one). `!pay` needs it too. `live off` answers "not live", and `live real`
   goes back to asking Twitch. Only the test Worker reads this, because only it has the token.
+- `buy <bot> pet|hat <id>` spends the bot's dollars like the viewer page's Buy button (`gift` them
+  first); `equip <bot> <pet|none>` brings a pet the bot owns and keeps its character, color and hat.
 
 ## Alt account in real chat
 

@@ -33,6 +33,15 @@ const GROUPS = [
     { key: "giveMaxPerStream", label: "Most one viewer gives per stream", unit: "$", min: 0, max: 10000 },
     { key: "giveMinDuels", label: "Finished duels before giving", unit: "duels", min: 0, max: 1000 },
   ] },
+  // The shop (server/pets.js): pet prices by tier, and locked hats cost this much per win they need (0 = not for sale).
+  { title: "Shop", fields: [
+    { key: "petPriceCommon", label: "Common pet", unit: "$", min: 1, max: 100000 },
+    { key: "petPriceUncommon", label: "Uncommon pet", unit: "$", min: 1, max: 100000 },
+    { key: "petPriceRare", label: "Rare pet", unit: "$", min: 1, max: 100000 },
+    { key: "petPriceEpic", label: "Epic pet", unit: "$", min: 1, max: 100000 },
+    { key: "petPriceLegendary", label: "Legendary pet", unit: "$", min: 1, max: 100000 },
+    { key: "hatPricePerWin", label: "Hat price per win it needs", unit: "$", min: 0, max: 1000 },
+  ] },
   // Only used when config.quickDuel is false, and no screen turns that off, so the group stays hidden (but in the form, so saving keeps its values).
   { title: "HP fight abilities", visible: (c) => c.quickDuel === false, fields: [
     { key: "abilities.strike.damage", label: "Strike damage", unit: "HP", min: 1, max: 1000 },
@@ -104,7 +113,7 @@ async function init() {
   $("#dev-link").hidden = $("#dev-section").hidden = !S.access.owner;
   $("#owner-chat").hidden = !S.access.owner || CHANNEL !== "nesszerra";
   $("#chat-box").hidden = CHANNEL !== "nesszerra";   // other channels get chat through StreamElements only
-  await Promise.all([load(), loadLeaderboard(), loadCustom()]);
+  await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets()]);
   if (S.admin?.channelState !== "paused") connectLive();
   // Back from "Connect mod access" (/auth/login?connect=mods)
   const mods = new URLSearchParams(location.search).get("mods");
@@ -433,6 +442,58 @@ async function loadCustom() {
     h("tbody", {}, customItems.map((x) => h("tr", {}, h("td", {}, x.label || x.id), h("td", { class: "num" }, (x.frames || []).length + Object.values(x.animations || {}).reduce((n, f) => n + f.length, 0)),
       h("td", { class: "num" }, formatBytes(x.bytes || 0)), h("td", {}, dateTime(x.createdAt))))))));
 }
+// ---------- custom pets ----------
+// Uploaded pets join the shop at their tier's price (server/pets.js). Built-in pets are drawn in code and can't be removed.
+const TIER_LABELS = { common: "Common", uncommon: "Uncommon", rare: "Rare", epic: "Epic", legendary: "Legendary" };
+const boostLabel = (b) => b?.power && b.power === b.guard && b.power === b.luck ? "+" + b.power + " to all stats" : ["power", "guard", "luck"].filter((k) => b?.[k]).map((k) => "+" + b[k] + " " + k).join(", ");
+async function loadPets() {
+  const r = await api("/api/pets/" + CHANNEL), box = $("#pet-custom-list");
+  if (!r.ok) { box.replaceChildren(h("p", { class: "muted small" }, "Couldn't list pets: " + errorText(r))); return; }
+  const custom = (r.data.pets || []).filter((p) => p.custom), max = r.data.limits?.maxPets || 24;
+  $("#pet-count").textContent = "(" + custom.length + " of " + max + ")";
+  if (!custom.length) { box.replaceChildren(h("p", { class: "muted small" }, "No custom pets yet. Viewers can buy the 14 built-in pets.")); return; }
+  box.replaceChildren(h("div", { class: "table-wrap" }, h("table", { class: "data" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Pet"), h("th", {}, "Tier"), h("th", {}, "Boost"), h("th", { class: "num" }, "Price ($)"), h("th", {}, h("span", { class: "sr-only" }, "Actions")))),
+    h("tbody", {}, custom.map((p) => h("tr", {},
+      h("td", {}, h("img", { class: "pet-thumb", src: p.url, alt: "", width: 32, height: 32 }), " " + p.label),
+      h("td", {}, TIER_LABELS[p.tier] || p.tier), h("td", {}, boostLabel(p.boost)), h("td", { class: "num" }, p.price),
+      h("td", {}, h("button", { type: "button", class: "btn btn-small btn-danger", onclick: (e) => deletePet(p, e.currentTarget) }, "Delete"))))))));
+}
+async function deletePet(p, button) {
+  if (!confirm("Delete " + p.label + "? Fighters who bought it lose it, and no dollars are refunded.")) return;
+  button.disabled = true;
+  const r = await api("/api/pets/" + CHANNEL + "/" + p.id, { method: "DELETE" });
+  button.disabled = false;
+  setStatus($("#pet-upload-status"), r.ok ? p.label + " deleted." : "Couldn't delete: " + errorText(r) + ".", r.ok ? "ok" : "error");
+  if (r.ok) loadPets();
+}
+function syncPetStats() {
+  const tier = $("#pet-tier").value;
+  $("#pet-stat-wrap").hidden = tier === "legendary";
+  $("#pet-stat2-wrap").hidden = tier !== "epic";
+}
+$("#pet-tier").addEventListener("change", syncPetStats);
+$("#pet-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = $("#pet-upload-status"), file = $("#pet-file").files[0], label = $("#pet-label").value.trim(), tier = $("#pet-tier").value;
+  const stat = $("#pet-stat").value, stat2 = $("#pet-stat2").value;
+  if (!file) return setStatus(status, "Choose a PNG image.", "error");
+  if (file.type !== "image/png") return setStatus(status, "The image must be a PNG.", "error");
+  if (file.size > 65536) return setStatus(status, "The image is larger than 64 KB.", "error");
+  if (!label) return setStatus(status, "Name the pet.", "error");
+  if (tier === "epic" && stat === stat2) return setStatus(status, "Epic pets boost two different stats.", "error");
+  const image = await new Promise((resolve, reject) => { const fr = new FileReader(); fr.onload = () => resolve(fr.result); fr.onerror = reject; fr.readAsDataURL(file); });
+  const button = $("#pet-upload");
+  button.disabled = true;
+  setStatus(status, "Uploading…");
+  const r = await api("/api/pets/" + CHANNEL, { method: "POST", body: { label, tier, stat, stat2, image } });
+  button.disabled = false;
+  if (!r.ok) return setStatus(status, "Not uploaded: " + errorText(r) + ".", "error");
+  setStatus(status, label + " is in the shop now.", "ok");
+  $("#pet-form").reset(); syncPetStats();
+  loadPets();
+});
+
 // Lane D hook: public/upload.js may export mountUpload(root, ctx). Probe first so a missing file stays quiet.
 async function mountUploads() {
   const root = $("#upload-root");
@@ -490,7 +551,7 @@ $("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.cur
 $("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat", e.currentTarget));
 
 // ---------- StreamElements ----------
-const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", rematch: "Rematch the last rival", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", help: "How to play", checkin: "Daily check-in", wallet: "Wallet", give: "Give dollars", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
+const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", rematch: "Rematch the last rival", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", help: "How to play", pet: "Own pet, or @viewer's", checkin: "Daily check-in", wallet: "Wallet", give: "Give dollars", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 function renderSe() {
   const se = S.admin.streamelements, c = S.admin.chatStatus || {};
   const using = c.connected && c.source === "streamelements", twitch = c.connected && c.source === "twitch";

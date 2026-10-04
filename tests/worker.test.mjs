@@ -360,6 +360,13 @@ test('dev token (test site only): the right token acts as the owner and can seed
   assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/profile', { userId: 't', username: 'x', color: 'red' }), f.env)).status, 400);
   assert.equal((await worker.fetch(devReq('/api/devtools/somechannel/chat', { userId: 't', username: 'x', text: 'hi' }), f.env)).status, 403);
   assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/nope', {}), f.env)).status, 404);
+  // Bots buy and bring pets through the same room calls as signed-in viewers.
+  assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/shop', { userId: 'testbot:a', username: 'testbot_a', kind: 'pet', id: 'fox' }), f.env)).status, 200);
+  assert.deepEqual({ path: f.forwarded.at(-1).path, body: f.forwarded.at(-1).body }, { path: '/shop', body: { userId: 'testbot:a', kind: 'pet', id: 'fox' } });
+  assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/shop', { userId: 'testbot:a', username: 'testbot_a', kind: 'car', id: 'fox' }), f.env)).status, 400);
+  await worker.fetch(devReq('/api/devtools/nesszerra/profile', { userId: 'testbot:a', username: 'testbot_a', pet: 'fox' }), f.env);
+  assert.equal(f.forwarded.at(-1).body.pet, 'fox');
+  assert.equal((await worker.fetch(devReq('/api/devtools/nesszerra/profile', { userId: 'testbot:a', username: 'testbot_a', pet: 7 }), f.env)).status, 400);
 });
 
 test('dev token binding: declared for the test deploy only, never for production', async () => {
@@ -368,4 +375,33 @@ test('dev token binding: declared for the test deploy only, never for production
   assert.ok('DEV_TOOLS_TOKEN' in env('test'));
   assert.ok(!('DEV_TOOLS_TOKEN' in env(undefined)));
   assert.ok(!('DEV_TOOLS_TOKEN' in env('production')));
+});
+
+test('pets: the catalog and images are public; uploads and deletes need a mod; the shop needs sign-in', async () => {
+  const f = environment();
+  assert.equal((await worker.fetch(req('/api/pets/nesszerra'), f.env)).status, 200);
+  assert.equal(f.forwarded.at(-1).path, '/pets');
+  await worker.fetch(req('/api/pets/nesszerra/p-blob-abc123'), f.env);
+  assert.equal(f.forwarded.at(-1).path, '/pets/p-blob-abc123');
+  assert.equal((await worker.fetch(req('/api/pets/nesszerra', 'POST', {}), f.env)).status, 401);
+  assert.equal((await worker.fetch(req('/api/pets/nesszerra', 'POST', {}, await signedIn(f)), f.env)).status, 403);
+  const owner = await signedIn(f, true), sent = f.forwarded.length;
+  const bad = await worker.fetch(req('/api/pets/nesszerra', 'POST', { label: 'Blob', tier: 'mythic' }, owner), f.env);
+  assert.equal((await bad.json()).reason, 'invalid_tier');
+  assert.equal((await worker.fetch(req('/api/pets/nesszerra/fox', 'DELETE', undefined, owner), f.env)).status, 404, 'built-in pets cannot be deleted');
+  assert.equal(f.forwarded.length, sent, 'rejected uploads and deletes never reach the room');
+  assert.equal((await worker.fetch(req('/api/pets/nesszerra/p-blob-abc123', 'DELETE', undefined, owner), f.env)).status, 200);
+  assert.equal(f.forwarded.at(-1).path, '/pets/p-blob-abc123');
+
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'pet', id: 'fox' }), f.env)).status, 401);
+  const viewer = await signedIn(f);
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'car', id: 'fox' }, viewer), f.env)).status, 400);
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'pet', id: 'x'.repeat(65) }, viewer), f.env)).status, 400);
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'GET', undefined, viewer), f.env)).status, 405);
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'pet', id: 'fox', userId: 'forged' }, viewer), f.env)).status, 200);
+  assert.deepEqual(f.forwarded.at(-1).body, { userId: '2', kind: 'pet', id: 'fox' });
+  assert.equal(f.forwarded.at(-1).path, '/shop');
+  assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'player', color: '#aabbcc', defaultAbility: 'heal', pet: 7 }, viewer), f.env)).status, 400);
+  assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'player', color: '#aabbcc', defaultAbility: 'heal', pet: 'fox' }, viewer), f.env)).status, 200);
+  assert.equal(f.forwarded.at(-1).body.pet, 'fox');
 });

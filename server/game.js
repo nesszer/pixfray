@@ -1,4 +1,5 @@
 import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, STAT_STEP } from "./upgrades.js";
+import { cleanBoost, TIERS } from "./pets.js";
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -31,6 +32,13 @@ const DEFAULT_CONFIG = {
   giveEnabled: true,
   giveMaxPerStream: 100,
   giveMinDuels: 5,
+  // Shop (server/pets.js): pet prices by tier, and hats before their wins at wins needed x hatPricePerWin (0 = off).
+  petPriceCommon: 30,
+  petPriceUncommon: 75,
+  petPriceRare: 180,
+  petPriceEpic: 420,
+  petPriceLegendary: 900,
+  hatPricePerWin: 10,
   abilities: {
     strike: { damage: 20, cooldownMs: 2_000 },
     heavy: { damage: 35, cooldownMs: 5_000 },
@@ -84,6 +92,9 @@ function defaultProfile(userId, config, now) {
     stats: emptyStats(),
     hat: "",
     bonus: 0,   // check-in points (server/channel.js checkin), added to the wins for upgrades
+    pet: "",    // the active pet's id (server/pets.js), its tier for the overlay, and its stat boost
+    petTier: "",
+    petBoost: emptyStats(),
   };
 }
 
@@ -193,6 +204,7 @@ function recentProfile(state, profile, now) {
   if (profile.registered && profile.stats) merged.stats = cleanStats(profile.stats);
   if (profile.registered && typeof profile.hat === "string") merged.hat = knownHat(profile.hat) ? profile.hat : "";
   if (profile.registered && Number.isInteger(profile.bonus)) merged.bonus = Math.max(0, profile.bonus);
+  if (profile.registered && typeof profile.pet === "string") Object.assign(merged, petFields(profile));
   // hp/respawnAt only seed a new player, so a later chat message can never undo a KO.
   if (!existing && Number.isInteger(profile.hp) && profile.registered) merged.hp = Math.min(state.config.maxHp, Math.max(0, profile.hp));
   if (!existing && Number.isInteger(profile.respawnAt)) merged.respawnAt = profile.respawnAt;
@@ -385,7 +397,7 @@ function settleQuickDuel(state, duel, rolls, now) {
   const maxHp = duel.rules.maxHp;
   const blow = { hit: Math.round(maxHp * 0.34), crit: Math.round(maxHp * 0.5), counter: Math.round(maxHp * 0.34) };
   const look = (id) => player(state, id)?.defaultAbility || "strike";   // cosmetic: picks the attack effect on the overlay
-  const stats = Object.fromEntries([duel.a, duel.b].map((id) => [id, effectiveStats(player(state, id)?.stats, player(state, id)?.wins, player(state, id)?.bonus)]));
+  const stats = Object.fromEntries([duel.a, duel.b].map((id) => [id, effectiveStats(player(state, id)?.stats, player(state, id)?.wins, player(state, id)?.bonus, player(state, id)?.petBoost)]));
   const swings = [];
   let attacker = duel.a, defender = duel.b, winnerId = "", loserId = "", decision = "ko";
   for (let i = 0; !winnerId && i < 200; i++) {
@@ -510,7 +522,7 @@ function applyAbility(state, duel, actor, abilityName, now) {
   } else {
     const before = duel.hp[targetId];
     const foe = player(state, targetId);
-    const damage = scaledDamage(ability.damage, effectiveStats(actor.stats, actor.wins, actor.bonus), effectiveStats(foe?.stats, foe?.wins, foe?.bonus));
+    const damage = scaledDamage(ability.damage, effectiveStats(actor.stats, actor.wins, actor.bonus, actor.petBoost), effectiveStats(foe?.stats, foe?.wins, foe?.bonus, foe?.petBoost));
     duel.hp[targetId] = Math.max(0, before - damage);
     amount = before - duel.hp[targetId];
   }
@@ -615,6 +627,12 @@ function validateConfigPatch(patch) {
     lossDollars: [0, 100],
     giveMaxPerStream: [0, 10_000],
     giveMinDuels: [0, 1_000],
+    petPriceCommon: [1, 100_000],
+    petPriceUncommon: [1, 100_000],
+    petPriceRare: [1, 100_000],
+    petPriceEpic: [1, 100_000],
+    petPriceLegendary: [1, 100_000],
+    hatPricePerWin: [0, 1_000],
   };
   for (const key of Object.keys(patch)) {
     if (key === "enabled" || key === "quickDuel" || key === "streakBonus" || key === "giveEnabled") {
@@ -802,6 +820,12 @@ export function parseGameCommand(text) {
   return { action, target };
 }
 
+// The pet fields a saved profile carries (channel.js normalizeProfileRow works them out from the pet id).
+function petFields(profile) {
+  const pet = safeString(profile?.pet, 48);
+  return { pet, petTier: pet && TIERS.includes(profile?.petTier) ? profile.petTier : "", petBoost: pet ? cleanBoost(profile?.petBoost) : emptyStats() };
+}
+
 export function applyProfile(state, profile, now) {
   const normalized = {
     ...profile,
@@ -813,13 +837,15 @@ export function applyProfile(state, profile, now) {
     defaultAbility: ABILITIES.has(profile?.defaultAbility) ? profile.defaultAbility : "strike",
     stats: cleanStats(profile?.stats),
     hat: knownHat(profile?.hat) ? profile.hat : "",
+    ...petFields(profile),
     registered: true,
   };
   if (!normalized.userId || !normalized.username) return { ok: false, reason: "invalid_profile" };
   const existing = player(state, normalized.userId);
   const p = existing || defaultProfile(normalized.userId, state.config, now);
   // No respec while a challenge or duel is open: the build counts from when the duel starts to its end.
-  if (existing && hasOpenDuel(state, p.userId) && JSON.stringify(cleanStats(p.stats)) !== JSON.stringify(normalized.stats)) return { ok: false, reason: "in_duel" };
+  const build = (x) => JSON.stringify([cleanStats(x.stats), cleanBoost(x.petBoost)]);
+  if (existing && hasOpenDuel(state, p.userId) && build(p) !== build(normalized)) return { ok: false, reason: "in_duel" };
   Object.assign(p, {
     username: normalized.username,
     displayName: normalized.displayName,
@@ -828,6 +854,9 @@ export function applyProfile(state, profile, now) {
     defaultAbility: normalized.defaultAbility,
     stats: normalized.stats,
     hat: normalized.hat,
+    pet: normalized.pet,
+    petTier: normalized.petTier,
+    petBoost: normalized.petBoost,
     ...(Number.isInteger(profile?.bonus) ? { bonus: Math.max(0, profile.bonus) } : {}),
     registered: true,
     lastSeen: now,

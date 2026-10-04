@@ -7,6 +7,9 @@ import { ChannelRoom } from '../server/channel.js';
 import { AuthStore } from '../server/auth.js';
 import { logRoomError } from '../server/developer.js';
 import { createInitialState, defaultConfig } from '../server/game.js';
+import { makePng, b64 } from './upload-helpers.mjs';
+import { effectiveStats } from '../server/upgrades.js';
+import { tierBoost, petOf, PETS, boostText } from '../server/pets.js';
 
 const SECRET = 'test-only-internal-secret-0123456789';
 
@@ -676,7 +679,7 @@ test('/looks returns saved looks by login for the overlay: saved profiles only, 
   const r = room();
   await r.save('u1', 'Alice', { avatar: 'toon-ghoul', color: '#112233' });
   const looks = (await r.call('/looks?u=alice,nobody,bad%20name,ALICE')).body;
-  assert.deepEqual(looks, { alice: { avatar: 'toon-ghoul', color: '#112233', hat: '', displayName: 'Alice', elo: 1000 } });
+  assert.deepEqual(looks, { alice: { avatar: 'toon-ghoul', color: '#112233', hat: '', pet: '', petTier: '', displayName: 'Alice', elo: 1000 } });
   assert.deepEqual((await r.call('/looks')).body, {});
   for (let i = 0; i < 25; i++) await r.save('x' + i, 'v' + i);
   const many = (await r.call('/looks?u=' + Array.from({ length: 25 }, (_, i) => 'v' + i).join(','))).body;
@@ -766,4 +769,102 @@ test('snapshots carry the deploy build id and the announce setting so open overl
   assert.equal(snap.build, 'build-42');
   assert.equal(snap.config.announce, 'off');
   assert.equal(room().publicState(createInitialState('nesszerra')).build, '');
+});
+
+test('pets: tier boosts, added after the upgrade cap', () => {
+  assert.deepEqual(tierBoost('common', 'power'), { power: 1, guard: 0, luck: 0 });
+  assert.deepEqual(tierBoost('rare', 'luck'), { power: 0, guard: 0, luck: 2 });
+  assert.deepEqual(tierBoost('epic', 'guard', 'power'), { power: 1, guard: 2, luck: 0 });
+  assert.deepEqual(tierBoost('epic', 'guard', 'guard'), { power: 0, guard: 2, luck: 0 }, 'an epic second stat must differ');
+  assert.deepEqual(tierBoost('legendary'), { power: 1, guard: 1, luck: 1 });
+  assert.deepEqual(tierBoost('mythic', 'power'), { power: 0, guard: 0, luck: 0 });
+  assert.equal(PETS.length, 14);
+  assert.equal(petOf('p-gone', ''), null, 'a deleted upload is no pet');
+  assert.deepEqual(petOf('p-blob-1a2b3c', 'rare:power:').boost, { power: 2, guard: 0, luck: 0 });
+  // 8 power at 8 points stays 8 before the pet, then the fox's +2 goes past the per-stat cap.
+  assert.deepEqual(effectiveStats({ power: 8 }, 8, 0, tierBoost('rare', 'power')), { power: 10, guard: 0, luck: 0 });
+  assert.deepEqual(effectiveStats({ power: 8 }, 3, 0, null), { power: 3, guard: 0, luck: 0 });
+});
+
+test('shop: buy pets and hats with shown dollars, equip on save, !pet, custom pet uploads and deletes', async () => {
+  const r = room({ DEV_TOOLS_TOKEN: 'x'.repeat(40) }, { quick: true });
+  const se = (await r.call('/admin')).body.streamelements;
+  assert.equal(se.names.pet, '!pet');
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  const gift = (username, amount) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'giftDollars', payload: { username, amount } } });
+  const buy = (userId, kind, id) => r.call('/shop', { method: 'POST', userId, body: { userId, kind, id } });
+  const cmd = async (id, login, target = '') => (await r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action: 'pet', userId: id, username: login, displayName: login, target } })).body.reply;
+  // The catalog: built-ins with the config prices, and the hat price per win.
+  const catalog = (await r.call('/pets')).body;
+  assert.equal(catalog.pets.length, 14);
+  assert.deepEqual(catalog.pets.find((p) => p.id === 'fox'), { id: 'fox', label: 'Fox', tier: 'rare', boost: { power: 2, guard: 0, luck: 0 }, price: 180, custom: false });
+  assert.equal(catalog.hatPricePerWin, 10);
+  // Buying: identity, unknown items, money.
+  assert.equal((await r.call('/shop', { method: 'POST', userId: 'u1', body: { userId: 'u2', kind: 'pet', id: 'fox' } })).status, 403);
+  assert.equal((await buy('u9', 'pet', 'fox')).body.error, 'no_fighter');
+  assert.equal((await buy('u1', 'pet', 'unicorn')).body.error, 'unknown_item');
+  assert.deepEqual((({ status, body }) => [status, body.error, body.price, body.dollars])(await buy('u1', 'pet', 'fox')), [409, 'not_enough', 180, 0]);
+  await gift('alice', 250);
+  const bought = (await buy('u1', 'pet', 'fox')).body;
+  assert.deepEqual([bought.ok, bought.price, bought.dollars, bought.owned], [true, 180, 70, { pets: ['fox'], hats: [] }]);
+  assert.equal((await buy('u1', 'pet', 'fox')).body.error, 'owned');
+  // Hats: free ones are already unlocked; locked ones cost wins x hatPricePerWin; 0 turns hat sales off.
+  assert.equal((await buy('u1', 'hat', 'cap')).body.error, 'already_unlocked');
+  assert.equal((await buy('u1', 'hat', 'wizard')).body.price, 30);
+  assert.equal((await r.save('u1', 'alice', { hat: 'tophat' })).body.error, 'hat_locked');
+  assert.equal((await r.save('u1', 'alice', { hat: 'wizard' })).body.profile.hat, 'wizard', 'a bought hat saves before its wins');
+  const cfg = (patch) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'config', payload: { patch } } });
+  assert.equal((await cfg({ petPriceRare: 0 })).body.error, 'invalid_config_petPriceRare');
+  assert.equal((await cfg({ hatPricePerWin: 0 })).status, 200);
+  assert.equal((await buy('u1', 'hat', 'crown')).body.error, 'hats_not_for_sale');
+  // Equip: only owned pets; the profile, the game state and /looks carry it.
+  assert.equal(await cmd('u1', 'alice'), '@alice, you have no pet yet. Buy one with Mini Chat dollars at https://test.example/?channel=nesszerra#pets');
+  assert.equal((await r.save('u1', 'alice', { pet: 'wolf' })).body.error, 'pet_locked');
+  assert.equal((await r.save('u1', 'alice', { pet: 7 })).body.error, 'invalid_profile');
+  const saved = (await r.save('u1', 'alice', { pet: 'fox' })).body.profile;
+  assert.deepEqual([saved.pet, saved.petTier, saved.petBoost, saved.dollars], ['fox', 'rare', { power: 2, guard: 0, luck: 0 }, 40]);
+  assert.deepEqual((await r.call('/profile?userId=u1')).body.owned, { pets: ['fox'], hats: ['wizard'] });
+  assert.equal(r.readState('nesszerra').players.find((p) => p.userId === 'u1').petBoost.power, 2, 'duels count the boost');
+  assert.deepEqual((({ pet, petTier }) => [pet, petTier])((await r.call('/looks?u=alice')).body.alice), ['fox', 'rare']);
+  assert.equal((await r.save('u1', 'alice', { avatar: 'toon-ghoul' })).body.profile.pet, 'fox', 'a save without pet keeps it');
+  assert.equal(await cmd('u1', 'alice'), "@alice's pet: Fox (rare), +2 power.");
+  assert.equal(await cmd('u2', 'bob', 'alice'), "@alice's pet: Fox (rare), +2 power.");
+  assert.equal(await cmd('u1', 'alice', 'bob'), '@bob has no pet yet.');
+  assert.equal(await cmd('u1', 'alice', 'nobody'), '@nobody has no fighter in the arena yet! Send them to https://test.example/?channel=nesszerra');
+  assert.equal((await r.call('/dev-chat', { method: 'POST', body: { userId: 'u2', username: 'bob', displayName: 'bob', text: '!pet @alice' } })).body.reply, "@alice's pet: Fox (rare), +2 power.");
+  // A duel's result write keeps the pet (upsertProfile from the game state).
+  await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
+  const duel = async (id, login, action, target = '') => r.call('/se', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target } });
+  await duel('u1', 'alice', 'challenge', 'bob'); await duel('u2', 'bob', 'accept');
+  assert.ok(r.readState('nesszerra').duels.some((d) => d.status === 'completed'));
+  assert.equal(r.ctx.storage.sql.exec("SELECT pet FROM profiles WHERE user_id = 'u1'").toArray()[0].pet, 'fox');
+  // Custom pets: checked uploads, priced by tier; deleting one takes it off fighters and owners.
+  const upload = (body) => r.call('/pets', { method: 'POST', body: { label: 'Blob', tier: 'epic', stat: 'luck', stat2: 'guard', image: b64(makePng(32, 32)), createdBy: 'mod1', ...body } });
+  assert.equal((await upload({ stat2: 'luck' })).body.reason, 'invalid_stat');
+  assert.equal((await upload({ tier: 'mythic' })).body.reason, 'invalid_tier');
+  assert.equal((await upload({ image: b64(makePng(65, 32)) })).body.reason, 'image_dimensions');
+  assert.equal((await upload({ image: b64(Buffer.from('not a png at all, just some text that is long enough to read')) })).body.reason, 'not_png');
+  const item = (await upload({})).body.item;
+  assert.match(item.id, /^p-blob-[0-9a-f]{6}$/);
+  assert.deepEqual([item.tier, item.boost, item.price, item.url], ['epic', { power: 0, guard: 1, luck: 2 }, 420, '/api/pets/nesszerra/' + item.id]);
+  const png = await r.fetch(new Request('https://room/pets/' + item.id, { headers: { 'X-Mini-Internal': SECRET, 'X-Mini-Channel': 'nesszerra' } }));
+  assert.equal(png.headers.get('content-type'), 'image/png');
+  await gift('bob', 500);
+  assert.equal((await buy('u2', 'pet', item.id)).body.price, 420);
+  assert.equal((await r.save('u2', 'bob', { pet: item.id })).body.profile.petTier, 'epic');
+  assert.equal(await cmd('u2', 'bob'), "@bob's pet: Blob (epic), +1 guard, +2 luck.");
+  assert.equal((await r.call('/pets/' + item.id, { method: 'DELETE' })).body.ok, true);
+  assert.equal((await r.call('/profile?userId=u2')).body.pet, '');
+  assert.deepEqual((await r.call('/profile?userId=u2')).body.owned.pets, []);
+  assert.equal(r.readState('nesszerra').players.find((p) => p.userId === 'u2').pet, '');
+  assert.equal((await r.call('/pets/' + item.id, { method: 'DELETE' })).status, 404);
+  // A deleted profile takes its purchases with it.
+  await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'removePlayer', payload: { userId: 'u1' } } });
+  assert.equal(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM owned_items WHERE user_id = 'u1'").toArray()[0].n, 0);
+});
+
+test('pet boost text: legendary pets read "+1 to all stats", like the viewer page', () => {
+  assert.equal(boostText(tierBoost('legendary')), '+1 to all stats');
+  assert.equal(boostText({ power: 2, guard: 1, luck: 0 }), '+2 power, +1 guard');
+  assert.equal(boostText({ power: 0, guard: 0, luck: 1 }), '+1 luck');
 });

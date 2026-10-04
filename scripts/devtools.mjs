@@ -234,6 +234,8 @@ Bots on the test site
   say <bot> <line> [--via …]  one chat line as a bot, e.g. say a "!challenge @testbot_b"
   state                       players and open duels
   live on|off|real [--stream id]  pretend the channel is live for !checkin and !pay (real = ask Twitch)
+  buy <bot> pet|hat <id>      the bot buys a pet or hat with its dollars
+  equip <bot> <pet|none>      the bot brings a pet it owns (keeps its character and color)
   gift <bot> <amount>         a mod gift of Mini Chat dollars (negative takes them back)
   clean                       remove the bots and their profiles
 
@@ -245,6 +247,13 @@ Alt account in real Twitch chat (posts only while the channel is offline)
 
 const commands = {
   seed, clean, duel, live, state: show,
+  buy: async () => { const b = botByName(args[0]); const r = await site(`/api/devtools/${CHANNEL}/shop`, { method: 'POST', body: { ...b, kind: args[1], id: args[2] } }); console.log(`${b.username}: ${r.reason} ${r.kind || args[1]} ${r.id || args[2]} -> $${r.dollars}`); },
+  equip: async () => {
+    const b = botByName(args[0]), p = (await state()).players.find((x) => x.userId === b.userId);
+    if (!p) fail(b.username + ' is not in the arena; run seed first');
+    const r = await site(`/api/devtools/${CHANNEL}/profile`, { method: 'POST', body: { ...b, avatar: p.avatar, color: p.color, defaultAbility: p.defaultAbility || 'strike', pet: args[1] === 'none' ? '' : args[1] } });
+    console.log(`${b.username}: pet ${r.profile?.pet || 'none'} (${r.profile?.petTier || '-'})`);
+  },
   gift: async () => { const r = await site(`/api/admin/${CHANNEL}`, { method: 'POST', body: { action: 'giftDollars', payload: { username: botByName(args[0]).username, amount: Number(args[1]) } } }); console.log(`${r.username}: ${r.amount > 0 ? '+' : ''}${r.amount} -> $${r.dollars}`); },
   say: async () => { const who = botByName(args[0]); console.log(await say(who, args.slice(1).join(' '))); },
   login, 'alt-profile': altProfile, chat: () => chat(args.join(' ')), 'real-duel': realDuel,

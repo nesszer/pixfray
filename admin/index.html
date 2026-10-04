@@ -131,6 +131,19 @@
              mountUpload(root, {channel, usage, limits, refresh}). Until then this box links nothing and says so. -->
         <div class="mount section" id="upload-root" data-mount="upload"><p class="muted small">Uploading characters isn't available yet.</p></div>
       </section>
+      <section class="section" aria-labelledby="pets-title">
+        <h2 id="pets-title">Custom pets <span class="muted small" id="pet-count"></span></h2>
+        <p class="muted small">Upload a PNG pet, up to 64 by 64 px and 64 KB. Viewers buy it in the shop at its tier's price (set on the Rules tab). Deleting a pet takes it from every fighter who bought it, with no refund.</p>
+        <div id="pet-custom-list"></div>
+        <form id="pet-form" class="controls section" novalidate>
+          <div><label for="pet-file">Image (PNG)</label><input id="pet-file" type="file" accept="image/png" required></div>
+          <div><label for="pet-label">Name</label><input id="pet-label" maxlength="24" autocomplete="off" required></div>
+          <div><label for="pet-tier">Tier</label><select id="pet-tier"><option value="common">Common: +1 to a stat</option><option value="uncommon">Uncommon: +1 to a stat</option><option value="rare" selected>Rare: +2 to a stat</option><option value="epic">Epic: +2 and +1</option><option value="legendary">Legendary: +1 to every stat</option></select></div>
+          <div id="pet-stat-wrap"><label for="pet-stat">Boosts</label><select id="pet-stat"><option value="power">Power</option><option value="guard">Guard</option><option value="luck">Luck</option></select></div>
+          <div id="pet-stat2-wrap" hidden><label for="pet-stat2">Also boosts (+1)</label><select id="pet-stat2"><option value="power">Power</option><option value="guard" selected>Guard</option><option value="luck">Luck</option></select></div>
+          <div><button class="btn" id="pet-upload" type="submit">Upload pet</button><p class="status" id="pet-upload-status" role="status"></p></div>
+        </form>
+      </section>
     </div>
     <div role="tabpanel" id="panel-chat" aria-labelledby="tab-chat" tabindex="0" hidden>
       <section class="section" id="setup-check" aria-labelledby="check-title">

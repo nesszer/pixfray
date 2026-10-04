@@ -52,6 +52,13 @@
       <fieldset>
         <legend>Hat <span class="muted small" id="hat-note"></span></legend>
         <div class="char-grid hat-grid" id="hats" role="radiogroup" aria-label="Hat"></div>
+        <p class="status" id="hat-status" role="status"></p>
+      </fieldset>
+      <fieldset id="pets">
+        <legend>Pet <span class="muted small" id="pet-note"></span></legend>
+        <p class="muted small">A pet follows your fighter on stream and adds to its stats, on top of the upgrade limit. Buy pets with the Mini Chat dollars you earn in duels. You keep every pet you buy and bring one at a time.</p>
+        <div class="char-grid hat-grid" id="pet-list" role="radiogroup" aria-label="Pet"></div>
+        <p class="status" id="pet-status" role="status"></p>
       </fieldset>
       <fieldset id="upgrades">
         <legend>Upgrades <span class="muted small" id="points-note"></span></legend>
@@ -108,6 +115,7 @@
             <tr><td><code>!checkin</code></td><td>Once per stream, while it's live: <span id="cmd-checkin">+1 upgrade point</span>. Check in on streams in a row for +1 more at 3, 7, 14 and 30. One missed stream a week doesn't break the streak.</td></tr>
             <tr><td><code>!wallet</code></td><td>Posts your Mini Chat dollars, upgrade points and streak. Each finished duel pays <span id="cmd-dollars">$5 for a win and $3 for a loss</span>.</td></tr>
             <tr><td><code>!pay @viewer 10</code></td><td id="cmd-give">Gives dollars to another fighter while the stream is live: up to $100 per stream, after your first 5 duels.</td></tr>
+            <tr><td><code>!pet</code></td><td>Posts the pet you bring and its boost. Add <code>@viewer</code> to see someone else's.</td></tr>
             <tr><td><code>!elo</code></td><td>Posts your Elo, rank and record in chat. Add <code>@viewer</code> to check someone else.</td></tr>
             <tr><td><code>!ranks</code></td><td>Posts the top 5 of the leaderboard in chat.</td></tr>
             <tr><td><code>!minichat</code></td><td>Posts how to join, with a link to this page.</td></tr>

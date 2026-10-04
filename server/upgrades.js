@@ -44,7 +44,8 @@ export function cleanStats(input) {
 
 // Stats the fighter can use with these points. A rank reset lowers the points; the excess comes off
 // luck first, then guard, then power, so a stored build never counts for more than the points allow.
-export function effectiveStats(stats, wins, bonus = 0) {
+// boost (the active pet's, server/pets.js) is added after the cap, so it may take a stat past MAX_PER_STAT.
+export function effectiveStats(stats, wins, bonus = 0, boost = null) {
   const out = cleanStats(stats);
   let extra = STATS.reduce((sum, key) => sum + out[key], 0) - pointsFor(wins, bonus);
   for (const key of ["luck", "guard", "power"]) {
@@ -52,6 +53,7 @@ export function effectiveStats(stats, wins, bonus = 0) {
     out[key] -= cut;
     extra -= cut;
   }
+  if (boost) for (const key of STATS) out[key] += Number.isInteger(boost[key]) && boost[key] > 0 ? boost[key] : 0;
   return out;
 }
 

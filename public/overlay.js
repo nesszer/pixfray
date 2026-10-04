@@ -1,6 +1,7 @@
 import { connectChat } from './chat.js';
 import { createArenaClient } from './arena-client.js';
 import { drawHat } from './hats.js';
+import { drawPet } from './pets.js';
 
 export function sanitizeColor(value) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : null;
@@ -256,6 +257,13 @@ async function start() {
     }
     lookTimer = lookQueue.size ? setTimeout(fetchLooks, retryMs) : 0;
   }
+  // Uploaded pets are PNGs served by /api/pets/<channel>/<id>; built-in pets are drawn in code (public/pets.js).
+  const petImages = new Map();
+  function petArt(id) {
+    if (!/^p-[a-z0-9-]{1,40}$/.test(id)) return id;
+    if (!petImages.has(id)) { const img = new Image(); img.src = '/api/pets/' + encodeURIComponent(channel) + '/' + id; petImages.set(id, { image: img }); }
+    return petImages.get(id);
+  }
   function applyArenaProfile(p) {
     const arena = arenaEnabled && p.userId ? profilesById.get(p.userId) : null;
     const profile = arena?.registered ? arena : (arenaEnabled && savedLooks.get(p.key)?.look) || arena || null;
@@ -263,6 +271,7 @@ async function start() {
     p.renderAvatar = p.avatar;
     p.defaultAbility = '';
     p.hat = '';
+    p.pet = ''; p.petTier = '';
     if (!profile) return;
     if (profile.displayName || profile.username) p.label = String(profile.displayName || profile.username).slice(0, 24);
     if (!profile.registered) return;
@@ -273,6 +282,8 @@ async function start() {
     else if (avatar && !arenaDemo && (!missingAvatars.has(avatar) || Date.now() - lastCatalogFetch > 30_000) && missingAvatars.add(avatar)) void loadArenaCatalog().then(() => { for (const q of players.values()) applyArenaProfile(q); });
     p.defaultAbility = String(profile.defaultAbility || '').slice(0, 20);
     p.hat = typeof profile.hat === 'string' ? profile.hat : '';
+    p.pet = typeof profile.pet === 'string' ? profile.pet : '';
+    p.petTier = typeof profile.petTier === 'string' ? profile.petTier : '';
   }
   function acceptArenaSnapshot(snapshot, metadata = {}) {
     if (!snapshot || typeof snapshot !== 'object') return;
@@ -898,6 +909,8 @@ async function start() {
       if (anim?.kind === 'attack' && progress > 0) offset = Math.sin(progress * Math.PI) * s * (anim.heavy ? .45 : .3) * p.direction;
       if (anim?.kind === 'hit' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * (anim.heavy ? .3 : .16) * p.direction;
       if (anim?.kind === 'dodge' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * .4 * p.direction;
+      // The pet trots behind its fighter, facing the same way; it is drawn first so the fighter stays in front.
+      if (p.pet) drawPet(ctx, petArt(p.pet), p.x - p.direction * s * .55, y, s * .42, { facing: p.direction, t: clock + p.phase, moving, tier: p.petTier });
       ctx.save();
       if (sprite?.loaded) {
         const { frame, drawn } = frameFor(sprite, p, ac, moving);
@@ -966,6 +979,8 @@ async function start() {
       userId: 'demo-' + index, username: displayName.toLowerCase(), displayName, registered: true,
       avatar, color, defaultAbility, hp: 100, elo, wins: index % 4, losses: index % 3, lastSeen: Date.now(), respawnAt: 0,
       hat: ['crown', 'cap', 'halo', 'tophat', 'horns', 'wizard', 'beanie', 'bandana'][index],
+      pet: ['dragon', 'fox', 'cat', '', 'owl', 'slime', 'phoenix', 'frog'][index],
+      petTier: ['legendary', 'rare', 'uncommon', '', 'epic', 'common', 'legendary', 'uncommon'][index],
     }));
     arenaTransport = 'demo';
     arenaChat = { connected: true, lastSeen: Date.now(), status: 'enabled' };

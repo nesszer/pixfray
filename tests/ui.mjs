@@ -14,7 +14,7 @@ const now = Date.now();
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const user = { id: '1001', login: 'viewer_one', displayName: 'Viewer_One' };
 const mod = { id: '2002', login: 'mod_two', displayName: 'Mod_Two' };
-const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24, checkinPoints: 1, streakBonus: true, winDollars: 5, lossDollars: 3, giveEnabled: true, giveMaxPerStream: 100, giveMinDuels: 5,
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24, checkinPoints: 1, streakBonus: true, winDollars: 5, lossDollars: 3, giveEnabled: true, giveMaxPerStream: 100, giveMinDuels: 5, petPriceCommon: 30, petPriceUncommon: 75, petPriceRare: 180, petPriceEpic: 420, petPriceLegendary: 900, hatPricePerWin: 10,
   abilities: { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } } };
 const board = [
   { userId: '3003', username: 'top_dog', displayName: 'top_dog', avatar: 'soldier', color: '#34d399', defaultAbility: 'heavy', elo: 1048, wins: 4, losses: 1 },
@@ -102,7 +102,8 @@ try {
   // 3. Signed-in viewer (stubbed session/profile/leaderboard; catalog and state are real).
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    let posted = null;
+    let posted = null, bought = null;
+    await page.route('**/api/shop/nesszerra', (r) => { bought = r.request().postDataJSON(); return json(r, { ok: true, reason: 'bought', kind: 'pet', id: bought.id, price: 30, dollars: 12, owned: { pets: [bought.id], hats: [] } }); });
     await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
@@ -129,6 +130,21 @@ try {
     await page.locator('label[for=hat-cap]').click();
     assert.match(await page.locator('#points-note').textContent(), /3 of 3 points/);
     assert.ok((await page.locator('#upgrades-help').textContent()).includes('2 from wins and 1 from check-ins'));
+    // Shop: hats past the wins can be bought; a pet buy needs a second click to confirm, then the pet is picked.
+    assert.equal(await page.getByRole('button', { name: /^Buy Crown hat for \$200$/ }).isDisabled(), true, '$42 is not enough for the crown');
+    assert.equal(await page.locator('#pet-none').isChecked(), true);
+    assert.equal(await page.locator('#pet-mouse').isDisabled(), true, 'an unowned pet cannot be picked');
+    assert.equal(await page.getByRole('button', { name: 'Buy Dragon for $900' }).isDisabled(), true);
+    const buyMouse = page.getByRole('button', { name: 'Buy Mouse for $30' });
+    await buyMouse.click();
+    assert.equal(await buyMouse.textContent(), 'Confirm: spend $30');
+    assert.equal(bought, null, 'the first click only asks to confirm');
+    await buyMouse.click();
+    await page.waitForFunction(() => document.querySelector('#pet-status').textContent.startsWith('Bought'));
+    assert.deepEqual(bought, { kind: 'pet', id: 'mouse' });
+    assert.equal(await page.locator('#pet-mouse').isChecked(), true);
+    assert.equal(await page.locator('#stat-dollars').textContent(), '$12');
+    assert.match(await page.locator('#pet-note').textContent(), /you own 1, you have \$12/);
     await page.getByRole('button', { name: 'Put a point into Power' }).click();
     await page.getByRole('button', { name: 'Put a point into Power' }).click();
     await page.getByRole('button', { name: 'Put a point into Luck' }).click();
@@ -137,7 +153,8 @@ try {
     if (s.name === '1280') await page.screenshot({ path: shots + '/viewer-signed-in-editing-1280.png', fullPage: true });
     await page.locator('#save').click();
     await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('Saved'));
-    assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heal', stats: { power: 2, guard: 0, luck: 1 }, hat: 'cap' });   // the saved ability is kept as is
+    assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heal', stats: { power: 2, guard: 0, luck: 1 }, hat: 'cap', pet: 'mouse' });   // the saved ability is kept as is
+    assert.match(await page.locator('#upgrade-list').textContent(), /2 \/ 8 \+1/, 'the mouse adds +1 power past the points');
     await noOverflow(page, 'viewer signed-in ' + s.name);
     if (s.name !== '1280') {
       // phones: explanation tables wrap instead of scrolling sideways, and the fighter bar stays at the bottom while picking
@@ -309,7 +326,8 @@ try {
         assert.ok(count(/1.5 MB|1.50 MB/g) <= 1, 'the atlas size limit appears once');
       }
       if (tab === 'rules') {
-        assert.equal(await page.locator('#config-fields .config-group:visible').count(), 4, 'only the groups that apply show');
+        assert.equal(await page.locator('#config-fields .config-group:visible').count(), 5, 'only the groups that apply show');
+        assert.equal(await page.locator('#cfg-petPriceLegendary').inputValue(), '900');
         assert.equal(await page.locator('#cfg-streakBonus').isChecked(), true);
         assert.equal(await page.locator('#cfg-abilities-strike-damage').count(), 1, 'the HP fight inputs stay in the form');
         assert.equal(await page.locator('#cfg-abilities-strike-damage').isVisible(), false, 'HP fight abilities are hidden unless quick duels are off');
@@ -376,7 +394,7 @@ try {
     await page.reload();
     await page.waitForSelector('#app:not([hidden])');
     await page.click('#tab-rules');
-    assert.equal(await page.locator('#config-fields .config-group:visible').count(), 5);
+    assert.equal(await page.locator('#config-fields .config-group:visible').count(), 6);
     assert.match(await page.locator('#config-fields .config-group:visible').last().locator('legend').textContent(), /HP fight abilities/);
     const strike = page.locator('#cfg-abilities-strike-damage');
     await strike.fill('5000');
