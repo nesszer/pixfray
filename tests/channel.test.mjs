@@ -292,6 +292,16 @@ test('versioned config editor: history, optimistic version check, rollback', asy
   assert.equal(after.config.abilities.heavy.damage, 35);
   assert.equal(after.history[0].note, 'rollback to v1');
   assert.equal((await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'rollbackConfig', payload: { version: 99 } } })).status, 404);
+  // A version saved before a setting existed (here: the Stage 4 prices) restores that setting's default.
+  const old = JSON.parse(r.ctx.storage.sql.exec('SELECT config FROM config_history WHERE version = 1').toArray()[0].config);
+  delete old.trailPrice; delete old.buildSlotPrice;
+  r.ctx.storage.sql.exec('UPDATE config_history SET config = ? WHERE version = 1', JSON.stringify(old));
+  const cheap = await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'config', payload: { baseVersion: 3, patch: { trailPrice: 7, buildSlotPrice: 11 } } } });
+  assert.equal(cheap.status, 200);
+  assert.equal((await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'rollbackConfig', payload: { version: 1 } } })).status, 200);
+  const restored = (await r.call('/admin')).body.config;
+  assert.equal(restored.trailPrice, 120, 'a setting missing from the old version goes back to its default');
+  assert.equal(restored.buildSlotPrice, 200);
 });
 
 test('rank reset reaches stored profiles; removePlayer deletes the profile', async () => {
@@ -592,9 +602,12 @@ test('dollars: paid once per finished duel and hidden until the stream shows it;
   // Until the stream has shown the fight, !wallet and the website show the old balance.
   assert.equal(await cmd('u1', 'alice', 'wallet'), '@alice: $0 Mini Chat dollars, 0 of 20 upgrade points, 0-stream streak.');
   assert.equal((await r.call('/profile?userId=u1')).body.dollars, 0);
+  const winId = win === 'alice' ? 'u1' : 'u2', point = { stats: { power: 1, guard: 0, luck: 0 } };
+  assert.equal((await r.save(winId, win, point)).body.error, 'invalid_upgrades', 'a save cannot spend (or reveal) a win the stream has not shown');
   const realNow = Date.now;
   Date.now = () => duel.revealAt + 1;
   try {
+    assert.equal((await r.save(winId, win, point)).body.profile.stats.power, 1, 'the point is spendable once shown');
     assert.equal(await cmd(win === 'alice' ? 'u1' : 'u2', win, 'wallet'), `@${win}: $5 Mini Chat dollars, 1 of 20 upgrade points, 0-stream streak.`);
     r.advance('nesszerra', { type: 'tick' }, Date.now());
     assert.deepEqual([dollars()[win], dollars()[lose]], [5, 3], 'never paid twice');
@@ -867,7 +880,7 @@ test('cosmetics and builds: the shop list, buying, wearing, build slots with the
   const r = room({}, { quick: true });
   await r.save('u1', 'alice'); await r.save('u2', 'bob');
   const gift = (username, amount) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'giftDollars', payload: { username, amount } } });
-  const buy = (kind, id) => r.call('/shop', { method: 'POST', userId: 'u1', body: { userId: 'u1', kind, id } });
+  const buy = (kind, id, price) => r.call('/shop', { method: 'POST', userId: 'u1', body: { userId: 'u1', kind, id, price } });
   // The public list: every kind with the config price, and the build slot prices.
   const shop = (await r.call('/shop')).body;
   assert.equal(shop.pets.length, 14);
@@ -878,7 +891,10 @@ test('cosmetics and builds: the shop list, buying, wearing, build slots with the
   assert.equal((await buy('accessory', 'jetpack')).body.error, 'unknown_item');
   assert.equal((await buy('trail', 'flames')).body.error, 'not_enough');
   await gift('alice', 2000);
-  assert.deepEqual((({ price, dollars }) => [price, dollars])((await buy('trail', 'flames')).body), [120, 1880]);
+  // The page sends the price it showed; after a mod's change the buy is refused with the new price.
+  const stale = await buy('trail', 'flames', 100);
+  assert.deepEqual([stale.status, stale.body.error, stale.body.price], [409, 'price_changed', 120]);
+  assert.deepEqual((({ price, dollars }) => [price, dollars])((await buy('trail', 'flames', 120)).body), [120, 1880]);
   assert.equal((await buy('trail', 'flames')).status, 409);
   for (const [kind, id] of [['recolor', 'crimson'], ['petcolor', 'gold'], ['accessory', 'cape'], ['effect', 'fireworks'], ['taunt', 'gg'], ['title', 'legend']]) assert.equal((await buy(kind, id)).body.ok, true, kind);
   // Wearing: only bought ones; "" takes one off; left out keeps it.
@@ -908,6 +924,10 @@ test('cosmetics and builds: the shop list, buying, wearing, build slots with the
   assert.equal((await buy('slot', '')).body.error, 'max_slots');
   prof = (await r.call('/profile?userId=u1')).body;
   assert.deepEqual([prof.owned.slots, prof.builds.length, prof.builds[2]], [5, 5, null]);
+  // A build saved with an uploaded pet that was deleted since loads with no pet.
+  r.ctx.storage.sql.exec("INSERT INTO builds (user_id, slot, data) VALUES ('u1', 2, ?)", JSON.stringify({ ...prof.builds[0], pet: 'c-gone-abc123' }));
+  prof = (await r.call('/profile?userId=u1')).body;
+  assert.deepEqual([prof.builds[2].pet, prof.builds[2].trail], ['', 'flames']);
   // A duel's result write keeps the cosmetics; a removed fighter loses builds and purchases.
   const se = (await r.call('/admin')).body.streamelements;
   await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });

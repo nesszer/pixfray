@@ -220,6 +220,9 @@ test('export downloads one room as JSON: fighters, ranks, config, history, chara
   assert.match(secret, /^[a-f0-9]{16,}$/);
   sql.exec("INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat) VALUES ('11', 'fighter1', 'Fighter1', 'player', '#ff0000', 'strike', 1234, 9, 3, 5, 1, 2, 3, 'crown')");
   sql.exec("INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen) VALUES ('12', 'fighter2', 'Fighter2', 'player', '#00ff00', 'heal', 900, 1, 8, 6)");
+  sql.exec("UPDATE profiles SET dollars = 70, title = 'legend', build = 1 WHERE user_id = '11'");
+  sql.exec("INSERT INTO owned_items (user_id, kind, item_id, price, bought_at) VALUES ('11', 'title', 'legend', 50, 7)");
+  sql.exec("INSERT INTO builds (user_id, slot, data) VALUES ('11', 0, '{\"title\":\"\"}')");
   sql.exec('INSERT INTO custom_characters (id, meta, atlas, bytes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)', 'c-orc-abc123', JSON.stringify({ label: 'Orc', fps: 8 }), new Uint8Array([137, 80, 78, 71]), 4, '11', 99);
   await call(f, '/api/dev/settings', 'POST', { action: 'config', payload: { patch: { maxHp: 120 }, baseVersion: 1, note: 'tankier' } }, owner);
 
@@ -238,7 +241,10 @@ test('export downloads one room as JSON: fighters, ranks, config, history, chara
   assert.equal('atlas' in data.customCharacters[0], false);
   assert.deepEqual(Object.keys(data.streamelements), ['commandNames']);
   assert.ok(Object.keys(data.streamelements.commandNames).length >= 6);
-  assert.deepEqual(data.counts, { profiles: 2, configVersions: 2, customCharacters: 1 });
+  assert.deepEqual(data.counts, { profiles: 2, configVersions: 2, customCharacters: 1, purchases: 1, builds: 1, customPets: 0 });
+  assert.deepEqual([data.profiles[0].dollars, data.profiles[0].title, data.profiles[0].build, data.profiles[0].bonus], [70, 'legend', 1, 0]);
+  assert.deepEqual(data.purchases, [{ userId: '11', kind: 'title', itemId: 'legend', price: 50, boughtAt: 7 }]);
+  assert.deepEqual(data.builds, [{ userId: '11', slot: 0, data: { title: '' } }]);
   assert.ok(!text.includes(secret), 'the StreamElements key is not exported');
   assert.doesNotMatch(text, /secret|subscriptionId|token/i);
 });

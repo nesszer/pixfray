@@ -238,7 +238,7 @@ export class ChannelRoom extends DurableObject {
       const userId = validUserId(request.headers.get(USER_HEADER));
       if (!userId || userId !== validUserId(body.value.userId)) return json({ error: "profile identity mismatch" }, 403);
       const bought = this.buy(channel, userId, body.value);
-      return json(bought.ok ? bought : { ...bought, error: bought.reason }, bought.ok ? 200 : bought.reason === "no_fighter" ? 404 : ["not_enough", "owned", "max_slots"].includes(bought.reason) ? 409 : 400);
+      return json(bought.ok ? bought : { ...bought, error: bought.reason }, bought.ok ? 200 : bought.reason === "no_fighter" ? 404 : ["not_enough", "owned", "max_slots", "price_changed"].includes(bought.reason) ? 409 : 400);
     }
 
     if (path === "/admin" && request.method === "GET") {
@@ -308,7 +308,8 @@ export class ChannelRoom extends DurableObject {
         const version = Number(payload.version);
         const row = Number.isInteger(version) ? this.ctx.storage.sql.exec("SELECT config FROM config_history WHERE version = ?", version).toArray()[0] : null;
         if (!row) return json({ ok: false, reason: "config_version_not_found", error: "config_version_not_found" }, 404);
-        payload = { patch: safeJsonParse(row.config, {}) };
+        // A version saved before a setting existed has no value for it; it goes back to its default, not the current value.
+        payload = { patch: { ...defaultConfig(), ...safeJsonParse(row.config, {}) } };
         note = "rollback to v" + version;
       }
       const targetId = validUserId(payload.userId);
@@ -511,8 +512,9 @@ export class ChannelRoom extends DurableObject {
     return this.ctx.storage.transactionSync(() => {
       const state = this.readState(channel);
       const existing = this.getProfile(userId, state.config);
-      // Upgrades and hat: optional in the request (left out = keep the saved ones), checked against the saved wins.
-      const wins = existing?.wins || 0;
+      // Upgrades and hat: optional in the request (left out = keep the saved ones), checked against the wins the stream
+      // has shown, so a save can't reveal a duel result the overlay hasn't played yet.
+      const wins = Math.max(0, (existing?.wins || 0) - (hiddenResults(state, now).get(userId)?.wins || 0));
       const stats = input.stats === undefined ? existing?.stats : validStats(input.stats, wins, existing?.bonus || 0);
       if (stats === null) return { ok: false, reason: "invalid_upgrades" };
       const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
@@ -938,14 +940,20 @@ export class ChannelRoom extends DurableObject {
   // always the profile itself (a fighter saved before builds has no row yet).
   builds(profile) {
     const out = Array.from({ length: this.buildSlots(profile.userId) }, () => null);
-    for (const r of this.ctx.storage.sql.exec("SELECT slot, data FROM builds WHERE user_id = ?", profile.userId).toArray()) if (r.slot < out.length) out[r.slot] = safeJsonParse(r.data, null);
+    const pets = new Set(this.owned(profile.userId).pets);
+    for (const r of this.ctx.storage.sql.exec("SELECT slot, data FROM builds WHERE user_id = ?", profile.userId).toArray()) {
+      if (r.slot >= out.length) continue;
+      const build = safeJsonParse(r.data, null);
+      if (build?.pet && !pets.has(build.pet)) build.pet = "";   // an uploaded pet a mod deleted since this build was saved
+      out[r.slot] = build;
+    }
     if ((profile.build || 0) < out.length) out[profile.build || 0] = buildOf(profile);
     return out;
   }
 
   // Shop: a pet (price by tier, config) or a hat before its wins unlock it (hatPrice). Pays with the dollars the
   // stream has shown, like give(). Buying doesn't equip; the dashboard selects it and the viewer saves.
-  buy(channel, userId, { kind, id }) {
+  buy(channel, userId, { kind, id, price: expected }) {
     return this.ctx.storage.transactionSync(() => {
       const sql = this.ctx.storage.sql, state = this.readState(channel), config = state.config, now = Date.now();
       const row = sql.exec("SELECT wins, dollars FROM profiles WHERE user_id = ?", userId).toArray()[0];
@@ -967,6 +975,8 @@ export class ChannelRoom extends DurableObject {
       } else if (COSMETIC_KINDS.includes(kind)) price = cosmeticItem(kind, id) ? cosmeticPrice(kind, config) : null;
       if (price === null) return { ok: false, reason: "unknown_item" };
       if (sql.exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id).toArray().length) return { ok: false, reason: "owned" };
+      // The page sends the price it showed; a mod may have changed it since, and the viewer should see the new one first.
+      if (expected !== undefined && expected !== price) return { ok: false, reason: "price_changed", price };
       const dollars = Math.max(0, row.dollars - h.dollars);
       if (price > dollars) return { ok: false, reason: "not_enough", price, dollars };
       sql.exec("UPDATE profiles SET dollars = dollars - ? WHERE user_id = ?", price, userId);

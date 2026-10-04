@@ -140,7 +140,15 @@ async function buy(kind, item, label, price, btn, out, text = "Buy for $" + pric
   }
   btn.disabled = true;
   setStatus(out, "Buying…");
-  const r = await api("/api/shop/" + CHANNEL, { method: "POST", body: { kind, id: item } });
+  const r = await api("/api/shop/" + CHANNEL, { method: "POST", body: { kind, id: item, price } });
+  if (r.data?.error === "price_changed") {
+    // A mod changed the price after this page loaded: show the new prices and let the viewer decide again.
+    const shop = await api("/api/shop/" + CHANNEL);
+    if (shop.ok && Array.isArray(shop.data?.pets)) state.shop = shop.data;
+    renderAll();
+    setStatus(out, "Not bought: the price changed to $" + r.data.price + ". Check it and buy again.", "error");
+    return;
+  }
   if (!r.ok) { btn.disabled = false; btn.dataset.confirm = ""; btn.textContent = text; setStatus(out, "Not bought: " + (REASONS[r.data?.error] || errorText(r)), "error"); return; }
   state.profile = { ...state.profile, dollars: r.data.dollars };
   state.owned = { ...emptyOwned(), ...(r.data.owned || state.owned) };

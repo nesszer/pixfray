@@ -14,6 +14,8 @@ const OPEN_WHEN_PAUSED=['access','admin','leaderboard','catalog','assets','pets'
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
 // Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.js (the room checks the ids and prices).
 const SHOP_KINDS=['pet','hat','slot',...COSMETIC_KINDS];
+// The price a buyer saw is optional; when sent it must match the current one (409 price_changed).
+const shopPrice=(p)=>p===undefined||(Number.isInteger(p)&&p>=0&&p<=1000000);
 // The cosmetics and build slot a profile save may carry, all optional: { ok, fields }.
 function loadoutFields(data){
   const fields={};
@@ -91,9 +93,9 @@ async function handleDevtools(request,env,channel,action,data){
   }
   // A bot buys a pet, a hat, a cosmetic or a build slot, the same room call as POST /api/shop.
   if(action==='shop'){
-    const {kind,id=''}=data;
-    if(!SHOP_KINDS.includes(kind)||typeof id!=='string'||id.length>64)return json({error:'Invalid item'},400);
-    return internal(request,env,channel,'/shop',{userId,kind,id});
+    const {kind,id='',price}=data;
+    if(!SHOP_KINDS.includes(kind)||typeof id!=='string'||id.length>64||!shopPrice(price))return json({error:'Invalid item'},400);
+    return internal(request,env,channel,'/shop',{userId,kind,id,price});
   }
   if(action==='chat'){
     const text=String(data.text||'').slice(0,500);if(!text.trim())return json({error:'text required'},400);
@@ -158,9 +160,9 @@ export default {async fetch(request,env,ctx){
       if(request.method==='GET'&&!id)return internal(request,env,channel,'/shop');
       if(request.method!=='POST'||id)return json({error:'Use GET or POST'},405);
       if(!user)return json({error:'Sign in to shop'},401);
-      const {kind,id:item=''}=await bodyJson(request,1000);
-      if(!SHOP_KINDS.includes(kind)||typeof item!=='string'||item.length>64)return json({error:'Invalid item'},400);
-      return internal(request,env,channel,'/shop',{userId:user.id,kind,id:item});
+      const {kind,id:item='',price}=await bodyJson(request,1000);
+      if(!SHOP_KINDS.includes(kind)||typeof item!=='string'||item.length>64||!shopPrice(price))return json({error:'Invalid item'},400);
+      return internal(request,env,channel,'/shop',{userId:user.id,kind,id:item,price});
     }
     if(route==='profile'){
       if(!user)return json({error:'Sign in to customize your profile'},401);

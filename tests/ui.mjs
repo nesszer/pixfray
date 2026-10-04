@@ -134,8 +134,19 @@ try {
   // 3. Signed-in viewer (stubbed session/profile/leaderboard; catalog and state are real).
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    let posted = null, bought = null;
-    await page.route('**/api/shop/nesszerra', (r) => { if (r.request().method() === 'GET') return r.continue(); bought = r.request().postDataJSON(); return json(r, { ok: true, reason: 'bought', kind: 'pet', id: bought.id, price: 30, dollars: 12, owned: { pets: [bought.id], hats: [], slots: 1 } }); });
+    let posted = null, bought = null, repriced = false;
+    // The first confirmed buy meets a price a mod just changed (Mouse $30 -> $35); the page reloads the shop list.
+    await page.route('**/api/shop/nesszerra', async (r) => {
+      if (r.request().method() === 'GET') {
+        if (!repriced) return r.continue();
+        const res = await r.fetch(), list = await res.json();
+        list.pets = list.pets.map((p) => (p.id === 'mouse' ? { ...p, price: 35 } : p));
+        return r.fulfill({ response: res, json: list });
+      }
+      bought = r.request().postDataJSON();
+      if (!repriced) { repriced = true; return json(r, { error: 'price_changed', reason: 'price_changed', price: 35 }, 409); }
+      return json(r, { ok: true, reason: 'bought', kind: 'pet', id: bought.id, price: 35, dollars: 7, owned: { pets: [bought.id], hats: [], slots: 1 } });
+    });
     await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
@@ -188,11 +199,16 @@ try {
     assert.equal(await buyMouse.textContent(), 'Confirm: spend $30');
     assert.equal(bought, null, 'the first click only asks to confirm');
     await buyMouse.click();
+    await page.waitForFunction(() => /price changed/.test(document.querySelector('#pet-status').textContent));
+    assert.deepEqual(bought, { kind: 'pet', id: 'mouse', price: 30 });
+    assert.equal(await page.locator('#pet-status').textContent(), 'Not bought: the price changed to $35. Check it and buy again.');
+    const buyMouse2 = page.getByRole('button', { name: 'Buy Mouse for $35' });
+    await buyMouse2.click(); await buyMouse2.click();
     await page.waitForFunction(() => document.querySelector('#pet-status').textContent.startsWith('Bought'));
-    assert.deepEqual(bought, { kind: 'pet', id: 'mouse' });
+    assert.deepEqual(bought, { kind: 'pet', id: 'mouse', price: 35 });
     assert.equal(await page.locator('#pet-mouse').isChecked(), true);
-    assert.equal(await page.locator('#stat-dollars').textContent(), '$12');
-    assert.match(await page.locator('#pet-note').textContent(), /you own 1, you have \$12/);
+    assert.equal(await page.locator('#stat-dollars').textContent(), '$7');
+    assert.match(await page.locator('#pet-note').textContent(), /you own 1, you have \$7/);
     assert.equal(await page.locator('#items-petcolor input').count(), 9, 'eight pet colors and none');
     await page.evaluate(() => scrollTo(0, 0));
     await page.screenshot({ path: shots + '/viewer-pets-' + s.name + '.png', fullPage: true });

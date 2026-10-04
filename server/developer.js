@@ -434,11 +434,18 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
     });
   }
   // Backup of this room (read only). StreamElements: command names only, never the key (and not seSettings(),
-  // which would create a key in a room that has none). Custom characters: metadata, not the atlas images.
+  // which would create a key in a room that has none). Custom characters and pets: metadata, not the images.
   if (path === '/dev/export' && method === 'GET') {
     const state = room.readState(channel);
-    const profiles = sql.exec('SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, last_opponent FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC').toArray()
-      .map((p) => ({ userId: p.user_id, username: p.username, displayName: p.display_name, avatar: p.avatar, color: p.color, defaultAbility: p.default_ability, elo: p.elo, wins: p.wins, losses: p.losses, lastSeen: p.last_seen, power: p.power, guard: p.guard, luck: p.luck, hat: p.hat, lastOpponentId: p.last_opponent }));
+    const profiles = sql.exec('SELECT * FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC').toArray()
+      .map((p) => ({ userId: p.user_id, username: p.username, displayName: p.display_name, avatar: p.avatar, color: p.color, defaultAbility: p.default_ability, elo: p.elo, wins: p.wins, losses: p.losses, lastSeen: p.last_seen, power: p.power, guard: p.guard, luck: p.luck, hat: p.hat, lastOpponentId: p.last_opponent,
+        bonus: p.bonus_points, checkins: p.checkins, streak: p.streak, dollars: p.dollars, pet: p.pet, recolor: p.recolor, petColor: p.pet_color, accessory: p.accessory, trail: p.trail, winEffect: p.win_effect, taunt: p.taunt, title: p.title, build: p.build }));
+    const purchases = sql.exec('SELECT user_id, kind, item_id, price, bought_at FROM owned_items ORDER BY bought_at, user_id').toArray()
+      .map((x) => ({ userId: x.user_id, kind: x.kind, itemId: x.item_id, price: x.price, boughtAt: x.bought_at }));
+    const builds = sql.exec('SELECT user_id, slot, data FROM builds ORDER BY user_id, slot').toArray()
+      .map((x) => ({ userId: x.user_id, slot: x.slot, data: safeParse(x.data) || {} }));
+    const pets = sql.exec('SELECT id, label, tier, stat, stat2, bytes, width, height, created_by, created_at FROM custom_pets ORDER BY created_at').toArray()
+      .map((x) => ({ id: x.id, label: x.label, tier: x.tier, stat: x.stat, stat2: x.stat2, bytes: x.bytes, width: x.width, height: x.height, createdBy: x.created_by, createdAt: x.created_at }));
     const history = sql.exec('SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC').toArray()
       .map((h) => ({ version: h.version, config: safeParse(h.config) || {}, actorId: h.actor_id, actorName: h.actor_name, at: h.at, note: h.note }));
     const characters = sql.exec('SELECT id, meta, bytes, created_by, created_at FROM custom_characters ORDER BY created_at').toArray()
@@ -446,8 +453,8 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
     const stored = safeParse(sql.exec('SELECT names FROM se_settings WHERE id = 1').toArray()[0]?.names) || {}, names = { ...DEFAULT_SE_NAMES, ...stored };
     if (names.accept === '!accept') names.accept = DEFAULT_SE_NAMES.accept;
     if (names.top === '!top') names.top = DEFAULT_SE_NAMES.top;
-    return json({ counts: { profiles: profiles.length, configVersions: history.length, customCharacters: characters.length },
-      profiles, config: state.config, configVersion: state.configVersion, configHistory: history, customCharacters: characters, streamelements: { commandNames: names } });
+    return json({ counts: { profiles: profiles.length, configVersions: history.length, customCharacters: characters.length, purchases: purchases.length, builds: builds.length, customPets: pets.length },
+      profiles, purchases, builds, customPets: pets, config: state.config, configVersion: state.configVersion, configHistory: history, customCharacters: characters, streamelements: { commandNames: names } });
   }
   return json({ error: 'Not found' }, 404);
 }

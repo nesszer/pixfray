@@ -397,6 +397,7 @@ test('pets: the catalog and images are public; uploads and deletes need a mod; t
   const viewer = await signedIn(f);
   assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'car', id: 'fox' }, viewer), f.env)).status, 400);
   assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'pet', id: 'x'.repeat(65) }, viewer), f.env)).status, 400);
+  for (const price of ['30', -1, 1.5, null]) assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'pet', id: 'fox', price }, viewer), f.env)).status, 400, 'price ' + price);
   assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'GET'), f.env)).status, 200, 'the shop list is public');
   assert.equal(f.forwarded.at(-1).path, '/shop');
   assert.equal((await worker.fetch(req('/api/shop/nesszerra/x', 'GET'), f.env)).status, 405);
