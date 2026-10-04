@@ -44,6 +44,16 @@ export async function listRecords(env, prefix) {
   return r.json();
 }
 
+// Public: the logins a viewer can pick on the bare site (built-in channels first, then by sign-up). Cached a minute.
+let channelList = null;
+export async function publicChannels(env) {
+  if (channelList && Date.now() - channelList.at < HIT_MS) return channelList.logins;
+  const rows = (await listRecords(env, 'channel:')).map((r) => r.value).filter((c) => c && !c.pausedAt && LOGIN.test(c.login || '') && !CHANNELS.includes(c.login));
+  const logins = [...CHANNELS, ...rows.sort((a, b) => (a.enabledAt || 0) - (b.enabledAt || 0)).map((c) => c.login)];
+  channelList = { logins, at: Date.now() };
+  return logins;
+}
+
 export function inviteStatus(invite, now = Date.now()) {
   if (!invite) return 'invalid';
   if (invite.usedAt) return 'used';

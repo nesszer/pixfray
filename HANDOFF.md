@@ -107,6 +107,10 @@ The run writes screenshots to `screenshots/e2e-*.png`. They are generated, not i
 15. During this pass, another `npx vite` dev server of this project (pid 6560) was holding port
    5173. It was left running. Tests use `MINI_PORT=5199` and their own state folder
    (`.cloudflare/e2e-state`).
+16. A bare `chat.miolaf.xyz` used to mean nesszerra, so miolafff's viewers who followed it saved
+   fighters on the wrong channel (2026-10-04). The bare `/` is now a channel picker fed by
+   `/api/channels`, and every link the site hands out names its channel. Fighters already saved on
+   the wrong channel stay there; those viewers re-save on their streamer's link.
 
 Fixed in this pass:
 - `arena-client.js` built its WebSocket with an arrow function called with `new`, so the live

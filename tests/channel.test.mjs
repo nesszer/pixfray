@@ -350,12 +350,12 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   assert.deepEqual(se.seen, {});
   // The first command with the right key makes StreamElements the chat source. A sign-in refusal names who is missing a fighter.
   const first = (await cmd('u1', 'alice', 'challenge', 'bob')).body;
-  assert.deepEqual(first, { reply: '@alice, you have no fighter in the arena yet! Gear up at https://test.example/' }, 'no Twitch subscription to drop');
+  assert.deepEqual(first, { reply: '@alice, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra' }, 'no Twitch subscription to drop');
   assert.equal((await admin()).chatStatus.source, 'streamelements');
   assert.ok((await admin()).streamelements.lastCommandAt > 0, 'a command with the right key is recorded');
   assert.deepEqual(Object.keys((await admin()).streamelements.seen), ['challenge'], 'each command is marked as seen');
   await r.save('u1', 'alice');
-  assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, '@bob has no fighter in the arena yet! Send them to https://test.example/');
+  assert.equal((await cmd('u1', 'alice', 'challenge', 'bob')).body.reply, '@bob has no fighter in the arena yet! Send them to https://test.example/?channel=nesszerra');
   await r.save('u2', 'bob');
   assert.equal((await cmd('u1', 'alice', 'challenge')).body.reply, 'Challenge who? Name your rival: !challenge @name');
   assert.equal((await cmd('u1', 'alice', 'challenge', 'alice')).body.reply, "alice, you can't fight your own shadow! Name a rival: !challenge @name");
@@ -501,16 +501,16 @@ test('StreamElements !ranks, !elo and !minichat work even while duels are paused
   assert.deepEqual([se.names.top, se.names.elo, se.names.help], ['!ranks', '!elo', '!minichat']);
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 't' + (++m) } });
-  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'Mini Chat duels: gear up at https://test.example/, then name your rival with !challenge @name. They answer !fight. Again? !rematch');
-  assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'The arena has no champions yet! Gear up at https://test.example/ and win a duel.');
-  assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/');
+  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'Mini Chat duels: gear up at https://test.example/?channel=nesszerra, then name your rival with !challenge @name. They answer !fight. Again? !rematch');
+  assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'The arena has no champions yet! Gear up at https://test.example/?channel=nesszerra and win a duel.');
+  assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra');
   await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
   r.ctx.storage.sql.exec("UPDATE profiles SET elo = 1040, wins = 3, losses = 1 WHERE user_id = 'u2'");
   r.ctx.storage.sql.exec("UPDATE profiles SET elo = 990, wins = 0, losses = 1 WHERE user_id = 'u3'");
-  assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'Top 3: 1. bob 1040 · 2. alice 1000 · 3. cara 990. Full list: https://test.example/#ranks');
+  assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'Top 3: 1. bob 1040 · 2. alice 1000 · 3. cara 990. Full list: https://test.example/?channel=nesszerra#ranks');
   assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, 'alice: 1000 Elo, rank 2 of 3, 0 wins and 0 losses.');
   assert.equal((await cmd('u1', 'alice', 'elo', 'bob')).body.reply, 'bob: 1040 Elo, rank 1 of 3, 3 wins and 1 loss.');
-  assert.equal((await cmd('u1', 'alice', 'elo', 'zed')).body.reply, '@zed has no fighter in the arena yet! Send them to https://test.example/');
+  assert.equal((await cmd('u1', 'alice', 'elo', 'zed')).body.reply, '@zed has no fighter in the arena yet! Send them to https://test.example/?channel=nesszerra');
   assert.equal((await r.call('/dev/logs?source=command')).body[0].context.reason, 'elo_not_found');
   // A channel that stored the old !top name gets !ranks: StreamElements' built-in !top can't be replaced.
   await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { top: '!top' } } });

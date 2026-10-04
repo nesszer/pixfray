@@ -155,13 +155,13 @@ export async function handleAuth(request,env){
     await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);
   }
   const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);
-  const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel&&pending.channel!=='nesszerra'?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectMods?'&mods=connected':'')+(pending.invite||pending.connectMods?'#chat':'');
+  const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectMods?'&mods=connected':'')+(pending.invite||pending.connectMods?'#chat':'');
   const response=new Response(null,{status:303,headers:{Location:back}});
   response.headers.append('Set-Cookie',cookie('mini_session',key,21600));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
 }
 // Back to /start with the reason the invite didn't work (invalid, used, expired, wrong_account, full, denied, failed).
 function startPage(invite,error){return new Response(null,{status:303,headers:{Location:'/start/?invite='+encodeURIComponent(invite)+'&error='+encodeURIComponent(error),'Set-Cookie':cookie('mini_oauth','',0)}});}
-function adminPage(channel,query){return new Response(null,{status:303,headers:{Location:'/admin/?'+(channel!=='nesszerra'?'channel='+channel+'&':'')+query+'#chat','Set-Cookie':cookie('mini_oauth','',0)}});}
+function adminPage(channel,query){return new Response(null,{status:303,headers:{Location:'/admin/?channel='+channel+'&'+query+'#chat','Set-Cookie':cookie('mini_oauth','',0)}});}
 const verdict=moderator=>({owner:false,moderator,canManage:moderator,reason:moderator?'':'Current Twitch moderator role required'});
 export async function access(env,user,channel){
   const owner=await isOwner(env,user);

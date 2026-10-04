@@ -33,6 +33,7 @@ can still sign in and turn it back on.
 | GET | `/api/invite/:token` | none | 32 hex chars | `{status:"valid"\|"used"\|"expired"\|"invalid", login?}` | 404 malformed token |
 | POST | `/auth/logout` | cookie | none | clears the cookie | 403 when cross-origin |
 | GET | `/api/session` | optional | none | `{user:{id,login,displayName}\|null, owner, configured, channels:["nesszerra","miolafff"] (the built-ins), productionEnabled:false}`. `productionEnabled` is a constant `false` left from the first rollout, when production stayed closed until the broadcaster was onboarded. Nothing reads it; use `channelState` instead. | 503 when secrets are missing |
+| GET | `/api/channels` | none | none | `{channels:[login,...]}`: the built-ins first, then the enabled (not paused) registry channels in sign-up order. Cached 60 s per isolate. The viewer page at a bare `/` (no `?channel=`) shows "Which stream are you watching?" with one button per channel; every link the site, sign-in and `!minichat` hand out carries `?channel=` so a fighter is never saved to the wrong channel by default | |
 | GET | `/api/health` | none | none | `{ok:true, version, twitchConfigured, productionEnabled:false}` (same constant) | |
 | GET | `/api/access/:channel` | optional | none | `{owner, broadcaster, moderator, canManage, reason}` | 403 for a channel that isn't set up |
 | GET | `/api/state/:channel` | none | none | Snapshot (section 3) | 403, 405 |

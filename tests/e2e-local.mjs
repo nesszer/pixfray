@@ -258,7 +258,7 @@ try {
     await page.waitForTimeout(800);
     await page.screenshot({ path: shots + '/e2e-overlay-' + size.name + '.png' });
     await ctx.addCookies([{ name: 'mini_session', value: cookies.alice, url: base }]);
-    await page.goto(base + '/');
+    await page.goto(base + '/?channel=nesszerra');
     await page.waitForFunction(() => !document.querySelector('#leaderboard tbody')?.textContent.includes('Loading'));
     await page.waitForTimeout(500);
     assert.match(await page.locator('#leaderboard').textContent(), /Alice_E2E|alice_e2e/);

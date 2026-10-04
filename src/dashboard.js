@@ -1,6 +1,6 @@
 // Viewer dashboard ("/"): sign-in state, character picker with live preview, nameplate color,
 // profile save and a compact leaderboard. Talks only to the routes in CONTRACTS.md section 2.
-import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, seconds, CHANNEL, DEFAULT_COLOR, applyChannel } from "./ui.js";
+import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, seconds, CHANNEL, CHANNEL_PICKED, DEFAULT_COLOR, applyChannel } from "./ui.js";
 import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.js";
 applyChannel();
 
@@ -235,7 +235,7 @@ function showOff(off) {
   const note = $("#off-note");
   note.hidden = false;
   if (off === "paused") { note.textContent = "Mini Chat is off on " + CHANNEL + "'s channel right now. Saved fighters and ranks are kept for when it's back."; return; }
-  note.replaceChildren("Mini Chat isn't set up on " + CHANNEL + "'s channel. ", h("a", { href: "/" }, "Pick a fighter on nesszerra's channel"), ".");
+  note.replaceChildren("Mini Chat isn't set up on " + CHANNEL + "'s channel. ", h("a", { href: "/" }, "Pick another channel"), ".");
   $("#profile-form").hidden = true;
   $(".fighter-card").hidden = true;
 }
@@ -264,4 +264,15 @@ async function init() {
   renderSignedIn(); update(); welcome();
   loadLeaderboard();
 }
-init();
+// The bare site (no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
+async function pickChannel() {
+  document.title = "Mini Chat: pick your stream";
+  for (const el of [$("#fighter"), $("main.page:not(#pick)"), $(".topbar nav")]) if (el) el.hidden = true;
+  $("#pick").hidden = false;
+  const [session, list] = await Promise.all([api("/api/session"), api("/api/channels")]);
+  // Signing in happens on a channel's page, so the picker shows only who is already signed in.
+  if (session.ok && session.data?.user) renderWho($("#who"), session.data, signOut); else $("#who").replaceChildren();
+  const channels = list.ok && Array.isArray(list.data?.channels) ? list.data.channels : ["nesszerra", "miolafff"];
+  $("#channel-list").replaceChildren(...channels.map((c) => h("li", {}, h("a", { class: "btn", href: "/?channel=" + encodeURIComponent(c) }, c))));
+}
+if (CHANNEL_PICKED) init(); else pickChannel();

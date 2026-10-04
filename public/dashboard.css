@@ -65,6 +65,7 @@ img, svg, video { max-width: 100%; height: auto; }
 .page-header .subtitle { font-size: var(--text-lg); color: var(--text-2); margin: 0; max-width: var(--measure); }
 .meta { font-size: var(--text-sm); color: var(--text-3); margin-top: var(--space-3); }
 .section { margin-top: var(--space-7); }
+.channel-list { list-style: none; padding: 0; margin: var(--space-5) 0; display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .section > h2:first-child { margin-top: 0; }
 .stack > * + * { margin-top: var(--space-4); }
 .grid-2, .grid-3 { display: grid; gap: var(--space-5); }

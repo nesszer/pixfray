@@ -4,7 +4,7 @@ import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
-import { channelState,isOn,offError,readInvite,setPaused } from './channels.js';
+import { channelState,isOn,offError,readInvite,setPaused,publicChannels } from './channels.js';
 export {ChannelRoom,AuthStore};
 // A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
 // page's state and profile saves are refused.
@@ -115,6 +115,8 @@ export default {async fetch(request,env,ctx){
       return await handleDevtools(request,env,devMatch[1],devMatch[2],await bodyJson(request,4000));
     }
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
+    // The bare site asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
+    if(path==='/api/channels')return json({channels:await publicChannels(env)});
     if(path==='/api/health')return json({ok:true,version:'0.2.0',twitchConfigured:configured(env),productionEnabled:false});
     // /start: who an invite is for and whether it still works. The 128-bit token is the secret.
     const inviteMatch=path.match(/^\/api\/invite\/([a-f0-9]{32})$/);

@@ -723,11 +723,11 @@ test('invisible characters that chat clients append to repeated messages are ign
   assert.equal(seTarget('bad name!'), '');
 });
 
-test('StreamElements sign-up link names the channel, except for nesszerra', async () => {
+test('StreamElements sign-up link always names the channel', async () => {
   const { seReplyText } = await import('../server/streamelements.js');
   const reply = (channel) => seReplyText({ result: { ok: false, reason: 'target_not_found' }, state: createInitialState(channel), actorId: 'u1', action: 'challenge', target: 'bob', origin: 'https://chat.example' });
   assert.equal(reply('miolafff'), '@bob has no fighter in the arena yet! Send them to https://chat.example/?channel=miolafff');
-  assert.equal(reply('nesszerra'), '@bob has no fighter in the arena yet! Send them to https://chat.example/');
+  assert.equal(reply('nesszerra'), '@bob has no fighter in the arena yet! Send them to https://chat.example/?channel=nesszerra');
 });
 
 test('StreamElements "seeing stars" names the knocked-out fighter, not the one who asked', async () => {

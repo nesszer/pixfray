@@ -42,7 +42,7 @@ try {
   // 1. Signed out, real server (no Twitch credentials locally).
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    await page.goto(base + '/');
+    await page.goto(base + '/?channel=nesszerra');
     assert.match(await page.title(), /Mini Chat/);
     await page.waitForSelector('#characters input[name=character]');
     const count = await page.locator('#characters input[name=character]').count();
@@ -53,7 +53,7 @@ try {
     const session = await page.evaluate(() => fetch('/api/session').then((r) => r.json()));
     if (session.configured === false) assert.match(await page.locator('#signin-note').textContent(), /isn't set up/);
     else assert.equal(await page.locator('#save-signin').isVisible(), true);
-    assert.equal(await page.locator('#who a[href="/auth/login"]').count(), 0, 'one sign-in button: the fighter card has it');
+    assert.equal(await page.locator('#who a[href^="/auth/login"]').count(), 0, 'one sign-in button: the fighter card has it');
     assert.equal(await page.locator('#obs-setup').count(), 0, 'the OBS link lives in mod controls, not on the viewer page');
     if (await page.locator('#leaderboard tr.empty').count()) assert.match(await page.locator('#leaderboard tr.empty').textContent(), /To get on the board: sign in and save your fighter.*!challenge @viewer/);
     await page.locator('#char-soldier').check({ force: true });
@@ -69,13 +69,32 @@ try {
     await context.close();
   }
 
+  // 1b. The bare site asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    await page.goto(base + '/');
+    await page.waitForSelector('#channel-list a');
+    assert.equal(await page.locator('h1:visible').textContent(), 'Which stream are you watching?');
+    const links = await page.locator('#channel-list a').evaluateAll((a) => a.map((x) => x.getAttribute('href')));
+    assert.deepEqual(links.slice(0, 2), ['/?channel=nesszerra', '/?channel=miolafff'], 'built-in channels first');
+    assert.equal(await page.locator('#fighter').isHidden(), true, 'no fighter form until a channel is picked');
+    assert.equal(await page.locator('#save-signin').isVisible(), false);
+    await noOverflow(page, 'channel picker ' + s.name);
+    await page.screenshot({ path: shots + '/viewer-picker-' + s.name + '.png', fullPage: true });
+    await page.locator('#channel-list a', { hasText: 'miolafff' }).click();
+    await page.waitForSelector('#characters input[name=character]');
+    assert.match(await page.locator('#hero-title').textContent(), /miolafff/);
+    assert.equal(await page.locator('.brand').getAttribute('href'), '/?channel=miolafff', 'the brand link keeps the channel');
+    await context.close();
+  }
+
   // 2. Signed out with Twitch configured (stubbed session): sign-in buttons show.
   {
     const { context, page } = await newPage(sizes[0]);
     await page.route('**/api/session', (r) => json(r, { user: null, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
-    await page.goto(base + '/');
+    await page.goto(base + '/?channel=nesszerra');
     await page.waitForSelector('#save-signin:visible');
-    assert.equal(await page.locator('#who a[href="/auth/login"]').count(), 0, 'no second sign-in button in the top bar');
+    assert.equal(await page.locator('#who a[href^="/auth/login"]').count(), 0, 'no second sign-in button in the top bar');
     await page.screenshot({ path: shots + '/viewer-signed-out-configured-1280.png', fullPage: false });
     await context.close();
   }
@@ -91,7 +110,7 @@ try {
       if (r.request().method() === 'POST') { posted = r.request().postDataJSON(); return json(r, { profile: { ...board[1], ...posted }, revision: 9 }); }
       return json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now });
     });
-    await page.goto(base + '/');
+    await page.goto(base + '/?channel=nesszerra');
     await page.waitForSelector('#save:not([hidden])');
     assert.equal(await page.locator('#char-zombie').isChecked(), true);
     assert.equal(await page.locator('#color').inputValue(), '#f472b6');
@@ -141,10 +160,10 @@ try {
       if (r.request().method() === 'POST') { saved = { ...user, username: user.login, ...r.request().postDataJSON(), elo: 1000, wins: 0, losses: 0 }; return json(r, { profile: saved, revision: 3 }); }
       return json(r, saved);
     });
-    await page.goto(base + '/?signed_in=1');
+    await page.goto(base + '/?channel=nesszerra&signed_in=1');
     await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('Signed in'));
     assert.equal(await page.locator('#save-status').textContent(), 'Signed in as Viewer_One. Pick a fighter and save.');
-    assert.equal(new URL(page.url()).search, '', 'the signed_in flag is gone from the address');
+    assert.equal(new URL(page.url()).search, '?channel=nesszerra', 'the signed_in flag is gone from the address');
     assert.equal(await page.locator('#next-step').isHidden(), true);
     await page.locator('label[for=char-adventurer]').click();
     await page.locator('#save').click();
