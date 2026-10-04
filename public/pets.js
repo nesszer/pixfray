@@ -225,10 +225,50 @@ const PETS = {
 export const PET_IDS = Object.keys(PETS);
 const RARE_SPARKLE = { epic: "#c4b5fd", legendary: "#fde047" };
 
+// Each built-in pet frame is painted once into a small canvas (CELL px per pixel-art cell) and then drawn as one
+// image; a pet color is baked into its own copy the same way. A canvas filter on the stage costs a pass over the
+// whole 1920x1080 canvas, so a crowd of tinted pets drawn with one dropped the overlay to 1 fps or crashed it.
+const CELL = 8, frames = new Map(), tintedImages = new WeakMap();
+function blank(w, h) {
+  const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(w, h)
+    : typeof document === "object" ? Object.assign(document.createElement("canvas"), { width: w, height: h }) : null;
+  return canvas?.getContext("2d") || null;
+}
+function tintCopy(source, w, h, tint) {
+  const g = blank(w, h);
+  if (!g) return null;
+  g.filter = tint;
+  g.drawImage(source, 0, 0);
+  return g.canvas;
+}
+function petFrame(id, rows, cols, tint) {
+  const key = id + (rows === PETS[id].rows ? "" : ":wings") + "|" + tint;
+  if (frames.has(key)) return frames.get(key);
+  let frame = null;
+  if (tint !== "none") {
+    const plain = petFrame(id, rows, cols, "none");
+    frame = plain && tintCopy(plain, plain.width, plain.height, tint);
+  } else {
+    const g = blank(cols * CELL, rows.length * CELL);
+    if (g) rows.forEach((row, r) => [...row].forEach((ch, c) => { if (ch !== ".") { g.fillStyle = PETS[id].colors[ch]; g.fillRect(c * CELL, r * CELL, CELL, CELL); } }));
+    frame = g?.canvas || null;
+  }
+  frames.set(key, frame);
+  return frame;
+}
+function tintedImage(image, tint) {
+  if (tint === "none") return image;
+  let byTint = tintedImages.get(image);
+  if (!byTint) tintedImages.set(image, byTint = new Map());
+  if (!byTint.has(tint)) byTint.set(tint, tintCopy(image, image.naturalWidth, image.naturalHeight, tint) || image);
+  return byTint.get(tint);
+}
+
 // Draws pet `pet` (a built-in id, or {image} for an uploaded pet) standing on (x, baseY), about `size` px tall, facing
 // `facing` (1 right, -1 left). t is a clock in ms for the hop, hover and sparkles; tier adds the epic/legendary sparkle.
 // Unknown ids draw nothing. Returns true when something was drawn.
-export function drawPet(ctx, pet, x, baseY, size, { facing = 1, t = 0, moving = false, tier = "", still = false } = {}) {
+// tint: a canvas filter (a pet color) baked into a cached copy of the pet, never run on ctx.
+export function drawPet(ctx, pet, x, baseY, size, { facing = 1, t = 0, moving = false, tier = "", still = false, tint = "none" } = {}) {
   const art = typeof pet === "string" ? PETS[pet] : null;
   const image = pet && typeof pet === "object" ? pet.image : null;
   if (!art && !(image?.complete && image.naturalWidth)) return false;
@@ -242,7 +282,13 @@ export function drawPet(ctx, pet, x, baseY, size, { facing = 1, t = 0, moving = 
     const rows = flap ? art.wings : art.rows, cols = Math.max(...art.rows.map((r) => r.length));
     const px = size / Math.max(art.rows.length, cols * 0.8);
     const x0 = -cols * px / 2, y0 = -rows.length * px;
-    rows.forEach((row, r) => {
+    const frame = petFrame(pet, rows, cols, tint || "none");
+    if (frame) {
+      const smooth = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(frame, x0, y0, cols * px, rows.length * px);
+      ctx.imageSmoothingEnabled = smooth;
+    } else rows.forEach((row, r) => {
       // One rect per run of a color; a slight overlap hides seams between cells.
       for (let c = 0; c < row.length;) {
         const ch = row[c];
@@ -260,7 +306,7 @@ export function drawPet(ctx, pet, x, baseY, size, { facing = 1, t = 0, moving = 
     const w = image.naturalWidth * scale, h = image.naturalHeight * scale;
     const smooth = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(image, -w / 2, -h, w, h);
+    ctx.drawImage(tintedImage(image, tint || "none"), -w / 2, -h, w, h);
     ctx.imageSmoothingEnabled = smooth;
   }
   // Epic and legendary pets sparkle: a few small diamonds that circle the pet.

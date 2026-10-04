@@ -28,6 +28,24 @@ const RECOLORS = {
   negative: 'invert(1) hue-rotate(180deg)',
 };
 export const recolorFilter = (id) => RECOLORS[id] || '';
+// One sprite frame with a recolor baked in, cached per image, frame and recolor. Drawing with ctx.filter set costs
+// a filter pass over the whole stage canvas per fighter: a crowd of 50 recolored fighters ran at about 1 fps.
+const tintedFrames = new WeakMap();
+export function recoloredFrame(image, frame, id) {
+  const filter = recolorFilter(id);
+  if (!filter) return null;
+  let byKey = tintedFrames.get(image);
+  if (!byKey) tintedFrames.set(image, byKey = new Map());
+  const key = id + '|' + frame.x + ',' + frame.y + ',' + frame.w + ',' + frame.h;
+  if (!byKey.has(key)) {
+    const w = Math.max(1, Math.round(frame.w)), h = Math.max(1, Math.round(frame.h));
+    const canvas = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+    const g = canvas.getContext('2d');
+    if (g) { g.filter = filter; g.drawImage(image, frame.x, frame.y, frame.w, frame.h, 0, 0, w, h); }
+    byKey.set(key, g ? canvas : null);
+  }
+  return byKey.get(key);
+}
 // The swatch color shown for a recolor in lists.
 export const RECOLOR_SWATCH = { crimson: '#c0392b', ocean: '#2f80c9', forest: '#3f8f3a', violet: '#7c4dcc', gold: '#e0a526', ghost: '#e8edf2', shadow: '#2b2b33', negative: '#38c7c0' };
 

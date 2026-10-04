@@ -2,7 +2,7 @@ import { connectChat } from './chat.js';
 import { createArenaClient } from './arena-client.js';
 import { drawHat } from './hats.js';
 import { drawPet } from './pets.js';
-import { recolorFilter, drawAccessory, createTrail, drawWinEffect, WIN_EFFECT_MS, TAUNTS, TITLES } from './cosmetics.js';
+import { recolorFilter, recoloredFrame, drawAccessory, createTrail, drawWinEffect, WIN_EFFECT_MS, TAUNTS, TITLES } from './cosmetics.js';
 
 export function sanitizeColor(value) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : null;
@@ -926,10 +926,7 @@ async function start() {
       if (anim?.kind === 'dodge' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * .4 * p.direction;
       // The pet trots behind its fighter, facing the same way; it is drawn first so the fighter stays in front.
       if (p.pet) {
-        ctx.save();
-        if (recolorFilter(p.petColor)) ctx.filter = recolorFilter(p.petColor);
-        drawPet(ctx, petArt(p.pet), p.x - p.direction * s * .55, y, s * .42, { facing: p.direction, t: clock + p.phase, moving, tier: p.petTier });
-        ctx.restore();
+        drawPet(ctx, petArt(p.pet), p.x - p.direction * s * .55, y, s * .42, { facing: p.direction, t: clock + p.phase, moving, tier: p.petTier, tint: recolorFilter(p.petColor) || 'none' });
       }
       if (p.trail && moving && !ko) trail.spawn(p.key, p.trail, p.x, y, s, p.direction, clock);
       ctx.save();
@@ -950,12 +947,13 @@ async function start() {
         // Sources face right; mirror left walking.
         ctx.scale(p.direction / squash, squash);
         const look = { headHint: sprite.head, t: clock + p.phase, moving };
-        // The recolor tints the body only; the hit flash covers everything. A cape hangs behind the body.
+        // The recolor tints the body only (a cached tinted frame); the brief hit flash covers everything. A cape
+        // hangs behind the body.
         ctx.filter = flash || 'none';
         if (p.accessory) drawAccessory(ctx, p.accessory, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, { ...look, layer: 'back' });
-        ctx.filter = [recolorFilter(p.recolor), flash].filter(Boolean).join(' ') || 'none';
-        ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
-        ctx.filter = flash || 'none';
+        const body = recoloredFrame(sprite.image, frame, p.recolor);
+        if (body) ctx.drawImage(body, 0, 0, body.width, body.height, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
+        else ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
         if (p.hat) drawHat(ctx, p.hat, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, sprite.head);
         if (p.accessory) drawAccessory(ctx, p.accessory, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, look);
       } else {

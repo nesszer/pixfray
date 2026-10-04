@@ -128,9 +128,7 @@ export function addPet(canvas, pet, { color = "" } = {}) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!pets || !pet?.id) return;
     canvas.dataset.drawn = "1";
-    ctx.save(); ctx.filter = tint(color);
-    pets.drawPet(ctx, petArg(pet), canvas.width / 2, canvas.height - 2, canvas.height * 0.62, { tier: pet.tier, still: true });
-    ctx.restore();
+    pets.drawPet(ctx, petArg(pet), canvas.width / 2, canvas.height - 2, canvas.height * 0.62, { tier: pet.tier, still: true, tint: tint(color) });
   };
   redraws.add(draw);
   if (pet?.url) image(pet.url).addEventListener("load", draw, { once: true });
@@ -164,9 +162,7 @@ export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0, loo
   const dw = Math.round(w * room), dh = Math.round(h2 * room), dx = Math.round((canvas.width - dw) / 2), dy = canvas.height - dh;
   // A pet stands behind the fighter, on its left, like on stream.
   if (pet?.id && pets) {
-    ctx.save(); ctx.filter = tint(looks.petColor);
-    pets.drawPet(ctx, petArg(pet), canvas.width * 0.2, canvas.height - 1, canvas.height * 0.3, { tier: pet.tier, t, moving: t > 0, still: !t });
-    ctx.restore();
+    pets.drawPet(ctx, petArg(pet), canvas.width * 0.2, canvas.height - 1, canvas.height * 0.3, { tier: pet.tier, t, moving: t > 0, still: !t, tint: tint(looks.petColor) });
   }
   const look = { headHint: entry.head, t, moving: t > 0 };
   if (looks.accessory && cosmetics) cosmetics.drawAccessory(ctx, looks.accessory, img, frame, dx, dy, dw, dh, { ...look, layer: "back" });
@@ -266,9 +262,7 @@ export function addStage(canvas) {
       if (still) cosmetics.drawTrailSample(ctx, trailId, x - s * 0.35, ground - s * 0.05, s);
     }
     if (st.pet?.id && pets) {
-      ctx.save(); ctx.filter = tint(L.petColor);
-      pets.drawPet(ctx, petArg(st.pet), x - s * 0.55, ground, s * 0.42, { facing: 1, t: still ? 0 : now, moving, tier: st.pet.tier, still });
-      ctx.restore();
+      pets.drawPet(ctx, petArg(st.pet), x - s * 0.55, ground, s * 0.42, { facing: 1, t: still ? 0 : now, moving, tier: st.pet.tier, still, tint: tint(L.petColor) });
     }
     const img = st.entry && image(st.entry.url);
     const frames = framesFor(st.entry, moving ? "walk" : effectOn ? "cheer" : "idle");
