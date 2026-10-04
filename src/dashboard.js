@@ -60,12 +60,15 @@ const current = () => ({ ...copy(state.d), build: state.slot });
 const activeBuild = () => state.profile?.build || 0;
 const savedSlot = () => state.builds[state.slot] ? loadoutOf(state.builds[state.slot]) : null;
 const dirty = () => Boolean(state.profile) && (state.slot !== activeBuild() || !same(state.d, savedSlot()));
+// Edits that leaving the page would lose, in any build. Only looking at another saved build loses nothing.
+const unsavedIn = (d, slot) => !same(d, state.builds[slot] ? loadoutOf(state.builds[slot]) : null);
+const edited = () => Boolean(state.profile) && (unsavedIn(state.d, state.slot) || state.drafts.some((d, i) => d && i !== state.slot && unsavedIn(d, i)));
 const petById = (id) => state.shop?.pets.find((x) => x.id === id) || null;
 const entryOf = (id) => state.catalog.find((x) => x.id === id) || null;
 const looks = (d = state.d) => Object.fromEntries(LOOK_FIELDS.map((f) => [f, d[f]]));
 const boostText = (b) => b?.power && b.power === b.guard && b.power === b.luck ? "+" + b.power + " to all stats" : STATS.filter((k) => b?.[k]).map((k) => "+" + b[k] + " " + k).join(", ");
 const TIER_NAMES = { common: "Common", uncommon: "Uncommon", rare: "Rare", epic: "Epic", legendary: "Legendary" };
-const canShop = () => Boolean(state.session?.user && state.profile);
+const canShop = () => Boolean(state.session?.user && state.profile) && !state.off;
 const signedIn = () => Boolean(state.session?.user);
 const money = (n) => "$" + (n || 0);
 
@@ -361,7 +364,10 @@ function renderPreview() {
 $("#play-win").addEventListener("click", () => stage.play());
 
 function renderSave() {
-  if (signedIn() && state.profile) {
+  saveBtn.disabled = Boolean(state.off);
+  if (signedIn() && state.off === "paused") {
+    setStatus(status, state.profile ? "Mini Chat is off on this channel right now, so saving and buying are closed. Your fighter is kept." : "Mini Chat is off on this channel right now. You can save a fighter when it's back.");
+  } else if (signedIn() && state.profile) {
     const locked = lockedWorn();
     const msg = locked.length ? "Trying on " + locked.map(([k, id]) => itemLabel(k, id)).join(", ") + ". Buy " + (locked.length === 1 ? "it" : "them") + " to save this look."
       : state.slot !== activeBuild() ? "Build " + (state.slot + 1) + " isn't on stream. Save to switch to it."
@@ -410,7 +416,7 @@ function renderCommands() {
 const fresh = () => Boolean(state.profile) && !(state.profile.wins + state.profile.losses);
 // Until the first duel: what to type in chat now that the fighter is saved.
 function renderNextStep() {
-  const next = $("#next-step"), show = Boolean(signedIn() && state.profile && !dirty() && !lockedWorn().length && fresh());
+  const next = $("#next-step"), show = Boolean(signedIn() && state.profile && !state.off && !dirty() && !lockedWorn().length && fresh());
   next.hidden = !show;
   if (show) next.replaceChildren(h("strong", {}, "Saved. Next: "), "in " + CHANNEL + "'s chat, type ", h("code", {}, "!challenge @friend"), ". They answer ", h("code", {}, "!fight"), ".");
 }
@@ -475,7 +481,7 @@ async function loadLeaderboard() {
   else $("#leaderboard tbody").replaceChildren(h("tr", {}, h("td", { colspan: 6, class: "muted" }, "Couldn't load the leaderboard: " + errorText(r))));
 }
 
-addEventListener("beforeunload", (e) => { if (signedIn() && state.profile && dirty()) e.preventDefault(); });
+addEventListener("beforeunload", (e) => { if (signedIn() && edited()) e.preventDefault(); });
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!signedIn()) return;
@@ -521,7 +527,7 @@ async function init() {
   state.config = live.ok ? live.data?.config : null;
   const hash = location.hash.slice(1);
   showTab(tabOf(hash) || "fighter", { hash: tabOf(hash) ? hash : "fighter", scroll: Boolean(tabOf(hash)) && hash !== "fighter" });
-  if (live.status === 403 && live.data?.off) showOff(live.data.off);
+  if (live.status === 403 && live.data?.off) { state.off = live.data.off; showOff(live.data.off); }
   renderCharacters(); renderCommands();
   if (signedIn()) {
     const [profile, access] = await Promise.all([api("/api/profile/" + CHANNEL), api("/api/access/" + CHANNEL)]);

@@ -147,8 +147,9 @@ export default {async fetch(request,env,ctx){
     if(!match)return json({error:'Not found'},404);
     const [,route,channel,id]=match;
     const state=await channelState(env,channel);
-    // The shop list stays readable while paused (like pets), so viewers still see what they own; buying stays closed.
-    const openWhenPaused=OPEN_WHEN_PAUSED.includes(route)||(route==='shop'&&request.method==='GET');
+    // The shop list and the viewer's own profile stay readable while paused (like pets), so viewers still see their
+    // fighter and what they own; saving and buying stay closed.
+    const openWhenPaused=OPEN_WHEN_PAUSED.includes(route)||((route==='shop'||route==='profile')&&request.method==='GET');
     if(!isOn(state)&&!(state==='paused'&&openWhenPaused))return json(offError(state),403);
     if(route==='live'&&request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return json({error:'WebSocket upgrade required'},426);
     if(route==='access')return json(await access(env,user,channel));

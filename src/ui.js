@@ -94,8 +94,15 @@ export async function signOut() {
 const images = new Map();
 const sprites = new Set();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
-const redraws = new Set();   // stills and stages that redraw once a module or image arrives
-const redrawAll = () => { for (const s of sprites) s.drawn = ""; start(); for (const d of redraws) d(); };
+const redraws = new Map();   // stills and stages that redraw once a module or image arrives: draw -> its canvas
+const redrawAll = () => { for (const s of sprites) s.drawn = ""; start(); for (const d of redraws.keys()) d(); };
+// Lists rebuild their canvases on every render; the old ones are dropped a moment later, once the new list is in
+// the page (a canvas is added here before it is attached).
+let sweep = 0;
+function onRedraw(canvas, draw) {
+  redraws.set(draw, canvas);
+  if (!sweep) sweep = setTimeout(() => { sweep = 0; for (const [d, c] of redraws) if (!c.isConnected) redraws.delete(d); }, 1000);
+}
 reducedMotion.addEventListener("change", redrawAll);
 function image(url) {
   if (!images.has(url)) { const img = new Image(); img.decoding = "async"; img.src = url; images.set(url, img); }
@@ -123,29 +130,25 @@ const petArg = (pet) => pet?.url ? { image: image(pet.url) } : pet?.id || "";
 // A still pet on its own canvas (the dashboard's pet list), in a pet color (cosmetics.js) if one is given.
 export function addPet(canvas, pet, { color = "" } = {}) {
   const draw = () => {
-    if (!canvas.isConnected && canvas.dataset.drawn) { redraws.delete(draw); return; }
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!pets || !pet?.id) return;
-    canvas.dataset.drawn = "1";
     pets.drawPet(ctx, petArg(pet), canvas.width / 2, canvas.height - 2, canvas.height * 0.62, { tier: pet.tier, still: true, tint: tint(color) });
   };
-  redraws.add(draw);
+  onRedraw(canvas, draw);
   if (pet?.url) image(pet.url).addEventListener("load", draw, { once: true });
   draw();
 }
 // A still sample of a trail or a win effect for the shop lists.
 export function addCosmeticSample(canvas, kind, id) {
   const draw = () => {
-    if (!canvas.isConnected && canvas.dataset.drawn) { redraws.delete(draw); return; }
     const ctx = canvas.getContext("2d"), w = canvas.width, hgt = canvas.height;
     ctx.clearRect(0, 0, w, hgt);
     if (!cosmetics || !id) return;
-    canvas.dataset.drawn = "1";
     if (kind === "trail") cosmetics.drawTrailSample(ctx, id, w * 0.78, hgt * 0.78, hgt * 0.9);
     else if (kind === "effect") cosmetics.drawWinEffect(ctx, id, w / 2, hgt * 1.25, hgt * 0.42, id === "fireworks" ? 0.42 : id === "banner" ? 0.5 : 0.12, 7);
   };
-  redraws.add(draw);
+  onRedraw(canvas, draw);
   draw();
 }
 // looks: { recolor, accessory, petColor } (cosmetics.js ids), drawn as on stream.
@@ -301,7 +304,7 @@ export function addStage(canvas) {
       ctx.fillStyle = "#ffffff"; ctx.fillText(taunt, bx, top + 18 * k, Math.max(1, bw - 8 * k));
     }
   }
-  redraws.add(kick);
+  onRedraw(canvas, kick);
   new ResizeObserver(kick).observe(canvas);
   kick();
   return {

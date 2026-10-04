@@ -4,8 +4,9 @@ This file is for every lane that builds against the backend. If it disagrees wit
 wins; report the difference to Lane A. `nesszerra` and `miolafff` are built in and always on. Other
 channels are added by invite (section 2a). A channel that isn't set up returns 403
 `{error, off:"not_enabled"}`; a channel that is turned off returns 403 `{error, off:"paused"}` on
-every route except `access`, `admin`, `leaderboard`, `catalog` and `assets`, so its streamer and mods
-can still sign in and turn it back on.
+every route except `access`, `admin`, `leaderboard`, `catalog`, `assets`, `pets` and a GET of `shop` or
+`profile`, so its streamer and mods can still sign in and turn it back on, and viewers still see their saved
+fighter (saving and buying stay closed).
 
 ## 1. Conventions
 

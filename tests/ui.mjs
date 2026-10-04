@@ -744,6 +744,41 @@ try {
     await page.screenshot({ path: shots + '/viewer-not-set-up-390.png' });
     await context.close();
   }
+  // 11. Builds: looking at another saved build is not an unsaved edit; leaving warns only after a real change.
+  // 12. A paused channel: the signed-in viewer sees their fighter; saving and buying say they're closed.
+  for (const paused of [false, true]) {
+    const { context, page } = await newPage(sizes[0]);
+    const look = { color: '#60a5fa', stats: { power: 0, guard: 0, luck: 0 }, hat: '', pet: '', recolor: '', petColor: '', accessory: '', trail: '', winEffect: '', taunt: '', title: '' };
+    const profile = { ...board[1], ...look, avatar: 'player', hp: 100, registered: true, respawnAt: 0, lastSeen: now, bonus: 0, dollars: 500, build: 0,
+      owned: { pets: [], hats: [], slots: 2 }, builds: [{ ...look, avatar: 'player' }, { ...look, avatar: 'adventurer', color: '#34d399' }] };
+    await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+    await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
+    await page.route('**/api/profile/nesszerra', (r) => json(r, profile));
+    if (paused) await page.route('**/api/state/nesszerra', (r) => json(r, { error: 'off', off: 'paused' }, 403));
+    await page.goto(base + '/?channel=nesszerra');
+    await page.waitForSelector('#save:not([hidden])');
+    const leaving = () => page.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); dispatchEvent(e); return e.defaultPrevented; });
+    if (!paused) {
+      assert.equal(await leaving(), false, 'nothing edited yet');
+      await page.locator('#build-list button.build').nth(1).click();
+      assert.match(await page.locator('#save-status').textContent(), /Build 2 isn't on stream/);
+      assert.equal(await leaving(), false, 'only looking at build 2');
+      await page.locator('.swatch[data-color="#f472b6"]').click();
+      assert.equal(await leaving(), true, 'build 2 was changed');
+      await page.locator('#build-list button.build').nth(0).click();
+      assert.equal(await leaving(), true, 'the edit in build 2 is still unsaved');
+    } else {
+      await page.waitForSelector('#off-note:not([hidden])');
+      assert.equal(await page.locator('#save').isDisabled(), true);
+      assert.match(await page.locator('#save-status').textContent(), /Mini Chat is off on this channel right now, so saving and buying are closed. Your fighter is kept./);
+      assert.equal(await page.locator('#next-step').isHidden(), true);
+      await page.locator('#tab-shop').click();
+      assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $50' }).isDisabled(), true, 'buying is closed');
+      await noOverflow(page, 'viewer paused signed-in');
+      await page.screenshot({ path: shots + '/viewer-paused-signed-in-1280.png' });
+    }
+    await context.close();
+  }
   assert.deepEqual(errors, []);
   console.log('PASS: viewer + admin UI at 1280/390, signed-out (real server), signed-in viewer save, mod gate, admin actions, config save/409/revert; no page errors.');
 } finally { await browser.close(); }

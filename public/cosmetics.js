@@ -127,6 +127,7 @@ export function createTrail(limit = 400) {
     spawn(key, id, x, y, size, dir, now, vx = 0) {
       if (!COSMETIC_IDS.trail.includes(id) || now - (last.get(key) || 0) < TRAIL_EVERY_MS) return;
       last.set(key, now);
+      if (last.size > 200) for (const [k, t] of last) if (now - t > TRAIL_LIFE_MS) last.delete(k);   // fighters who left
       const seed = now % 997 + parts.length;
       parts.push({ id, x: x - dir * size * 0.18 + (rnd(seed, 1) - 0.5) * size * 0.2, y: y - size * (0.08 + rnd(seed, 2) * 0.45), born: now, size, seed, vx,
         vy: id === 'stars' ? size * 0.25 : id === 'flames' ? -size * 0.35 : -size * (0.3 + rnd(seed, 3) * 0.3) });
