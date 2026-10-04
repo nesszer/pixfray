@@ -493,6 +493,22 @@ test('chat bot: a rate-limited reply (429) is retried after a short wait, then g
   assert.deepEqual(waits, [1100, 1100, 2200]);
 });
 
+test('chat bot: a line Twitch drops as a duplicate is resent with an invisible tag character, at most twice', async (t) => {
+  const f = environment(), sent = [];
+  let dupes = 1;
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (String(url).startsWith('https://id.twitch.tv')) return Response.json({ access_token: 'app-token-1', expires_in: 5000 });
+    sent.push(JSON.parse(init.body).message);
+    return Response.json({ data: [dupes-- > 0 ? { message_id: '', is_sent: false, drop_reason: { code: 'msg_duplicate' } } : { message_id: 'r1', is_sent: true }] });
+  });
+  const send = () => sendChatMessage(f.env, { broadcasterId: '1', senderId: '99', message: 'PixFray help', replyTo: 'm1' });
+  assert.deepEqual(await send(), { sent: true, reason: '' });
+  assert.deepEqual(sent, ['PixFray help', 'PixFray help \u{E0000}']);
+  sent.length = 0; dupes = 9;
+  assert.deepEqual(await send(), { sent: false, reason: 'msg_duplicate' });
+  assert.deepEqual(sent, ['PixFray help', 'PixFray help \u{E0000}', 'PixFray help \u{E0000}\u{E0000}']);
+});
+
 test('chat bot: several reply lines go out in order, about a second apart, and one failure does not stop the rest', async (t) => {
   const f = environment(), waits = [], sent = [];
   let first = true;

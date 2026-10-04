@@ -187,12 +187,19 @@ export function botMessage(message){
 // A bot that isn't a channel mod may send about one line per second there, so a 429 is retried twice after a short wait.
 export async function sendChatMessage(env,{broadcasterId,senderId,message,replyTo='',sleep=ms=>new Promise(r=>setTimeout(r,ms))}){
   const text=botMessage(message);if(!text||!broadcasterId||!senderId)return {sent:false,reason:'empty'};
-  const body={broadcaster_id:broadcasterId,sender_id:senderId,message:text,...(replyTo?{reply_parent_message_id:replyTo}:{})};
-  let r=await helix(env,'POST','/chat/messages',body);
-  for(const wait of [1100,2200]){if(r.status!==429)break;await sleep(wait);r=await helix(env,'POST','/chat/messages',body);}
-  if(!r.ok)throw fail('Twitch send chat message failed ('+r.status+')',502);
-  const d=(await r.json()).data?.[0];
-  return {sent:d?.is_sent===true,reason:String(d?.drop_reason?.code||'')};
+  const post=async message=>{
+    const body={broadcaster_id:broadcasterId,sender_id:senderId,message,...(replyTo?{reply_parent_message_id:replyTo}:{})};
+    let r=await helix(env,'POST','/chat/messages',body);
+    for(const wait of [1100,2200]){if(r.status!==429)break;await sleep(wait);r=await helix(env,'POST','/chat/messages',body);}
+    if(!r.ok)throw fail('Twitch send chat message failed ('+r.status+')',502);
+    const d=(await r.json()).data?.[0];
+    return {sent:d?.is_sent===true,reason:String(d?.drop_reason?.code||'')};
+  };
+  // Twitch drops a line identical to the sender's previous one within 30 s (two viewers asking !fray). An invisible tag
+  // character (U+E0000) makes it differ; twice when the previous line already carried one.
+  let out=await post(text);
+  for(const tail of [' \u{E0000}',' \u{E0000}\u{E0000}']){if(out.reason!=='msg_duplicate')break;out=await post(text+tail);}
+  return out;
 }
 // The room's reply lines, in order and about a second apart (a bot that isn't a mod gets ~1 line per second).
 export async function sendChatMessages(env,{messages=[],sleep=ms=>new Promise(r=>setTimeout(r,ms)),...rest}){
