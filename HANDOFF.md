@@ -107,7 +107,7 @@ The run writes screenshots to `screenshots/e2e-*.png`. They are generated, not i
    StreamElements puts the viewer's id and name in the query. Keep the key off stream and press
    New key if it leaks (CONTRACTS.md, "StreamElements route checks").
 14. The `/api/` and `/auth/` edge rate limit (20 requests per 10 s per IP and colo) is a Cloudflare WAF
-   rule on the `miolaf.xyz` zone, outside this repo. CONTRACTS.md has its ids and how to undo it.
+   rule on each zone (`pixfray.xyz` and `miolaf.xyz`), outside this repo. CONTRACTS.md has its ids and how to undo it.
 15. During this pass, another `npx vite` dev server of this project (pid 6560) was holding port
    5173. It was left running. Tests use `MINI_PORT=5199` and their own state folder
    (`.cloudflare/e2e-state`).
