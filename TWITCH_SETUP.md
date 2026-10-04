@@ -4,7 +4,7 @@ Register a **confidential** application in [Twitch Developer Console](https://de
 
 - `https://pixfray.xyz/auth/callback`
 - `https://chat.miolaf.xyz/auth/callback` (miolafff's domain; sign-in returns to the domain it started on)
-- `https://test.pixfray.xyz/auth/callback`
+- `https://staging.pixfray.xyz/auth/callback`
 - `https://test.chat.miolaf.xyz/auth/callback`
 
 Keep the client secret out of chat, GitHub, OBS URLs, and screenshots. Run `pwsh -NoProfile -File scripts/configure-twitch.ps1` locally. It prompts for the secret without echoing it and saves ignored local configuration.

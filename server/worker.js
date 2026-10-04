@@ -65,14 +65,14 @@ async function chatAction(env,url,channel,action,{takeover=false}={}){
   return room('/chat',{action:'connected',...sub});
 }
 // Pages pass through the Worker (run_worker_first), and public/_headers doesn't reach responses a Worker returns,
-// so the page headers are set here: no framing by other sites (clickjacking), and the test sites stay out of search.
+// so the page headers are set here: no framing by other sites (clickjacking), and the staging and test sites stay out of search.
 async function page(request,env,url){
   const r=await env.ASSETS.fetch(request);
   if(!isPage(url.pathname))return r;
   const out=new Response(r.body,r);
   out.headers.set('Content-Security-Policy',"frame-ancestors 'none'");out.headers.set('X-Frame-Options','DENY');
   out.headers.set('X-Content-Type-Options','nosniff');out.headers.set('Referrer-Policy','strict-origin-when-cross-origin');
-  if(url.hostname.startsWith('test.'))out.headers.set('X-Robots-Tag','noindex, nofollow');
+  if(/^(staging|test)\./.test(url.hostname))out.headers.set('X-Robots-Tag','noindex, nofollow');
   return out;
 }
 // Admin-only view of the StreamElements setup: the key and the paste-ready command replies.

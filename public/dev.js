@@ -120,7 +120,7 @@ $('#hotfix').addEventListener('click', (e) => busy(e.currentTarget, async () => 
 }));
 $('#rollback').addEventListener('click', (e) => busy(e.currentTarget, async () => {
   const target = $('#rb-target').value, versionId = $('#rb-version').value;
-  if (!confirm(`Roll back ${target === 'production' ? 'pixfray.xyz' : 'test.pixfray.xyz'} to ${versionId ? short(versionId) : 'the previous deployment'}?`)) return;
+  if (!confirm(`Roll back ${target === 'production' ? 'pixfray.xyz' : 'staging.pixfray.xyz'} to ${versionId ? short(versionId) : 'the previous deployment'}?`)) return;
   released(await api('/api/dev/rollback', { method: 'POST', body: { target, ...(versionId ? { versionId } : {}) } }), 'Rollback');
 }));
 $('#rb-target').addEventListener('change', fillVersions);

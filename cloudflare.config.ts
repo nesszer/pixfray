@@ -6,7 +6,7 @@ const name=testing ? 'nesszerra-mini-chat-test' : 'nesszerra-mini-chat';
 // and PUBLIC_ORIGIN is the loopback dev server. It can never reach a build or a deploy.
 const localTest=process.env.MINI_LOCAL_TEST === '1';
 if(localTest && (testing || process.argv.some(a => /^(build|deploy|publish|versions)$/.test(a))))throw new Error('MINI_LOCAL_TEST is only allowed with cf dev');
-const origin=localTest ? 'http://127.0.0.1:' + (Number(process.env.MINI_PORT) || 5173) : testing ? "https://test.pixfray.xyz" : "https://pixfray.xyz";
+const origin=localTest ? 'http://127.0.0.1:' + (Number(process.env.MINI_PORT) || 5173) : testing ? "https://staging.pixfray.xyz" : "https://pixfray.xyz";
 // chat.miolaf.xyz is miolafff's own domain: it opens her channel, and pages for other channels move to pixfray.xyz.
 // The API and the overlay still answer there, so older OBS and StreamElements links keep working (server/hosts.js).
 const miolaf=testing ? "test.chat.miolaf.xyz" : "chat.miolaf.xyz";

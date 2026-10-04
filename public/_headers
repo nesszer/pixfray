@@ -18,7 +18,7 @@
 # The test site and the OBS overlay stay out of search results.
 /overlay*
   X-Robots-Tag: noindex, nofollow
-https://test.pixfray.xyz/*
+https://staging.pixfray.xyz/*
   X-Robots-Tag: noindex, nofollow
 https://test.chat.miolaf.xyz/*
   X-Robots-Tag: noindex, nofollow

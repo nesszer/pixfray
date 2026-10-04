@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRETS = path.join(ROOT, '.secrets.local.json');   // DEV_TOOLS_TOKEN, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
 const ALT_FILE = path.join(ROOT, '.devtools.local.json'); // alt account tokens from `login`; gitignored
-const BASE = (process.env.MINI_DEVTOOLS_BASE || 'https://test.pixfray.xyz').replace(/\/$/, '');
+const BASE = (process.env.MINI_DEVTOOLS_BASE || 'https://staging.pixfray.xyz').replace(/\/$/, '');
 const BOT_LETTERS = 'abcd';
 
 const argv = process.argv.slice(2);

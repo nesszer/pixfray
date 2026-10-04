@@ -1,7 +1,7 @@
 # PixFray
 Open-source Twitch mini-character overlay for nesszerra and other channels. Transparent Canvas rendering, 56 free CC0 characters, chat duels with Elo ranks, and demo mode.
 
-Live: https://pixfray.xyz (deployed on Cloudflare Workers Free; the test site is test.pixfray.xyz).
+Live: https://pixfray.xyz (deployed on Cloudflare Workers Free; the test site is staging.pixfray.xyz).
 https://chat.miolaf.xyz is miolafff's own domain: it opens her channel, and other channels' pages move to
 pixfray.xyz. Older OBS and StreamElements links on chat.miolaf.xyz keep working.
 

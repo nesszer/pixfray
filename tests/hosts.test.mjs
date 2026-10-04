@@ -60,7 +60,7 @@ test('pages keep their no-framing headers when they pass through the Worker', as
     assert.equal(r.headers.get('Content-Security-Policy'), "frame-ancestors 'none'", url);
     assert.equal(r.headers.get('X-Robots-Tag'), null, url);
   }
-  assert.equal((await get('https://test.pixfray.xyz/')).headers.get('X-Robots-Tag'), 'noindex, nofollow');
+  for (const site of ['https://staging.pixfray.xyz/', 'https://test.chat.miolaf.xyz/?channel=miolafff']) assert.equal((await get(site)).headers.get('X-Robots-Tag'), 'noindex, nofollow', site);
   assert.equal((await get(MAIN + '/overlay.html')).headers.get('X-Frame-Options'), null, 'OBS can still frame the overlay');
 });
 
