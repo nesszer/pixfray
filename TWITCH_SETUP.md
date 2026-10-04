@@ -2,14 +2,16 @@
 
 Register a **confidential** application in [Twitch Developer Console](https://dev.twitch.tv/console/apps). Use your own account and these OAuth redirect URLs:
 
-- `https://chat.miolaf.xyz/auth/callback`
+- `https://pixfray.xyz/auth/callback`
+- `https://chat.miolaf.xyz/auth/callback` (miolafff's domain; sign-in returns to the domain it started on)
+- `https://test.pixfray.xyz/auth/callback`
 - `https://test.chat.miolaf.xyz/auth/callback`
 
 Keep the client secret out of chat, GitHub, OBS URLs, and screenshots. Run `pwsh -NoProfile -File scripts/configure-twitch.ps1` locally. It prompts for the secret without echoing it and saves ignored local configuration.
 
 Chat reaches the game through a Twitch EventSub webhook (`channel.chat.message`) that calls the Worker at `/api/eventsub`. Nothing runs on the OBS PC, and there is no relay.
 
-**One site at a time.** Both sites use this one Twitch app, and Twitch allows only one `channel.chat.message` subscription per channel and app, whatever the callback URL. So only one of `chat.miolaf.xyz` and `test.chat.miolaf.xyz` can receive chat at a time. If chat is connected on the other site, **Connect chat** says so and offers to move it here; moving it deletes the other site's subscription and that site pauses within an hour (its hourly check finds the subscription gone). To run both at once, register a second Twitch app for the test site.
+**One site at a time.** Both sites use this one Twitch app, and Twitch allows only one `channel.chat.message` subscription per channel and app, whatever the callback URL. So only one of the live site and the test site can receive chat at a time. If chat is connected on the other site, **Connect chat** says so and offers to move it here; moving it deletes the other site's subscription and that site pauses within an hour (its hourly check finds the subscription gone). To run both at once, register a second Twitch app for the test site.
 
 To connect a site:
 

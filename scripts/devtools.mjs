@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRETS = path.join(ROOT, '.secrets.local.json');   // DEV_TOOLS_TOKEN, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
 const ALT_FILE = path.join(ROOT, '.devtools.local.json'); // alt account tokens from `login`; gitignored
-const BASE = (process.env.MINI_DEVTOOLS_BASE || 'https://test.chat.miolaf.xyz').replace(/\/$/, '');
+const BASE = (process.env.MINI_DEVTOOLS_BASE || 'https://test.pixfray.xyz').replace(/\/$/, '');
 const BOT_LETTERS = 'abcd';
 
 const argv = process.argv.slice(2);
@@ -30,7 +30,7 @@ function secrets() {
   const s = readJson(SECRETS) || {};
   return { ...s, DEV_TOOLS_TOKEN: process.env.DEV_TOOLS_TOKEN || s.DEV_TOOLS_TOKEN };
 }
-if (/^https:\/\/chat\.miolaf\.xyz$/.test(BASE)) fail('refusing to run against production; devtools are test-site only');
+if (/^https:\/\/(chat\.miolaf|pixfray)\.xyz$/.test(BASE)) fail('refusing to run against production; devtools are test-site only');
 
 // ---- test site API (dev token) ----
 async function site(pathname, { method = 'GET', body } = {}) {

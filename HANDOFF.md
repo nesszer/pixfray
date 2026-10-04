@@ -1,8 +1,12 @@
 # PixFray v2 handoff
 
 Project root: `D:\code\2026-10-01\i-ne\outputs\mini-chat`
-Live v2: https://chat.miolaf.xyz (Cloudflare Workers Free, Worker `nesszerra-mini-chat`; v1 replaced 2026-10-01)
-Test target: `cf build/deploy --mode test` → Worker `nesszerra-mini-chat-test` on `test.chat.miolaf.xyz`
+Live v2: https://pixfray.xyz (Cloudflare Workers Free, Worker `nesszerra-mini-chat`; v1 replaced 2026-10-01)
+Test target: `cf build/deploy --mode test` → Worker `nesszerra-mini-chat-test` on `test.pixfray.xyz`
+Channel domain: `chat.miolaf.xyz` (and `test.chat.miolaf.xyz`) is miolafff's. The same Worker answers there: its
+pages open miolafff, other channels' pages move to pixfray.xyz, and the API and overlay answer for every channel, so
+older OBS and StreamElements links keep working (`CHANNEL_ORIGINS` in cloudflare.config.ts, server/hosts.js).
+The Worker names keep "mini-chat": the Durable Object data is tied to them.
 
 ## Rules for every agent
 
@@ -246,8 +250,9 @@ left alone.
 
 ## Prerequisites (owner does these)
 
-1. Create a Twitch Developer app with the OAuth redirect `https://chat.miolaf.xyz/auth/callback`
-   (and `https://test.chat.miolaf.xyz/auth/callback` for the test Worker).
+1. Create a Twitch Developer app with the OAuth redirects `https://pixfray.xyz/auth/callback` and
+   `https://chat.miolaf.xyz/auth/callback` (sign-in returns to the domain it started on), plus
+   `https://test.pixfray.xyz/auth/callback` and `https://test.chat.miolaf.xyz/auth/callback` for the test Worker.
 2. Set Worker secrets `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET` and `INTERNAL_SECRET`
    (`scripts/configure-twitch.ps1`).
 3. Create the GitHub repo under `Finesssee`.

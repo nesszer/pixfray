@@ -1,6 +1,6 @@
 # Test-site devtools
 
-`scripts/devtools.mjs` drives the **test site** (test.chat.miolaf.xyz) from a terminal: bot fighters,
+`scripts/devtools.mjs` drives the **test site** (test.pixfray.xyz) from a terminal: bot fighters,
 scripted duels, and an alt account that types in real Twitch chat. Production has none of this.
 
 ## How it is locked down

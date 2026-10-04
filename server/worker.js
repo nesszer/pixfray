@@ -7,6 +7,7 @@ import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './event
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
 import { channelState,isOn,offError,readInvite,setPaused,publicChannels } from './channels.js';
 import { COSMETIC_KINDS,COSMETIC_FIELDS,MAX_BUILDS } from './cosmetics.js';
+import { siteOrigin,channelPageRedirect,isPage } from './hosts.js';
 export {ChannelRoom,AuthStore};
 // A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
 // page's state and profile saves are refused.
@@ -63,10 +64,21 @@ async function chatAction(env,url,channel,action,{takeover=false}={}){
   const sub=await connectChat(env,{broadcasterId,origin:env.PUBLIC_ORIGIN||url.origin,url,takeover});
   return room('/chat',{action:'connected',...sub});
 }
+// Pages pass through the Worker (run_worker_first), and public/_headers doesn't reach responses a Worker returns,
+// so the page headers are set here: no framing by other sites (clickjacking), and the test sites stay out of search.
+async function page(request,env,url){
+  const r=await env.ASSETS.fetch(request);
+  if(!isPage(url.pathname))return r;
+  const out=new Response(r.body,r);
+  out.headers.set('Content-Security-Policy',"frame-ancestors 'none'");out.headers.set('X-Frame-Options','DENY');
+  out.headers.set('X-Content-Type-Options','nosniff');out.headers.set('Referrer-Policy','strict-origin-when-cross-origin');
+  if(url.hostname.startsWith('test.'))out.headers.set('X-Robots-Tag','noindex, nofollow');
+  return out;
+}
 // Admin-only view of the StreamElements setup: the key and the paste-ready command replies.
 function seView(env,url,channel,se){
   if(!se?.secret)return null;
-  const origin=env.PUBLIC_ORIGIN||url.origin;
+  const origin=siteOrigin(env,url,channel);
   return {key:se.secret,names:se.names,origin,lastCommandAt:se.lastCommandAt||0,rejectedAt:se.rejectedAt||0,seen:se.seen||{},duelModuleOff:!!se.duelModuleOff,commands:seCommandLines(origin,channel,se.secret,se.names),timerText:seHelpText({names:se.names,origin,channel})};
 }
 // Test site only: DEV_TOOLS_TOKEN is declared only by `cf deploy --mode test`, so production has no token to match.
@@ -116,7 +128,7 @@ export default {async fetch(request,env,ctx){
     // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
     if(path.startsWith('/api/se/')){
       if(!env.INTERNAL_SECRET)return new Response('PixFray is not configured',{status:503});
-      return await handleStreamElements(request,env,{url,origin:env.PUBLIC_ORIGIN||url.origin,channelState:channel=>channelState(env,channel),roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),
+      return await handleStreamElements(request,env,{url,origin:siteOrigin(env,url,path.split('/')[3]||''),channelState:channel=>channelState(env,channel),roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),
         // StreamElements took over from a Twitch EventSub subscription: delete it so Twitch stops sending chat.
         dropSubscription:subscriptionId=>ctx?.waitUntil?.(disconnectChat(env,{subscriptionId,url}).catch(e=>console.warn('eventsub drop failed',e?.message)))});
     }
@@ -125,7 +137,7 @@ export default {async fetch(request,env,ctx){
     if(request.headers.has('Authorization')&&!dev&&path.startsWith('/api/'))return json({error:'Invalid dev token'},401);
     if(mutating&&!dev&&request.headers.get('Origin')!==url.origin)return json({error:'Same-origin request required'},403);
     if(path.startsWith('/auth/'))return handleAuth(request,env);
-    if(!path.startsWith('/api/'))return env.ASSETS.fetch(request);
+    if(!path.startsWith('/api/'))return channelPageRedirect(env,url)||await page(request,env,url);
     if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
     const s=dev?null:await session(request,env),user=dev?await devUser(env):s?.user||null,owner=await isOwner(env,user);
     const devMatch=path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop)$/);

@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { channelState, readInvite, claimInvite } from './channels.js';
+import { authOrigin } from './hosts.js';
 export class AuthStore extends DurableObject {
   constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS entries (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL)');}
   async fetch(request){
@@ -90,7 +91,7 @@ export async function handleAuth(request,env){
     return new Response(null,{status:303,headers:{Location:'/', 'Set-Cookie':cookie('mini_session','',0)}});
   }
   if(!configured(env))return Response.json({error:'Twitch app is not configured yet. Add the app client ID and secret to the Worker.'},{status:503});
-  const callback=(env.PUBLIC_ORIGIN||url.origin)+'/auth/callback';
+  const callback=authOrigin(env,url)+'/auth/callback';
   if(path==='/auth/login'){
     const nonce=randomToken(), invite=url.searchParams.get('invite')||'';
     let pending, scope='';

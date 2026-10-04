@@ -110,17 +110,17 @@ $('#deploy-test').addEventListener('click', (e) => busy(e.currentTarget, async (
 $('#promote').addEventListener('click', (e) => busy(e.currentTarget, async () => {
   const number = $('#pr-number').value ? Number($('#pr-number').value) : undefined, percentage = Number($('#percentage').value || 100);
   const what = number ? `merge #${number} and deploy main` : 'deploy main as it is';
-  if (!confirm(`Promote to chat.miolaf.xyz: ${what}, ${percentage}% of traffic?`)) return;
+  if (!confirm(`Promote to pixfray.xyz: ${what}, ${percentage}% of traffic?`)) return;
   released(await api('/api/dev/promote', { method: 'POST', body: { ...(number ? { number } : {}), percentage } }), 'Promote');
 }));
 $('#hotfix').addEventListener('click', (e) => busy(e.currentTarget, async () => {
   if (!branch().startsWith('hotfix/')) return status('#release-status', 'Set the branch to hotfix/<name> in the code editor first.', 'error');
-  if (!confirm(`Deploy ${branch()} straight to chat.miolaf.xyz without the test site?`)) return;
+  if (!confirm(`Deploy ${branch()} straight to pixfray.xyz without the test site?`)) return;
   released(await api('/api/dev/hotfix', { method: 'POST', body: { branch: branch() } }), 'Hotfix');
 }));
 $('#rollback').addEventListener('click', (e) => busy(e.currentTarget, async () => {
   const target = $('#rb-target').value, versionId = $('#rb-version').value;
-  if (!confirm(`Roll back ${target === 'production' ? 'chat.miolaf.xyz' : 'test.chat.miolaf.xyz'} to ${versionId ? short(versionId) : 'the previous deployment'}?`)) return;
+  if (!confirm(`Roll back ${target === 'production' ? 'pixfray.xyz' : 'test.pixfray.xyz'} to ${versionId ? short(versionId) : 'the previous deployment'}?`)) return;
   released(await api('/api/dev/rollback', { method: 'POST', body: { target, ...(versionId ? { versionId } : {}) } }), 'Rollback');
 }));
 $('#rb-target').addEventListener('change', fillVersions);

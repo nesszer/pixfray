@@ -6,13 +6,17 @@ const name=testing ? 'nesszerra-mini-chat-test' : 'nesszerra-mini-chat';
 // and PUBLIC_ORIGIN is the loopback dev server. It can never reach a build or a deploy.
 const localTest=process.env.MINI_LOCAL_TEST === '1';
 if(localTest && (testing || process.argv.some(a => /^(build|deploy|publish|versions)$/.test(a))))throw new Error('MINI_LOCAL_TEST is only allowed with cf dev');
-const origin=localTest ? 'http://127.0.0.1:' + (Number(process.env.MINI_PORT) || 5173) : testing ? "https://test.chat.miolaf.xyz" : "https://chat.miolaf.xyz";
+const origin=localTest ? 'http://127.0.0.1:' + (Number(process.env.MINI_PORT) || 5173) : testing ? "https://test.pixfray.xyz" : "https://pixfray.xyz";
+// chat.miolaf.xyz is miolafff's own domain: it opens her channel, and pages for other channels move to pixfray.xyz.
+// The API and the overlay still answer there, so older OBS and StreamElements links keep working (server/hosts.js).
+const miolaf=testing ? "test.chat.miolaf.xyz" : "chat.miolaf.xyz";
 return {
   worker: defineWorker({
     name, compatibilityDate: "2026-09-25",
     entrypoint: "./server/worker.js",
-    domains: [testing ? "test.chat.miolaf.xyz" : "chat.miolaf.xyz"],
-    assets: { runWorkerFirst: ["/api/*","/auth/*"], notFoundHandling:"none" },
+    domains: [new URL(origin).hostname, miolaf],
+    // The pages go through the Worker too, so a channel domain can send other channels' pages to the main site.
+    assets: { runWorkerFirst: ["/api/*","/auth/*","/","/index.html","/admin","/admin/*","/start","/start/*"], notFoundHandling:"none" },
     // Workers Logs: console output and requests, kept by Cloudflare (dashboard: Workers > this worker > Logs).
     // redactQueryString keeps StreamElements keys (?k=...) out of the stored request URLs.
     observability: { enabled: true, redactQueryString: true, logs: { enabled: true, invocationLogs: true } },
@@ -30,6 +34,7 @@ return {
       // and set with `wrangler secret put` once the repo exists; declaring them here would make them required (docs/LIVE_FIX.md).
       CF_VERSION_METADATA: bindings.versionMetadata(),
       PUBLIC_ORIGIN: bindings.text(origin),
+      ...(localTest ? {} : { CHANNEL_ORIGINS: bindings.text(JSON.stringify({ miolafff: 'https://' + miolaf })) }),
       // nesszerra's Twitch user id (public, not a secret): owner access no longer depends on the owner:nesszerra record,
       // which expires 90 days after the last sign-in. Sign-in still refreshes that record. Not declared for the local
       // test server, whose seeded sessions use their own owner id (tests/seed-local.mjs).

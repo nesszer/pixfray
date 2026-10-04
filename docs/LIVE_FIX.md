@@ -22,7 +22,7 @@ settings work without any of them.
    `target=test`. The workflow runs the unit tests, uploads a new version of
    `nesszerra-mini-chat-test` and sends it 100% of test traffic.
 3. **Check in OBS.** Point a test browser source at
-   `https://test.chat.miolaf.xyz/overlay.html?channel=nesszerra&arena=1`.
+   `https://test.pixfray.xyz/overlay.html?channel=nesszerra&arena=1`.
 4. **Promote.** Enter the pull request number (use **Open pull request** first) and press
    **Promote to production**. The Worker squash-merges the PR, but only if its base is `main` and
    its head is a `live-fix/` or `hotfix/` branch. Then it starts the workflow with

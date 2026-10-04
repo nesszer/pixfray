@@ -1,7 +1,7 @@
 # Live-fix deploy flow for mini-chat (docs/LIVE_FIX.md). Started by /api/dev/{deploy,promote,hotfix,rollback}
 # through workflow_dispatch, or by hand from the Actions tab.
-#   deploy   + test        any allowed ref (base branch, live-fix/*, hotfix/*) -> test.chat.miolaf.xyz
-#   deploy   + production  base branch only (promote), or hotfix/* with hotfix=true -> chat.miolaf.xyz
+#   deploy   + test        any allowed ref (base branch, live-fix/*, hotfix/*) -> test.pixfray.xyz
+#   deploy   + production  base branch only (promote), or hotfix/* with hotfix=true -> pixfray.xyz
 #   rollback + target      points 100% of traffic at an earlier Worker version (no build)
 # Inputs reach shell steps only through env, never by ${{ }} inside run scripts.
 name: Deploy

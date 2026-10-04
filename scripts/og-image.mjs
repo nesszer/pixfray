@@ -1,4 +1,4 @@
-// Renders public/og.png (1200x630), the link preview Twitch and Discord show for chat.miolaf.xyz.
+// Renders public/og.png (1200x630), the link preview Twitch and Discord show for pixfray.xyz.
 // Uses only the site's own character art and font. Rerun after adding characters: node scripts/og-image.mjs
 import { chromium } from '@playwright/test';
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';

@@ -8,7 +8,7 @@ works. Setup takes about 10 minutes.
 ## 1. Sign in with your invite
 
 PixFray is invite-only. nesszerra creates an invite on `/admin/dev` (Channels) and sends you a
-link like `https://chat.miolaf.xyz/start/?invite=<token>`.
+link like `https://pixfray.xyz/start/?invite=<token>`.
 
 - The invite names one Twitch account, works once, and expires after 7 days.
 - Click **Sign in with Twitch as <you>**. Twitch asks to let PixFray read your moderator list
