@@ -28,6 +28,37 @@ const REJECTED_WRITE_MS = 60_000;          // a wrong StreamElements key is reco
 const MAX_CONFIG_HISTORY = 50;
 const SEEN_WRITE_MS = 60_000;             // each command's "last seen" time is written at most once a minute
 const BOT_REPLIES_PER_30S = 18;          // the bot's chat replies per channel; Twitch allows 20 per 30 s unless it is a mod
+// !fray e2e (BOT_DEBUG): [who, action, target, expected reasons, gate]. B is the bot account, O the opponent. A gate step
+// starts or answers a duel the next steps need, so the run stops when it fails.
+const E2E_STEPS = [
+  ["B", "help", "", ["help"]],
+  ["B", "top", "", ["top"]],
+  ["B", "elo", "", ["elo"]],
+  ["B", "elo", "O", ["elo"]],
+  ["B", "wallet", "", ["wallet"]],
+  ["B", "pet", "", ["pet", "no_pet"]],
+  ["B", "checkin", "", ["checked_in", "already_checked_in", "not_live"]],
+  ["B", "challenge", "", ["target_required"]],
+  ["B", "challenge", "O", ["challenge"], true],
+  ["O", "decline", "", ["challenge_declined"], true],
+  ["B", "challenge", "O", ["challenge"], true],
+  ["O", "accept", "", ["quick_duel"], true],
+  ["B", "rematch", "", ["challenge", "rematch_cooldown", "respawning", "result_hidden"]],
+  ["B", "give", "O", ["given", "not_live", "too_few_duels", "not_enough", "give_off", "give_cap", "over_cap"]],
+  ["B", "decline", "", ["challenge_not_found"]],
+  ["B", "accept", "", ["challenge_not_found"]],
+];
+const MAX_E2E_LINE = 470;   // under the bot's 480-character chat line
+// Joins parts into as few lines as fit max characters each.
+function chatLines(parts, sep, max) {
+  const out = [];
+  for (const part of parts) {
+    const last = out.length ? out[out.length - 1] : null;
+    if (last !== null && last.length + sep.length + part.length <= max) out[out.length - 1] = last + sep + part;
+    else out.push(part.slice(0, max));
+  }
+  return out;
+}
 const MAX_LOOKS = 20;                  // logins per /looks call
 const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
 const MAX_EVENTSUB_IDS = 5_000;
@@ -819,12 +850,83 @@ export class ChannelRoom extends DurableObject {
       await this.scheduleAlarm(verified.state);
     }
     const input = { action, userId: ev.chatter_user_id, username: ev.chatter_user_login, displayName: ev.chatter_user_name, target: seTarget(words[1]), targetRaw: words[1] || "", ...(action === "give" ? { amount: String(words[2] || "").slice(0, 16) } : {}), messageId: String(ev.message_id || msg.messageId || "") };
-    const out = await (await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })).json();
-    const now = Date.now();
+    // BOT_DEBUG (test site): the bot account also plays. "!fray spar" and "!fray e2e" replace the help reply.
+    const botId = this.env?.BOT_DEBUG === "1" ? validUserId(msg.botId) : "";
+    const mode = botId && action === "help" ? String(words[1] || "").toLowerCase() : "";
+    let lines;
+    if (mode === "spar" || mode === "e2e") lines = await this.botDebug(channel, mode, { ev, words, botId, origin, settings, subscriptionId });
+    else {
+      const out = await (await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })).json();
+      lines = [out.reply, ...(botId && validUserId(input.userId) !== botId ? await this.botAnswer(channel, input, out, { botId, origin, settings, subscriptionId }) : [])];
+    }
+    const now = Date.now(), sent = [];
     this.botReplies = (this.botReplies || []).filter((at) => now - at < 30000);
-    if (!out.reply || this.botReplies.length >= BOT_REPLIES_PER_30S) return json({ ok: true, reason: out.reply ? "reply_limit" : "no_reply", reply: "" });
-    this.botReplies.push(now);
-    return json({ ok: true, reply: out.reply });
+    for (const line of lines.filter(Boolean)) {
+      if (this.botReplies.length >= BOT_REPLIES_PER_30S) break;
+      this.botReplies.push(now);
+      sent.push(line);
+    }
+    if (!sent.length) return json({ ok: true, reason: lines.some(Boolean) ? "reply_limit" : "no_reply", reply: "", replies: [] });
+    return json({ ok: true, reply: sent[0], replies: sent });
+  }
+
+  // One command played by the bot account (BOT_DEBUG), through the same path as a chat line. Returns { reply, reason }.
+  async botPlays(channel, bot, action, target, { origin, settings, subscriptionId, kind = "bot", amount }) {
+    const input = { action, userId: bot.userId, username: bot.username, displayName: bot.displayName || bot.username, target, targetRaw: target ? "@" + target : "", ...(amount !== undefined ? { amount: String(amount) } : {}) };
+    return (await this.runCommand(channel, input, origin, settings, { kind, subscriptionId })).json();
+  }
+
+  // Sparring partner (BOT_DEBUG): a challenge or rematch aimed at the bot is accepted, and dollars paid to it are paid back.
+  async botAnswer(channel, input, out, ctx) {
+    const config = this.readState(channel).config, bot = this.getProfile(ctx.botId, config);
+    if (!bot) return [];
+    const userId = validUserId(input.userId);
+    if (this.readState(channel).duels.some((d) => d.status === "pending" && d.a === userId && d.b === ctx.botId)) return [(await this.botPlays(channel, bot, "accept", "", ctx)).reply];
+    if (input.action === "give" && out.reason === "given" && normalizeUsername(input.target) === bot.username) {
+      return [(await this.botPlays(channel, bot, "give", normalizeUsername(input.username), { ...ctx, amount: input.amount })).reply];
+    }
+    return [];
+  }
+
+  // "!fray spar": the bot challenges whoever asked. "!fray e2e [@name]" (broadcaster, mods or the bot account): the bot
+  // plays every chat command once against @name (default: whoever asked) and posts which steps passed.
+  async botDebug(channel, mode, { ev, words, botId, origin, settings, subscriptionId }) {
+    const config = this.readState(channel).config, bot = this.getProfile(botId, config);
+    const userId = validUserId(ev.chatter_user_id), username = normalizeUsername(ev.chatter_user_login);
+    if (!bot) return [`PixFray debug: the bot account has no saved fighter here yet. Sign in as the bot at ${origin}/?channel=${channel} and save one.`];
+    const ctx = { origin, settings, subscriptionId };
+    if (mode === "spar") {
+      if (userId === botId) return ["PixFray debug: the bot can't spar with itself. Type !fray spar from another account."];
+      return [(await this.botPlays(channel, bot, "challenge", username, ctx)).reply];
+    }
+    const allowed = userId === botId || userId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
+    if (!allowed) return ["PixFray debug: only the broadcaster or a mod can run !fray e2e."];
+    const named = seTarget(words[2]);
+    const opponent = named ? this.getProfileByUsername(named, config) : userId === botId ? null : this.getProfile(userId, config);
+    if (!opponent) return [named ? `PixFray debug: @${named} has no saved fighter here.` : userId === botId ? "PixFray debug: name the opponent: !fray e2e @name" : `PixFray debug: @${username} has no saved fighter here. Save one at ${origin}/?channel=${channel}`];
+    if (opponent.userId === botId) return ["PixFray debug: the opponent can't be the bot itself."];
+    return this.botE2e(channel, bot, opponent, { ...ctx, kind: "e2e" });
+  }
+
+  async botE2e(channel, bot, opponent, ctx) {
+    const names = ctx.settings.names, results = [];
+    const player = { B: bot, O: opponent };
+    for (const [who, action, target, want, gate] of E2E_STEPS) {
+      const actor = player[who], aimed = target ? player[target].username : "";
+      const out = await this.botPlays(channel, actor, action, aimed, { ...ctx, amount: action === "give" ? 1 : undefined });
+      const ok = Boolean(out.reply) && want.includes(out.reason);
+      const label = String(names[action] || action).replace(/^!/, "") + (aimed ? " @" + aimed : "") + (who === "O" ? " by " + opponent.username : "");
+      results.push({ label, action, ok, reason: out.reason, want });
+      // A rematch the game allowed leaves a challenge open; the opponent declines it so the run ends clean.
+      if (action === "rematch" && out.reason === "challenge") await this.botPlays(channel, opponent, "decline", "", ctx);
+      if (!ok && gate) break;   // the steps after this one need its duel
+    }
+    const passed = results.filter((r) => r.ok).length, stopped = results.length < E2E_STEPS.length;
+    const head = `PixFray e2e, ${bot.username} vs ${opponent.username}: ${passed} of ${E2E_STEPS.length} steps passed` +
+      (stopped ? `, stopped early (a duel or cooldown between them is still running; try again in 30 s).` : ".");
+    const parts = results.map((r) => r.ok ? `${r.label} ok${r.reason !== r.action ? " (" + r.reason + ")" : ""}` : `FAIL ${r.label}: got ${r.reason || "no reply"}, want ${r.want.join("|")}`);
+    logRoomEvent(this, "command", `e2e ${bot.username} vs ${opponent.username}: ${passed}/${E2E_STEPS.length}`, { channel, via: "e2e", passed, steps: E2E_STEPS.length, results });
+    return [head, ...chatLines(parts, " · ", MAX_E2E_LINE)];
   }
 
   // The command itself, shared by StreamElements and the bot. source: { kind: "se" | "bot", subscriptionId }.
@@ -850,7 +952,7 @@ export class ChannelRoom extends DurableObject {
     // Every command is logged with what came in, what the game decided and what the bot said.
     const done = (reply, reason, extra = {}) => {
       logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { channel, via: source.kind, user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });
-      return json(switchedFrom ? { reply, switchedFrom } : { reply });
+      return json({ reply, ...(source.kind === "se" ? {} : { reason }), ...(switchedFrom ? { switchedFrom } : {}) });   // the bot reads reason
     };
     if (!action) return done(`Lost in the arena? Type ${names.help}`, "unknown_action");
     if (!userId || !username) return done("PixFray: this command is missing sender details. Copy it again from the admin page.", "missing_sender");

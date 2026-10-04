@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
 import { createHmac } from 'node:crypto';
 import { digest } from '../server/auth.js';
-import { eventsubSecret, signEventsub, localTestMode, sendChatMessage } from '../server/eventsub.js';
+import { eventsubSecret, signEventsub, localTestMode, sendChatMessage, sendChatMessages } from '../server/eventsub.js';
 
 function environment() {
   const entries = new Map(), forwarded = [];
@@ -442,6 +442,7 @@ test('chat bot: only commands reach the room; its reply is sent as the bot, thre
   assert.equal((await post(botBody('  !ranks'))).status, 204);
   assert.equal(f.forwarded.length, 1);
   assert.equal(f.forwarded[0].body.bot, true);
+  assert.equal(f.forwarded[0].body.botId, '99');
   assert.match(f.forwarded[0].url, /\/eventsub\?origin=https%3A%2F%2F/);
   await Promise.all(waits);
   assert.equal(helix.length, 1);
@@ -462,7 +463,7 @@ test('chat bot: Connect chat subscribes as the signed-in bot account, and asks f
   assert.deepEqual(created.body.condition, { broadcaster_user_id: '1', user_id: '99' });
   assert.deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.url.searchParams.get('id')), ['broadcaster-self'], "the channel's old self-read subscription goes; another channel's bot subscription stays");
   const view = await (await worker.fetch(req('/api/admin/nesszerra', 'GET', undefined, owner), f.env)).json();
-  assert.deepEqual(view.chatBot, { login: 'pixbot' });
+  assert.deepEqual(view.chatBot, { login: 'pixbot', debug: false });
 });
 
 test('chat bot: bot sign-in needs CHAT_BOT and asks for the chat scopes', async () => {
@@ -490,4 +491,19 @@ test('chat bot: a rate-limited reply (429) is retried after a short wait, then g
   statuses = [429, 429, 429];
   await assert.rejects(send(), /\(429\)/);
   assert.deepEqual(waits, [1100, 1100, 2200]);
+});
+
+test('chat bot: several reply lines go out in order, about a second apart, and one failure does not stop the rest', async (t) => {
+  const f = environment(), waits = [], sent = [];
+  let first = true;
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    if (String(url).startsWith('https://id.twitch.tv')) return Response.json({ access_token: 'app-token-1', expires_in: 5000 });
+    sent.push(JSON.parse(init.body).message);
+    if (first) { first = false; return new Response('{}', { status: 500 }); }
+    return Response.json({ data: [{ message_id: 'r', is_sent: true }] });
+  });
+  const out = await sendChatMessages(f.env, { broadcasterId: '1', senderId: '99', replyTo: 'm1', messages: ['one', 'two', 'three'], sleep: async (ms) => waits.push(ms) });
+  assert.deepEqual(sent, ['one', 'two', 'three']);
+  assert.deepEqual(waits, [1100, 1100]);
+  assert.deepEqual(out.map((r) => r.sent), [false, true, true]);
 });

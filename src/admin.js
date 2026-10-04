@@ -533,6 +533,7 @@ function renderChat() {
   if (c.lastRevocationReason) parts.push("Last revocation: " + (CHAT_STATUS[c.lastRevocationReason] || c.lastRevocationReason) + ".");
   const bot = S.admin.chatBot;
   if (bot) parts.push(bot.login ? `The PixFray bot (${bot.login}) reads chat and answers commands; StreamElements stays quiet while it's connected. Type /mod ${bot.login} in your chat so it can answer more than one command a second.` : "Sign in the PixFray bot account at /auth/login?bot=1, then click Connect chat.");
+  if (bot?.login && bot.debug) parts.push(`Debug: challenge @${bot.login} and it fights back, !fray spar makes it challenge you, and !fray e2e (you or a mod) plays every command once and posts which passed.`);
   if (S.admin.seOnly) parts.push("This site takes chat from StreamElements only; the first StreamElements command connects it.");
   else if (!c.connected) parts.push("Duels stay paused until chat is connected.");
   $("#chat-actions").hidden = !!S.admin.seOnly;

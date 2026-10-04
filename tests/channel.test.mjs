@@ -993,3 +993,63 @@ test('chat bot: a notification confirms a pending subscription; without CHAT_BOT
   assert.notEqual((await plain.call('/se', { method: 'POST', body: { key: se.secret, action: 'help', userId: 'u1', username: 'alice' } })).body.reply, '');
   assert.equal(plain.readState('nesszerra').chat.subscriptionId, 'se-streamelements');
 });
+
+// BOT_DEBUG: the bot account (u9 pixbot) plays back. The Worker forwards the subscription's bot id and a mod flag.
+function botRoom(env) {
+  const r = room({ CHAT_BOT: '1', DEV_TOOLS_TOKEN: 'x'.repeat(40), ...env }, { quick: true });
+  let n = 0;
+  r.say = async (id, login, text, { mod = false } = {}) => (await r.call('/eventsub?origin=' + encodeURIComponent('https://staging.example'), { method: 'POST', body: { messageId: 'd' + (++n), messageType: 'notification', bot: true, botId: 'u9', timestamp: Date.now(), subscription: { id: 'sub-bot', status: 'enabled' }, event: { broadcaster_user_id: 'owner1', broadcaster_user_login: 'nesszerra', chatter_user_id: id, chatter_user_login: login, chatter_user_name: login, message_id: 'dm' + n, message: { text }, mod } } })).body;
+  return r;
+}
+
+test('debug bot: a challenge aimed at the bot is fought back, !fray spar challenges you; off without BOT_DEBUG', async () => {
+  const r = botRoom({ BOT_DEBUG: '1' });
+  await r.save('u1', 'alice'); await r.save('u9', 'pixbot');
+  await r.connectChat('sub-bot');
+  await r.call('/dev-live', { method: 'POST', body: { live: false } });
+  const fought = await r.say('u1', 'alice', '!challenge @pixbot');
+  assert.equal(fought.replies.length, 2);
+  assert.match(fought.replies[0], /alice challenges @pixbot/);
+  assert.match(fought.replies[1], /Fight on: alice vs pixbot/);
+  assert.ok(r.readState('nesszerra').duels.some((d) => d.status === 'completed' && d.a === 'u1' && d.b === 'u9'));
+  await sleep(10);
+  const s = r.readState('nesszerra'); s.rematchLocks = []; for (const p of s.players) p.respawnAt = 0; for (const d of s.duels) d.revealAt = 0; r.writeState(s);
+  const spar = await r.say('u1', 'alice', '!fray spar');
+  assert.deepEqual(spar.replies.length, 1);
+  assert.match(spar.reply, /pixbot challenges @alice/);
+  assert.ok(r.readState('nesszerra').duels.some((d) => d.status === 'pending' && d.a === 'u9' && d.b === 'u1'));
+  assert.match((await r.say('u9', 'pixbot', '!fray spar')).reply, /can't spar with itself/);
+
+  const plain = botRoom({});
+  await plain.save('u1', 'alice'); await plain.save('u9', 'pixbot');
+  await plain.connectChat('sub-bot');
+  const once = await plain.say('u1', 'alice', '!challenge @pixbot');
+  assert.equal(once.replies.length, 1);
+  assert.ok(plain.readState('nesszerra').duels.some((d) => d.status === 'pending'), 'nobody answers for the bot');
+  assert.match((await plain.say('u1', 'alice', '!fray spar')).reply, /gear up/i, 'spar is just the help reply');
+});
+
+test('debug bot: !fray e2e plays every command once against the asker and posts which steps passed', async () => {
+  const r = botRoom({ BOT_DEBUG: '1' });
+  await r.save('u1', 'alice'); await r.save('u9', 'pixbot');
+  await r.connectChat('sub-bot');
+  await r.call('/dev-live', { method: 'POST', body: { live: false } });
+  assert.match((await r.say('u1', 'alice', '!fray e2e')).reply, /only the broadcaster or a mod/);
+  const run = await r.say('u1', 'alice', '!fray e2e', { mod: true });
+  assert.match(run.replies[0], /^PixFray e2e, pixbot vs alice: 16 of 16 steps passed\.$/);
+  const detail = run.replies.slice(1).join(' · ');
+  assert.doesNotMatch(detail, /FAIL/);
+  assert.match(detail, /checkin ok \(not_live\)/);
+  assert.match(detail, /fight by alice ok \(quick_duel\)/);
+  assert.ok(run.replies.every((line) => line.length <= 480));
+  const state = r.readState('nesszerra');
+  assert.equal(state.duels.filter((d) => d.status === 'pending' || d.status === 'active').length, 0, 'the run leaves no open duel');
+  // Right after, the pair is still in its cooldown: the run stops at the first challenge and says so.
+  const again = await r.say('u1', 'alice', '!fray e2e', { mod: true });
+  assert.match(again.replies[0], /stopped early/);
+  assert.match(again.replies.slice(1).join(' '), /FAIL challenge @alice/);
+  // The bot account names an opponent; nobody needs a fighter it doesn't have.
+  assert.match((await r.say('u9', 'pixbot', '!fray e2e')).reply, /name the opponent/);
+  assert.match((await r.say('u9', 'pixbot', '!fray e2e @nobody')).reply, /@nobody has no saved fighter/);
+  assert.match((await r.say('owner1', 'nesszerra', '!fray e2e')).reply, /@nesszerra has no saved fighter/);
+});

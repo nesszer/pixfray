@@ -3,7 +3,7 @@ import { AuthStore,record,session,isOwner,configured,handleAuth,access,CHANNELS,
 import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { handlePets } from './pets.js';
-import { EVENTSUB_PATH,BOT_LOGIN_URL,handleEventsub,connectChat,disconnectChat,sendChatMessage,twitchUserId } from './eventsub.js';
+import { EVENTSUB_PATH,BOT_LOGIN_URL,handleEventsub,connectChat,disconnectChat,sendChatMessages,twitchUserId } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
 import { channelState,isOn,offError,readInvite,setPaused,publicChannels } from './channels.js';
 import { COSMETIC_KINDS,COSMETIC_FIELDS,MAX_BUILDS } from './cosmetics.js';
@@ -134,7 +134,7 @@ export default {async fetch(request,env,ctx){
       if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
       return await handleEventsub(request,env,{channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),origin:channel=>siteOrigin(env,url,channel),
         // The bot's reply goes out after Twitch has its 204.
-        sendChat:args=>ctx?.waitUntil?.(sendChatMessage(env,args).then(r=>{if(!r.sent)console.warn('bot reply dropped',r.reason);}).catch(e=>console.warn('bot reply failed',e?.message)))});
+        sendChat:args=>ctx?.waitUntil?.(sendChatMessages(env,args).then(rs=>{for(const r of rs)if(!r.sent)console.warn('bot reply dropped',r.reason);}))});
     }
     // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
     if(path.startsWith('/api/se/')){
@@ -214,7 +214,7 @@ export default {async fetch(request,env,ctx){
         const modsReady=!!broadcaster,modsLapsed=!modsReady&&!!marker;
         if(broadcaster)await Promise.all([touchBroadcaster(env,channel,broadcaster),marker?null:markModsConnected(env,channel)]).catch(e=>console.warn('mods record refresh failed',e?.message));   // rare writes: weekly, and once per channel
         const bot=env.CHAT_BOT==='1'?await record(env,'bot:twitch'):null;
-        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',chatBot:env.CHAT_BOT==='1'?{login:bot?.login||''}:null,modsReady,modsLapsed,channelState:state});
+        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',chatBot:env.CHAT_BOT==='1'?{login:bot?.login||'',debug:env.BOT_DEBUG==='1'}:null,modsReady,modsLapsed,channelState:state});
       }
       const data=await bodyJson(request,12000);
       // Turn PixFray off or back on: the broadcaster or the owner, never a mod. Fighters and ranks are kept.

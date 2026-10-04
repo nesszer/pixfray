@@ -49,7 +49,8 @@ function slimEvent(ev){
   if(!ev||typeof ev!=='object')return null;
   // caps sit above every valid length, so the room's own validation still decides
   return {broadcaster_user_id:str(ev.broadcaster_user_id,100),broadcaster_user_login:str(ev.broadcaster_user_login,64),chatter_user_id:str(ev.chatter_user_id,100),chatter_user_login:str(ev.chatter_user_login,64),
-    chatter_user_name:str(ev.chatter_user_name,100),color:str(ev.color,16),message_id:str(ev.message_id,100),message:{text:str(ev.message?.text,512)}};
+    chatter_user_name:str(ev.chatter_user_name,100),color:str(ev.color,16),message_id:str(ev.message_id,100),message:{text:str(ev.message?.text,512)},
+    mod:Array.isArray(ev.badges)&&ev.badges.some(b=>b&&(b.set_id==='broadcaster'||b.set_id==='moderator'))};
 }
 
 // POST /api/eventsub. No session, no same-origin check: the HMAC signature is the authentication.
@@ -92,9 +93,10 @@ export async function handleEventsub(request,env,{channels,roomFetch,origin=()=>
     if(!channels.includes(channel))return new Response(null,{status:204});
     if(!botId){await send(channel);return new Response(null,{status:204});}
     if(!String(body.event?.message?.text||'').trimStart().startsWith('!'))return new Response(null,{status:204});   // chat, not a command: no room request
-    const r=await send(channel,{bot:true});
-    const reply=r.ok?String((await r.json().catch(()=>({}))).reply||''):'';
-    if(reply&&sendChat)sendChat({broadcasterId:String(body.event.broadcaster_user_id||condition.broadcaster_user_id||''),senderId:botId,message:reply,replyTo:String(body.event.message_id||'')});
+    const r=await send(channel,{bot:true,botId});
+    const d=r.ok?await r.json().catch(()=>({})):{};
+    const messages=(Array.isArray(d.replies)?d.replies:[d.reply]).map(x=>String(x||'')).filter(Boolean).slice(0,6);
+    if(messages.length&&sendChat)sendChat({broadcasterId:String(body.event.broadcaster_user_id||condition.broadcaster_user_id||''),senderId:botId,messages,replyTo:String(body.event.message_id||'')});
   }
   return new Response(null,{status:204});   // other channels, subscription types and message types are ignored
 }
@@ -191,6 +193,15 @@ export async function sendChatMessage(env,{broadcasterId,senderId,message,replyT
   if(!r.ok)throw fail('Twitch send chat message failed ('+r.status+')',502);
   const d=(await r.json()).data?.[0];
   return {sent:d?.is_sent===true,reason:String(d?.drop_reason?.code||'')};
+}
+// The room's reply lines, in order and about a second apart (a bot that isn't a mod gets ~1 line per second).
+export async function sendChatMessages(env,{messages=[],sleep=ms=>new Promise(r=>setTimeout(r,ms)),...rest}){
+  const out=[];
+  for(const [i,message] of messages.entries()){
+    if(i)await sleep(1100);
+    out.push(await sendChatMessage(env,{...rest,message,sleep}).catch(e=>({sent:false,reason:String(e?.message||e)})));
+  }
+  return out;
 }
 // A channel's immutable Twitch id from its login, or '' when Twitch doesn't know it.
 export async function twitchUserId(env,login){

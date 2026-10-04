@@ -43,7 +43,8 @@ return {
       ...(testing ? { DEV_TOOLS_TOKEN: bindings.secret() } : {}),
       // Test site only: the PixFray chat bot. Connect chat subscribes as the BOT_LOGIN account (signed in once at
       // /auth/login?bot=1), commands are answered in chat by the bot, and StreamElements stays quiet while it's connected.
-      ...(testing ? { CHAT_BOT: bindings.text('1'), BOT_LOGIN: bindings.text('nesszers') } : {}),
+      // BOT_DEBUG: the bot account also plays (sparring partner, !fray spar, !fray e2e; server/channel.js botDebug).
+      ...(testing ? { CHAT_BOT: bindings.text('1'), BOT_LOGIN: bindings.text('nesszers'), BOT_DEBUG: bindings.text('1') } : {}),
       ...(localTest ? { MINI_LOCAL_TEST: bindings.text('1') } : {})
     }
   })
