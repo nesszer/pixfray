@@ -14,7 +14,7 @@ const now = Date.now();
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const user = { id: '1001', login: 'viewer_one', displayName: 'Viewer_One' };
 const mod = { id: '2002', login: 'mod_two', displayName: 'Mod_Two' };
-const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24, checkinPoints: 1, streakBonus: true,
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24, checkinPoints: 1, streakBonus: true, winDollars: 5, lossDollars: 3, giveEnabled: true, giveMaxPerStream: 100, giveMinDuels: 5,
   abilities: { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } } };
 const board = [
   { userId: '3003', username: 'top_dog', displayName: 'top_dog', avatar: 'soldier', color: '#34d399', defaultAbility: 'heavy', elo: 1048, wins: 4, losses: 1 },
@@ -107,8 +107,8 @@ try {
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
     await page.route('**/api/profile/nesszerra', async (r) => {
-      if (r.request().method() === 'POST') { posted = r.request().postDataJSON(); return json(r, { profile: { ...board[1], bonus: 1, checkins: 4, streak: 3, ...posted }, revision: 9 }); }
-      return json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now, bonus: 1, checkins: 4, streak: 3 });
+      if (r.request().method() === 'POST') { posted = r.request().postDataJSON(); return json(r, { profile: { ...board[1], bonus: 1, checkins: 4, streak: 3, dollars: 42, ...posted }, revision: 9 }); }
+      return json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now, bonus: 1, checkins: 4, streak: 3, dollars: 42 });
     });
     await page.goto(base + '/?channel=nesszerra');
     await page.waitForSelector('#save:not([hidden])');
@@ -119,6 +119,8 @@ try {
     assert.equal(await page.locator('#admin-link').isHidden(), true);
     assert.match(await page.locator('#stat-elo').textContent(), /1012/);
     assert.equal((await page.locator('#stat-streak').textContent()).trim(), '3');
+    assert.equal(await page.locator('#stat-dollars').textContent(), '$42');
+    assert.match(await page.locator('#cmd-give').textContent(), /up to \$100 per stream, after your first 5 duels/);
     await page.waitForSelector('#leaderboard tr.me');
     await page.locator('label[for=char-adventurer]').click();
     await page.locator('.swatch[data-color="#34d399"]').click();
@@ -232,6 +234,7 @@ try {
         chatStatus = { ...chatStatus, connected: true, status: 'enabled', subscriptionId: 'sub-2' };
         return json(r, { ok: true, reason: 'chat_connected', revision: 51, chatStatus });
       }
+      if (body.action === 'giftDollars') return json(r, { ok: true, reason: 'dollars_gifted', username: 'cara', displayName: 'Cara', amount: body.payload.amount, dollars: 75 });
       if (body.action === 'disconnectChat') { chatStatus = { ...chatStatus, connected: false, status: 'disconnected', subscriptionId: '' }; return json(r, { ok: true, reason: 'chat_disconnected', revision: 52, chatStatus }); }
       return json(r, { ok: true, reason: 'ok', revision: 50 });
     });
@@ -306,7 +309,7 @@ try {
         assert.ok(count(/1.5 MB|1.50 MB/g) <= 1, 'the atlas size limit appears once');
       }
       if (tab === 'rules') {
-        assert.equal(await page.locator('#config-fields .config-group:visible').count(), 3, 'only the groups that apply show');
+        assert.equal(await page.locator('#config-fields .config-group:visible').count(), 4, 'only the groups that apply show');
         assert.equal(await page.locator('#cfg-streakBonus').isChecked(), true);
         assert.equal(await page.locator('#cfg-abilities-strike-damage').count(), 1, 'the HP fight inputs stay in the form');
         assert.equal(await page.locator('#cfg-abilities-strike-damage').isVisible(), false, 'HP fight abilities are hidden unless quick duels are off');
@@ -347,6 +350,15 @@ try {
     assert.deepEqual(posts.at(-1), { action: 'resetRank', payload: { userId: '3003' } });
     await page.locator('#reset-all-ranks').click(); await page.waitForTimeout(150);
     assert.deepEqual(posts.at(-1), { action: 'resetAllRanks' });
+    // mod gift: a Twitch name (with or without @) and a whole amount
+    await page.locator('#gift-user').fill('@Cara');
+    await page.locator('#gift-send').click();
+    assert.match(await page.locator('#gift-status').textContent(), /whole number/);
+    await page.locator('#gift-amount').fill('25');
+    await page.locator('#gift-send').click();
+    await page.waitForFunction(() => document.querySelector('#gift-status').textContent.startsWith('Gave'));
+    assert.deepEqual(posts.at(-1), { action: 'giftDollars', payload: { username: 'Cara', amount: 25 } });
+    assert.equal(await page.locator('#gift-status').textContent(), 'Gave $25 to Cara. They have $75 now.');
     // config: invalid value blocks save, valid value saves only the changed field
     await page.click('#tab-rules');
     assert.equal(await page.locator('#history').isVisible(), false, 'version history starts collapsed');
@@ -364,7 +376,7 @@ try {
     await page.reload();
     await page.waitForSelector('#app:not([hidden])');
     await page.click('#tab-rules');
-    assert.equal(await page.locator('#config-fields .config-group:visible').count(), 4);
+    assert.equal(await page.locator('#config-fields .config-group:visible').count(), 5);
     assert.match(await page.locator('#config-fields .config-group:visible').last().locator('legend').textContent(), /HP fight abilities/);
     const strike = page.locator('#cfg-abilities-strike-damage');
     await strike.fill('5000');

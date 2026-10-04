@@ -220,7 +220,7 @@ input[type="color"] { padding: 2px; width: 56px; cursor: pointer; }
   outline: 1px solid var(--border-strong); outline-offset: -6px; display: grid; gap: var(--space-4); }
 .fighter-card .toolbar > .btn { flex: 1 1 auto; justify-content: center; }
 .fighter-card .status { margin: 0; }
-.fighter-card .stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.fighter-card .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .fighter-card .stat { padding: var(--space-3) var(--space-4); }
 .fighter-card .stat .value { font-size: var(--text-xl); }
 
@@ -348,7 +348,8 @@ html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused fie
   .hero-card .preview .caption { text-align: left; }
   .hero-card .toolbar { grid-area: save; max-width: 190px; }
   .hero-card .toolbar > .btn { white-space: normal; line-height: 1.25; padding: var(--space-2) var(--space-3); text-align: center; }
-  .hero-card .stat-strip { grid-area: stats; }
+  .hero-card .stat-strip { grid-area: stats; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .hero-card .stat .label { font-size: var(--text-xs); }
   .hero-card .points-link { grid-area: points; font-size: var(--text-sm); }
   .hero-card .stat { padding: var(--space-2) var(--space-3); }
   .hero-card .stat .value { font-size: var(--text-md); }
@@ -385,6 +386,8 @@ html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused fie
   .table-wrap > table:is(#duels, #players, #ranks) { width: 100%; }
   .table-wrap > table:is(#duels, #players, #ranks) td:first-child { min-width: 0; }
   .stat .value { font-size: var(--text-xl); overflow-wrap: anywhere; }
+  /* short headers on phones: "Dollars ($)" becomes "$" so the ranks table keeps its buttons on screen */
+  .wide-only { display: none; }
 }
 
 /* empty leaderboard: a sentence on how to get on it, wrapped to the table width */

@@ -144,6 +144,9 @@ function renderCommands() {
     $("#cmd-rematch").textContent = seconds(state.config.rematchDelayMs);
     const pts = state.config.checkinPoints ?? 1;
     $("#cmd-checkin").textContent = pts ? "+" + pts + (pts === 1 ? " upgrade point" : " upgrade points") : "A check-in";
+    const c = state.config, usd = (n) => "$" + n, win = c.winDollars ?? 5, loss = c.lossDollars ?? 3;
+    $("#cmd-dollars").textContent = win || loss ? usd(win) + " for a win and " + usd(loss) + " for a loss" : "nothing on this channel right now";
+    $("#cmd-give").textContent = c.giveEnabled === false ? "Giving dollars is off on this channel." : "Gives dollars to another fighter while the stream is live: up to " + usd(c.giveMaxPerStream ?? 100) + " per stream, after your first " + (c.giveMinDuels ?? 5) + " duels.";
     $("#lb-note").textContent = "Ranked duels need a saved profile. Everyone starts at " + state.config.initialElo + " Elo.";
     $("#hp-mode-note").hidden = state.config.quickDuel !== false;
   }
@@ -183,6 +186,7 @@ function renderSignedIn() {
   if (state.profile) {
     $("#stat-elo").textContent = state.profile.elo;
     $("#stat-wl").textContent = state.profile.wins + " / " + state.profile.losses;
+    $("#stat-dollars").textContent = "$" + (state.profile.dollars || 0);
     $("#stat-streak").textContent = state.profile.streak || 0;
   }
 }

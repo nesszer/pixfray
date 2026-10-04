@@ -25,6 +25,14 @@ const GROUPS = [
     { key: "checkinPoints", label: "Upgrade points per check-in", unit: "points", min: 0, max: 3 },
     { key: "streakBonus", label: "Streak bonus", bool: true, hint: "+1 point at a streak of 3, 7, 14 and 30 streams" },
   ] },
+  // Mini Chat dollars (server/channel.js payDuels and give). Mods gift dollars from the Players tab.
+  { title: "Dollars", fields: [
+    { key: "winDollars", label: "Dollars for a win", unit: "$", min: 0, max: 100 },
+    { key: "lossDollars", label: "Dollars for a loss", unit: "$", min: 0, max: 100 },
+    { key: "giveEnabled", label: "Viewers can give dollars", bool: true, hint: "!give @name amount, only while the stream is live" },
+    { key: "giveMaxPerStream", label: "Most one viewer gives per stream", unit: "$", min: 0, max: 10000 },
+    { key: "giveMinDuels", label: "Finished duels before giving", unit: "duels", min: 0, max: 1000 },
+  ] },
   // Only used when config.quickDuel is false, and no screen turns that off, so the group stays hidden (but in the form, so saving keeps its values).
   { title: "HP fight abilities", visible: (c) => c.quickDuel === false, fields: [
     { key: "abilities.strike.damage", label: "Strike damage", unit: "HP", min: 1, max: 1000 },
@@ -177,6 +185,22 @@ $("#cap").addEventListener("change", async (e) => {
 $("#open-chat-setup").addEventListener("click", () => selectTab($("#tab-chat"), true));
 $("#reset-health").addEventListener("click", (e) => act("resetHealth", undefined, { button: e.currentTarget, confirmText: "Put every viewer in the arena back to full health?", done: "Everyone in the arena is back to full health." }));
 $("#reset-round").addEventListener("click", (e) => act("resetRound", undefined, { button: e.currentTarget, confirmText: "Cancel every open duel without scoring and restart rounds at 1?", done: "Open duels cancelled; rounds restart at 1." }));
+// Mod gift: dollars to one saved fighter (server/channel.js giftDollars). Negative takes them back.
+$("#gift-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = $("#gift-status"), username = $("#gift-user").value.trim().replace(/^@/, ""), amount = Number($("#gift-amount").value);
+  if (!/^[a-z0-9_]{1,25}$/i.test(username)) return setStatus(status, "Type the viewer's Twitch name.", "error");
+  if (!Number.isInteger(amount) || !amount || Math.abs(amount) > 10000) return setStatus(status, "Pick a whole number from -10000 to 10000, not 0.", "error");
+  const button = $("#gift-send");
+  button.disabled = true;
+  setStatus(status, "Saving…");
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: "giftDollars", payload: { username, amount } } });
+  button.disabled = false;
+  if (!r.ok) return setStatus(status, r.status === 404 ? username + " has no saved fighter on " + CHANNEL + "." : "Couldn't gift: " + errorText(r) + ".", "error");
+  setStatus(status, (amount > 0 ? "Gave $" + amount + " to " : "Took $" + -amount + " from ") + (r.data.displayName || r.data.username) + ". They have $" + r.data.dollars + " now.", "ok");
+  $("#gift-amount").value = "";
+  await loadLeaderboard();
+});
 $("#reset-all-ranks").addEventListener("click", (e) => act("resetAllRanks", undefined, { button: e.currentTarget, confirmText: "Reset Elo, wins and losses for every saved profile on " + CHANNEL + "? This can't be undone.", done: "All ranks reset." }));
 $("#reset-all").addEventListener("click", (e) => act("resetAll", undefined, { button: e.currentTarget, confirmText: "Remove every character from the arena and cancel all duels? Saved profiles and ranks stay.", done: "Arena cleared." }));
 
@@ -269,10 +293,10 @@ const removePlayer = (p, button) => act("removePlayer", { userId: p.userId }, { 
 function renderRanks() { keepFocus($("#ranks tbody"), drawRanks); }
 function drawRanks() {
   const tbody = $("#ranks tbody");
-  if (!S.leaderboard.length) return tbody.replaceChildren(empty(6, "No saved profiles yet."));
+  if (!S.leaderboard.length) return tbody.replaceChildren(empty(7, "No saved profiles yet."));
   tbody.replaceChildren(...S.leaderboard.map((p, i) => h("tr", {},
     h("td", { class: "num" }, i + 1), h("td", {}, p.displayName || p.username),
-    h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses),
+    h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses), h("td", { class: "num" }, p.dollars ?? 0),
     h("td", {}, h("div", { class: "toolbar" },
       h("button", { class: "btn btn-small", type: "button", "data-key": "rank:" + p.userId, "aria-label": "Reset rank for " + (p.displayName || p.username), onclick: (e) => act("resetRank", { userId: p.userId }, { button: e.currentTarget, confirmText: "Reset " + (p.displayName || p.username) + "'s Elo, wins and losses?", done: "Rank reset." }) }, "Reset rank"),
       h("button", { class: "btn btn-small btn-danger", type: "button", "data-key": "rank-remove:" + p.userId, "aria-label": "Remove " + (p.displayName || p.username), onclick: (e) => removePlayer(p, e.currentTarget) }, "Remove"))))));
@@ -466,7 +490,7 @@ $("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.cur
 $("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat", e.currentTarget));
 
 // ---------- StreamElements ----------
-const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", rematch: "Rematch the last rival", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", help: "How to play", checkin: "Daily check-in", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
+const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", rematch: "Rematch the last rival", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", help: "How to play", checkin: "Daily check-in", wallet: "Wallet", give: "Give dollars", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 function renderSe() {
   const se = S.admin.streamelements, c = S.admin.chatStatus || {};
   const using = c.connected && c.source === "streamelements", twitch = c.connected && c.source === "twitch";

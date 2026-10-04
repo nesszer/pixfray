@@ -80,10 +80,19 @@
         <h2 id="ranks-title">Ranks and saved profiles</h2>
         <p class="muted small">Resetting a rank sets Elo back to the starting value and clears wins and losses. Removing a viewer also deletes their saved profile.</p>
         <div class="table-wrap"><table class="data" id="ranks">
-          <thead><tr><th class="num">Rank</th><th>Viewer</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th><th><span class="sr-only">Actions</span></th></tr></thead>
+          <thead><tr><th class="num">Rank</th><th>Viewer</th><th class="num">Elo</th><th class="num">Wins</th><th class="num">Losses</th><th class="num"><span class="wide-only">Dollars (</span>$<span class="wide-only">)</span></th><th><span class="sr-only">Actions</span></th></tr></thead>
           <tbody></tbody>
         </table></div>
         <div class="toolbar section"><button class="btn btn-danger" id="reset-all-ranks" type="button">Reset all ranks</button></div>
+      </section>
+      <section class="section" aria-labelledby="gift-title">
+        <h2 id="gift-title">Gift Mini Chat dollars to a saved fighter</h2>
+        <p class="muted small">Viewers earn dollars from duels and pass them on with !give. A negative amount takes dollars back, never below $0. Rank resets keep dollars.</p>
+        <form id="gift-form" class="controls" novalidate>
+          <div><label for="gift-user">Viewer (Twitch name)</label><input id="gift-user" maxlength="26" autocomplete="off" spellcheck="false" required></div>
+          <div><label for="gift-amount">Amount ($)</label><input id="gift-amount" type="number" min="-10000" max="10000" step="1" inputmode="numeric" required><p class="hint">-10000 to 10000</p></div>
+          <div><button class="btn" id="gift-send" type="submit">Gift dollars</button><p class="status" id="gift-status" role="status"></p></div>
+        </form>
       </section>
     </div>
     <div role="tabpanel" id="panel-rules" aria-labelledby="tab-rules" tabindex="0" hidden>

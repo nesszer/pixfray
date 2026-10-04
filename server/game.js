@@ -24,6 +24,13 @@ const DEFAULT_CONFIG = {
   // !checkin: upgrade points per stream check-in, and +1 more at a streak of 3, 7, 14 and 30 streams.
   checkinPoints: 1,
   streakBonus: true,
+  // Mini Chat dollars (server/channel.js payDuels, give). Saved fighters earn them per finished duel.
+  winDollars: 5,
+  lossDollars: 3,
+  // !give @name amount: on/off, the most one viewer can give per stream, and the finished duels needed first.
+  giveEnabled: true,
+  giveMaxPerStream: 100,
+  giveMinDuels: 5,
   abilities: {
     strike: { damage: 20, cooldownMs: 2_000 },
     heavy: { damage: 35, cooldownMs: 5_000 },
@@ -460,6 +467,11 @@ function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } =
     [duel.b]: { before: ratingB, after: nextB, delta: nextB - ratingB },
   };
   if (bonus) { duel.ratings[winnerId].bonus = bonus; duel.flawless = true; }
+  // Dollars for saved fighters; the room adds them to the profiles once (server/channel.js payDuels).
+  const payout = {};
+  if (winner.registered && state.config.winDollars > 0) payout[winner.userId] = state.config.winDollars;
+  if (loser.registered && state.config.lossDollars > 0) payout[loser.userId] = state.config.lossDollars;
+  if (Object.keys(payout).length) duel.payout = payout;
   if (decision !== "ko") duel.decision = decision;
   state.rematchLocks.push({
     pair: pairKey(duel.a, duel.b),
@@ -599,9 +611,13 @@ function validateConfigPatch(patch) {
     eloK: [1, 100],
     maxOnStream: ON_STREAM,
     checkinPoints: [0, 3],
+    winDollars: [0, 100],
+    lossDollars: [0, 100],
+    giveMaxPerStream: [0, 10_000],
+    giveMinDuels: [0, 1_000],
   };
   for (const key of Object.keys(patch)) {
-    if (key === "enabled" || key === "quickDuel" || key === "streakBonus") {
+    if (key === "enabled" || key === "quickDuel" || key === "streakBonus" || key === "giveEnabled") {
       if (typeof patch[key] !== "boolean") return { ok: false, reason: "invalid_config_" + key };
       out[key] = patch[key];
     } else if (key === "announce") {
@@ -748,14 +764,15 @@ function applyAdmin(state, event, now) {
   return { ok: false, reason: "unknown_admin_action" };
 }
 
-// Results the stream hasn't shown yet: userId -> { elo before the first hidden duel, hidden wins, hidden losses }.
+// Results the stream hasn't shown yet: userId -> { elo before the first hidden duel, hidden wins, losses and dollars }.
 export function hiddenResults(state, now) {
   const out = new Map();
   for (const duel of state.duels) {
     if (duel.status !== "completed" || !(duel.revealAt > now) || !duel.ratings) continue;
     for (const id of [duel.a, duel.b]) {
-      const h = out.get(id) || { elo: duel.ratings[id]?.before, wins: 0, losses: 0 };   // duels are in order, so the first is the pre-fight Elo
+      const h = out.get(id) || { elo: duel.ratings[id]?.before, wins: 0, losses: 0, dollars: 0 };   // duels are in order, so the first is the pre-fight Elo
       if (duel.winnerId === id) h.wins += 1; else h.losses += 1;
+      h.dollars += duel.payout?.[id] || 0;
       out.set(id, h);
     }
   }
@@ -766,7 +783,9 @@ export function hiddenResults(state, now) {
 export function shownProfile(profile, hidden) {
   const h = profile && hidden.get(profile.userId);
   if (!h || !Number.isInteger(h.elo)) return profile;
-  return { ...profile, elo: h.elo, wins: Math.max(0, profile.wins - h.wins), losses: Math.max(0, profile.losses - h.losses) };
+  const shown = { ...profile, elo: h.elo, wins: Math.max(0, profile.wins - h.wins), losses: Math.max(0, profile.losses - h.losses) };
+  if (Number.isInteger(profile.dollars)) shown.dollars = Math.max(0, profile.dollars - h.dollars);
+  return shown;
 }
 
 export function parseGameCommand(text) {

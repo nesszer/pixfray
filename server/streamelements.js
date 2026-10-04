@@ -5,10 +5,10 @@ import { hiddenResults } from './game.js';
 
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
-export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help', 'checkin'];   // quick duels need no attack commands
+export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help', 'checkin', 'wallet', 'give'];   // quick duels need no attack commands
 export const SE_READ_ACTIONS = ['top', 'elo', 'help'];   // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!minichat', checkin: '!checkin' };
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!minichat', checkin: '!checkin', wallet: '!wallet', give: '!give' };
 export const LOST_TEXT = 'Lost in the arena? Type !minichat';
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
 export const OFF_TEXT = 'Mini Chat is off on this channel right now.';
@@ -52,6 +52,7 @@ export async function handleStreamElements(request, env, { url, origin, channels
     displayName: q('d').slice(0, 48),
     target: seTarget(q('t')),
     targetRaw: shown(q('t')),   // for the command log
+    ...(action === 'give' ? { amount: q('a').slice(0, 16) } : {}),   // !give @name amount: $(2)
     messageId: q('m').slice(0, 64),
   };
   const r = await roomFetch(channel, '/se?origin=' + encodeURIComponent(origin), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -77,11 +78,18 @@ export const shown = raw => String(raw || '').slice(0, 40).replace(/[^\x20-\x7e]
 
 // Paste-ready StreamElements command replies, one per action. $(1|-) not $(1): with no argument, a bare
 // $(queryescape $(1)) makes StreamElements drop the whole command silently (seen with a bare !fight and !strike).
+// !give also sends its second word, the amount, as a=.
 export function seCommandLines(origin, channel, key, names = {}) {
   return SE_ACTIONS.map(action => {
-    const url = `${origin}/api/se/${channel}/${action}?k=${key}&id=$(sender.twitchid)&u=$(sender.name)&d=$(queryescape $(sender))&t=$(queryescape $(1|-))&m=$(msgid)`;
+    const url = `${origin}/api/se/${channel}/${action}?k=${key}&id=$(sender.twitchid)&u=$(sender.name)&d=$(queryescape $(sender))&t=$(queryescape $(1|-))&m=$(msgid)${action === 'give' ? '&a=$(queryescape $(2|-))' : ''}`;
     return { action, name: names[action] || DEFAULT_SE_NAMES[action], response: `$(customapi ${url})` };
   });
+}
+
+// !give's amount: a whole number of dollars ("20" or "$20"), or null.
+export function seAmount(raw) {
+  const m = /^\$?(\d{1,7})$/.exec(String(raw ?? '').replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ''));
+  return m ? Number(m[1]) : null;
 }
 
 // SE command → the chat text the game parser understands.
@@ -135,6 +143,31 @@ export function seCheckinText(r, { who = '', origin = '', channel = '', maxPoint
     case 'already_checked_in': return `@${me}, you already checked in this stream (${r.streak}-stream streak). Come back next stream!`;
     case 'not_live': return `Check-ins open while ${channel || 'the stream'} is live. See you next stream!`;
     case 'no_fighter': return noFighter(me, true, origin, channel);
+    default: return "Couldn't reach Twitch to check the stream. Try again in a minute!";
+  }
+}
+// !wallet: dollars, upgrade points and streak. w = ChannelRoom.wallet() or null (no fighter).
+export function seWalletText(w, { who = '', origin = '', channel = '', maxPoints = 20 } = {}) {
+  const me = short(who) || 'you';
+  if (!w) return noFighter(me, true, origin, channel);
+  return `@${me}: $${w.dollars} Mini Chat dollars, ${w.points} of ${maxPoints} upgrade points, ${w.streak}-stream streak.`;
+}
+
+// !give @name amount: one line per outcome of ChannelRoom.give (server/channel.js).
+export function seGiveText(r, { who = '', target = '', origin = '', channel = '', names = {} } = {}) {
+  const me = short(who) || 'you', n = a => names[a] || DEFAULT_SE_NAMES[a];
+  switch (r?.reason) {
+    case 'given': return `@${me} gave $${r.amount} to @${short(r.to)}. You have $${r.dollars} left.`;
+    case 'give_off': return 'Giving dollars is off on this channel.';
+    case 'no_fighter': return noFighter(me, true, origin, channel);
+    case 'give_usage': return `Give who, and how much? Type ${n('give')} @name 10`;
+    case 'target_not_found': return noFighter(target, false, origin, channel);
+    case 'self_give': return `@${me}, you can't give dollars to yourself!`;
+    case 'not_live': return `Giving opens while ${channel || 'the stream'} is live. See you next stream!`;
+    case 'too_few_duels': return `@${me}, finish ${r.need} duels before giving dollars. You have ${r.duels} so far.`;
+    case 'give_cap': return `@${me}, you gave the most for this stream ($${r.max}). Give more next stream!`;
+    case 'over_cap': return `@${me}, you can give $${r.left} more this stream.`;
+    case 'not_enough': return `@${me}, you only have $${r.dollars}.`;
     default: return "Couldn't reach Twitch to check the stream. Try again in a minute!";
   }
 }

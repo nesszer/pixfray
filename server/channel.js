@@ -14,7 +14,7 @@ import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js"
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription, liveStream } from "./eventsub.js";
 import { cleanStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS } from "./upgrades.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText } from "./streamelements.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText, seWalletText, seGiveText, seAmount } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -38,8 +38,10 @@ const LIVE_CACHE_MS = 60_000;              // !checkin asks Twitch whether the c
 const FREE_MISS_MS = 7 * 24 * 60 * 60_000; // a streak survives one missed stream per week
 const STREAK_MILESTONES = [3, 7, 14, 30];  // +1 point when the streak reaches one of these (config.streakBonus)
 const MAX_BONUS = 1_000;                   // stored check-in points; only MAX_POINTS of wins + bonus ever count
+const MAX_DOLLARS = 1_000_000;             // a wallet never holds more
+const MAX_GIFT = 10_000;                   // the most a mod can add or take back in one gift
 // Every query that builds a profile with normalizeProfileRow reads these columns.
-const PROFILE_COLUMNS = "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak";
+const PROFILE_COLUMNS = "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak, dollars";
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -93,6 +95,7 @@ function normalizeProfileRow(row, config) {
     bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0,   // check-in points (checkin below)
     checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
     streak: Number.isInteger(row.streak) ? row.streak : 0,
+    dollars: Number.isInteger(row.dollars) ? row.dollars : 0,   // Mini Chat dollars (payDuels, give, giftDollars)
     ...(row.last_opponent ? { lastOpponentId: String(row.last_opponent) } : {}),   // only getProfile reads it
   };
 }
@@ -133,6 +136,9 @@ export class ChannelRoom extends DurableObject {
     // v2.6: !checkin. Check-in points live apart from wins, so a rank reset keeps them; upsertProfile never writes them.
     for (const column of ["bonus_points", "checkins", "streak", "last_stream_seq", "free_miss_at"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("last_stream")) sql.exec("ALTER TABLE profiles ADD COLUMN last_stream TEXT NOT NULL DEFAULT ''");
+    // v2.7: Mini Chat dollars, and what each viewer gave away in which stream (!give). upsertProfile never writes them either.
+    for (const column of ["dollars", "given_in_stream"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+    if (!profileColumns.includes("give_stream")) sql.exec("ALTER TABLE profiles ADD COLUMN give_stream TEXT NOT NULL DEFAULT ''");
     // Streams with at least one check-in, numbered in order: a streak counts these, so a gap of one seq is one missed stream.
     sql.exec("CREATE TABLE IF NOT EXISTS streams (seq INTEGER PRIMARY KEY, stream_id TEXT NOT NULL UNIQUE, started_at INTEGER NOT NULL)");
     // Test site only (DEV_TOOLS_TOKEN): a pretend live stream for !checkin. stream_id '' = pretend offline.
@@ -245,6 +251,10 @@ export class ChannelRoom extends DurableObject {
       const action = String(body.value.action || "");
       let payload = body.value.payload && typeof body.value.payload === "object" && !Array.isArray(body.value.payload) ? body.value.payload : body.value;
       let note = "";
+      if (action === "giftDollars") {
+        const gift = this.giftDollars(channel, payload, actorId, String(body.value.actorName || "").slice(0, 48));
+        return json(gift.ok ? gift : { ...gift, error: gift.reason }, gift.ok ? 200 : gift.reason === "profile_not_found" ? 404 : 400);
+      }
       if (action === "rollbackConfig") {
         const version = Number(payload.version);
         const row = Number.isInteger(version) ? this.ctx.storage.sql.exec("SELECT config FROM config_history WHERE version = ?", version).toArray()[0] : null;
@@ -313,6 +323,13 @@ export class ChannelRoom extends DurableObject {
       if (result.changed) await this.scheduleAlarm(result.state);
       const r = result.result || {};
       if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
+      const devGive = /^!(wallet|give)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(String(line || "").trim());
+      if (devGive) {   // the reply is the line a StreamElements bot would post
+        const who = displayName || username, uid = validUserId(userId), devTarget = normalizeUsername(String(devGive[2] || "").replace(/^@/, ""));
+        if (devGive[1].toLowerCase() === "wallet") { const wallet = this.wallet(channel, uid); return json({ wallet, reply: seWalletText(wallet, { who, origin: "", channel, maxPoints: MAX_POINTS }) }); }
+        const given = await this.give(channel, { userId: uid, target: devTarget, amount: seAmount(devGive[3]) }, now);
+        return json({ ...given, reply: seGiveText(given, { who, target: devTarget, origin: "", channel, names: this.seSettings().names }) });
+      }
       if (/^!checkin(?:\s|$)/i.test(String(line || "").trim())) {
         const checked = await this.checkin(channel, { userId: validUserId(userId) }, now);
         return json({ ...checked, reply: seCheckinText(checked, { who: displayName || username, origin: "", channel, maxPoints: MAX_POINTS }) });
@@ -386,11 +403,11 @@ export class ChannelRoom extends DurableObject {
       const state = this.readState(channel);
       if (event.type === "admin" && event.action === "config") this.seedConfigHistory(state);
       const result = reduceGame(state, event, now);
-      if (result.changed) this.writeState(result.state);
       for (const userId of result.dirtyProfileIds) {
         const profile = result.state.players.find((item) => item.userId === userId);
         if (profile?.registered) this.upsertProfile(profile);
       }
+      if (this.payDuels(result.state) || result.changed) this.writeState(result.state);
       if (result.resetAllRanks) this.resetAllRanks(result.state.config.initialElo);
       for (const userId of result.rankResetIds || []) {
         this.ctx.storage.sql.exec("UPDATE profiles SET elo = ?, wins = 0, losses = 0 WHERE user_id = ?", result.state.config.initialElo, userId);
@@ -478,8 +495,8 @@ export class ChannelRoom extends DurableObject {
       this.writeState(result.state);
       const active = result.state.players.find((item) => item.userId === userId);
       this.upsertProfile(active || profile);
-      // The state player has no streak or check-in count; they live only in the profiles table.
-      const saved = { ...(active || profile), bonus: existing?.bonus || 0, checkins: existing?.checkins || 0, streak: existing?.streak || 0 };
+      // The state player has no streak, check-in count or dollars; they live only in the profiles table.
+      const saved = { ...(active || profile), bonus: existing?.bonus || 0, checkins: existing?.checkins || 0, streak: existing?.streak || 0, dollars: existing?.dollars || 0 };
       return { ok: true, profile: saved, state: result.state };
     });
   }
@@ -706,6 +723,14 @@ export class ChannelRoom extends DurableObject {
       const checked = await this.checkin(channel, { userId }, now);
       return done(seCheckinText(checked, { who: input.displayName || username, origin, channel, maxPoints: MAX_POINTS }), checked.reason, checked.reason === "checked_in" ? { streak: checked.streak, points: checked.points } : {});
     }
+    if (action === "wallet") {   // like !elo, it works while duels are paused
+      const wallet = this.wallet(channel, userId);
+      return done(seWalletText(wallet, { who: input.displayName || username, origin, channel, maxPoints: MAX_POINTS }), wallet ? "wallet" : "no_fighter");
+    }
+    if (action === "give") {
+      const given = await this.give(channel, { userId, target, amount: seAmount(input.amount) }, now);
+      return done(seGiveText(given, { who: input.displayName || username, target, origin, channel, names }), given.reason, given.reason === "given" ? { amount: given.amount } : {});
+    }
     if (SE_READ_ACTIONS.includes(action)) {
       if (action === "help") return done(seHelpText({ names, origin, channel }), "help");
       if (action === "top") return done(seTopText(this.leaderboard(channel).slice(0, 5), { origin, channel }), "top");
@@ -756,6 +781,76 @@ export class ChannelRoom extends DurableObject {
       if (active) { active.bonus = bonus; this.writeState(state); }   // the next duel counts the new points
       return { reason: "checked_in", streak, points, milestone, freeMiss, total: pointsFor(row.wins, bonus) };
     });
+  }
+
+  // !wallet: dollars, upgrade points and streak as the stream has shown them (a quick duel's payout stays hidden too).
+  wallet(channel, userId) {
+    const state = this.readState(channel);
+    const profile = userId && shownProfile(this.getProfile(userId, state.config), hiddenResults(state, Date.now()));
+    return profile ? { dollars: profile.dollars, points: pointsFor(profile.wins, profile.bonus), streak: profile.streak } : null;
+  }
+
+  // !give @name amount: dollars from one saved fighter to another, only while the channel is live. Limits (config):
+  // giveEnabled, giveMinDuels finished duels first, and at most giveMaxPerStream given per stream.
+  async give(channel, { userId, target, amount }, now = Date.now()) {
+    const config = this.readState(channel).config;
+    if (!config.giveEnabled) return { reason: "give_off" };
+    const giver = userId && this.getProfile(userId, config);
+    if (!giver) return { reason: "no_fighter" };
+    if (!target || !Number.isInteger(amount) || amount < 1) return { reason: "give_usage" };
+    const to = this.getProfileByUsername(target, config);
+    if (!to) return { reason: "target_not_found" };
+    if (to.userId === giver.userId) return { reason: "self_give" };
+    let stream;
+    try { stream = await this.currentStream(channel, now); }
+    catch (error) {
+      logRoomEvent(this, "warn", "twitch stream lookup failed", { channel, error: String(error?.message || error).slice(0, 200) });
+      return { reason: "twitch_error" };
+    }
+    if (!stream) return { reason: "not_live" };
+    return this.ctx.storage.transactionSync(() => {
+      const sql = this.ctx.storage.sql, state = this.readState(channel), cfg = state.config;
+      const row = sql.exec("SELECT wins, losses, dollars, give_stream, given_in_stream FROM profiles WHERE user_id = ?", giver.userId).toArray()[0];
+      if (!row) return { reason: "no_fighter" };
+      // Spend only what the stream has shown: a quick duel's payout or result still hidden doesn't count yet.
+      const h = hiddenResults(state, now).get(giver.userId) || { wins: 0, losses: 0, dollars: 0 };
+      const duels = row.wins + row.losses - h.wins - h.losses, dollars = Math.max(0, row.dollars - h.dollars);
+      if (duels < cfg.giveMinDuels) return { reason: "too_few_duels", duels, need: cfg.giveMinDuels };
+      const given = row.give_stream === stream.id ? row.given_in_stream : 0, left = Math.max(0, cfg.giveMaxPerStream - given);
+      if (!left) return { reason: "give_cap", max: cfg.giveMaxPerStream };
+      if (amount > left) return { reason: "over_cap", left, max: cfg.giveMaxPerStream };
+      if (amount > dollars) return { reason: "not_enough", dollars };
+      sql.exec("UPDATE profiles SET dollars = dollars - ?, give_stream = ?, given_in_stream = ? WHERE user_id = ?", amount, stream.id, given + amount, giver.userId);
+      sql.exec("UPDATE profiles SET dollars = MIN(?, dollars + ?) WHERE user_id = ?", MAX_DOLLARS, amount, to.userId);
+      return { reason: "given", amount, to: to.displayName || to.username, dollars: dollars - amount, left: left - amount };
+    });
+  }
+
+  // Mod gift from the admin page: adds dollars to a saved fighter, or takes them back with a negative amount (never below 0).
+  giftDollars(channel, payload, actorId, actorName) {
+    const amount = Number(payload.amount);
+    if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > MAX_GIFT) return { ok: false, reason: "invalid_amount" };
+    const name = normalizeUsername(String(payload.username || "").replace(/^@/, ""));
+    const sql = this.ctx.storage.sql;
+    const row = name ? sql.exec("SELECT user_id, username, display_name, dollars FROM profiles WHERE username = ? COLLATE NOCASE", name).toArray()[0] : null;
+    if (!row) return { ok: false, reason: "profile_not_found" };
+    const dollars = Math.max(0, Math.min(MAX_DOLLARS, row.dollars + amount));
+    sql.exec("UPDATE profiles SET dollars = ? WHERE user_id = ?", dollars, row.user_id);
+    logRoomEvent(this, "command", `${actorName || actorId} gift ${amount} -> ${row.username}`, { channel, action: "giftDollars", actorId, actorName, userId: row.user_id, user: row.username, amount, dollars });
+    return { ok: true, reason: "dollars_gifted", username: row.username, displayName: row.display_name, amount, dollars };
+  }
+
+  // Dollars for finished duels: game.js finishDuel sets duel.payout, and this adds it to the saved profiles once
+  // (duel.paid). Called inside the transaction that wrote the result; returns true when the state needs writing.
+  payDuels(state) {
+    let paid = false;
+    for (const duel of state.duels) {
+      if (!duel.payout || duel.paid) continue;
+      for (const [id, amount] of Object.entries(duel.payout)) this.ctx.storage.sql.exec("UPDATE profiles SET dollars = MIN(?, dollars + ?) WHERE user_id = ?", MAX_DOLLARS, amount, id);
+      duel.paid = true;
+      paid = true;
+    }
+    return paid;
   }
 
   // The channel's live stream {id, startedAt} or null. Twitch's answer is kept for a minute; a failed lookup throws.
@@ -829,7 +924,7 @@ export class ChannelRoom extends DurableObject {
           }
         }
       }
-      let changed = steps.some((r) => r.changed);
+      let changed = this.payDuels(state) || steps.some((r) => r.changed);
       if (changed || now - (Number(state.chat.lastSeen) || 0) >= LAST_SEEN_WRITE_MS) {
         state.chat.lastSeen = now;
         this.writeState(state);

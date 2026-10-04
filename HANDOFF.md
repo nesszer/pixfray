@@ -162,8 +162,12 @@ Fixed in this pass:
 - 45 s of inactivity cancels a duel with no scoring.
 - Each win earns an upgrade point (power, guard, luck, 8 per stat, 20 in all) and unlocks hats
   (`server/upgrades.js`). `!checkin` (StreamElements) gives points once per live stream, with a
-  streak bonus at 3, 7, 14 and 30 streams; check-in points survive a rank reset. The plan for the
-  next stages (dollars, pets, builds) is docs/PROGRESSION_PLAN.md.
+  streak bonus at 3, 7, 14 and 30 streams; check-in points survive a rank reset.
+- Each finished duel pays Mini Chat dollars (config `winDollars` 5, `lossDollars` 3), shown once the
+  stream has shown the fight. `!wallet` lists dollars, points and streak; `!give @name amount` works
+  while live, after 5 finished duels, up to $100 per stream (all mod-tunable, and `giveEnabled`
+  turns it off). Mods gift or take back dollars on the Players tab. Rank resets keep dollars. The
+  plan for the next stages (pets, builds) is docs/PROGRESSION_PLAN.md.
 - Ranked duels require a signed-in profile.
 - If chat is disconnected or Twitch revokes the subscription, combat pauses and unfinished duels
   are cancelled without scoring.

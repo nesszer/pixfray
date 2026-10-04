@@ -29,6 +29,8 @@ node scripts/devtools.mjs duel a b --via se
 node scripts/devtools.mjs state
 node scripts/devtools.mjs live on
 node scripts/devtools.mjs say a "!checkin" --via se
+node scripts/devtools.mjs say a "!wallet"
+node scripts/devtools.mjs say a "!give @testbot_b 10" --via se
 node scripts/devtools.mjs clean
 ```
 
@@ -38,7 +40,7 @@ node scripts/devtools.mjs clean
 - Both print the reply the StreamElements bot would post.
 - `clean` removes the bots from the arena and deletes their profiles and ranks.
 - `live on` makes `!checkin` see a live stream with a new stream id, so each `live on` is the next
-  stream for streaks (`--stream <id>` reuses one). `live off` answers "not live", and `live real`
+  stream for streaks (`--stream <id>` reuses one). `!give` needs it too. `live off` answers "not live", and `live real`
   goes back to asking Twitch. Only the test Worker reads this, because only it has the token.
 
 ## Alt account in real chat

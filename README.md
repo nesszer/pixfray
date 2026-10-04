@@ -40,7 +40,9 @@ Chat commands for v2 duels:
   the winner and the Elo change. `!elo`, `!ranks` and the website show the old numbers until the
   replay has played on stream (plus the channel's stream delay, 6 s by default and set in the admin Rules tab), so chat replies and ranks don't spoil the stream. The overlay itself gets the result at once, so someone who opens the overlay page can see it early. The default ability only changes how blows look. Each win earns an upgrade point
   (power, guard, luck) and unlocks hats. `!checkin`, once per live stream, adds a point too, with
-  streak bonuses; 20 points in all, 8 per stat. See CONTRACTS.md section 6. The HP fight with `!strike`,
+  streak bonuses; 20 points in all, 8 per stat. Each finished duel pays Mini Chat dollars ($5 a win,
+  $3 a loss): `!wallet` shows them, `!give @name 10` passes them on while the stream is live, and
+  mods gift them from the Players tab. See CONTRACTS.md section 6. The HP fight with `!strike`,
   `!heavy` and `!heal` runs only if a mod's config sets `quickDuel` to false.
 - Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).
 

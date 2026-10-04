@@ -529,6 +529,18 @@ test('StreamElements: a bare command sends t=- and reaches the room with no targ
   assert.equal(sent.target, '');
 });
 
+test('StreamElements !give sends its amount as a=; seAmount takes 20 or $20 only', async () => {
+  const { handleStreamElements, seCommandLines, seAmount } = await import('../server/streamelements.js');
+  const lines = seCommandLines('https://x', 'nesszerra', 'k1');
+  assert.match(lines.find((l) => l.action === 'give').response, /&a=\$\(queryescape \$\(2\|-\)\)\)$/);
+  assert.ok(!lines.find((l) => l.action === 'wallet').response.includes('&a='));
+  assert.deepEqual(['20', '$20', ' 7 ', '-', '', '2.5', '-3', '12345678', 'ten'].map(seAmount), [20, 20, 7, null, null, null, null, null, null]);
+  let sent;
+  const url = new URL('https://x/api/se/nesszerra/give?k=' + 'b2'.repeat(24) + '&id=2&u=bob&d=bob&t=%40cara&a=%2415&m=1');
+  await handleStreamElements(new Request(url), {}, { url, origin: 'https://x', channels: ['nesszerra'], roomFetch: async (c, p, init) => { sent = JSON.parse(init.body); return Response.json({ reply: 'ok' }); } });
+  assert.deepEqual([sent.action, sent.target, sent.amount], ['give', 'cara', '$15']);
+});
+
 test('StreamElements: an empty room reply (repeated message id) posts nothing; a missing one says something went wrong', async () => {
   const { handleStreamElements } = await import('../server/streamelements.js');
   const url = new URL('https://x/api/se/nesszerra/accept?k=' + 'b2'.repeat(24) + '&id=2&u=bob&d=bob&t=-&m=1');
@@ -622,10 +634,11 @@ test('quick duels hide the result until the stream has played it out (revealAt)'
   assert.equal(replayMs(0), replayMs(1), 'at least one roll is replayed');
   const hidden = hiddenResults(w.state, w.now);
   const winner = duel.winnerId, loser = winner === 'id-alice' ? 'id-bob' : 'id-alice';
-  assert.deepEqual(hidden.get(winner), { elo: 1000, wins: 1, losses: 0 });
-  assert.deepEqual(hidden.get(loser), { elo: 1000, wins: 0, losses: 1 });
+  assert.deepEqual(hidden.get(winner), { elo: 1000, wins: 1, losses: 0, dollars: 5 });
+  assert.deepEqual(hidden.get(loser), { elo: 1000, wins: 0, losses: 1, dollars: 3 });
   const saved = { userId: winner, elo: duel.ratings[winner].after, wins: 1, losses: 0 };
   assert.deepEqual(shownProfile(saved, hidden), { userId: winner, elo: 1000, wins: 0, losses: 0 });
+  assert.equal(shownProfile({ ...saved, dollars: 12 }, hidden).dollars, 7, 'a hidden payout stays out of !wallet');
   assert.equal(shownProfile(null, hidden), null);
   const cara = { userId: 'id-cara', elo: 1000, wins: 0, losses: 0 };
   assert.equal(shownProfile(cara, hidden), cara, 'fighters with nothing hidden are unchanged');

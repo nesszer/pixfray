@@ -63,7 +63,7 @@ async function say(who, line, via = flags.via || 'chat') {
 }
 let seKey = null;
 async function seCall(who, line) {
-  const m = /^!(\w+)(?:\s+(\S+))?/.exec(line.trim());
+  const m = /^!(\w+)(?:\s+(\S+))?(?:\s+(\S+))?/.exec(line.trim());
   if (!m) fail(`not a command: ${line}`);
   if (!seKey) {
     const admin = await site(`/api/admin/${CHANNEL}`);
@@ -71,7 +71,7 @@ async function seCall(who, line) {
     if (!seKey) fail('StreamElements is not set up on the test site for ' + CHANNEL + '; use --via chat');
   }
   const action = { duel: 'challenge', fight: 'accept' }[m[1].toLowerCase()] || m[1].toLowerCase();
-  const q = new URLSearchParams({ k: seKey, id: who.userId, u: who.username, d: who.displayName, t: m[2] || '', m: 'devtools-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) });
+  const q = new URLSearchParams({ k: seKey, id: who.userId, u: who.username, d: who.displayName, t: m[2] || '', ...(action === 'give' ? { a: m[3] || '' } : {}), m: 'devtools-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) });
   const res = await fetch(`${BASE}/api/se/${CHANNEL}/${action}?${q}`);
   return (await res.text()).trim();
 }
@@ -233,7 +233,8 @@ Bots on the test site
   duel [a] [b] [--via chat|se] testbot_a challenges testbot_b, testbot_b answers !fight
   say <bot> <line> [--via …]  one chat line as a bot, e.g. say a "!challenge @testbot_b"
   state                       players and open duels
-  live on|off|real [--stream id]  pretend the channel is live for !checkin (real = ask Twitch)
+  live on|off|real [--stream id]  pretend the channel is live for !checkin and !give (real = ask Twitch)
+  gift <bot> <amount>         a mod gift of Mini Chat dollars (negative takes them back)
   clean                       remove the bots and their profiles
 
 Alt account in real Twitch chat (posts only while the channel is offline)
@@ -244,6 +245,7 @@ Alt account in real Twitch chat (posts only while the channel is offline)
 
 const commands = {
   seed, clean, duel, live, state: show,
+  gift: async () => { const r = await site(`/api/admin/${CHANNEL}`, { method: 'POST', body: { action: 'giftDollars', payload: { username: botByName(args[0]).username, amount: Number(args[1]) } } }); console.log(`${r.username}: ${r.amount > 0 ? '+' : ''}${r.amount} -> $${r.dollars}`); },
   say: async () => { const who = botByName(args[0]); console.log(await say(who, args.slice(1).join(' '))); },
   login, 'alt-profile': altProfile, chat: () => chat(args.join(' ')), 'real-duel': realDuel,
   help: async () => console.log(usage),

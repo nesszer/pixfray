@@ -569,6 +569,82 @@ test('!checkin: once per stream while live, streaks with one free miss a week, m
   assert.equal((await r.call('/se', { method: 'POST', body: { key: 'f'.repeat(48), action: 'checkin', userId: 'u1', username: 'alice' } })).status, 403);
 });
 
+test('dollars: paid once per finished duel and hidden until the stream shows it; mod gifts; !wallet; !give and its limits', async () => {
+  const r = room({ DEV_TOOLS_TOKEN: 'x'.repeat(40) }, { quick: true });
+  const se = (await r.call('/admin')).body.streamelements;
+  assert.deepEqual([se.names.wallet, se.names.give], ['!wallet', '!give']);
+  await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
+  await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
+  let m = 0;
+  const cmd = async (id, login, action, target = '', amount) => (await r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 'd' + (++m), ...(amount !== undefined ? { amount } : {}) } })).body.reply;
+  const dollars = () => Object.fromEntries(r.ctx.storage.sql.exec('SELECT username, dollars FROM profiles').toArray().map((x) => [x.username, x.dollars]));
+  await cmd('u1', 'alice', 'challenge', 'bob');
+  await cmd('u2', 'bob', 'accept');
+  const duel = r.readState('nesszerra').duels.find((d) => d.status === 'completed');
+  const [win, lose] = duel.winnerId === 'u1' ? ['alice', 'bob'] : ['bob', 'alice'];
+  assert.deepEqual([dollars()[win], dollars()[lose], duel.paid], [5, 3, true], 'paid in the same transaction as the result');
+  // Until the stream has shown the fight, !wallet and the website show the old balance.
+  assert.equal(await cmd('u1', 'alice', 'wallet'), '@alice: $0 Mini Chat dollars, 0 of 20 upgrade points, 0-stream streak.');
+  assert.equal((await r.call('/profile?userId=u1')).body.dollars, 0);
+  const realNow = Date.now;
+  Date.now = () => duel.revealAt + 1;
+  try {
+    assert.equal(await cmd(win === 'alice' ? 'u1' : 'u2', win, 'wallet'), `@${win}: $5 Mini Chat dollars, 1 of 20 upgrade points, 0-stream streak.`);
+    r.advance('nesszerra', { type: 'tick' }, Date.now());
+    assert.deepEqual([dollars()[win], dollars()[lose]], [5, 3], 'never paid twice');
+  } finally { Date.now = realNow; }
+  // A website save and a rank reset keep dollars.
+  assert.equal((await r.save('u3', 'cara')).body.profile.dollars, 0);
+  const gift = (username, amount) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', actorName: 'Mod', action: 'giftDollars', payload: { username, amount } } });
+  assert.deepEqual((({ ok, username, amount, dollars }) => [ok, username, amount, dollars])((await gift('@Cara', 50)).body), [true, 'cara', 50, 50]);
+  assert.equal((await gift('cara', 0)).body.error, 'invalid_amount');
+  assert.equal((await gift('cara', 10_001)).body.error, 'invalid_amount');
+  assert.equal((await gift('nobody', 5)).status, 404);
+  assert.equal((await gift('cara', -80)).body.dollars, 0, 'taking back never goes below 0');
+  await gift('cara', 50);
+  assert.match((await r.call('/dev/logs?source=command')).body[0].message, /^Mod gift 50 -> cara$/);
+  await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'resetRank', payload: { userId: 'u3' } } });
+  assert.equal((await r.save('u3', 'cara')).body.profile.dollars, 50, 'a rank reset and a save keep dollars');
+  // !give: usage, targets and the live check come first.
+  const live = (body) => r.call('/dev-live', { method: 'POST', body });
+  assert.equal(await cmd('u3', 'cara', 'give', 'alice'), 'Give who, and how much? Type !give @name 10');
+  assert.equal(await cmd('u3', 'cara', 'give', 'nobody', '5'), '@nobody has no fighter in the arena yet! Send them to https://test.example/?channel=nesszerra');
+  assert.equal(await cmd('u3', 'cara', 'give', 'cara', '5'), "@cara, you can't give dollars to yourself!");
+  assert.equal(await cmd('u9', 'zed', 'give', 'alice', '5'), '@zed, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra');
+  await live({ live: false });
+  assert.equal(await cmd('u3', 'cara', 'give', 'alice', '5'), 'Giving opens while nesszerra is live. See you next stream!');
+  await live({ live: true, streamId: 's1' });
+  assert.equal(await cmd('u3', 'cara', 'give', 'alice', '5'), '@cara, finish 5 duels before giving dollars. You have 0 so far.');
+  r.ctx.storage.sql.exec("UPDATE profiles SET wins = 3, losses = 2 WHERE user_id = 'u3'");
+  assert.equal(await cmd('u3', 'cara', 'give', 'alice', '60'), '@cara, you only have $50.');
+  const before = dollars().alice;
+  assert.equal(await cmd('u3', 'cara', 'give', 'alice', '$30'), '@cara gave $30 to @alice. You have $20 left.');
+  assert.deepEqual([dollars().cara, dollars().alice], [20, before + 30]);
+  await gift('cara', 200);
+  assert.equal(await cmd('u3', 'cara', 'give', 'alice', '80'), '@cara, you can give $70 more this stream.');
+  assert.equal(await cmd('u3', 'cara', 'give', 'alice', '70'), '@cara gave $70 to @alice. You have $150 left.');
+  assert.equal(await cmd('u3', 'cara', 'give', 'bob', '1'), '@cara, you gave the most for this stream ($100). Give more next stream!');
+  await live({ live: true, streamId: 's2' });
+  assert.equal(await cmd('u3', 'cara', 'give', 'bob', '10'), '@cara gave $10 to @bob. You have $140 left.', 'a new stream starts a new limit');
+  const log = (await r.call('/dev/logs?source=command')).body;
+  assert.deepEqual([log[0].context.reason, log[0].context.amount], ['given', 10]);
+  // The dev chat (test site) answers like the bot would.
+  const dev = async (text) => (await r.call('/dev-chat', { method: 'POST', body: { userId: 'u3', username: 'cara', displayName: 'cara', text } })).body.reply;
+  assert.equal(await dev('!wallet'), '@cara: $140 Mini Chat dollars, 3 of 20 upgrade points, 0-stream streak.');
+  assert.equal(await dev('!give @bob 5'), '@cara gave $5 to @bob. You have $135 left.');
+  // Mods tune it or turn !give off; payouts follow the config.
+  const cfg = (patch) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'config', payload: { patch } } });
+  assert.equal((await cfg({ winDollars: 101 })).body.error, 'invalid_config_winDollars');
+  assert.equal((await cfg({ giveEnabled: 'no' })).body.error, 'invalid_config_giveEnabled');
+  assert.equal((await cfg({ giveEnabled: false, winDollars: 0, lossDollars: 1 })).status, 200);
+  assert.equal(await cmd('u3', 'cara', 'give', 'bob', '5'), 'Giving dollars is off on this channel.');
+  await r.save('u4', 'dan');   // alice and bob's duel is still hidden from chat
+  await cmd('u3', 'cara', 'challenge', 'dan');
+  await cmd('u4', 'dan', 'accept');
+  const second = r.readState('nesszerra').duels.filter((d) => d.status === 'completed').at(-1);
+  assert.deepEqual(Object.values(second.payout), [1], 'no win payout at 0; the loser gets 1');
+});
+
 test('!checkin asks Twitch whether the channel is live, keeps the answer a minute, and says try again when Twitch fails', async (t) => {
   const store = new AuthStore(fakeCtx(), { INTERNAL_SECRET: SECRET });
   const AUTH = { idFromName: () => 'auth', get: () => ({ fetch: (url, init) => store.fetch(new Request(url, init)) }) };

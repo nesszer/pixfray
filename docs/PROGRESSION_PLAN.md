@@ -1,7 +1,7 @@
 # Plan: check-ins, Mini Chat dollars, pets and builds
 
-Status: agreed with the owner on 2026-10-04. Stage 1 (check-ins, streaks, 20/8 caps) is built;
-stages 2 to 4 are not. Every number below is a default that
+Status: agreed with the owner on 2026-10-04. Stage 1 (check-ins, streaks, 20/8 caps) and
+Stage 2 (dollars, `!wallet`, `!give`, mod gifts) are built; stages 3 and 4 are not. Every number below is a default that
 mods can tune in the balance editor (versioned, undoable). All data is per channel, like fighters
 and ranks today.
 
