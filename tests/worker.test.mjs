@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
 import { createHmac } from 'node:crypto';
 import { digest } from '../server/auth.js';
-import { eventsubSecret, signEventsub, localTestMode } from '../server/eventsub.js';
+import { eventsubSecret, signEventsub, localTestMode, sendChatMessage } from '../server/eventsub.js';
 
 function environment() {
   const entries = new Map(), forwarded = [];
@@ -474,4 +474,20 @@ test('chat bot: bot sign-in needs CHAT_BOT and asks for the chat scopes', async 
   assert.equal(new URL(res.headers.get('Location')).searchParams.get('scope'), 'user:read:chat user:write:chat user:bot');
   const allow = await worker.fetch(req('/auth/login?channel=nesszerra&connect=bot'), f.env);
   assert.equal(new URL(allow.headers.get('Location')).searchParams.get('scope'), 'moderation:read channel:bot');
+});
+
+test('chat bot: a rate-limited reply (429) is retried after a short wait, then gives up', async (t) => {
+  const f = environment(), waits = [];
+  let statuses = [429, 200];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).startsWith('https://id.twitch.tv')) return Response.json({ access_token: 'app-token-1', expires_in: 5000 });
+    const status = statuses.shift();
+    return status === 200 ? Response.json({ data: [{ message_id: 'r1', is_sent: true }] }) : new Response('{}', { status });
+  });
+  const send = () => sendChatMessage(f.env, { broadcasterId: '1', senderId: '99', message: 'hi', replyTo: 'm1', sleep: async (ms) => waits.push(ms) });
+  assert.deepEqual(await send(), { sent: true, reason: '' });
+  assert.deepEqual(waits, [1100]);
+  statuses = [429, 429, 429];
+  await assert.rejects(send(), /\(429\)/);
+  assert.deepEqual(waits, [1100, 1100, 2200]);
 });
