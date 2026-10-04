@@ -69,6 +69,8 @@ async function devUser(env){const id=env.OWNER_TWITCH_ID||(await record(env,'own
 // Dev-token routes: save a profile for any account (test bots, an alt), or feed one chat line through the room as if
 // Twitch had delivered it. The room repeats the DEV_TOOLS_TOKEN check.
 async function handleDevtools(request,env,channel,action,data){
+  // {live:true} starts a pretend stream for !checkin (a new stream id each time), {live:false} ends it, {live:null} asks Twitch again.
+  if(action==='live')return roomFetch(null,env,channel,'/dev-live',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({live:data.live??null,streamId:String(data.streamId||'').slice(0,40)})});
   const userId=String(data.userId||''),username=String(data.username||'').toLowerCase(),displayName=String(data.displayName||username).slice(0,48);
   if(!/^[a-zA-Z0-9_:-]{1,64}$/.test(userId)||!/^[a-z0-9_]{1,25}$/.test(username))return json({error:'userId and username required'},400);
   if(action==='profile'){
@@ -107,7 +109,7 @@ export default {async fetch(request,env,ctx){
     if(!path.startsWith('/api/'))return env.ASSETS.fetch(request);
     if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
     const s=dev?null:await session(request,env),user=dev?await devUser(env):s?.user||null,owner=await isOwner(env,user);
-    const devMatch=path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat)$/);
+    const devMatch=path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live)$/);
     if(path.startsWith('/api/devtools/')){
       if(!dev||!devMatch)return json({error:'Not found'},404);
       const st=await channelState(env,devMatch[1]);if(!isOn(st))return json(offError(st),403);

@@ -9,7 +9,7 @@ scripted duels, and an alt account that types in real Twitch chat. Production ha
   (`cloudflare.config.ts`). The production Worker has no such binding, so no token can match there.
   `tests/worker.test.mjs` checks both configs.
 - A request with `Authorization: Bearer <token>` acts as the owner for `/api/dev/*` and
-  `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat)`. A wrong or short
+  `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live)`. A wrong or short
   token gets 401; an owner session without the token gets 404 from `/api/devtools`.
 - The token lives in `.secrets.local.json` (gitignored) next to the Twitch app credentials, so the
   normal test deploy uploads it:
@@ -27,6 +27,8 @@ node scripts/devtools.mjs seed --bots 2
 node scripts/devtools.mjs duel a b
 node scripts/devtools.mjs duel a b --via se
 node scripts/devtools.mjs state
+node scripts/devtools.mjs live on
+node scripts/devtools.mjs say a "!checkin" --via se
 node scripts/devtools.mjs clean
 ```
 
@@ -35,6 +37,9 @@ node scripts/devtools.mjs clean
   StreamElements bot does.
 - Both print the reply the StreamElements bot would post.
 - `clean` removes the bots from the arena and deletes their profiles and ranks.
+- `live on` makes `!checkin` see a live stream with a new stream id, so each `live on` is the next
+  stream for streaks (`--stream <id>` reuses one). `live off` answers "not live", and `live real`
+  goes back to asking Twitch. Only the test Worker reads this, because only it has the token.
 
 ## Alt account in real chat
 

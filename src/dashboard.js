@@ -26,7 +26,7 @@ const current = () => ({
 });
 const sameStats = (a, b) => ["power", "guard", "luck"].every((k) => (a?.[k] || 0) === (b?.[k] || 0));
 const dirty = () => { const c = current(), s = state.saved; return !s || c.avatar !== s.avatar || c.color !== s.color || c.hat !== s.hat || !sameStats(c.stats, s.stats); };
-const rules = () => upgradeRules(state.profile?.wins || 0);
+const rules = () => upgradeRules(state.profile?.wins || 0, state.profile?.bonus || 0);
 const savedOf = (p) => ({ avatar: p.avatar, color: p.color.toLowerCase(), defaultAbility: p.defaultAbility, hat: p.hat || "", stats: { ...p.stats } });
 
 // Hats: one option per hat, drawn on the selected character. Locked hats show the wins they need.
@@ -54,9 +54,11 @@ function renderUpgrades() {
   const r = rules(), list = $("#upgrade-list"), canEdit = Boolean(state.session?.user && state.profile);
   const used = r.stats.reduce((sum, k) => sum + state.stats[k], 0), left = r.points - used;
   $("#points-note").textContent = canEdit ? "(" + left + " of " + r.points + " points free)" : "";
+  // Where the points come from, so a viewer sees what !checkin adds.
+  const from = r.fromCheckins ? " You have " + r.fromWins + " from wins and " + r.fromCheckins + " from check-ins." : "";
   $("#upgrades-help").textContent = canEdit
-    ? "Each win gives one point, up to " + r.maxPoints + ". Move points between stats whenever you're not in a duel."
-    : "Save your fighter, then each win gives one upgrade point, up to " + r.maxPoints + ".";
+    ? "Each win and each stream check-in (!checkin in chat) gives a point, up to " + r.maxPoints + "." + from + " Move points between stats whenever you're not in a duel."
+    : "Save your fighter, then each win and each stream check-in (!checkin in chat) gives an upgrade point, up to " + r.maxPoints + ".";
   const shown = canEdit ? state.stats : { power: 0, guard: 0, luck: 0 };
   // The fighter card points at unspent points; the section is below the character list.
   const link = $("#points-link");
@@ -131,7 +133,7 @@ function applyProfile(p) {
   if (radio) radio.checked = true;
   colorInput.value = /^#[0-9a-f]{6}$/i.test(p?.color || "") ? p.color.toLowerCase() : DEFAULT_COLOR;
   state.hat = typeof p?.hat === "string" ? p.hat : "";
-  state.stats = effectiveStats(p?.stats, p?.wins || 0);
+  state.stats = effectiveStats(p?.stats, p?.wins || 0, p?.bonus || 0);
   preview.hat(state.hat);
   renderHats(); renderUpgrades();
 }
@@ -140,6 +142,8 @@ function renderCommands() {
   if (state.config) {
     $("#cmd-timeout").textContent = seconds(state.config.challengeTimeoutMs);
     $("#cmd-rematch").textContent = seconds(state.config.rematchDelayMs);
+    const pts = state.config.checkinPoints ?? 1;
+    $("#cmd-checkin").textContent = pts ? "+" + pts + (pts === 1 ? " upgrade point" : " upgrade points") : "A check-in";
     $("#lb-note").textContent = "Ranked duels need a saved profile. Everyone starts at " + state.config.initialElo + " Elo.";
     $("#hp-mode-note").hidden = state.config.quickDuel !== false;
   }
@@ -179,6 +183,7 @@ function renderSignedIn() {
   if (state.profile) {
     $("#stat-elo").textContent = state.profile.elo;
     $("#stat-wl").textContent = state.profile.wins + " / " + state.profile.losses;
+    $("#stat-streak").textContent = state.profile.streak || 0;
   }
 }
 

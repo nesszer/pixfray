@@ -55,7 +55,7 @@
       </fieldset>
       <fieldset id="upgrades">
         <legend>Upgrades <span class="muted small" id="points-note"></span></legend>
-        <p class="muted small" id="upgrades-help">Each win gives one point, up to 10. Move points between stats whenever you're not in a duel.</p>
+        <p class="muted small" id="upgrades-help">Each win and each stream check-in (!checkin in chat) gives a point, up to 20. Move points between stats whenever you're not in a duel.</p>
         <div class="upgrade-list" id="upgrade-list"></div>
       </fieldset>
     </form>
@@ -69,6 +69,7 @@
       <div class="stat-strip" id="my-stats" hidden>
         <div class="stat"><div class="label">Elo</div><div class="value" id="stat-elo">—</div></div>
         <div class="stat"><div class="label">Wins / losses</div><div class="value" id="stat-wl">—</div></div>
+        <div class="stat"><div class="label">Stream streak</div><div class="value" id="stat-streak">—</div></div>
       </div>
       <a class="points-link" id="points-link" href="#upgrades" hidden></a>
       <div class="toolbar">
@@ -103,6 +104,7 @@
             <tr><td><code>!fight</code></td><td>Accepts a challenge sent to you. The duel is rolled right away and plays out on stream.</td></tr>
             <tr><td><code>!decline</code></td><td>Turns a challenge down.</td></tr>
             <tr><td><code>!rematch</code></td><td>Challenges the last viewer you fought. If they type <code>!rematch</code> too, the duel starts. Rematches open 30 s after a duel.</td></tr>
+            <tr><td><code>!checkin</code></td><td>Once per stream, while it's live: <span id="cmd-checkin">+1 upgrade point</span>. Check in on streams in a row for +1 more at 3, 7, 14 and 30. One missed stream a week doesn't break the streak.</td></tr>
             <tr><td><code>!elo</code></td><td>Posts your Elo, rank and record in chat. Add <code>@viewer</code> to check someone else.</td></tr>
             <tr><td><code>!ranks</code></td><td>Posts the top 5 of the leaderboard in chat.</td></tr>
             <tr><td><code>!minichat</code></td><td>Posts how to join, with a link to this page.</td></tr>

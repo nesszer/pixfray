@@ -21,6 +21,9 @@ const DEFAULT_CONFIG = {
   sharedCooldownMs: 1_000,
   initialElo: 1_000,
   eloK: 24,
+  // !checkin: upgrade points per stream check-in, and +1 more at a streak of 3, 7, 14 and 30 streams.
+  checkinPoints: 1,
+  streakBonus: true,
   abilities: {
     strike: { damage: 20, cooldownMs: 2_000 },
     heavy: { damage: 35, cooldownMs: 5_000 },
@@ -73,6 +76,7 @@ function defaultProfile(userId, config, now) {
     respawnAt: 0,
     stats: emptyStats(),
     hat: "",
+    bonus: 0,   // check-in points (server/channel.js checkin), added to the wins for upgrades
   };
 }
 
@@ -181,6 +185,7 @@ function recentProfile(state, profile, now) {
   // Upgrades and hat come from the saved profile only (the dashboard sets them; chat can't).
   if (profile.registered && profile.stats) merged.stats = cleanStats(profile.stats);
   if (profile.registered && typeof profile.hat === "string") merged.hat = knownHat(profile.hat) ? profile.hat : "";
+  if (profile.registered && Number.isInteger(profile.bonus)) merged.bonus = Math.max(0, profile.bonus);
   // hp/respawnAt only seed a new player, so a later chat message can never undo a KO.
   if (!existing && Number.isInteger(profile.hp) && profile.registered) merged.hp = Math.min(state.config.maxHp, Math.max(0, profile.hp));
   if (!existing && Number.isInteger(profile.respawnAt)) merged.respawnAt = profile.respawnAt;
@@ -373,7 +378,7 @@ function settleQuickDuel(state, duel, rolls, now) {
   const maxHp = duel.rules.maxHp;
   const blow = { hit: Math.round(maxHp * 0.34), crit: Math.round(maxHp * 0.5), counter: Math.round(maxHp * 0.34) };
   const look = (id) => player(state, id)?.defaultAbility || "strike";   // cosmetic: picks the attack effect on the overlay
-  const stats = Object.fromEntries([duel.a, duel.b].map((id) => [id, effectiveStats(player(state, id)?.stats, player(state, id)?.wins)]));
+  const stats = Object.fromEntries([duel.a, duel.b].map((id) => [id, effectiveStats(player(state, id)?.stats, player(state, id)?.wins, player(state, id)?.bonus)]));
   const swings = [];
   let attacker = duel.a, defender = duel.b, winnerId = "", loserId = "", decision = "ko";
   for (let i = 0; !winnerId && i < 200; i++) {
@@ -493,7 +498,7 @@ function applyAbility(state, duel, actor, abilityName, now) {
   } else {
     const before = duel.hp[targetId];
     const foe = player(state, targetId);
-    const damage = scaledDamage(ability.damage, effectiveStats(actor.stats, actor.wins), effectiveStats(foe?.stats, foe?.wins));
+    const damage = scaledDamage(ability.damage, effectiveStats(actor.stats, actor.wins, actor.bonus), effectiveStats(foe?.stats, foe?.wins, foe?.bonus));
     duel.hp[targetId] = Math.max(0, before - damage);
     amount = before - duel.hp[targetId];
   }
@@ -593,9 +598,10 @@ function validateConfigPatch(patch) {
     initialElo: [0, 10_000],
     eloK: [1, 100],
     maxOnStream: ON_STREAM,
+    checkinPoints: [0, 3],
   };
   for (const key of Object.keys(patch)) {
-    if (key === "enabled" || key === "quickDuel") {
+    if (key === "enabled" || key === "quickDuel" || key === "streakBonus") {
       if (typeof patch[key] !== "boolean") return { ok: false, reason: "invalid_config_" + key };
       out[key] = patch[key];
     } else if (key === "announce") {
@@ -803,6 +809,7 @@ export function applyProfile(state, profile, now) {
     defaultAbility: normalized.defaultAbility,
     stats: normalized.stats,
     hat: normalized.hat,
+    ...(Number.isInteger(profile?.bonus) ? { bonus: Math.max(0, profile.bonus) } : {}),
     registered: true,
     lastSeen: now,
   });

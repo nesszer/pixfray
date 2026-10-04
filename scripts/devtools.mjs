@@ -104,6 +104,15 @@ async function duel() {
   console.log(`${b.username}: !fight\n  -> ${await say(b, '!fight')}`);
 }
 
+// Pretend live state for !checkin: on (a new stream id each time unless --stream), off, or real (ask Twitch).
+async function live() {
+  const mode = args[0] || 'on';
+  if (!['on', 'off', 'real'].includes(mode)) fail('usage: live on|off|real [--stream id]');
+  const body = mode === 'real' ? { live: null } : { live: mode === 'on', ...(flags.stream ? { streamId: String(flags.stream) } : {}) };
+  const r = await site(`/api/devtools/${CHANNEL}/live`, { method: 'POST', body });
+  console.log(mode === 'real' ? `${CHANNEL}: live check goes to Twitch again` : `${CHANNEL}: ${r.live ? 'live, stream ' + r.streamId : 'offline'}`);
+}
+
 async function show() {
   const s = await state();
   console.log(`${CHANNEL} rev ${s.revision} | chat ${s.chat?.status} | paused ${s.paused} | quickDuel ${s.config?.quickDuel}`);
@@ -224,6 +233,7 @@ Bots on the test site
   duel [a] [b] [--via chat|se] testbot_a challenges testbot_b, testbot_b answers !fight
   say <bot> <line> [--via …]  one chat line as a bot, e.g. say a "!challenge @testbot_b"
   state                       players and open duels
+  live on|off|real [--stream id]  pretend the channel is live for !checkin (real = ask Twitch)
   clean                       remove the bots and their profiles
 
 Alt account in real Twitch chat (posts only while the channel is offline)
@@ -233,7 +243,7 @@ Alt account in real Twitch chat (posts only while the channel is offline)
   real-duel [--bot a]         alt challenges a bot in chat; the bot answers via StreamElements`;
 
 const commands = {
-  seed, clean, duel, state: show,
+  seed, clean, duel, live, state: show,
   say: async () => { const who = botByName(args[0]); console.log(await say(who, args.slice(1).join(' '))); },
   login, 'alt-profile': altProfile, chat: () => chat(args.join(' ')), 'real-duel': realDuel,
   help: async () => console.log(usage),

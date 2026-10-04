@@ -14,7 +14,7 @@ const now = Date.now();
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const user = { id: '1001', login: 'viewer_one', displayName: 'Viewer_One' };
 const mod = { id: '2002', login: 'mod_two', displayName: 'Mod_Two' };
-const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24,
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24, checkinPoints: 1, streakBonus: true,
   abilities: { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } } };
 const board = [
   { userId: '3003', username: 'top_dog', displayName: 'top_dog', avatar: 'soldier', color: '#34d399', defaultAbility: 'heavy', elo: 1048, wins: 4, losses: 1 },
@@ -107,8 +107,8 @@ try {
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
     await page.route('**/api/profile/nesszerra', async (r) => {
-      if (r.request().method() === 'POST') { posted = r.request().postDataJSON(); return json(r, { profile: { ...board[1], ...posted }, revision: 9 }); }
-      return json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now });
+      if (r.request().method() === 'POST') { posted = r.request().postDataJSON(); return json(r, { profile: { ...board[1], bonus: 1, checkins: 4, streak: 3, ...posted }, revision: 9 }); }
+      return json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now, bonus: 1, checkins: 4, streak: 3 });
     });
     await page.goto(base + '/?channel=nesszerra');
     await page.waitForSelector('#save:not([hidden])');
@@ -118,13 +118,16 @@ try {
     assert.equal(await page.locator('input[name=ability]').count(), 0, 'no ability picker with quick duels');
     assert.equal(await page.locator('#admin-link').isHidden(), true);
     assert.match(await page.locator('#stat-elo').textContent(), /1012/);
+    assert.equal((await page.locator('#stat-streak').textContent()).trim(), '3');
     await page.waitForSelector('#leaderboard tr.me');
     await page.locator('label[for=char-adventurer]').click();
     await page.locator('.swatch[data-color="#34d399"]').click();
-    // Hats and upgrades: 2 wins = 2 points; the crown needs 20 wins.
+    // Hats and upgrades: 2 wins + 1 check-in point = 3 points; the crown needs 20 wins.
     assert.equal(await page.locator('#hat-crown').isDisabled(), true);
     await page.locator('label[for=hat-cap]').click();
-    assert.match(await page.locator('#points-note').textContent(), /2 of 2 points/);
+    assert.match(await page.locator('#points-note').textContent(), /3 of 3 points/);
+    assert.ok((await page.locator('#upgrades-help').textContent()).includes('2 from wins and 1 from check-ins'));
+    await page.getByRole('button', { name: 'Put a point into Power' }).click();
     await page.getByRole('button', { name: 'Put a point into Power' }).click();
     await page.getByRole('button', { name: 'Put a point into Luck' }).click();
     assert.equal(await page.getByRole('button', { name: 'Put a point into Guard' }).isDisabled(), true, 'no points left');
@@ -132,7 +135,7 @@ try {
     if (s.name === '1280') await page.screenshot({ path: shots + '/viewer-signed-in-editing-1280.png', fullPage: true });
     await page.locator('#save').click();
     await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('Saved'));
-    assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heal', stats: { power: 1, guard: 0, luck: 1 }, hat: 'cap' });   // the saved ability is kept as is
+    assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heal', stats: { power: 2, guard: 0, luck: 1 }, hat: 'cap' });   // the saved ability is kept as is
     await noOverflow(page, 'viewer signed-in ' + s.name);
     if (s.name !== '1280') {
       // phones: explanation tables wrap instead of scrolling sideways, and the fighter bar stays at the bottom while picking
@@ -303,7 +306,8 @@ try {
         assert.ok(count(/1.5 MB|1.50 MB/g) <= 1, 'the atlas size limit appears once');
       }
       if (tab === 'rules') {
-        assert.equal(await page.locator('#config-fields .config-group:visible').count(), 2, 'only the groups that apply show');
+        assert.equal(await page.locator('#config-fields .config-group:visible').count(), 3, 'only the groups that apply show');
+        assert.equal(await page.locator('#cfg-streakBonus').isChecked(), true);
         assert.equal(await page.locator('#cfg-abilities-strike-damage').count(), 1, 'the HP fight inputs stay in the form');
         assert.equal(await page.locator('#cfg-abilities-strike-damage').isVisible(), false, 'HP fight abilities are hidden unless quick duels are off');
         assert.ok(!/ability values apply/.test(await page.locator('#panel-rules').innerText()));
@@ -351,12 +355,16 @@ try {
     await page.locator('#config-save').click();
     await page.waitForFunction(() => document.querySelector('#config-status').textContent.startsWith('Saved as version'));
     assert.deepEqual(posts.at(-1).payload.patch, { maxHp: 120 });
+    await page.locator('#cfg-streakBonus').uncheck();
+    await page.locator('#config-save').click();
+    await page.waitForFunction(() => document.querySelector('#config-status').textContent.startsWith('Saved as version'));
+    assert.deepEqual(posts.at(-1).payload.patch, { streakBonus: false });
     // with quick duels off the HP-fight group shows
     quickOff = true;
     await page.reload();
     await page.waitForSelector('#app:not([hidden])');
     await page.click('#tab-rules');
-    assert.equal(await page.locator('#config-fields .config-group:visible').count(), 3);
+    assert.equal(await page.locator('#config-fields .config-group:visible').count(), 4);
     assert.match(await page.locator('#config-fields .config-group:visible').last().locator('legend').textContent(), /HP fight abilities/);
     const strike = page.locator('#cfg-abilities-strike-damage');
     await strike.fill('5000');

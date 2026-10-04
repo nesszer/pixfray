@@ -160,8 +160,10 @@ Fixed in this pass:
 - Each accepted duel counts as one round. A knocked-out character respawns.
 - Completed duels update wins/losses and Elo (start 1000, K=24). Rematches between the same pair wait 30 s.
 - 45 s of inactivity cancels a duel with no scoring.
-- Each win earns an upgrade point (power, guard, luck, 5 per stat, 10 in all) and unlocks hats
-  (`server/upgrades.js`).
+- Each win earns an upgrade point (power, guard, luck, 8 per stat, 20 in all) and unlocks hats
+  (`server/upgrades.js`). `!checkin` (StreamElements) gives points once per live stream, with a
+  streak bonus at 3, 7, 14 and 30 streams; check-in points survive a rank reset. The plan for the
+  next stages (dollars, pets, builds) is docs/PROGRESSION_PLAN.md.
 - Ranked duels require a signed-in profile.
 - If chat is disconnected or Twitch revokes the subscription, combat pauses and unfinished duels
   are cancelled without scoring.

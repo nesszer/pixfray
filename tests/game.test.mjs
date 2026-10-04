@@ -743,14 +743,20 @@ test('StreamElements "seeing stars" names the knocked-out fighter, not the one w
 });
 
 // ---------- upgrades (server/upgrades.js) ----------
-test('upgrade points: one per win up to 10, at most 5 per stat; a rank reset trims luck, then guard, then power', async () => {
+test('upgrade points: one per win plus check-in points, up to 20, at most 8 per stat; a rank reset trims luck, then guard, then power', async () => {
   const u = await import('../server/upgrades.js');
-  assert.deepEqual([0, 3, 10, 40].map(u.pointsFor), [0, 3, 10, 10]);
+  assert.deepEqual([0, 3, 20, 40].map((w) => u.pointsFor(w)), [0, 3, 20, 20]);
+  assert.deepEqual([[3, 2], [15, 9], [0, 25], [-1, 4], [2, 1.5]].map(([w, b]) => u.pointsFor(w, b)), [5, 20, 20, 4, 2]);
   assert.deepEqual(u.validStats({ power: 2, guard: 1 }, 3), { power: 2, guard: 1, luck: 0 });
   assert.equal(u.validStats({ power: 2, guard: 2 }, 3), null, 'more points than wins');
-  assert.equal(u.validStats({ power: 6 }, 10), null, 'over the per-stat cap');
+  assert.deepEqual(u.validStats({ power: 2, guard: 2 }, 3, 1), { power: 2, guard: 2, luck: 0 }, 'a check-in point covers the fourth');
+  assert.deepEqual(u.validStats({ power: 8 }, 20), { power: 8, guard: 0, luck: 0 });
+  assert.equal(u.validStats({ power: 9 }, 20), null, 'over the per-stat cap');
   assert.equal(u.validStats({ power: 1.5 }, 10), null);
   assert.deepEqual(u.effectiveStats({ power: 3, guard: 3, luck: 3 }, 5), { power: 3, guard: 2, luck: 0 });
+  assert.deepEqual(u.effectiveStats({ power: 3, guard: 3, luck: 3 }, 0, 7), { power: 3, guard: 3, luck: 1 }, 'check-in points survive a rank reset');
+  const r = u.upgradeRules(4, 3);
+  assert.deepEqual([r.points, r.fromWins, r.fromCheckins, r.maxPoints, r.maxPerStat], [7, 4, 3, 20, 8]);
   assert.equal(u.hatUnlocked('crown', 19), false);
   assert.equal(u.hatUnlocked('crown', 20), true);
   assert.equal(u.hatUnlocked('cap', 0), true);

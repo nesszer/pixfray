@@ -39,7 +39,8 @@ Chat commands for v2 duels:
   the stream for the winner.", and the overlay replays the duel in about 8-25 s and then announces
   the winner and the Elo change. `!elo`, `!ranks` and the website show the old numbers until the
   replay has played on stream (plus the channel's stream delay, 6 s by default and set in the admin Rules tab), so chat replies and ranks don't spoil the stream. The overlay itself gets the result at once, so someone who opens the overlay page can see it early. The default ability only changes how blows look. Each win earns an upgrade point
-  (power, guard, luck) and unlocks hats; see CONTRACTS.md section 6. The HP fight with `!strike`,
+  (power, guard, luck) and unlocks hats. `!checkin`, once per live stream, adds a point too, with
+  streak bonuses; 20 points in all, 8 per stat. See CONTRACTS.md section 6. The HP fight with `!strike`,
   `!heavy` and `!heal` runs only if a mod's config sets `quickDuel` to false.
 - Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).
 

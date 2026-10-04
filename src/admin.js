@@ -20,6 +20,11 @@ const GROUPS = [
     { key: "initialElo", label: "Starting Elo", unit: "Elo", min: 0, max: 10000 },
     { key: "eloK", label: "Elo K-factor", unit: "K", min: 1, max: 100 },
   ] },
+  // !checkin (server/channel.js checkin). Wins and check-in points together are capped at 20.
+  { title: "Check-ins", fields: [
+    { key: "checkinPoints", label: "Upgrade points per check-in", unit: "points", min: 0, max: 3 },
+    { key: "streakBonus", label: "Streak bonus", bool: true, hint: "+1 point at a streak of 3, 7, 14 and 30 streams" },
+  ] },
   // Only used when config.quickDuel is false, and no screen turns that off, so the group stays hidden (but in the form, so saving keeps its values).
   { title: "HP fight abilities", visible: (c) => c.quickDuel === false, fields: [
     { key: "abilities.strike.damage", label: "Strike damage", unit: "HP", min: 1, max: 1000 },
@@ -35,7 +40,7 @@ const FIELDS = GROUPS.flatMap((g) => g.fields);
 const LABELS = Object.fromEntries([...FIELDS.map((f) => [f.key, f]), ["enabled", { label: "Duels enabled" }]]);
 const get = (obj, key) => key.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 const flatten = (config) => Object.fromEntries([...FIELDS.map((f) => [f.key, get(config, f.key)]), ["enabled", config?.enabled]]);
-const show = (key, v) => v === undefined ? "—" : key === "enabled" ? (v ? "on" : "off") : LABELS[key]?.ms ? seconds(v) : v + (LABELS[key]?.unit && LABELS[key].unit !== "s" ? " " + LABELS[key].unit : "");
+const show = (key, v) => v === undefined ? "—" : key === "enabled" || LABELS[key]?.bool ? (v ? "on" : "off") : LABELS[key]?.ms ? seconds(v) : v + (LABELS[key]?.unit && LABELS[key].unit !== "s" ? " " + LABELS[key].unit : "");
 
 const S = { session: null, access: null, admin: null, leaderboard: [], names: new Map(), socket: null, retry: 0 };
 const actionStatus = $("#action-status"), configStatus = $("#config-status");
@@ -287,6 +292,7 @@ function renderConfig() {
   box.replaceChildren(...GROUPS.map((g) => h("fieldset", { class: "config-group", hidden: g.visible ? !g.visible(config) : false }, h("legend", {}, g.title),
     h("div", { class: "config-grid" }, g.fields.map((f) => {
       const id = "cfg-" + f.key.replace(/\./g, "-"), value = get(config, f.key);
+      if (f.bool) return h("div", {}, h("label", { class: "check", for: id }, h("input", { id, type: "checkbox", "data-key": f.key, checked: Boolean(value) }), " " + f.label), h("p", { class: "hint" }, f.hint));
       const input = h("input", { id, type: "number", inputmode: "decimal", required: true, "data-key": f.key,
         min: f.ms ? f.min / 1000 : f.min, max: f.ms ? f.max / 1000 : f.max, step: f.ms ? 0.25 : 1, value: String(f.ms ? value / 1000 : value) });
       return h("div", {}, h("label", { for: id }, f.label + " (" + f.unit + ")"), input,
@@ -296,6 +302,7 @@ function renderConfig() {
 }
 function readField(input) {
   const f = LABELS[input.dataset.key], raw = input.value.trim(), n = Number(raw);
+  if (f.bool) return { value: input.checked };
   if (raw === "" || !Number.isFinite(n)) return { error: f.label + " needs a number." };
   const value = f.ms ? Math.round(n * 1000) : n;
   if (!Number.isInteger(value)) return { error: f.label + " must be a whole number." };
@@ -459,7 +466,7 @@ $("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.cur
 $("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat", e.currentTarget));
 
 // ---------- StreamElements ----------
-const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", rematch: "Rematch the last rival", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", help: "How to play", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
+const SE_LABELS = { challenge: "Challenge @viewer", accept: "Accept a challenge", decline: "Decline a challenge", rematch: "Rematch the last rival", top: "Top 5 by Elo", elo: "Own Elo, or @viewer's", help: "How to play", checkin: "Daily check-in", attack: "Default ability", strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 function renderSe() {
   const se = S.admin.streamelements, c = S.admin.chatStatus || {};
   const using = c.connected && c.source === "streamelements", twitch = c.connected && c.source === "twitch";

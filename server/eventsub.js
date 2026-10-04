@@ -160,6 +160,13 @@ export async function disconnectChat(env,{subscriptionId,url}){
   if(!subscriptionId||subscriptionId.startsWith('local-')||subscriptionId.startsWith('se-')||localTestMode(env,url))return;
   await deleteSubscription(env,subscriptionId);
 }
+// !checkin: the channel's current stream as {id,startedAt}, or null when it is offline. Throws when Twitch can't be reached.
+export async function liveStream(env,login){
+  const r=await helix(env,'GET','/streams?user_login='+encodeURIComponent(login));
+  if(!r.ok)throw fail('Twitch stream lookup failed ('+r.status+')',502);
+  const s=(await r.json()).data?.[0];
+  return s?.id&&s.type==='live'?{id:String(s.id),startedAt:Date.parse(s.started_at)||0}:null;
+}
 // Hourly alarm check. Returns the subscription status, 'missing', or null when Twitch can't be reached (no change then).
 export async function checkChatSubscription(env,subscriptionId){
   try{const s=(await listChatSubscriptions(env)).find(x=>x.id===subscriptionId);return s?String(s.status):'missing';}

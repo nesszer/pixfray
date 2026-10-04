@@ -220,7 +220,7 @@ input[type="color"] { padding: 2px; width: 56px; cursor: pointer; }
   outline: 1px solid var(--border-strong); outline-offset: -6px; display: grid; gap: var(--space-4); }
 .fighter-card .toolbar > .btn { flex: 1 1 auto; justify-content: center; }
 .fighter-card .status { margin: 0; }
-.fighter-card .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fighter-card .stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .fighter-card .stat { padding: var(--space-3) var(--space-4); }
 .fighter-card .stat .value { font-size: var(--text-xl); }
 

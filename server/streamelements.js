@@ -5,10 +5,10 @@ import { hiddenResults } from './game.js';
 
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
-export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help'];   // quick duels need no attack commands
+export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help', 'checkin'];   // quick duels need no attack commands
 export const SE_READ_ACTIONS = ['top', 'elo', 'help'];   // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!minichat' };
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!minichat', checkin: '!checkin' };
 export const LOST_TEXT = 'Lost in the arena? Type !minichat';
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
 export const OFF_TEXT = 'Mini Chat is off on this channel right now.';
@@ -120,6 +120,23 @@ export function seEloText(found, { self, askerName = '', target = '', origin = '
   }
   const { profile: p, rank, total } = found;
   return `${short(p.displayName || p.username)}: ${p.elo} Elo, rank ${rank} of ${total}, ${p.wins} win${p.wins === 1 ? '' : 's'} and ${p.losses} loss${p.losses === 1 ? '' : 'es'}.`;
+}
+// !checkin: one line per outcome of ChannelRoom.checkin (server/channel.js).
+export function seCheckinText(r, { who = '', origin = '', channel = '', maxPoints = 20 } = {}) {
+  const me = short(who) || 'you';
+  switch (r?.reason) {
+    case 'checked_in': {
+      const extras = [`${r.streak}-stream streak`, r.milestone ? 'streak bonus' : '', r.freeMiss ? 'free miss used' : ''].filter(Boolean).join(', ');
+      const gain = r.points ? `+${r.points} upgrade point${r.points === 1 ? '' : 's'} (${extras})` : `${extras}`;
+      const link = siteLink(origin, channel, '#upgrades');
+      const total = r.total >= maxPoints ? `${maxPoints} of ${maxPoints} points, the most a fighter can hold.` : `${r.total} of ${maxPoints} points.`;
+      return `@${me} checked in: ${gain}. ${total}${r.points && link ? ' Spend them at ' + link : ''}`;
+    }
+    case 'already_checked_in': return `@${me}, you already checked in this stream (${r.streak}-stream streak). Come back next stream!`;
+    case 'not_live': return `Check-ins open while ${channel || 'the stream'} is live. See you next stream!`;
+    case 'no_fighter': return noFighter(me, true, origin, channel);
+    default: return "Couldn't reach Twitch to check the stream. Try again in a minute!";
+  }
 }
 const nameOf = (state, id) => { const p = state.players.find(x => x.userId === id); return p?.displayName || p?.username || 'someone'; };
 

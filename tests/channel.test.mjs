@@ -520,6 +520,79 @@ test('StreamElements !ranks, !elo and !minichat work even while duels are paused
   assert.match((await cmd('u1', 'alice', 'help')).body.reply, /!duel @name\. They answer !yes\. Again\? !rematch$/);
 });
 
+test('!checkin: once per stream while live, streaks with one free miss a week, milestone bonus; points survive a rank reset', async () => {
+  const r = room({ DEV_TOOLS_TOKEN: 'x'.repeat(40) }, { quick: true });
+  const se = (await r.call('/admin')).body.streamelements;
+  assert.equal(se.names.checkin, '!checkin');
+  let m = 0;
+  const cmd = (id, login) => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action: 'checkin', userId: id, username: login, displayName: login, messageId: 'c' + (++m) } });
+  const live = (body) => r.call('/dev-live', { method: 'POST', body });
+  const say = async (id, login) => (await cmd(id, login)).body.reply;
+  assert.equal(await say('u1', 'alice'), '@alice, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra');
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  assert.deepEqual((await live({ live: false })).body, { ok: true, live: false, streamId: '' });
+  assert.equal(await say('u1', 'alice'), 'Check-ins open while nesszerra is live. See you next stream!');
+  await live({ live: true, streamId: 's1' });
+  assert.equal(await say('u1', 'alice'), '@alice checked in: +1 upgrade point (1-stream streak). 1 of 20 points. Spend them at https://test.example/?channel=nesszerra#upgrades');
+  assert.equal(await say('u1', 'alice'), '@alice, you already checked in this stream (1-stream streak). Come back next stream!');
+  await live({ live: true, streamId: 's2' });
+  assert.ok((await say('u1', 'alice')).includes('+1 upgrade point (2-stream streak). 2 of 20'));
+  await live({ live: true, streamId: 's3' });
+  assert.ok((await say('u1', 'alice')).includes('+2 upgrade points (3-stream streak, streak bonus). 4 of 20'));
+  // Alice misses s4: the free miss keeps her streak. Missing s6 too, within the week, starts it over.
+  for (const [stream, who] of [['s4', ['u2', 'bob']], ['s5', ['u1', 'alice']], ['s6', ['u2', 'bob']], ['s7', ['u1', 'alice']]]) {
+    await live({ live: true, streamId: stream });
+    const reply = await say(...who);
+    if (stream === 's5') assert.ok((reply).includes('+1 upgrade point (4-stream streak, free miss used). 5 of 20'));
+    if (stream === 's7') assert.ok((reply).includes('+1 upgrade point (1-stream streak). 6 of 20'));
+  }
+  let p = (await r.call('/profile?userId=u1')).body;
+  assert.deepEqual([p.bonus, p.checkins, p.streak, p.upgrades.points, p.upgrades.fromCheckins], [6, 5, 1, 6, 6]);
+  assert.equal((await r.call('/state')).body.players.find((x) => x.userId === 'u1').bonus, 6, 'the next duel counts the new points');
+  assert.equal((await r.call('/dev/logs?source=command')).body[0].context.reason, 'checked_in');
+  // The points are spendable, and a rank reset keeps them.
+  r.ctx.storage.sql.exec("UPDATE profiles SET wins = 3 WHERE user_id = 'u1'");
+  const saved = (await r.save('u1', 'alice', { stats: { power: 8, guard: 1 } })).body.profile;
+  assert.deepEqual([saved.bonus, saved.checkins, saved.streak], [6, 5, 1], 'the save answer keeps the streak');
+  assert.equal((await r.save('u1', 'alice', { stats: { power: 8, guard: 2 } })).body.error, 'invalid_upgrades');
+  await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'resetRank', payload: { userId: 'u1' } } });
+  p = (await r.call('/profile?userId=u1')).body;
+  assert.deepEqual([p.wins, p.bonus, p.upgrades.points], [0, 6, 6]);
+  // Mods tune it: no points per check-in and no streak bonus still count the streak.
+  const cfg = (patch) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'config', payload: { patch } } });
+  assert.equal((await cfg({ checkinPoints: 4 })).body.error, 'invalid_config_checkinPoints');
+  assert.equal((await cfg({ streakBonus: 'yes' })).body.error, 'invalid_config_streakBonus');
+  assert.equal((await cfg({ checkinPoints: 0, streakBonus: false })).status, 200);
+  await live({ live: true, streamId: 's8' });
+  assert.equal(await say('u1', 'alice'), '@alice checked in: 2-stream streak. 6 of 20 points.');
+  // A wrong key never reaches the check-in.
+  assert.equal((await r.call('/se', { method: 'POST', body: { key: 'f'.repeat(48), action: 'checkin', userId: 'u1', username: 'alice' } })).status, 403);
+});
+
+test('!checkin asks Twitch whether the channel is live, keeps the answer a minute, and says try again when Twitch fails', async (t) => {
+  const store = new AuthStore(fakeCtx(), { INTERNAL_SECRET: SECRET });
+  const AUTH = { idFromName: () => 'auth', get: () => ({ fetch: (url, init) => store.fetch(new Request(url, init)) }) };
+  const r = room({ AUTH, AUTH_SECRET: 'a'.repeat(64), TWITCH_CLIENT_ID: 'client-id', TWITCH_CLIENT_SECRET: 'client-secret' });
+  let helix = () => new Response('down', { status: 503 });
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    calls.push(String(url));
+    if (String(url).startsWith('https://id.twitch.tv/oauth2/token')) return Response.json({ access_token: 'app-token', expires_in: 3600 });
+    return helix();
+  });
+  const se = (await r.call('/admin')).body.streamelements;
+  const say = async (id, login) => (await r.call('/se', { method: 'POST', body: { key: se.secret, action: 'checkin', userId: id, username: login, displayName: login } })).body.reply;
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  assert.equal(await say('u1', 'alice'), "Couldn't reach Twitch to check the stream. Try again in a minute!");
+  assert.equal((await r.call('/profile?userId=u1')).body.bonus, 0);
+  assert.equal((await r.call('/dev-live', { method: 'POST', body: { live: true } })).status, 404, 'no pretend streams without the dev token');
+  helix = () => Response.json({ data: [{ id: '4242', type: 'live', started_at: '2026-10-04T10:00:00Z' }] });
+  assert.ok((await say('u1', 'alice')).includes('@alice checked in: +1 upgrade point'));
+  assert.match(await say('u2', 'bob'), /^@bob checked in/);
+  assert.equal(calls.filter((u) => u.includes('/helix/streams?user_login=nesszerra')).length, 2, 'the failed lookup was not cached; the live answer is');
+  assert.equal(r.ctx.storage.sql.exec("SELECT stream_id FROM streams").toArray()[0].stream_id, '4242');
+});
+
 test('/looks returns saved looks by login for the overlay: saved profiles only, at most 20 logins', async () => {
   const r = room();
   await r.save('u1', 'Alice', { avatar: 'toon-ghoul', color: '#112233' });
@@ -548,6 +621,11 @@ test('dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   assert.equal(fight.body.reason, 'quick_duel');
   assert.equal(fight.body.reply, 'Fight on: testbot_a vs testbot_b! Watch the stream for the winner.');
   assert.equal(r.ctx.storage.sql.exec('SELECT wins, losses FROM profiles').toArray().filter((p) => p.wins + p.losses === 1).length, 2, 'Elo and records are saved');
+
+  await r.call('/dev-live', { method: 'POST', body: { live: true, streamId: 's1' } });
+  const checked = await say('b1', 'testbot_a', '!checkin');
+  assert.equal(checked.body.reason, 'checked_in');
+  assert.ok(checked.body.reply.startsWith('@testbot_a checked in: +1 upgrade point'), checked.body.reply);
 });
 
 test('overlay sockets: one network is capped, and a full room drops an old socket instead of refusing', async () => {

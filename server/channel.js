@@ -12,9 +12,9 @@ import {
 } from "./game.js";
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
-import { checkChatSubscription } from "./eventsub.js";
-import { cleanStats, knownHat, validStats, hatUnlocked, upgradeRules } from "./upgrades.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText } from "./streamelements.js";
+import { checkChatSubscription, liveStream } from "./eventsub.js";
+import { cleanStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS } from "./upgrades.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -34,6 +34,12 @@ const PRESENCE_REFRESH_MS = 30_000;        // chat-only viewers refresh their ar
 const LAST_SEEN_WRITE_MS = 60_000;         // chat.lastSeen alone is persisted at most once a minute
 const CHAT_CHECK_MS = 60 * 60_000;         // the alarm re-checks the Helix subscription at most hourly
 const CHAT_PENDING_CHECK_MS = 3 * 60_000;  // a subscription still awaiting webhook verification is re-checked sooner
+const LIVE_CACHE_MS = 60_000;              // !checkin asks Twitch whether the channel is live at most once a minute
+const FREE_MISS_MS = 7 * 24 * 60 * 60_000; // a streak survives one missed stream per week
+const STREAK_MILESTONES = [3, 7, 14, 30];  // +1 point when the streak reaches one of these (config.streakBonus)
+const MAX_BONUS = 1_000;                   // stored check-in points; only MAX_POINTS of wins + bonus ever count
+// Every query that builds a profile with normalizeProfileRow reads these columns.
+const PROFILE_COLUMNS = "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak";
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -84,6 +90,9 @@ function normalizeProfileRow(row, config) {
     respawnAt: 0,
     stats: cleanStats({ power: row.power, guard: row.guard, luck: row.luck }),
     hat: knownHat(row.hat) ? row.hat : "",
+    bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0,   // check-in points (checkin below)
+    checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
+    streak: Number.isInteger(row.streak) ? row.streak : 0,
     ...(row.last_opponent ? { lastOpponentId: String(row.last_opponent) } : {}),   // only getProfile reads it
   };
 }
@@ -121,6 +130,13 @@ export class ChannelRoom extends DurableObject {
     for (const column of ["power", "guard", "luck"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("hat")) sql.exec("ALTER TABLE profiles ADD COLUMN hat TEXT NOT NULL DEFAULT ''");
     if (!profileColumns.includes("last_opponent")) sql.exec("ALTER TABLE profiles ADD COLUMN last_opponent TEXT NOT NULL DEFAULT ''");   // !rematch
+    // v2.6: !checkin. Check-in points live apart from wins, so a rank reset keeps them; upsertProfile never writes them.
+    for (const column of ["bonus_points", "checkins", "streak", "last_stream_seq", "free_miss_at"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+    if (!profileColumns.includes("last_stream")) sql.exec("ALTER TABLE profiles ADD COLUMN last_stream TEXT NOT NULL DEFAULT ''");
+    // Streams with at least one check-in, numbered in order: a streak counts these, so a gap of one seq is one missed stream.
+    sql.exec("CREATE TABLE IF NOT EXISTS streams (seq INTEGER PRIMARY KEY, stream_id TEXT NOT NULL UNIQUE, started_at INTEGER NOT NULL)");
+    // Test site only (DEV_TOOLS_TOKEN): a pretend live stream for !checkin. stream_id '' = pretend offline.
+    sql.exec("CREATE TABLE IF NOT EXISTS dev_live (id INTEGER PRIMARY KEY CHECK (id = 1), stream_id TEXT NOT NULL, started_at INTEGER NOT NULL)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
     sql.exec("CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')");
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
@@ -187,7 +203,7 @@ export class ChannelRoom extends DurableObject {
       const logins = [...new Set(String(url.searchParams.get("u") || "").split(",").map(normalizeUsername).filter((u) => /^[a-z0-9_]+$/.test(u)))].slice(0, MAX_LOOKS);
       if (!logins.length) return json({});
       const state = this.readState(channel), config = state.config, hidden = hiddenResults(state, Date.now()), out = {};
-      const rows = this.ctx.storage.sql.exec(`SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`, ...logins).toArray();
+      const rows = this.ctx.storage.sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`, ...logins).toArray();
       for (const row of rows) {
         const p = shownProfile(normalizeProfileRow(row, config), hidden);
         out[p.username.toLowerCase()] = { avatar: p.avatar, color: p.color, hat: p.hat || "", displayName: p.displayName, elo: p.elo };
@@ -204,7 +220,7 @@ export class ChannelRoom extends DurableObject {
       if (!profile) return json(null);
       // A knocked-out fighter (hp 0, respawnAt) would give away a result the stream hasn't shown yet.
       const active = !hidden.has(userId) && state.players.find((item) => item.userId === userId);
-      return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins) });
+      return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins, profile.bonus) });
     }
 
     if (path === "/profile" && request.method === "POST") {
@@ -218,7 +234,7 @@ export class ChannelRoom extends DurableObject {
       this.broadcast(result.state);
       await this.scheduleAlarm(result.state);
       const shown = shownProfile(result.profile, hiddenResults(result.state, Date.now()));
-      return json({ profile: { ...shown, upgrades: upgradeRules(shown.wins) }, revision: result.state.revision });
+      return json({ profile: { ...shown, upgrades: upgradeRules(shown.wins, shown.bonus) }, revision: result.state.revision });
     }
 
     if (path === "/admin" && request.method === "POST") {
@@ -297,9 +313,25 @@ export class ChannelRoom extends DurableObject {
       if (result.changed) await this.scheduleAlarm(result.state);
       const r = result.result || {};
       if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
+      if (/^!checkin(?:\s|$)/i.test(String(line || "").trim())) {
+        const checked = await this.checkin(channel, { userId: validUserId(userId) }, now);
+        return json({ ...checked, reply: seCheckinText(checked, { who: displayName || username, origin: "", channel, maxPoints: MAX_POINTS }) });
+      }
       const parsed = parseGameCommand(String(line || ""));   // the reply is the line a StreamElements bot would post
       const action = parsed ? ({ duel: "challenge" }[parsed.action] || parsed.action) : "";
       return json({ ...r, revision: result.state.revision, reply: parsed ? seReplyText({ result: r, state: result.state, actorId: userId, action, target: parsed.target, names: this.seSettings().names, origin: "", now }) : "" });
+    }
+    // Test site only: pretend the channel is live ({live:true}, a new stream id unless streamId is given), offline
+    // ({live:false}), or ask Twitch again ({live:null}).
+    if (path === "/dev-live" && request.method === "POST") {
+      if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      const { live, streamId } = body.value, sql = this.ctx.storage.sql;
+      if (typeof live !== "boolean") sql.exec("DELETE FROM dev_live");
+      else sql.exec("INSERT OR REPLACE INTO dev_live (id, stream_id, started_at) VALUES (1, ?, ?)", live ? "dev-" + (/^[a-z0-9_-]{1,36}$/i.test(streamId || "") ? streamId : randomHex().slice(0, 12)) : "", Date.now());
+      const row = sql.exec("SELECT stream_id FROM dev_live WHERE id = 1").toArray()[0];
+      return json({ ok: true, live: row ? Boolean(row.stream_id) : null, streamId: row?.stream_id || "" });
     }
     if (path === "/chat" && request.method === "GET") return json(chatStatus(this.readState(channel)));
     if (path === "/chat" && request.method === "POST") {
@@ -411,7 +443,7 @@ export class ChannelRoom extends DurableObject {
       const existing = this.getProfile(userId, state.config);
       // Upgrades and hat: optional in the request (left out = keep the saved ones), checked against the saved wins.
       const wins = existing?.wins || 0;
-      const stats = input.stats === undefined ? existing?.stats : validStats(input.stats, wins);
+      const stats = input.stats === undefined ? existing?.stats : validStats(input.stats, wins, existing?.bonus || 0);
       if (stats === null) return { ok: false, reason: "invalid_upgrades" };
       const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
       if (hat !== (existing?.hat || "") && !hatUnlocked(hat, wins)) return { ok: false, reason: knownHat(hat) ? "hat_locked" : "invalid_profile" };
@@ -446,13 +478,15 @@ export class ChannelRoom extends DurableObject {
       this.writeState(result.state);
       const active = result.state.players.find((item) => item.userId === userId);
       this.upsertProfile(active || profile);
-      return { ok: true, profile: active || profile, state: result.state };
+      // The state player has no streak or check-in count; they live only in the profiles table.
+      const saved = { ...(active || profile), bonus: existing?.bonus || 0, checkins: existing?.checkins || 0, streak: existing?.streak || 0 };
+      return { ok: true, profile: saved, state: result.state };
     });
   }
 
   getProfile(userId, config) {
     const row = this.ctx.storage.sql.exec(
-      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, last_opponent FROM profiles WHERE user_id = ?",
+      `SELECT ${PROFILE_COLUMNS}, last_opponent FROM profiles WHERE user_id = ?`,
       userId,
     ).toArray()[0];
     return normalizeProfileRow(row, config);
@@ -462,7 +496,7 @@ export class ChannelRoom extends DurableObject {
     const name = normalizeUsername(username);
     if (!name) return null;
     const row = this.ctx.storage.sql.exec(
-      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE username = ? COLLATE NOCASE",
+      `SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`,
       name,
     ).toArray()[0];
     return normalizeProfileRow(row, config);
@@ -508,7 +542,7 @@ export class ChannelRoom extends DurableObject {
   leaderboard(channel) {
     const state = this.readState(channel);
     const rows = this.ctx.storage.sql.exec(
-      "SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC LIMIT 100",
+      `SELECT ${PROFILE_COLUMNS} FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC LIMIT 100`,
     ).toArray();
     const hidden = hiddenResults(state, Date.now());
     const out = rows.map((row) => {
@@ -523,8 +557,8 @@ export class ChannelRoom extends DurableObject {
   eloLookup(channel, { userId, username }) {
     const sql = this.ctx.storage.sql;
     const row = (userId
-      ? sql.exec("SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE user_id = ?", userId)
-      : sql.exec("SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE username = ? COLLATE NOCASE", username)).toArray()[0];
+      ? sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, userId)
+      : sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`, username)).toArray()[0];
     if (!row) return null;
     const state = this.readState(channel), hidden = hiddenResults(state, Date.now());
     const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
@@ -535,7 +569,7 @@ export class ChannelRoom extends DurableObject {
     // The count used everyone's saved numbers; swap in the shown ones for fighters whose result is still hidden.
     for (const id of hidden.keys()) {
       if (id === profile.userId) continue;
-      const other = sql.exec("SELECT user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat FROM profiles WHERE user_id = ?", id).toArray()[0];
+      const other = sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, id).toArray()[0];
       if (!other) continue;
       const saved = normalizeProfileRow(other, state.config);
       ahead += (boardOrder(shownProfile(saved, hidden), profile) < 0) - (boardOrder(saved, profile) < 0);
@@ -668,6 +702,10 @@ export class ChannelRoom extends DurableObject {
     };
     if (!action) return done(`Lost in the arena? Type ${names.help}`, "unknown_action");
     if (!userId || !username) return done("Mini Chat: this command is missing sender details. Copy it again from the admin page.", "missing_sender");
+    if (action === "checkin") {   // works while duels are paused: it only needs the stream to be live
+      const checked = await this.checkin(channel, { userId }, now);
+      return done(seCheckinText(checked, { who: input.displayName || username, origin, channel, maxPoints: MAX_POINTS }), checked.reason, checked.reason === "checked_in" ? { streak: checked.streak, points: checked.points } : {});
+    }
     if (SE_READ_ACTIONS.includes(action)) {
       if (action === "help") return done(seHelpText({ names, origin, channel }), "help");
       if (action === "top") return done(seTopText(this.leaderboard(channel).slice(0, 5), { origin, channel }), "top");
@@ -685,6 +723,51 @@ export class ChannelRoom extends DurableObject {
     if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
     const actorRegistered = r.reason !== "ranked_sign_in_required" || this.ctx.storage.sql.exec("SELECT 1 FROM profiles WHERE user_id = ?", userId).toArray().length > 0;
     return done(seReplyText({ result: r, state: result.state, actorId: userId, action, target, names, origin, now, actorRegistered }), r.reason || (r.ok ? action : "error"), r.swings ? { duelId: r.duelId, swings: r.swings.map((s) => s.die + ({ crit: "x" }[s.outcome] || s.outcome[0])).join(" ") } : {});
+  }
+
+  // !checkin: once per stream, only while Twitch says the channel is live. Gives config.checkinPoints, plus 1 when the
+  // streak reaches a milestone. A streak counts this channel's streams with check-ins (the streams table) in a row;
+  // one missed stream a week is forgiven. Points are stored apart from wins (bonus_points), so a rank reset keeps them.
+  async checkin(channel, { userId }, now = Date.now()) {
+    if (!userId || !this.getProfile(userId, this.readState(channel).config)) return { reason: "no_fighter" };
+    let stream;
+    try { stream = await this.currentStream(channel, now); }
+    catch (error) {
+      logRoomEvent(this, "warn", "twitch stream lookup failed", { channel, error: String(error?.message || error).slice(0, 200) });
+      return { reason: "twitch_error" };
+    }
+    if (!stream) return { reason: "not_live" };
+    return this.ctx.storage.transactionSync(() => {
+      const sql = this.ctx.storage.sql, state = this.readState(channel), config = state.config;
+      const row = sql.exec("SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at FROM profiles WHERE user_id = ?", userId).toArray()[0];
+      if (!row) return { reason: "no_fighter" };
+      if (row.last_stream === stream.id) return { reason: "already_checked_in", streak: row.streak };
+      sql.exec("INSERT OR IGNORE INTO streams (stream_id, started_at) VALUES (?, ?)", stream.id, stream.startedAt || now);
+      const seq = sql.exec("SELECT seq FROM streams WHERE stream_id = ?", stream.id).toArray()[0].seq;
+      const missed = row.last_stream_seq > 0 ? seq - row.last_stream_seq - 1 : -1;
+      const freeMiss = missed === 1 && now - row.free_miss_at >= FREE_MISS_MS;
+      const streak = missed === 0 || freeMiss ? row.streak + 1 : 1;
+      const milestone = Boolean(config.streakBonus) && STREAK_MILESTONES.includes(streak);
+      const points = config.checkinPoints + (milestone ? 1 : 0);
+      const bonus = Math.min(MAX_BONUS, row.bonus_points + points);
+      sql.exec("UPDATE profiles SET bonus_points = ?, checkins = checkins + 1, streak = ?, last_stream = ?, last_stream_seq = ?, free_miss_at = ? WHERE user_id = ?",
+        bonus, streak, stream.id, seq, freeMiss ? now : row.free_miss_at, userId);
+      const active = state.players.find((p) => p.userId === userId);
+      if (active) { active.bonus = bonus; this.writeState(state); }   // the next duel counts the new points
+      return { reason: "checked_in", streak, points, milestone, freeMiss, total: pointsFor(row.wins, bonus) };
+    });
+  }
+
+  // The channel's live stream {id, startedAt} or null. Twitch's answer is kept for a minute; a failed lookup throws.
+  async currentStream(channel, now) {
+    if (this.env?.DEV_TOOLS_TOKEN) {
+      const dev = this.ctx.storage.sql.exec("SELECT stream_id, started_at FROM dev_live WHERE id = 1").toArray()[0];
+      if (dev) return dev.stream_id ? { id: dev.stream_id, startedAt: dev.started_at } : null;
+    }
+    if (this.liveCache && now - this.liveCache.at < LIVE_CACHE_MS) return this.liveCache.stream;
+    const stream = await liveStream(this.env, channel);
+    this.liveCache = { at: now, stream };
+    return stream;
   }
 
   // After a finished duel the stored profiles must match the game state, or the next command undoes the result.

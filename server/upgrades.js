@@ -1,13 +1,14 @@
 // Fighter upgrades and hats: the rules live here so the duel math, profile saving and the dashboard agree.
-// Every win earns one upgrade point (up to MAX_POINTS). Points go into three stats, at most MAX_PER_STAT each,
+// Every win earns one upgrade point, and so does every stream check-in (bonus points, kept on a rank reset), up to
+// MAX_POINTS in total. Points go into three stats, at most MAX_PER_STAT each,
 // and can be moved around (respec) for free whenever the fighter is not in a duel.
 //   power: +4% damage dealt per point      guard: -4% damage taken per point
 //   luck:  4% per point that a miss still lands as a hit
 // Hats are cosmetic; some unlock at a number of wins. The overlay draws them (public/hats.js).
 
 export const STATS = ["power", "guard", "luck"];
-export const MAX_PER_STAT = 5;
-export const MAX_POINTS = 10;
+export const MAX_PER_STAT = 8;
+export const MAX_POINTS = 20;
 export const STAT_STEP = 0.04;
 
 export const HATS = [
@@ -23,7 +24,9 @@ export const HATS = [
 ];
 const HAT_WINS = new Map(HATS.map((h) => [h.id, h.wins]));
 
-export const pointsFor = (wins) => Math.max(0, Math.min(MAX_POINTS, Number.isInteger(wins) ? wins : 0));
+const whole = (n) => (Number.isInteger(n) && n > 0 ? n : 0);
+// Points from wins plus check-in (bonus) points, capped at MAX_POINTS.
+export const pointsFor = (wins, bonus = 0) => Math.min(MAX_POINTS, whole(wins) + whole(bonus));
 
 export function emptyStats() {
   return { power: 0, guard: 0, luck: 0 };
@@ -39,11 +42,11 @@ export function cleanStats(input) {
   return out;
 }
 
-// Stats the fighter can use with this many wins. A rank reset lowers the points; the excess comes off
-// luck first, then guard, then power, so a stored build never counts for more than the wins allow.
-export function effectiveStats(stats, wins) {
+// Stats the fighter can use with these points. A rank reset lowers the points; the excess comes off
+// luck first, then guard, then power, so a stored build never counts for more than the points allow.
+export function effectiveStats(stats, wins, bonus = 0) {
   const out = cleanStats(stats);
-  let extra = STATS.reduce((sum, key) => sum + out[key], 0) - pointsFor(wins);
+  let extra = STATS.reduce((sum, key) => sum + out[key], 0) - pointsFor(wins, bonus);
   for (const key of ["luck", "guard", "power"]) {
     const cut = Math.min(out[key], Math.max(0, extra));
     out[key] -= cut;
@@ -52,8 +55,8 @@ export function effectiveStats(stats, wins) {
   return out;
 }
 
-// For saving: null when the build spends more points than the wins give or breaks a stat cap.
-export function validStats(input, wins) {
+// For saving: null when the build spends more points than the fighter has or breaks a stat cap.
+export function validStats(input, wins, bonus = 0) {
   if (input === undefined || input === null) return emptyStats();
   if (typeof input !== "object" || Array.isArray(input)) return null;
   const out = emptyStats();
@@ -62,7 +65,7 @@ export function validStats(input, wins) {
     if (!Number.isInteger(v) || v < 0 || v > MAX_PER_STAT) return null;
     out[key] = v;
   }
-  return STATS.reduce((sum, key) => sum + out[key], 0) <= pointsFor(wins) ? out : null;
+  return STATS.reduce((sum, key) => sum + out[key], 0) <= pointsFor(wins, bonus) ? out : null;
 }
 
 export const knownHat = (id) => HAT_WINS.has(typeof id === "string" ? id : "");
@@ -75,12 +78,14 @@ export function scaledDamage(base, dealerStats, targetStats) {
 }
 
 // Rules for the dashboard, sent with the profile so the page never hard-codes them.
-export function upgradeRules(wins) {
+export function upgradeRules(wins, bonus = 0) {
   return {
     stats: STATS,
     maxPerStat: MAX_PER_STAT,
     maxPoints: MAX_POINTS,
-    points: pointsFor(wins),
+    points: pointsFor(wins, bonus),
+    fromWins: whole(wins),
+    fromCheckins: whole(bonus),
     step: STAT_STEP,
     hats: HATS.map((h) => ({ ...h, unlocked: (Number.isInteger(wins) ? wins : 0) >= h.wins })),
   };
