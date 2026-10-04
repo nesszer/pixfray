@@ -37,7 +37,8 @@ In StreamElements go to Chat bot, then Modules, and switch off Duel, or type
 ## 4. Add the commands to StreamElements
 
 The table in step 3, "Add the chat commands to StreamElements", lists 10 commands: `!challenge`, `!fight`, `!decline`,
-`!rematch`, `!checkin`, `!wallet`, `!give`, `!elo`, `!ranks` and `!minichat`. You can rename them first and click **Save names**.
+`!rematch`, `!checkin`, `!wallet`, `!pay`, `!elo`, `!ranks` and `!minichat`. You can rename them first and click **Save names**.
+Keep `!pay` off `!give`: StreamElements' built-in `!givepoints` already answers to `!give`.
 
 For each row, in StreamElements go to Chat bot, then Commands, then Custom commands, and click Add
 new command:

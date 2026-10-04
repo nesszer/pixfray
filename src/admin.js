@@ -29,7 +29,7 @@ const GROUPS = [
   { title: "Dollars", fields: [
     { key: "winDollars", label: "Dollars for a win", unit: "$", min: 0, max: 100 },
     { key: "lossDollars", label: "Dollars for a loss", unit: "$", min: 0, max: 100 },
-    { key: "giveEnabled", label: "Viewers can give dollars", bool: true, hint: "!give @name amount, only while the stream is live" },
+    { key: "giveEnabled", label: "Viewers can give dollars", bool: true, hint: "!pay @name amount, only while the stream is live" },
     { key: "giveMaxPerStream", label: "Most one viewer gives per stream", unit: "$", min: 0, max: 10000 },
     { key: "giveMinDuels", label: "Finished duels before giving", unit: "duels", min: 0, max: 1000 },
   ] },

@@ -515,6 +515,9 @@ test('StreamElements !ranks, !elo and !minichat work even while duels are paused
   // A channel that stored the old !top name gets !ranks: StreamElements' built-in !top can't be replaced.
   await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { top: '!top' } } });
   assert.equal((await r.call('/admin')).body.streamelements.names.top, '!ranks');
+  // The same for a stored !give: StreamElements' !givepoints answers to it, so it becomes !pay.
+  await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { give: '!give' } } });
+  assert.equal((await r.call('/admin')).body.streamelements.names.give, '!pay');
   // Renamed commands show up in !minichat.
   await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { challenge: '!duel', accept: '!yes' } } });
   assert.match((await cmd('u1', 'alice', 'help')).body.reply, /!duel @name\. They answer !yes\. Again\? !rematch$/);
@@ -572,7 +575,7 @@ test('!checkin: once per stream while live, streaks with one free miss a week, m
 test('dollars: paid once per finished duel and hidden until the stream shows it; mod gifts; !wallet; !give and its limits', async () => {
   const r = room({ DEV_TOOLS_TOKEN: 'x'.repeat(40) }, { quick: true });
   const se = (await r.call('/admin')).body.streamelements;
-  assert.deepEqual([se.names.wallet, se.names.give], ['!wallet', '!give']);
+  assert.deepEqual([se.names.wallet, se.names.give], ['!wallet', '!pay']);
   await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
   await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
   let m = 0;
@@ -607,7 +610,7 @@ test('dollars: paid once per finished duel and hidden until the stream shows it;
   assert.equal((await r.save('u3', 'cara')).body.profile.dollars, 50, 'a rank reset and a save keep dollars');
   // !give: usage, targets and the live check come first.
   const live = (body) => r.call('/dev-live', { method: 'POST', body });
-  assert.equal(await cmd('u3', 'cara', 'give', 'alice'), 'Give who, and how much? Type !give @name 10');
+  assert.equal(await cmd('u3', 'cara', 'give', 'alice'), 'Give who, and how much? Type !pay @name 10');
   assert.equal(await cmd('u3', 'cara', 'give', 'nobody', '5'), '@nobody has no fighter in the arena yet! Send them to https://test.example/?channel=nesszerra');
   assert.equal(await cmd('u3', 'cara', 'give', 'cara', '5'), "@cara, you can't give dollars to yourself!");
   assert.equal(await cmd('u9', 'zed', 'give', 'alice', '5'), '@zed, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra');
@@ -631,7 +634,7 @@ test('dollars: paid once per finished duel and hidden until the stream shows it;
   // The dev chat (test site) answers like the bot would.
   const dev = async (text) => (await r.call('/dev-chat', { method: 'POST', body: { userId: 'u3', username: 'cara', displayName: 'cara', text } })).body.reply;
   assert.equal(await dev('!wallet'), '@cara: $140 Mini Chat dollars, 3 of 20 upgrade points, 0-stream streak.');
-  assert.equal(await dev('!give @bob 5'), '@cara gave $5 to @bob. You have $135 left.');
+  assert.equal(await dev('!pay @bob 5'), '@cara gave $5 to @bob. You have $135 left.');
   // Mods tune it or turn !give off; payouts follow the config.
   const cfg = (patch) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'config', payload: { patch } } });
   assert.equal((await cfg({ winDollars: 101 })).body.error, 'invalid_config_winDollars');

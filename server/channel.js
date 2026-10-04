@@ -323,7 +323,7 @@ export class ChannelRoom extends DurableObject {
       if (result.changed) await this.scheduleAlarm(result.state);
       const r = result.result || {};
       if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
-      const devGive = /^!(wallet|give)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(String(line || "").trim());
+      const devGive = /^!(wallet|give|pay)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(String(line || "").trim());
       if (devGive) {   // the reply is the line a StreamElements bot would post
         const who = displayName || username, uid = validUserId(userId), devTarget = normalizeUsername(String(devGive[2] || "").replace(/^@/, ""));
         if (devGive[1].toLowerCase() === "wallet") { const wallet = this.wallet(channel, uid); return json({ wallet, reply: seWalletText(wallet, { who, origin: "", channel, maxPoints: MAX_POINTS }) }); }
@@ -671,6 +671,7 @@ export class ChannelRoom extends DurableObject {
       const names = { ...DEFAULT_SE_NAMES, ...safeJsonParse(row.names, {}) };
       if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;   // StreamElements' Duel module owns !accept
       if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top;   // and its built-in !top can't be replaced
+      if (names.give === "!give") names.give = DEFAULT_SE_NAMES.give;   // nor its !givepoints alias !give
       const stored = safeJsonParse(row.seen_json, {}), seen = {};
       for (const action of SE_ACTIONS) if (Number(stored?.[action]) > 0) seen[action] = Number(stored[action]);
       return { secret: row.secret, names, lastCommandAt: Number(row.last_command_at) || 0, rejectedAt: Number(row.rejected_at) || 0, seen, duelModuleOff: row.duel_module_off === 1 };

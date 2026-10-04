@@ -1,7 +1,7 @@
 # Plan: check-ins, Mini Chat dollars, pets and builds
 
 Status: agreed with the owner on 2026-10-04. Stage 1 (check-ins, streaks, 20/8 caps) and
-Stage 2 (dollars, `!wallet`, `!give`, mod gifts) are built; stages 3 and 4 are not. Every number below is a default that
+Stage 2 (dollars, `!wallet`, `!pay`, mod gifts) are built; stages 3 and 4 are not. Every number below is a default that
 mods can tune in the balance editor (versioned, undoable). All data is per channel, like fighters
 and ranks today.
 
@@ -13,7 +13,7 @@ and ranks today.
 | Streak | Streams in a row checked in, with 1 free miss per week. Bonus +1 point at 3, 7, 14 and 30. |
 | Upgrade points | One pool from wins (1 each) and check-ins. Cap raised from 10 to 20 total and from 5 to 8 per stat. Respec stays free outside a duel. Still power, guard and luck; no new stats. |
 | Mini Chat dollars | Win a duel $5, lose $3. Mods can gift dollars from the admin page. Check-ins give points, not dollars. |
-| `!give @name amount` | At most $100 given per stream, only after 5 finished duels, and the streamer can turn it off. |
+| `!pay @name amount` (planned as `!give`; StreamElements' `!givepoints` owns that name) | At most $100 given per stream, only after 5 finished duels, and the streamer can turn it off. |
 | Pets | Bought with dollars. Collect many, 1 active. Shown next to the fighter on stream. |
 | Builds | 1 build slot free; more cost $200, then $400, up to 5. Each build keeps its own character, recolor, stats, hat, pet, accessory, trail, taunt and title. Every build can spend the full point pool. |
 | Rank reset | Resets Elo and wins only. Dollars, pets, cosmetics and check-in points stay. |

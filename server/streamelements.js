@@ -8,7 +8,7 @@ export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements
 export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help', 'checkin', 'wallet', 'give'];   // quick duels need no attack commands
 export const SE_READ_ACTIONS = ['top', 'elo', 'help'];   // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!minichat', checkin: '!checkin', wallet: '!wallet', give: '!give' };
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!minichat', checkin: '!checkin', wallet: '!wallet', give: '!pay' };   // not !give: StreamElements' built-in !givepoints answers to that
 export const LOST_TEXT = 'Lost in the arena? Type !minichat';
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
 export const OFF_TEXT = 'Mini Chat is off on this channel right now.';
