@@ -779,6 +779,18 @@ try {
     }
     await context.close();
   }
+  // /start without an invite: the invite card sits beside the copy on wide screens and below it on phones, never over it.
+  for (const size of sizes) {
+    const { context, page } = await newPage({ width: size.width, height: size.height });
+    await page.goto(base + '/start/');
+    await page.waitForFunction(() => document.querySelector('#invite-text')?.textContent.trim());
+    const copy = await page.locator('.hero-copy').boundingBox(), card = await page.locator('#invite').boundingBox();
+    const apart = card.x >= copy.x + copy.width || card.y >= copy.y + copy.height;
+    assert.ok(apart, `start ${size.name}: invite card overlaps the copy`);
+    assert.ok(copy.width >= size.width * 0.5, `start ${size.name}: copy squeezed to ${copy.width}px`);
+    await noOverflow(page, 'start ' + size.name);
+    await context.close();
+  }
   assert.deepEqual(errors, []);
   console.log('PASS: viewer + admin UI at 1280/390, signed-out (real server), signed-in viewer save, mod gate, admin actions, config save/409/revert; no page errors.');
 } finally { await browser.close(); }
