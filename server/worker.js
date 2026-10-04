@@ -3,7 +3,7 @@ import { AuthStore,record,session,isOwner,configured,handleAuth,access,CHANNELS,
 import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { handlePets } from './pets.js';
-import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './eventsub.js';
+import { EVENTSUB_PATH,BOT_LOGIN_URL,handleEventsub,connectChat,disconnectChat,sendChatMessage,twitchUserId } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
 import { channelState,isOn,offError,readInvite,setPaused,publicChannels } from './channels.js';
 import { COSMETIC_KINDS,COSMETIC_FIELDS,MAX_BUILDS } from './cosmetics.js';
@@ -59,6 +59,15 @@ async function chatAction(env,url,channel,action,{takeover=false}={}){
   if(action==='disconnectChat'){
     await disconnectChat(env,{subscriptionId:current.subscriptionId,url});
     return room('/chat',{action:'disconnected',reason:'disconnected'});
+  }
+  // CHAT_BOT (test site): chat is read and answered by the PixFray bot account (bot:twitch, signed in at /auth/login?bot=1).
+  if(env.CHAT_BOT==='1'){
+    const bot=await record(env,'bot:twitch');
+    if(!bot?.id)throw Object.assign(new Error('Sign in the PixFray bot account first at '+BOT_LOGIN_URL),{status:409,reconnect:BOT_LOGIN_URL});
+    const broadcasterId=channel==='nesszerra'&&env.OWNER_TWITCH_ID||await twitchUserId(env,channel);
+    if(!broadcasterId)throw Object.assign(new Error('Twitch has no channel named '+channel),{status:404});
+    const sub=await connectChat(env,{broadcasterId,userId:bot.id,channel,origin:env.PUBLIC_ORIGIN||url.origin,url,takeover});
+    return room('/chat',{action:'connected',...sub});
   }
   const broadcasterId=env.OWNER_TWITCH_ID||(await record(env,'owner:'+channel))?.id||'';
   const sub=await connectChat(env,{broadcasterId,origin:env.PUBLIC_ORIGIN||url.origin,url,takeover});
@@ -123,7 +132,9 @@ export default {async fetch(request,env,ctx){
     // Twitch EventSub posts here: no session and no Origin header; the HMAC signature authenticates it.
     if(path===EVENTSUB_PATH){
       if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
-      return await handleEventsub(request,env,{channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init)});
+      return await handleEventsub(request,env,{channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),origin:channel=>siteOrigin(env,url,channel),
+        // The bot's reply goes out after Twitch has its 204.
+        sendChat:args=>ctx?.waitUntil?.(sendChatMessage(env,args).then(r=>{if(!r.sent)console.warn('bot reply dropped',r.reason);}).catch(e=>console.warn('bot reply failed',e?.message)))});
     }
     // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
     if(path.startsWith('/api/se/')){
@@ -202,7 +213,8 @@ export default {async fetch(request,env,ctx){
         const [broadcaster,marker]=await Promise.all([record(env,'broadcaster:'+channel),record(env,'modsconnected:'+channel)]);
         const modsReady=!!broadcaster,modsLapsed=!modsReady&&!!marker;
         if(broadcaster)await Promise.all([touchBroadcaster(env,channel,broadcaster),marker?null:markModsConnected(env,channel)]).catch(e=>console.warn('mods record refresh failed',e?.message));   // rare writes: weekly, and once per channel
-        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',modsReady,modsLapsed,channelState:state});
+        const bot=env.CHAT_BOT==='1'?await record(env,'bot:twitch'):null;
+        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',chatBot:env.CHAT_BOT==='1'?{login:bot?.login||''}:null,modsReady,modsLapsed,channelState:state});
       }
       const data=await bodyJson(request,12000);
       // Turn PixFray off or back on: the broadcaster or the owner, never a mod. Fighters and ranks are kept.
@@ -216,7 +228,7 @@ export default {async fetch(request,env,ctx){
         const out=await r.json();if(!r.ok)return json(out,r.status);
         return json({ok:true,streamelements:seView(env,url,channel,out.streamelements)});
       }
-      if(data.action==='connectChat'&&(channel!=='nesszerra'||env.SE_ONLY==='1'))return json({error:'This channel uses StreamElements for chat. Choose Use StreamElements.'},400);
+      if(data.action==='connectChat'&&env.CHAT_BOT!=='1'&&(channel!=='nesszerra'||env.SE_ONLY==='1'))return json({error:'This channel uses StreamElements for chat. Choose Use StreamElements.'},400);
       if(data.action==='connectChat'||data.action==='disconnectChat'||data.action==='useStreamElements')return await chatAction(env,url,channel,data.action,{takeover:data.takeover===true});
       return internal(request,env,channel,'/admin',{...data,actorId:user.id,actorName:user.displayName||user.login});
     }

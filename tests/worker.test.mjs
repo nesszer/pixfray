@@ -415,3 +415,63 @@ test('pets: the catalog and images are public; uploads and deletes need a mod; t
   assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'player', color: '#aabbcc', defaultAbility: 'heal', title: 'legend', winEffect: '', build: 2 }, viewer), f.env)).status, 200);
   assert.deepEqual((({ title, winEffect, build, trail }) => [title, winEffect, build, trail])(f.forwarded.at(-1).body), ['legend', '', 2, undefined]);
 });
+
+// ---------- PixFray chat bot (CHAT_BOT) ----------
+const botBody = (text) => ({ subscription: { id: 'sub-bot', status: 'enabled', type: 'channel.chat.message', condition: { broadcaster_user_id: '1', user_id: '99' } }, event: { broadcaster_user_id: '1', broadcaster_user_login: 'nesszerra', chatter_user_id: '7', chatter_user_login: 'viewer', chatter_user_name: 'Viewer', message_id: 'chat-9', message: { text } } });
+
+test('chat bot: only commands reach the room; its reply is sent as the bot, threaded, never as a command', async (t) => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = environment(), waits = [];
+  f.env.ROOMS = { idFromName: x => x, get: channel => ({ async fetch(url, options = {}) {
+    f.forwarded.push({ channel, url, body: JSON.parse(options.body) });
+    return Response.json({ ok: true, reply: '!ranks are at pixfray' });
+  } }) };
+  const ctx = { waitUntil: (p) => waits.push(p) };
+  const post = async (body) => {
+    const raw = JSON.stringify(body), timestamp = new Date(NOW).toISOString(), id = 'm-' + Math.random();
+    return worker.fetch(new Request('https://staging.pixfray.xyz/api/eventsub', { method: 'POST', headers: { 'Twitch-Eventsub-Message-Id': id, 'Twitch-Eventsub-Message-Timestamp': timestamp, 'Twitch-Eventsub-Message-Signature': await signEventsub(await eventsubSecret(f.env), id, timestamp, raw), 'Twitch-Eventsub-Message-Type': 'notification', 'Twitch-Eventsub-Subscription-Type': 'channel.chat.message' }, body: raw }), f.env, ctx);
+  };
+  const helix = [];
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    if (String(url).startsWith('https://id.twitch.tv')) return Response.json({ access_token: 'app-token-1', expires_in: 5000 });
+    helix.push({ url: String(url), body: JSON.parse(init.body) });
+    return Response.json({ data: [{ message_id: 'r1', is_sent: true }] });
+  });
+  assert.equal((await post(botBody('hello chat'))).status, 204);
+  assert.equal(f.forwarded.length, 0, 'plain chat costs no room request');
+  assert.equal((await post(botBody('  !ranks'))).status, 204);
+  assert.equal(f.forwarded.length, 1);
+  assert.equal(f.forwarded[0].body.bot, true);
+  assert.match(f.forwarded[0].url, /\/eventsub\?origin=https%3A%2F%2F/);
+  await Promise.all(waits);
+  assert.equal(helix.length, 1);
+  assert.equal(helix[0].url, 'https://api.twitch.tv/helix/chat/messages');
+  assert.deepEqual(helix[0].body, { broadcaster_id: '1', sender_id: '99', message: 'PixFray: !ranks are at pixfray', reply_parent_message_id: 'chat-9' });
+});
+
+test('chat bot: Connect chat subscribes as the signed-in bot account, and asks for it first', async (t) => {
+  const f = environment(), owner = await signedIn(f, true);
+  Object.assign(f.env, { CHAT_BOT: '1', BOT_LOGIN: 'pixbot', OWNER_TWITCH_ID: '1' });
+  const calls = helixMock(t, { subscriptions: [sub('broadcaster-self'), sub('other-channel', { condition: { broadcaster_user_id: '5', user_id: '99' } })] });
+  const first = await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, owner), f.env);
+  assert.equal(first.status, 409);
+  assert.match((await first.json()).error, /\/auth\/login\?bot=1/);
+  f.entries.set('bot:twitch', { id: '99', login: 'pixbot' });
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'connectChat' }, owner), f.env)).status, 200);
+  const created = calls.find((c) => c.method === 'POST' && c.url.host === 'api.twitch.tv');
+  assert.deepEqual(created.body.condition, { broadcaster_user_id: '1', user_id: '99' });
+  assert.deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.url.searchParams.get('id')), ['broadcaster-self'], "the channel's old self-read subscription goes; another channel's bot subscription stays");
+  const view = await (await worker.fetch(req('/api/admin/nesszerra', 'GET', undefined, owner), f.env)).json();
+  assert.deepEqual(view.chatBot, { login: 'pixbot' });
+});
+
+test('chat bot: bot sign-in needs CHAT_BOT and asks for the chat scopes', async () => {
+  const f = environment();
+  assert.equal((await worker.fetch(req('/auth/login?bot=1'), f.env)).status, 403);
+  Object.assign(f.env, { CHAT_BOT: '1', BOT_LOGIN: 'pixbot' });
+  const res = await worker.fetch(req('/auth/login?bot=1'), f.env);
+  assert.equal(res.status, 302);
+  assert.equal(new URL(res.headers.get('Location')).searchParams.get('scope'), 'user:read:chat user:write:chat user:bot');
+  const allow = await worker.fetch(req('/auth/login?channel=nesszerra&connect=bot'), f.env);
+  assert.equal(new URL(allow.headers.get('Location')).searchParams.get('scope'), 'moderation:read channel:bot');
+});

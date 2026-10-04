@@ -28,7 +28,7 @@ export class AuthStore extends DurableObject {
     if(request.method==='POST'){
       const {value,expires}=await request.json();
       // Channel registry rows and the modsconnected markers live ~20 years; everything else at most 100 days.
-      if(!Number.isFinite(expires)||expires>Date.now()+(/^(channel|modsconnected):/.test(key)?21*365:100)*86400000)return Response.json({error:'Invalid expiry'},{status:400});
+      if(!Number.isFinite(expires)||expires>Date.now()+(/^(channel|modsconnected|bot):/.test(key)?21*365:100)*86400000)return Response.json({error:'Invalid expiry'},{status:400});
       if(JSON.stringify(value).length>20000)return Response.json({error:'Record too large'},{status:413});
       sql.exec('INSERT INTO entries(key,value,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,expires=excluded.expires',key,JSON.stringify(value),expires);
       await this.ctx.storage.setAlarm(Date.now()+3600000);
@@ -72,6 +72,9 @@ export async function unseal(env,value){
 // Channels the site serves. nesszerra (the site owner) can use EventSub; every other channel uses StreamElements.
 export const CHANNELS=['nesszerra','miolafff'];
 export const CONNECT_SCOPES=['moderation:read','user:read:chat','user:bot','channel:bot'];
+// bot=1 (test site, CHAT_BOT): the BOT_LOGIN account lets the app read and send chat as it. Only its id is stored
+// (bot:twitch); the app token does the rest. connect=bot: a broadcaster allows the bot in their chat (channel:bot).
+export const BOT_SCOPES=['user:read:chat','user:write:chat','user:bot'];
 export function configured(env){return !!(env.TWITCH_CLIENT_ID&&env.TWITCH_CLIENT_SECRET&&env.AUTH_SECRET&&env.INTERNAL_SECRET);}
 export async function session(request,env){
   const raw=request.headers.get('Cookie')?.match(/(?:^|;\s*)mini_session=([a-f0-9]{64})(?:;|$)/)?.[1];
@@ -95,7 +98,10 @@ export async function handleAuth(request,env){
   if(path==='/auth/login'){
     const nonce=randomToken(), invite=url.searchParams.get('invite')||'';
     let pending, scope='';
-    if(invite){
+    if(url.searchParams.get('bot')==='1'){
+      if(env.CHAT_BOT!=='1'||!env.BOT_LOGIN)return Response.json({error:'This site has no PixFray chat bot'},{status:403});
+      pending={bot:true,next:'/'};scope=BOT_SCOPES.join(' ');
+    }else if(invite){
       // Signup from /start: moderation:read lets the channel's mods open the admin page (mods=0 skips it).
       const inv=await readInvite(env,invite);
       if(inv.status!=='valid')return startPage(invite,inv.status);
@@ -105,10 +111,10 @@ export async function handleAuth(request,env){
       const channel=url.searchParams.get('channel')||'nesszerra';
       // A turned-off channel still signs in, so its broadcaster can turn it back on.
       if(!await channelState(env,channel))return Response.json({error:'PixFray is not enabled for this channel'},{status:403});
-      const connect=url.searchParams.get('connect')==='1', connectMods=url.searchParams.get('connect')==='mods';
+      const connect=url.searchParams.get('connect')==='1', connectBot=env.CHAT_BOT==='1'&&url.searchParams.get('connect')==='bot', connectMods=connectBot||url.searchParams.get('connect')==='mods';
       if(connect&&channel!=='nesszerra')return Response.json({error:'Chat for this channel comes through StreamElements; no Twitch connection needed'},{status:403});
       const asked=url.searchParams.get('next'),next=connectMods?'/admin/':['/admin/','/admin/dev/'].includes(asked)?asked:'/';
-      pending={channel,connect,...(connectMods?{connectMods:true}:{}),next};scope=connect?CONNECT_SCOPES.join(' '):connectMods?'moderation:read':'';
+      pending={channel,connect,...(connectMods?{connectMods:true}:{}),...(connectBot?{connectBot:true}:{}),next};scope=connect?CONNECT_SCOPES.join(' '):connectBot?'moderation:read channel:bot':connectMods?'moderation:read':'';
     }
     await record(env,'oauth:'+nonce,pending,Date.now()+600000);
     const target=new URL('https://id.twitch.tv/oauth2/authorize');
@@ -144,6 +150,12 @@ export async function handleAuth(request,env){
     if(missing.length)return Response.json({error:'Twitch permissions were not granted: '+missing.join(', ')+'. Restart at /auth/login?connect=1.'},{status:403});
     await keepBroadcaster(env,'nesszerra',await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,'nesszerra');
   }
+  if(pending.bot){
+    if(String(user.login).toLowerCase()!==String(env.BOT_LOGIN).toLowerCase())return Response.json({error:'Sign in as the bot account '+env.BOT_LOGIN+', not '+user.login},{status:403});
+    const missing=BOT_SCOPES.filter(x=>!validation.scopes?.includes(x));
+    if(missing.length)return Response.json({error:'Twitch permissions were not granted: '+missing.join(', ')+'. Restart at /auth/login?bot=1.'},{status:403});
+    await record(env,'bot:twitch',{id:user.id,login:user.login,at:Date.now()},Date.now()+20*365*86400000);
+  }
   const modScope=validation.scopes?.includes('moderation:read');
   if(pending.invite){
     try{await claimInvite(env,pending.invite,user);}
@@ -152,11 +164,11 @@ export async function handleAuth(request,env){
   }
   if(pending.connectMods){
     if(String(user.login).toLowerCase()!==pending.channel)return adminPage(pending.channel,'mods=wrong_account');
-    if(!modScope)return adminPage(pending.channel,'mods=denied');
+    if(!modScope||pending.connectBot&&!validation.scopes?.includes('channel:bot'))return adminPage(pending.channel,'mods=denied');
     await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);
   }
   const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);
-  const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectMods?'&mods=connected':'')+(pending.invite||pending.connectMods?'#chat':'');
+  const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectBot?'&bot=allowed':pending.connectMods?'&mods=connected':'')+(pending.bot?'&bot=connected':'')+(pending.invite||pending.connectMods?'#chat':'');
   const response=new Response(null,{status:303,headers:{Location:back}});
   response.headers.append('Set-Cookie',cookie('mini_session',key,21600));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
 }

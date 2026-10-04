@@ -4,6 +4,8 @@ import { record, seal, unseal, randomToken } from './auth.js';
 export const EVENTSUB_PATH='/api/eventsub';
 export const MAX_EVENTSUB_BYTES=64*1024;
 export const RECONNECT_URL='/auth/login?connect=1';
+export const BOT_LOGIN_URL='/auth/login?bot=1';
+export const MAX_BOT_MESSAGE=480;   // Twitch allows 500 characters
 const HELIX='https://api.twitch.tv/helix';
 const enc=new TextEncoder();
 const hex=buf=>Array.from(new Uint8Array(buf),x=>x.toString(16).padStart(2,'0')).join('');
@@ -46,12 +48,14 @@ const str=(v,n)=>typeof v==='string'?v.slice(0,n):'';
 function slimEvent(ev){
   if(!ev||typeof ev!=='object')return null;
   // caps sit above every valid length, so the room's own validation still decides
-  return {broadcaster_user_login:str(ev.broadcaster_user_login,64),chatter_user_id:str(ev.chatter_user_id,100),chatter_user_login:str(ev.chatter_user_login,64),
+  return {broadcaster_user_id:str(ev.broadcaster_user_id,100),broadcaster_user_login:str(ev.broadcaster_user_login,64),chatter_user_id:str(ev.chatter_user_id,100),chatter_user_login:str(ev.chatter_user_login,64),
     chatter_user_name:str(ev.chatter_user_name,100),color:str(ev.color,16),message_id:str(ev.message_id,100),message:{text:str(ev.message?.text,512)}};
 }
 
 // POST /api/eventsub. No session, no same-origin check: the HMAC signature is the authentication.
-export async function handleEventsub(request,env,{channels,roomFetch,now=Date.now()}){
+// A subscription whose user_id is not the broadcaster reads chat as the PixFray bot: only messages starting with '!' reach
+// the room, which answers commands like the StreamElements route does, and sendChat posts the reply as the bot.
+export async function handleEventsub(request,env,{channels,roomFetch,origin=()=>'',sendChat,now=Date.now()}){
   if(request.method!=='POST')return text('Use POST',405);
   const h=name=>request.headers.get('Twitch-Eventsub-'+name)||'';
   const id=h('Message-Id'),timestamp=h('Message-Timestamp'),signature=h('Message-Signature'),type=h('Message-Type'),subType=h('Subscription-Type');
@@ -67,9 +71,12 @@ export async function handleEventsub(request,env,{channels,roomFetch,now=Date.no
   // Only the fields the room reads are forwarded (fragments, badges, reply and cheer are dropped), so an emote-heavy
   // message stays a few hundred bytes. A room 4xx for a validly signed message is acknowledged (204) so Twitch does not
   // retry it into notification_failures_exceeded; only real room failures (5xx) answer 503 for a retry.
-  const send=async channel=>{
-    const r=await roomFetch(channel,'/eventsub',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...message,event:slimEvent(body.event)})});
+  const condition=body.subscription?.condition&&typeof body.subscription.condition==='object'?body.subscription.condition:{};
+  const botId=condition.user_id&&condition.user_id!==condition.broadcaster_user_id?String(condition.user_id).slice(0,100):'';
+  const send=async(channel,extra={})=>{
+    const r=await roomFetch(channel,'/eventsub'+(extra.bot?'?origin='+encodeURIComponent(origin(channel)):''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...message,...extra,event:slimEvent(body.event)})});
     if(r.status>=500)throw new Error('Room rejected EventSub message ('+r.status+')');
+    return r;
   };
   if(type==='webhook_callback_verification'){
     if(typeof body.challenge!=='string'||!body.challenge||body.challenge.length>1000)return text('Missing challenge',400);
@@ -82,7 +89,12 @@ export async function handleEventsub(request,env,{channels,roomFetch,now=Date.no
   }
   if(type==='notification'&&subType==='channel.chat.message'){
     const channel=String(body.event?.broadcaster_user_login||'').toLowerCase();
-    if(channels.includes(channel))await send(channel);
+    if(!channels.includes(channel))return new Response(null,{status:204});
+    if(!botId){await send(channel);return new Response(null,{status:204});}
+    if(!String(body.event?.message?.text||'').trimStart().startsWith('!'))return new Response(null,{status:204});   // chat, not a command: no room request
+    const r=await send(channel,{bot:true});
+    const reply=r.ok?String((await r.json().catch(()=>({}))).reply||''):'';
+    if(reply&&sendChat)sendChat({broadcasterId:String(body.event.broadcaster_user_id||condition.broadcaster_user_id||''),senderId:botId,message:reply,replyTo:String(body.event.message_id||'')});
   }
   return new Response(null,{status:204});   // other channels, subscription types and message types are ignored
 }
@@ -133,23 +145,27 @@ const summary=s=>({subscriptionId:String(s.id),status:String(s.status||'pending'
 const callbackOrigin=s=>{try{return new URL(s.transport.callback).origin;}catch{return s.transport?.method||'another callback';}};
 const conflict=where=>fail('Chat is connected to '+where+'. Only one site can receive chat at a time: disconnect it there, or take it over here.',409,{connectedElsewhere:where});
 // Ensures exactly one enabled channel.chat.message v1 webhook for this callback; stale or duplicate ones are deleted.
-export async function connectChat(env,{broadcasterId,origin,url,takeover=false}){
+// userId is the account that reads chat: the broadcaster itself (nesszerra's original setup) or the PixFray bot.
+export async function connectChat(env,{broadcasterId,userId=broadcasterId,channel='',origin,url,takeover=false}){
   if(localTestMode(env,url))return {subscriptionId:'local-'+randomToken().slice(0,16),status:'enabled',createdAt:Date.now()};
   if(!broadcasterId)throw fail('Sign in as nesszerra with '+RECONNECT_URL+' before connecting chat',409,{reconnect:RECONNECT_URL});
+  const asBot=userId!==broadcasterId, allowBot='/auth/login?channel='+channel+'&connect=bot';
   if(!/^https:\/\//.test(origin))throw fail('PUBLIC_ORIGIN must be https for Twitch webhooks',400);
   const callback=origin+EVENTSUB_PATH;
   const all=await listChatSubscriptions(env);
   const ours=s=>s.transport?.method==='webhook'&&s.transport.callback===callback;
-  const sameCondition=s=>s.condition?.broadcaster_user_id===broadcasterId&&s.condition?.user_id===broadcasterId;
+  const sameCondition=s=>s.condition?.broadcaster_user_id===broadcasterId&&s.condition?.user_id===userId;
   const elsewhere=all.filter(s=>!ours(s)&&sameCondition(s));
   const live=elsewhere.find(s=>s.status==='enabled'||s.status==='webhook_callback_verification_pending');
   if(live&&!takeover)throw conflict(callbackOrigin(live));
   for(const s of elsewhere)await deleteSubscription(env,s.id);   // dead ones always; live ones only on takeover
-  const mine=all.filter(ours);
+  // This site's subscriptions for this channel; other channels on the same callback (the bot reads several) stay.
+  const mine=all.filter(s=>ours(s)&&s.condition?.broadcaster_user_id===broadcasterId);
   const keep=mine.find(s=>s.status==='enabled'&&s.version==='1'&&sameCondition(s));
   for(const s of mine)if(s!==keep)await deleteSubscription(env,s.id);
   if(keep)return summary(keep);
-  const r=await helix(env,'POST','/eventsub/subscriptions',{type:'channel.chat.message',version:'1',condition:{broadcaster_user_id:broadcasterId,user_id:broadcasterId},transport:{method:'webhook',callback,secret:await eventsubSecret(env)}});
+  const r=await helix(env,'POST','/eventsub/subscriptions',{type:'channel.chat.message',version:'1',condition:{broadcaster_user_id:broadcasterId,user_id:userId},transport:{method:'webhook',callback,secret:await eventsubSecret(env)}});
+  if(asBot&&(r.status===401||r.status===403))throw fail('Twitch refused the chat bot. '+channel+' must allow it at '+allowBot+' (or make the bot a moderator), and the bot account must be signed in at '+BOT_LOGIN_URL+'.',403,{reconnect:allowBot});
   if(r.status===401||r.status===403)throw fail('Twitch rejected the chat subscription: missing authorization. Reconnect Twitch at '+RECONNECT_URL+', then click Connect chat.',403,{reconnect:RECONNECT_URL});
   if(r.status===409)throw conflict('another site');   // created elsewhere between our list and our create
   if(!r.ok)throw fail('Twitch rejected the chat subscription ('+r.status+')',502);
@@ -159,6 +175,25 @@ export async function connectChat(env,{broadcasterId,origin,url,takeover=false})
 export async function disconnectChat(env,{subscriptionId,url}){
   if(!subscriptionId||subscriptionId.startsWith('local-')||subscriptionId.startsWith('se-')||localTestMode(env,url))return;
   await deleteSubscription(env,subscriptionId);
+}
+// The bot's chat line, sent with the app token (the bot granted user:write:chat + user:bot, the channel channel:bot).
+// A reply never starts with a command character, so the bot can't trigger itself or another bot.
+export function botMessage(message){
+  const text=String(message||'').replace(/\s+/g,' ').trim();
+  return (/^[!/.]/.test(text)?'PixFray: '+text:text).slice(0,MAX_BOT_MESSAGE);
+}
+export async function sendChatMessage(env,{broadcasterId,senderId,message,replyTo=''}){
+  const text=botMessage(message);if(!text||!broadcasterId||!senderId)return {sent:false,reason:'empty'};
+  const r=await helix(env,'POST','/chat/messages',{broadcaster_id:broadcasterId,sender_id:senderId,message:text,...(replyTo?{reply_parent_message_id:replyTo}:{})});
+  if(!r.ok)throw fail('Twitch send chat message failed ('+r.status+')',502);
+  const d=(await r.json()).data?.[0];
+  return {sent:d?.is_sent===true,reason:String(d?.drop_reason?.code||'')};
+}
+// A channel's immutable Twitch id from its login, or '' when Twitch doesn't know it.
+export async function twitchUserId(env,login){
+  const r=await helix(env,'GET','/users?login='+encodeURIComponent(login));
+  if(!r.ok)throw fail('Twitch user lookup failed ('+r.status+')',502);
+  return String((await r.json()).data?.[0]?.id||'');
 }
 // !checkin: the channel's current stream as {id,startedAt}, or null when it is offline. Throws when Twitch can't be reached.
 export async function liveStream(env,login){

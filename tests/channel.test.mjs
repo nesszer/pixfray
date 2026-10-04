@@ -958,3 +958,38 @@ test('pet boost text: legendary pets read "+1 to all stats", like the viewer pag
   assert.equal(boostText({ power: 2, guard: 1, luck: 0 }), '+2 power, +1 guard');
   assert.equal(boostText({ power: 0, guard: 0, luck: 1 }), '+1 luck');
 });
+
+test('chat bot: commands by the channel names get a reply; chat, other commands and other subscriptions get none', async () => {
+  const r = room({ CHAT_BOT: '1' }, { quick: true });
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  await r.connectChat('sub-bot');
+  let n = 0;
+  const say = async (id, login, text, sub = 'sub-bot') => (await r.call('/eventsub?origin=' + encodeURIComponent('https://staging.example'), { method: 'POST', body: { messageId: 'b' + (++n), messageType: 'notification', bot: true, timestamp: Date.now(), subscription: { id: sub, status: 'enabled' }, event: { broadcaster_user_login: 'nesszerra', chatter_user_id: id, chatter_user_login: login, chatter_user_name: login, message_id: 'tm' + n, message: { text } } } })).body.reply;
+  assert.match(await say('u1', 'alice', '!fray'), /staging\.example\/\?channel=nesszerra/);
+  assert.equal(await say('u1', 'alice', '!discord'), '', "another bot's command");
+  assert.equal(await say('u1', 'alice', '!fray', 'sub-old'), '', 'a subscription the room no longer uses');
+  assert.match(await say('u1', 'alice', '!challenge @bob'), /bob/);
+  await say('u2', 'bob', '!FIGHT');
+  assert.ok(r.readState('nesszerra').duels.some((d) => d.status === 'completed'), 'a quick duel through the bot');
+  // StreamElements posts nothing while the bot is connected, and doesn't take the chat source back.
+  const se = (await r.call('/admin')).body.streamelements;
+  assert.equal((await r.call('/se', { method: 'POST', body: { key: se.secret, action: 'help', userId: 'u1', username: 'alice' } })).body.reply, '');
+  assert.equal(r.readState('nesszerra').chat.subscriptionId, 'sub-bot');
+  // At most 18 replies per 30 s (Twitch allows 20 for a bot that isn't a mod); 3 were sent above.
+  const replies = [];
+  for (let i = 0; i < 20; i++) replies.push(await say('u1', 'alice', '!elo'));
+  assert.equal(replies.filter(Boolean).length, 15);
+});
+
+test('chat bot: a notification confirms a pending subscription; without CHAT_BOT, StreamElements takes over as before', async () => {
+  const r = room({ CHAT_BOT: '1' }, { quick: true });
+  await r.connectChat('sub-bot', 'webhook_callback_verification_pending');
+  const reply = (await r.call('/eventsub', { method: 'POST', body: { messageId: 'p1', messageType: 'notification', bot: true, timestamp: Date.now(), subscription: { id: 'sub-bot' }, event: { chatter_user_id: 'u1', chatter_user_login: 'alice', chatter_user_name: 'alice', message_id: 'x1', message: { text: '!ranks' } } } })).body.reply;
+  assert.ok(reply);
+  assert.equal(r.readState('nesszerra').chat.connected, true);
+  const plain = room({}, { quick: true });
+  await plain.connectChat('sub-bot');
+  const se = (await plain.call('/admin')).body.streamelements;
+  assert.notEqual((await plain.call('/se', { method: 'POST', body: { key: se.secret, action: 'help', userId: 'u1', username: 'alice' } })).body.reply, '');
+  assert.equal(plain.readState('nesszerra').chat.subscriptionId, 'se-streamelements');
+});

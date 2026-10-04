@@ -16,7 +16,7 @@ import { checkChatSubscription, liveStream } from "./eventsub.js";
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount } from "./streamelements.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -27,6 +27,7 @@ const MAX_SOCKETS_PER_CLIENT = 16;      // one network can't fill the room and l
 const REJECTED_WRITE_MS = 60_000;          // a wrong StreamElements key is recorded at most once a minute
 const MAX_CONFIG_HISTORY = 50;
 const SEEN_WRITE_MS = 60_000;             // each command's "last seen" time is written at most once a minute
+const BOT_REPLIES_PER_30S = 18;          // the bot's chat replies per channel; Twitch allows 20 per 30 s unless it is a mod
 const MAX_LOOKS = 20;                  // logins per /looks call
 const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
 const MAX_EVENTSUB_IDS = 5_000;
@@ -329,7 +330,7 @@ export class ChannelRoom extends DurableObject {
     if (path === "/eventsub" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
-      return this.eventsub(channel, body.value);
+      return this.eventsub(channel, body.value, url.searchParams.get("origin") || "");
     }
     // StreamElements custom commands, forwarded by the Worker from GET /api/se/<channel>/<action>.
     if (path === "/se" && request.method === "POST") {
@@ -730,7 +731,7 @@ export class ChannelRoom extends DurableObject {
     try { ws.close(1008, "Read-only socket"); } catch {}
   }
 
-  async eventsub(channel, msg) {
+  async eventsub(channel, msg, origin = "") {
     const now = Date.now();
     const id = String(msg.messageId || "").slice(0, 100);
     if (!id) return json({ error: "messageId required" }, 400);
@@ -749,7 +750,8 @@ export class ChannelRoom extends DurableObject {
     else if (kind === "revocation") {
       if (!subscriptionId || subscriptionId !== this.readState(channel).chat.subscriptionId) return json({ ok: true, ignored: true });
       result = this.advance(channel, { type: "chat_disconnected", reason: String(msg.subscription?.status || "revoked") }, now);
-    } else if (kind === "notification") result = this.processChatMessage(channel, msg, now);
+    } else if (kind === "notification" && msg.bot === true) return this.botCommand(channel, msg, origin);
+    else if (kind === "notification") result = this.processChatMessage(channel, msg, now);
     else return json({ ok: true, ignored: true });
     if (result.visible) this.broadcast(result.state);
     if (result.changed) await this.scheduleAlarm(result.state);
@@ -777,6 +779,12 @@ export class ChannelRoom extends DurableObject {
     this.ctx.storage.sql.exec("INSERT INTO se_settings (id, secret, names) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET secret = excluded.secret, names = excluded.names", secret, JSON.stringify(names));
   }
 
+  // A connected PixFray chat bot (test site, CHAT_BOT=1): an EventSub subscription that reads chat as the bot account.
+  botSource(state) {
+    const id = state.chat.subscriptionId;
+    return this.env?.CHAT_BOT === "1" && state.chat.connected && Boolean(id) && id !== SE_SUBSCRIPTION_ID && !id.startsWith("local-");
+  }
+
   // One StreamElements command. It goes through the same path as a Twitch chat message, then gets a one-line reply.
   async streamElements(channel, input, origin) {
     const settings = this.seSettings();
@@ -784,10 +792,44 @@ export class ChannelRoom extends DurableObject {
       if (Date.now() - settings.rejectedAt > REJECTED_WRITE_MS) this.ctx.storage.sql.exec("UPDATE se_settings SET rejected_at = ? WHERE id = 1", Date.now());
       return json({ reply: "PixFray: wrong key. Copy the commands again from the admin page." }, 403);
     }
+    // The bot answers every command itself, so StreamElements posts nothing (no double replies) and keeps the chat source.
+    if (this.botSource(this.readState(channel))) return json({ reply: "" });
     const action = SE_ACTIONS.includes(input.action) ? input.action : "";
     if (action && Date.now() - (settings.seen[action] || 0) > SEEN_WRITE_MS) {
       this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ?, seen_json = ? WHERE id = 1", Date.now(), JSON.stringify({ ...settings.seen, [action]: Date.now() }));
     } else this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ? WHERE id = 1", Date.now());
+    return this.runCommand(channel, input, origin, settings, { kind: "se", subscriptionId: SE_SUBSCRIPTION_ID });
+  }
+
+  // A chat line read by the PixFray bot. Its first word is matched against the channel's command names (the same names
+  // StreamElements uses); anything else, like another bot's command, gets no reply. Replies are capped per 30 s.
+  async botCommand(channel, msg, origin) {
+    const ev = msg.event && typeof msg.event === "object" ? msg.event : {};
+    const words = String(ev.message?.text || "").trim().split(/\s+/);
+    const settings = this.seSettings();
+    const first = (words[0] || "").toLowerCase();
+    const action = SE_ACTIONS.find((a) => String(settings.names[a] || "").toLowerCase() === first);
+    if (!action) return json({ ok: true, reason: "not_command", reply: "" });
+    const subscriptionId = String(msg.subscription?.id || "");
+    const state = this.readState(channel);
+    if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) return json({ ok: true, reason: "unknown_subscription", reply: "" });
+    if (!state.chat.connected) {   // Twitch only notifies enabled subscriptions, so this confirms a pending one
+      const verified = this.advance(channel, { type: "chat_verified", subscriptionId }, Date.now());
+      if (verified.visible) this.broadcast(verified.state);
+      await this.scheduleAlarm(verified.state);
+    }
+    const input = { action, userId: ev.chatter_user_id, username: ev.chatter_user_login, displayName: ev.chatter_user_name, target: seTarget(words[1]), targetRaw: words[1] || "", ...(action === "give" ? { amount: String(words[2] || "").slice(0, 16) } : {}), messageId: String(ev.message_id || msg.messageId || "") };
+    const out = await (await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })).json();
+    const now = Date.now();
+    this.botReplies = (this.botReplies || []).filter((at) => now - at < 30000);
+    if (!out.reply || this.botReplies.length >= BOT_REPLIES_PER_30S) return json({ ok: true, reason: out.reply ? "reply_limit" : "no_reply", reply: "" });
+    this.botReplies.push(now);
+    return json({ ok: true, reply: out.reply });
+  }
+
+  // The command itself, shared by StreamElements and the bot. source: { kind: "se" | "bot", subscriptionId }.
+  async runCommand(channel, input, origin, settings, source) {
+    const action = SE_ACTIONS.includes(input.action) ? input.action : "";
     const userId = validUserId(input.userId);
     const username = normalizeUsername(input.username);
     const target = normalizeUsername(input.target);
@@ -798,7 +840,7 @@ export class ChannelRoom extends DurableObject {
     // purpose (Disconnect chat; "Use StreamElements" turns it back on). SE_ONLY (test site) always switches.
     let switchedFrom = "";
     const turnedOff = state0.chat.status === "disconnected" && state0.chat.createdAt > 0;
-    if (state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID && (this.env?.SE_ONLY === "1" || !turnedOff)) {
+    if (source.kind === "se" && state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID && (this.env?.SE_ONLY === "1" || !turnedOff)) {
       switchedFrom = state0.chat.subscriptionId || "";   // a Twitch EventSub subscription the Worker deletes
       const switched = this.advance(channel, { type: "chat_subscription", subscriptionId: SE_SUBSCRIPTION_ID, status: "enabled", createdAt: now }, now);
       if (switched.visible) this.broadcast(switched.state);
@@ -807,7 +849,7 @@ export class ChannelRoom extends DurableObject {
     }
     // Every command is logged with what came in, what the game decided and what the bot said.
     const done = (reply, reason, extra = {}) => {
-      logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { channel, user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });
+      logRoomEvent(this, "command", `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`, { channel, via: source.kind, user: username, userId, action: input.action, t: String(input.targetRaw || "").slice(0, 80), target, reason, reply, ...extra });
       return json(switchedFrom ? { reply, switchedFrom } : { reply });
     };
     if (!action) return done(`Lost in the arena? Type ${names.help}`, "unknown_action");
@@ -834,10 +876,10 @@ export class ChannelRoom extends DurableObject {
       const found = this.eloLookup(channel, target ? { username: target } : { userId });
       return done(seEloText(found, { self: !target, askerName: input.displayName || username, target, origin, channel }), found ? "elo" : "elo_not_found");
     }
-    if (!state0.chat.connected || state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID) return done(seReplyText({ result: { ok: false, reason: "chat_offline" }, state: state0, actorId: userId, action, target, names, origin, now }), "chat_offline");
+    if (!state0.chat.connected || state0.chat.subscriptionId !== source.subscriptionId) return done(seReplyText({ result: { ok: false, reason: "chat_offline" }, state: state0, actorId: userId, action, target, names, origin, now }), "chat_offline");
     if (action === "challenge" && !target) return done(seReplyText({ result: { ok: false, reason: "target_required" }, state: state0, actorId: userId, action, target, names, origin, now }), "target_required");
-    const messageId = "se:" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));
-    const msg = { messageId, timestamp: now, subscription: { id: SE_SUBSCRIPTION_ID }, event: { chatter_user_id: userId, chatter_user_login: username, chatter_user_name: String(input.displayName || username).slice(0, 48), message_id: messageId, message: { text: seCommandText(action, target) } } };
+    const messageId = source.kind + ":" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));
+    const msg = { messageId, timestamp: now, quick: true, subscription: { id: source.subscriptionId }, event: { chatter_user_id: userId, chatter_user_login: username, chatter_user_name: String(input.displayName || username).slice(0, 48), message_id: messageId, message: { text: seCommandText(action, target) } } };
     const result = this.processChatMessage(channel, msg, now);
     if (result.visible) this.broadcast(result.state);
     if (result.changed) await this.scheduleAlarm(result.state);
@@ -1077,7 +1119,7 @@ export class ChannelRoom extends DurableObject {
         if (parsed) {
           const lastId = parsed.action === "rematch" ? state.players.find((p) => p.userId === userId)?.lastOpponentId || userProfile?.lastOpponentId : "";
           const targetProfile = parsed.target ? this.getProfileByUsername(parsed.target, state.config) : lastId ? this.getProfile(lastId, state.config) : null;
-          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, quick: subscriptionId === SE_SUBSCRIPTION_ID, rolls: Array.from({ length: 48 }, () => Math.random()) });
+          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, quick: subscriptionId === SE_SUBSCRIPTION_ID || msg.quick === true, rolls: Array.from({ length: 48 }, () => Math.random()) });
           if (!main.result.ok && main.result.reason !== "duplicate") step({ type: "command_rejected", userId, command: parsed.action, reason: main.result.reason, retryAt: main.result.retryAt });
         } else {
           const active = state.players.find((item) => item.userId === userId);

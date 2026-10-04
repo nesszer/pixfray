@@ -248,6 +248,26 @@ left alone.
 - Requests are HMAC-verified with a secret derived from `AUTH_SECRET`, limited to 64 KB, must be
   at most 10 min old, and are deduplicated (CONTRACTS.md section 4).
 
+### PixFray chat bot (staging only, `CHAT_BOT=1`)
+- Replaces StreamElements: the subscription reads chat as a bot account (`BOT_LOGIN`, `nesszers`
+  on staging) instead of the broadcaster. Messages that don't start with `!` are answered 204 by
+  the Worker with no room request. Commands use the channel's StreamElements names, run through the
+  same room code (`runCommand`), and the reply goes out via Helix `POST /chat/messages` as the
+  bot, threaded to the command. Replies never start with `!`, and the room sends at most 18 per 30 s.
+- Setup:
+  1. Sign in once as the bot at `/auth/login?bot=1`. This stores `bot:twitch` = {id, login};
+     the app token does the rest.
+  2. The broadcaster allows the bot at `/auth/login?channel=<c>&connect=bot` (`channel:bot`),
+     or mods it. nesszerra's `connect=1` already includes `channel:bot`.
+  3. Connect chat on `/admin/`.
+- While the bot is connected, StreamElements commands get an empty reply (no double answers) and
+  don't take the chat source back. "Use StreamElements" switches back.
+- Free plan: 1 Worker request per chat message (all of them, not just commands), plus 1 DO
+  request per command. The pixfray.xyz rate-limit rule exempts `/api/eventsub`; mirror that on
+  miolaf.xyz before the bot reaches prod.
+- Prod and staging share one Twitch app, so prod needs its own bot account or app to avoid
+  subscription conflicts.
+
 ## Prerequisites (owner does these)
 
 1. Create a Twitch Developer app with the OAuth redirects `https://pixfray.xyz/auth/callback` and

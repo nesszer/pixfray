@@ -41,8 +41,9 @@ return {
       ...(localTest ? {} : { OWNER_TWITCH_ID: bindings.text('445610108') }),
       // Test site only: owner access for scripts/devtools.mjs (docs/DEVTOOLS.md). Production never declares it.
       ...(testing ? { DEV_TOOLS_TOKEN: bindings.secret() } : {}),
-      // Test site only: chat comes from StreamElements alone; Connect chat (EventSub) is refused.
-      ...(testing ? { SE_ONLY: bindings.text('1') } : {}),
+      // Test site only: the PixFray chat bot. Connect chat subscribes as the BOT_LOGIN account (signed in once at
+      // /auth/login?bot=1), commands are answered in chat by the bot, and StreamElements stays quiet while it's connected.
+      ...(testing ? { CHAT_BOT: bindings.text('1'), BOT_LOGIN: bindings.text('nesszers') } : {}),
       ...(localTest ? { MINI_LOCAL_TEST: bindings.text('1') } : {})
     }
   })
