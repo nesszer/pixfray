@@ -227,25 +227,34 @@ async function start() {
     return p;
   }
   // Registered profiles (saved on the website) decide name, color and character. Unregistered chatters keep their chat look.
+  // A saved look is cached 5 min and "no saved fighter" 1 min, since viewers often save mid-stream. Lookups are batched
+  // every 2 s so a few OBS sources on one connection stay under the edge rate limit (20 requests per 10 s per IP).
   function queueLook(login) {
     const hit = savedLooks.get(login);
-    if (!arenaEnabled || arenaDemo || (hit && Date.now() - hit.at < 300_000)) return;
+    if (!arenaEnabled || arenaDemo || (hit && Date.now() - hit.at < (hit.look ? 300_000 : 60_000))) return;
     lookQueue.add(login);
-    if (!lookTimer) lookTimer = setTimeout(fetchLooks, 1000);
+    if (!lookTimer) lookTimer = setTimeout(fetchLooks, 2000);
   }
   async function fetchLooks() {
     const batch = [...lookQueue].slice(0, 20);
     for (const login of batch) { lookQueue.delete(login); savedLooks.set(login, { at: Date.now(), look: savedLooks.get(login)?.look || null }); }
+    let retryMs = 2000;
     try {
       const response = await fetch('/api/looks/' + encodeURIComponent(channel) + '?u=' + batch.join(','), { cache: 'no-store', headers: { accept: 'application/json' } });
-      const data = response.ok ? await response.json() : {};
+      if (!response.ok) throw new Error('Looks HTTP ' + response.status);
+      const data = await response.json();
       for (const login of batch) {
         const look = data && typeof data[login] === 'object' ? data[login] : null;
         savedLooks.set(login, { at: Date.now(), look: look ? { ...look, username: login, registered: true } : null });
       }
       for (const p of players.values()) if (batch.includes(p.key)) applyArenaProfile(p);
-    } catch { /* keep the random look until the next try */ }
-    lookTimer = lookQueue.size ? setTimeout(fetchLooks, 1000) : 0;
+    } catch {
+      // A failed lookup (a 429 from the rate limit blocks for 10 s) says nothing about the viewer: keep their current
+      // look and ask again, rather than caching them as having no saved fighter.
+      for (const login of batch) { savedLooks.get(login).at = 0; lookQueue.add(login); }
+      retryMs = 10_000;
+    }
+    lookTimer = lookQueue.size ? setTimeout(fetchLooks, retryMs) : 0;
   }
   function applyArenaProfile(p) {
     const arena = arenaEnabled && p.userId ? profilesById.get(p.userId) : null;
