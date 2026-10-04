@@ -1,4 +1,4 @@
-/* Mini Chat UI stylesheet: design.css v1 primitives (~/.claude/design) re-themed as a dark tavern
+/* PixFray UI stylesheet: design.css v1 primitives (~/.claude/design) re-themed as a dark tavern
    (warm near-black wood, 1px gold trim, Fraunces headings). Dark always, because this is a streamer
    tool used next to OBS. Bounded vocabulary: use these tokens and classes instead of inventing new
    ones. App classes are at the end. */
@@ -153,7 +153,7 @@ input, select, textarea { width: 100%; min-height: 40px; padding: var(--space-2)
   .section { break-inside: avoid-page; }
 }
 
-/* ---------- Mini Chat app classes (built from the tokens above) ---------- */
+/* ---------- PixFray app classes (built from the tokens above) ---------- */
 [hidden] { display: none !important; }
 /* .table-wrap is positioned so absolutely placed children (sr-only headers) scroll with it instead of widening the page */
 .table-wrap { position: relative; }

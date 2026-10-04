@@ -240,7 +240,7 @@ async function loadProgress(d, only) {
   renderChannels(S.channels);
 }
 function channelAction(action, login, button) {
-  if (action === 'pause' && !confirm('Turn Mini Chat off on ' + login + '? The overlay, commands and viewer page stop; fighters and ranks are kept.')) return;
+  if (action === 'pause' && !confirm('Turn PixFray off on ' + login + '? The overlay, commands and viewer page stop; fighters and ranks are kept.')) return;
   return busy(button, async () => {
     const r = await api('/api/dev/channels', { method: 'POST', body: { action, login } });
     if (!r.ok) return status('#invite-status', errorText(r, 'Could not change ' + login), 'error');

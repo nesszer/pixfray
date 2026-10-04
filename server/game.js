@@ -26,7 +26,7 @@ const DEFAULT_CONFIG = {
   // !checkin: upgrade points per stream check-in, and +1 more at a streak of 3, 7, 14 and 30 streams.
   checkinPoints: 1,
   streakBonus: true,
-  // Mini Chat dollars (server/channel.js payDuels, give). Saved fighters earn them per finished duel.
+  // PixFray dollars (server/channel.js payDuels, give). Saved fighters earn them per finished duel.
   winDollars: 5,
   lossDollars: 3,
   // !give @name amount: on/off, the most one viewer can give per stream, and the finished duels needed first.

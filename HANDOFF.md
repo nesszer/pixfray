@@ -1,4 +1,4 @@
-# Mini Chat v2 handoff
+# PixFray v2 handoff
 
 Project root: `D:\code\2026-10-01\i-ne\outputs\mini-chat`
 Live v2: https://chat.miolaf.xyz (Cloudflare Workers Free, Worker `nesszerra-mini-chat`; v1 replaced 2026-10-01)
@@ -163,7 +163,7 @@ Fixed in this pass:
 - Each win earns an upgrade point (power, guard, luck, 8 per stat, 20 in all) and unlocks hats
   (`server/upgrades.js`). `!checkin` (StreamElements) gives points once per live stream, with a
   streak bonus at 3, 7, 14 and 30 streams; check-in points survive a rank reset.
-- Each finished duel pays Mini Chat dollars (config `winDollars` 5, `lossDollars` 3), shown once the
+- Each finished duel pays PixFray dollars (config `winDollars` 5, `lossDollars` 3), shown once the
   stream has shown the fight. `!wallet` lists dollars, points and streak; `!pay @name amount` (not `!give`, which is
   StreamElements' points alias) works
   while live, after 5 finished duels, up to $100 per stream (all mod-tunable, and `giveEnabled`

@@ -25,7 +25,7 @@ const GROUPS = [
     { key: "checkinPoints", label: "Upgrade points per check-in", unit: "points", min: 0, max: 3 },
     { key: "streakBonus", label: "Streak bonus", bool: true, hint: "+1 point at a streak of 3, 7, 14 and 30 streams" },
   ] },
-  // Mini Chat dollars (server/channel.js payDuels and give). Mods gift dollars from the Players tab.
+  // PixFray dollars (server/channel.js payDuels and give). Mods gift dollars from the Players tab.
   { title: "Dollars", fields: [
     { key: "winDollars", label: "Dollars for a win", unit: "$", min: 0, max: 100 },
     { key: "lossDollars", label: "Dollars for a loss", unit: "$", min: 0, max: 100 },
@@ -253,12 +253,12 @@ function chatHealth() {
   const a = S.admin, c = a.chatStatus || a.chat || {}, se = a.streamelements;
   const fix = " Finish step 3, Add the chat commands to StreamElements, on the Stream setup tab.";
   if (!c.connected) return { ok: false, label: "Chat", value: "Not connected", note: "no chat source", title: "Waiting for chat",
-    text: CHANNEL === "nesszerra" ? "Duels start when chat is connected. Connect Twitch chat or set up StreamElements on the Stream setup tab." : "Duels start when chat commands reach Mini Chat." + fix };
+    text: CHANNEL === "nesszerra" ? "Duels start when chat is connected. Connect Twitch chat or set up StreamElements on the Stream setup tab." : "Duels start when chat commands reach PixFray." + fix };
   if (c.source === "streamelements") {
     if (se && se.rejectedAt > (se.lastCommandAt || 0)) return { ok: false, label: "StreamElements", value: "Old key", note: "a command was refused " + timeAgo(se.rejectedAt),
       title: "StreamElements is sending an old key", text: "A command arrived " + timeAgo(se.rejectedAt) + " with a key that no longer works, so it was refused. Copy every response again from the Stream setup tab and paste it into StreamElements." };
-    if (!se?.lastCommandAt) return { ok: false, label: "StreamElements", value: "No commands yet", note: "none has reached Mini Chat", title: "Waiting for the first chat command",
-      text: "StreamElements is the chat source, but no command has reached Mini Chat yet." + fix };
+    if (!se?.lastCommandAt) return { ok: false, label: "StreamElements", value: "No commands yet", note: "none has reached PixFray", title: "Waiting for the first chat command",
+      text: "StreamElements is the chat source, but no command has reached PixFray yet." + fix };
     return { ok: true, label: "StreamElements", value: "Working", note: "last command " + timeAgo(se.lastCommandAt) };
   }
   const last = c.lastNotificationAt ?? c.lastSeen;
@@ -668,7 +668,7 @@ function renderChecklist() {
   else if (!se) detail("check-commands", "StreamElements isn't available for this channel.");
   else {
     const missing = se.commands.filter((x) => !se.seen?.[x.action]);
-    detail("check-commands", (se.commands.length - missing.length) + " of " + se.commands.length + " commands have reached Mini Chat." +
+    detail("check-commands", (se.commands.length - missing.length) + " of " + se.commands.length + " commands have reached PixFray." +
       (missing.length ? " Not used yet: " + missing.map((x) => x.name).join(", ") + ". Type each one in your chat; any reply from the bot counts." : ""));
   }
   $("#check-mods [data-detail]").replaceChildren(...modsDetail());
@@ -685,7 +685,7 @@ function modsDetail() {
   const broadcaster = !!S.access?.broadcaster || (!!S.access?.owner && CHANNEL === "nesszerra");
   if (broadcaster) {
     const link = h("a", { href: "/auth/login?" + new URLSearchParams({ channel: CHANNEL, connect: "mods" }) }, lapsed ? "Reconnect mod access" : "Connect mod access");
-    return [lapsed ? "Mod access expired, so your Twitch moderators can't sign in until you reconnect it. " : "Your Twitch moderators can't sign in yet. Mini Chat needs permission to read your moderator list. ", link];
+    return [lapsed ? "Mod access expired, so your Twitch moderators can't sign in until you reconnect it. " : "Your Twitch moderators can't sign in yet. PixFray needs permission to read your moderator list. ", link];
   }
   const state = lapsed ? "Mod access expired" : "Mod access isn't connected";
   return [state + ". " + (S.access?.owner ? CHANNEL + " has to " + (lapsed ? "reconnect" : "connect") + " it from their own Stream setup page." : "Ask " + CHANNEL + " to " + (lapsed ? "reconnect" : "connect") + " it.")];
@@ -705,30 +705,30 @@ $("#duel-module-off").addEventListener("change", async (e) => {
   setStatus($("#check-status"), box.checked ? "Saved: the Duel module is off." : "Saved: the Duel module step is open again.", "ok");
   await load();
 });
-// ---------- turning Mini Chat off (invited channels; the broadcaster or the owner) ----------
+// ---------- turning PixFray off (invited channels; the broadcaster or the owner) ----------
 const mayPower = () => !!(S.access?.broadcaster || S.access?.owner) && ["on", "paused"].includes(S.admin?.channelState);
 function renderPower() {
   const paused = S.admin.channelState === "paused", toggle = $("#power-toggle");
   $("#channel-power").hidden = !mayPower();
-  $("#power-title").textContent = paused ? "Mini Chat is off on " + CHANNEL : "Turn Mini Chat off";
+  $("#power-title").textContent = paused ? "PixFray is off on " + CHANNEL : "Turn PixFray off";
   $("#power-text").textContent = paused
     ? "The overlay, the chat commands and the viewer page are stopped. Fighters and ranks are kept, so turning it back on picks up where it left off."
     : "Stops the overlay, the chat commands and the viewer page on " + CHANNEL + ". Fighters and ranks are kept, and you can turn it back on here at any time.";
-  toggle.textContent = paused ? "Turn Mini Chat back on" : "Turn Mini Chat off";
+  toggle.textContent = paused ? "Turn PixFray back on" : "Turn PixFray off";
   toggle.className = paused ? "btn btn-primary" : "btn btn-danger";
   const note = $("#paused-note");
   note.hidden = !paused;
-  if (paused) note.replaceChildren("Mini Chat is off on " + CHANNEL + ": the overlay, the commands and the viewer page are stopped. ",
+  if (paused) note.replaceChildren("PixFray is off on " + CHANNEL + ": the overlay, the commands and the viewer page are stopped. ",
     mayPower() ? h("a", { href: "#chat", onclick: (e) => { e.preventDefault(); selectTab($("#tab-chat")); $("#channel-power").scrollIntoView({ block: "center" }); toggle.focus({ preventScroll: true }); } }, "Turn it back on") : CHANNEL + " can turn it back on.");
 }
 $("#power-toggle").addEventListener("click", async (e) => {
   const button = e.currentTarget, pause = S.admin.channelState !== "paused";
-  if (pause && !confirm("Turn Mini Chat off on " + CHANNEL + "? The overlay, the commands and the viewer page stop until you turn it back on. Fighters and ranks are kept.")) return;
+  if (pause && !confirm("Turn PixFray off on " + CHANNEL + "? The overlay, the commands and the viewer page stop until you turn it back on. Fighters and ranks are kept.")) return;
   button.disabled = true;
   const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: pause ? "pauseChannel" : "resumeChannel" } });
   button.disabled = false;
   if (!r.ok) return setStatus($("#power-status"), "Couldn't change it: " + errorText(r) + ".", "error");
-  setStatus($("#power-status"), pause ? "Mini Chat is off. Overlays and chat commands stop within a minute." : "Mini Chat is back on. Refresh the OBS source if the overlay stays empty.", "ok");
+  setStatus($("#power-status"), pause ? "PixFray is off. Overlays and chat commands stop within a minute." : "PixFray is back on. Refresh the OBS source if the overlay stays empty.", "ok");
   await load();
   if (!pause && !S.socket) connectLive();
 });

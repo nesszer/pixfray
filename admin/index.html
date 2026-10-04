@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mini Chat mod controls — nesszerra</title>
+<title>PixFray mod controls — nesszerra</title>
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#17110c">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/" data-keep-channel>Mini Chat</a>
+  <a class="brand" href="/" data-keep-channel>PixFray</a>
   <nav aria-label="Pages"><a href="/" data-keep-channel>Your fighter</a><a href="/admin/" aria-current="page" data-keep-channel>Mod controls</a><a href="/admin/dev/" id="dev-link" hidden>Owner</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
@@ -86,7 +86,7 @@
         <div class="toolbar section"><button class="btn btn-danger" id="reset-all-ranks" type="button">Reset all ranks</button></div>
       </section>
       <section class="section" aria-labelledby="gift-title">
-        <h2 id="gift-title">Gift Mini Chat dollars to a saved fighter</h2>
+        <h2 id="gift-title">Gift PixFray dollars to a saved fighter</h2>
         <p class="muted small">Viewers earn dollars from duels and pass them on with !pay. A negative amount takes dollars back, never below $0. Rank resets keep dollars.</p>
         <form id="gift-form" class="controls" novalidate>
           <div><label for="gift-user">Viewer (Twitch name)</label><input id="gift-user" maxlength="26" autocomplete="off" spellcheck="false" required></div>
@@ -175,7 +175,7 @@
           </div></li>
           <li id="check-duel" tabindex="-1"><span class="badge" data-badge>…</span><div>
             <h3>Turn off the StreamElements Duel module</h3>
-            <p class="small muted" data-detail>StreamElements has its own Duel game. Its <code>!duel</code>, <code>!accept</code> and <code>!deny</code> would answer at the same time as Mini Chat. At streamelements.com go to Chat bot, then Modules, and switch off Duel, or type <code>!module duel disable</code> in your chat.</p>
+            <p class="small muted" data-detail>StreamElements has its own Duel game. Its <code>!duel</code>, <code>!accept</code> and <code>!deny</code> would answer at the same time as PixFray. At streamelements.com go to Chat bot, then Modules, and switch off Duel, or type <code>!module duel disable</code> in your chat.</p>
             <label class="check small"><input type="checkbox" id="duel-module-off"> I turned off the Duel module</label>
           </div></li>
           <li id="check-commands" tabindex="-1"><span class="badge" data-badge>…</span><div>
@@ -200,8 +200,8 @@
                 <ul>
                   <li><strong>Renaming:</strong> change a name in the table and click Save names before adding it in StreamElements. Bot replies use your names. Accepting is <code>!fight</code> because the Duel module owns <code>!accept</code>.</li>
                   <li><strong>The name is taken:</strong> find that command under Custom commands, click its edit (pencil) button, replace the whole Response with the copied one and click Save. Default commands can't be edited; turn them off or pick another name here.</li>
-                  <li><strong>Optional rows:</strong> <code>!ranks</code>, <code>!elo</code> and <code>!minichat</code>. <code>!minichat</code> tells viewers how to join.</li>
-                  <li><strong>Remind chat how to join:</strong> add a StreamElements timer every 15 to 20 minutes and paste the text from Copy timer message. Mini Chat never posts on its own.</li>
+                  <li><strong>Optional rows:</strong> <code>!ranks</code>, <code>!elo</code> and <code>!fray</code>. <code>!fray</code> tells viewers how to join.</li>
+                  <li><strong>Remind chat how to join:</strong> add a StreamElements timer every 15 to 20 minutes and paste the text from Copy timer message. PixFray never posts on its own.</li>
                   <li><strong>Use StreamElements</strong> makes StreamElements the chat source by hand. The first command that arrives does the same.</li>
                 </ul>
               </details>
@@ -242,9 +242,9 @@
         </details>
       </section>
       <section class="section" id="channel-power" aria-labelledby="power-title" hidden>
-        <h2 id="power-title">Turn Mini Chat off</h2>
+        <h2 id="power-title">Turn PixFray off</h2>
         <p id="power-text"></p>
-        <div class="toolbar"><button class="btn" id="power-toggle" type="button">Turn Mini Chat off</button></div>
+        <div class="toolbar"><button class="btn" id="power-toggle" type="button">Turn PixFray off</button></div>
         <p class="status" id="power-status" role="status"></p>
       </section>
     </div>

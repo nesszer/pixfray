@@ -10,7 +10,7 @@ try {
  const page=await browser.newPage({viewport:{width:1920,height:1080}});
  page.on('pageerror',e=>errors.push(e.message));
  await page.goto(base);
- assert.match(await page.title(),/Mini Chat/);
+ assert.match(await page.title(),/PixFray/);
  await page.screenshot({path:out+'/setup-preview.png',fullPage:true});
  await page.goto(base+'/overlay.html?demo=1&debug=1&cap=50&size=64');
  await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('8/50'));

@@ -1,5 +1,5 @@
 // Live end-to-end check through real Twitch chat and the StreamElements bot, against the deployed site.
-// Two headed Chromes with remote debugging, each signed in to Twitch (and to Mini Chat with a saved fighter):
+// Two headed Chromes with remote debugging, each signed in to Twitch (and to PixFray with a saved fighter):
 //   A = the broadcaster (LIVE_A_CDP, default :9333), B = a second account (LIVE_B_CDP, default :9334).
 // Both accounts type every command in the channel's popout chat; each bot reply must show in both tabs.
 // It refuses to run while the channel is live. The test duels change both accounts' Elo, wins and losses.
@@ -231,7 +231,7 @@ try {
 
   // Every read command from both accounts.
   for (const who of [A, B]) {
-    await step(`${who.login}: !minichat`, () => say(who, '!minichat', /^Mini Chat duels: gear up at \S+, then name your rival with !challenge @name\. They answer !fight\. Again\? !rematch$/));
+    await step(`${who.login}: !fray`, () => say(who, '!fray', /^PixFray duels: gear up at \S+, then name your rival with !challenge @name\. They answer !fight\. Again\? !rematch$/));
     await step(`${who.login}: !elo`, () => say(who, '!elo', new RegExp(`^${esc(who.login)}: \\d+ Elo, rank \\d+ of \\d+`, 'i')));
     await step(`${who.login}: !elo @${other(who).login}`, () => say(who, `!elo @${other(who).login}`, new RegExp(`^${esc(other(who).login)}: \\d+ Elo, rank`, 'i')));
     await step(`${who.login}: !ranks lists both accounts`, async () => {
@@ -322,12 +322,12 @@ try {
   });
 
   await step('Stream setup shows every command working', async () => {
-    // Same-origin fetch from a Mini Chat page in Chrome A, which holds the broadcaster's session.
+    // Same-origin fetch from a PixFray page in Chrome A, which holds the broadcaster's session.
     const admin = await A.ctx.newPage();
     try {
       await admin.goto(`${ORIGIN}/admin/?channel=${CHANNEL}`);
       const snap = await admin.evaluate((u) => fetch(u).then((r) => (r.ok ? r.json() : { status: r.status })), `/api/admin/${CHANNEL}`);
-      check(snap.streamelements, `admin answered ${snap.status || 'without streamelements'} (is Chrome A signed in to Mini Chat?)`);
+      check(snap.streamelements, `admin answered ${snap.status || 'without streamelements'} (is Chrome A signed in to PixFray?)`);
       const seen = snap.streamelements.seen || {};
       const stale = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help'].filter((a) => !(Date.now() - (seen[a] || 0) < 3600_000));
       check(!stale.length, 'not seen in the last hour: ' + stale.join(', '));

@@ -50,7 +50,7 @@ async function start() {
   const arenaDemo = arenaEnabled && demo;
   const debug = params.get('debug') === '1';
   // A channel that is turned off or was never set up shows nothing. It checks again every 5 minutes, so turning
-  // Mini Chat back on needs no OBS refresh.
+  // PixFray back on needs no OBS refresh.
   if (!demo && await channelOff(channel)) { setTimeout(() => location.reload(), 300_000); return; }
   // Most characters on screen. The channel setting (mod controls) arrives with every snapshot and wins over ?cap=.
   let cap = Math.max(1, Math.min(100, Number(params.get('cap')) || 100));

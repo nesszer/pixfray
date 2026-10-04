@@ -9,17 +9,17 @@ export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements
 export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help', 'checkin', 'wallet', 'give', 'pet'];   // quick duels need no attack commands
 export const SE_READ_ACTIONS = ['top', 'elo', 'help'];   // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!minichat', checkin: '!checkin', wallet: '!wallet', give: '!pay', pet: '!pet' };   // not !give: StreamElements' built-in !givepoints answers to that
-export const LOST_TEXT = 'Lost in the arena? Type !minichat';
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!fray', checkin: '!checkin', wallet: '!wallet', give: '!pay', pet: '!pet' };   // not !give: StreamElements' built-in !givepoints answers to that
+export const LOST_TEXT = 'Lost in the arena? Type !fray';
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
-export const OFF_TEXT = 'Mini Chat is off on this channel right now.';
+export const OFF_TEXT = 'PixFray is off on this channel right now.';
 const MAX_REPLY = 380;   // StreamElements cuts responses at 400 bytes
 
 const reply = (body, status = 200) => new Response(String(body).slice(0, MAX_REPLY), { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 
 // Keys are 24 random bytes as hex (randomHex in server/channel.js). Anything else is refused without waking the room.
 export const SE_KEY = /^[a-f0-9]{48}$/;
-export const WRONG_KEY_TEXT = 'Mini Chat: wrong key. Copy the commands again from the admin page.';
+export const WRONG_KEY_TEXT = 'PixFray: wrong key. Copy the commands again from the admin page.';
 // Per-isolate memory of refused (channel, key) pairs: the first refusal reaches the room (it records rejected_at for the
 // admin page), repeats within REFUSED_MS are answered here with no Durable Object request (Free plan quota).
 const REFUSED_MS = 60000, REFUSED_MAX = 2000;
@@ -38,13 +38,13 @@ export async function handleStreamElements(request, env, { url, origin, channels
   if (!SE_ACTIONS.includes(action)) return reply(LOST_TEXT);   // e.g. an old !attack/!strike/!heavy/!heal
   const q = name => (url.searchParams.get(name) || '').trim();
   const key = q('k');
-  if (!key || key.length > 128) return reply('Mini Chat: missing key. Copy the commands again from the admin page.');
+  if (!key || key.length > 128) return reply('PixFray: missing key. Copy the commands again from the admin page.');
   if (!SE_KEY.test(key)) return reply(WRONG_KEY_TEXT);
   const now = Date.now(), pair = channel + ':' + await keyHash(key), hit = refused.get(pair);
   if (hit && now - hit < REFUSED_MS) return reply(WRONG_KEY_TEXT);
   const state = channelState ? await channelState(channel) : channels.includes(channel) ? 'builtin' : null;
   if (state === 'paused') return reply(OFF_TEXT);
-  if (state !== 'builtin' && state !== 'on') return reply('Mini Chat is not enabled for this channel', 404);
+  if (state !== 'builtin' && state !== 'on') return reply('PixFray is not enabled for this channel', 404);
   const body = {
     key,
     action,
@@ -107,11 +107,11 @@ const siteLink = (origin, channel, hash = '') => origin ? `${origin}/${channel ?
 const gearUp = (origin, channel, lead = 'Gear up at') => { const link = siteLink(origin, channel); return link ? ` ${lead} ${link}` : ''; };
 const noFighter = (who, self, origin, channel) => self ? `@${who}, you have no fighter in the arena yet!${gearUp(origin, channel)}` : `@${who} has no fighter in the arena yet!${gearUp(origin, channel, 'Send them to')}`;
 
-// !minichat: how to join, with this channel's own command names.
+// !fray: how to join, with this channel's own command names.
 export function seHelpText({ names = {}, origin = '', channel = '' } = {}) {
   const n = a => names[a] || DEFAULT_SE_NAMES[a];
   const link = siteLink(origin, channel);
-  return `Mini Chat duels: gear up${link ? ' at ' + link : ' on the Mini Chat site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}. Again? ${n('rematch')}`;
+  return `PixFray duels: gear up${link ? ' at ' + link : ' on the PixFray site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}. Again? ${n('rematch')}`;
 }
 
 // !top: the first five of the leaderboard (rows in leaderboard order) on one line.
@@ -151,7 +151,7 @@ export function seCheckinText(r, { who = '', origin = '', channel = '', maxPoint
 export function seWalletText(w, { who = '', origin = '', channel = '', maxPoints = 20 } = {}) {
   const me = short(who) || 'you';
   if (!w) return noFighter(me, true, origin, channel);
-  return `@${me}: $${w.dollars} Mini Chat dollars, ${w.points} of ${maxPoints} upgrade points, ${w.streak}-stream streak.`;
+  return `@${me}: $${w.dollars} PixFray dollars, ${w.points} of ${maxPoints} upgrade points, ${w.streak}-stream streak.`;
 }
 
 // !pet [@name]: p = ChannelRoom.petInfo() -> { name, pet: {label, tier, boost} | null }, or null (no fighter).
@@ -161,7 +161,7 @@ export function sePetText(p, { who = '', target = '', origin = '', channel = '' 
   if (!p.pet) {
     if (target) return `@${short(p.name)} has no pet yet.`;
     const link = siteLink(origin, channel, '#pets');
-    return `@${me}, you have no pet yet. Buy one with Mini Chat dollars${link ? ' at ' + link : ' on the Mini Chat site.'}`;
+    return `@${me}, you have no pet yet. Buy one with PixFray dollars${link ? ' at ' + link : ' on the PixFray site.'}`;
   }
   return `@${target ? short(p.name) : me}'s pet: ${p.pet.label} (${p.pet.tier}), ${boostText(p.pet.boost)}.`;
 }

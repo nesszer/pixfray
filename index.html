@@ -1,21 +1,21 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mini Chat: pick your fighter on nesszerra</title>
-<meta data-channel name="description" content="Pick your Mini Chat character, colors, gear and pet for the nesszerra Twitch channel.">
+<title>PixFray: pick your fighter on nesszerra</title>
+<meta data-channel name="description" content="Pick your PixFray character, colors, gear and pet for the nesszerra Twitch channel.">
 <link rel="canonical" href="https://chat.miolaf.xyz/">
 <meta name="theme-color" content="#17110c">
-<meta property="og:type" content="website"><meta property="og:site_name" content="Mini Chat"><meta property="og:url" content="https://chat.miolaf.xyz/">
-<meta property="og:title" content="Mini Chat: pick your fighter on nesszerra">
+<meta property="og:type" content="website"><meta property="og:site_name" content="PixFray"><meta property="og:url" content="https://chat.miolaf.xyz/">
+<meta property="og:title" content="PixFray: pick your fighter on nesszerra">
 <meta property="og:description" content="Pick a character and nameplate color, then duel other viewers in nesszerra's Twitch chat.">
 <meta property="og:image" content="https://chat.miolaf.xyz/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Mini Chat characters lined up under the Mini Chat name">
+<meta property="og:image:alt" content="PixFray characters lined up under the PixFray name">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/" data-keep-channel>Mini Chat</a>
+  <a class="brand" href="/" data-keep-channel>PixFray</a>
   <nav aria-label="Pages"><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
@@ -24,7 +24,7 @@
   <h1 id="pick-title">Which stream are you watching?</h1>
   <p class="lead">Your fighter belongs to one streamer's chat. Pick that channel, then choose your character.</p>
   <ul class="channel-list" id="channel-list"><li class="muted">Loading channels…</li></ul>
-  <p class="caveat">Not listed? The streamer hasn't set up Mini Chat yet. Use the link from their chat's <code>!minichat</code> command.</p>
+  <p class="caveat">Not listed? The streamer hasn't set up PixFray yet. Use the link from their chat's <code>!fray</code> command.</p>
 </main>
 
 <section class="hero" id="fighter" aria-labelledby="hero-title">
@@ -103,7 +103,7 @@
         </div>
 
         <div class="form-stack" role="tabpanel" id="panel-shop" aria-labelledby="tab-shop" hidden>
-          <p class="note" id="shop-note">Spend the Mini Chat dollars you earn in duels. Everything here changes looks only, not stats. You keep what you buy and can wear it in any build.</p>
+          <p class="note" id="shop-note">Spend the PixFray dollars you earn in duels. Everything here changes looks only, not stats. You keep what you buy and can wear it in any build.</p>
           <fieldset id="hat-picker">
             <legend>Hat <span class="muted small" id="hat-note"></span></legend>
             <div class="char-grid item-grid" id="hats" role="radiogroup" aria-label="Hat"></div>
@@ -142,7 +142,7 @@
         <div class="form-stack" role="tabpanel" id="panel-pets" aria-labelledby="tab-pets" hidden>
           <fieldset id="pets">
             <legend>Pet <span class="muted small" id="pet-note"></span></legend>
-            <p class="muted small">A pet follows your fighter on stream and adds to its stats, on top of the upgrade limit. Buy pets with the Mini Chat dollars you earn in duels. You keep every pet you buy and bring one at a time.</p>
+            <p class="muted small">A pet follows your fighter on stream and adds to its stats, on top of the upgrade limit. Buy pets with the PixFray dollars you earn in duels. You keep every pet you buy and bring one at a time.</p>
             <div class="char-grid item-grid" id="pet-list" role="radiogroup" aria-label="Pet"></div>
             <p class="status" id="pet-status" role="status"></p>
           </fieldset>
@@ -178,12 +178,12 @@
             <tr><td><code>!decline</code></td><td>Turns a challenge down.</td></tr>
             <tr><td><code>!rematch</code></td><td>Challenges the last viewer you fought. If they type <code>!rematch</code> too, the duel starts. Rematches open 30 s after a duel.</td></tr>
             <tr><td><code>!checkin</code></td><td>Once per stream, while it's live: <span id="cmd-checkin">+1 upgrade point</span>. Check in on streams in a row for +1 more at 3, 7, 14 and 30. One missed stream a week doesn't break the streak.</td></tr>
-            <tr><td><code>!wallet</code></td><td>Posts your Mini Chat dollars, upgrade points and streak. Each finished duel pays <span id="cmd-dollars">$5 for a win and $3 for a loss</span>.</td></tr>
+            <tr><td><code>!wallet</code></td><td>Posts your PixFray dollars, upgrade points and streak. Each finished duel pays <span id="cmd-dollars">$5 for a win and $3 for a loss</span>.</td></tr>
             <tr><td><code>!pay @viewer 10</code></td><td id="cmd-give">Gives dollars to another fighter while the stream is live: up to $100 per stream, after your first 5 duels.</td></tr>
             <tr><td><code>!pet</code></td><td>Posts the pet you bring and its boost. Add <code>@viewer</code> to see someone else's.</td></tr>
             <tr><td><code>!elo</code></td><td>Posts your Elo, rank and record in chat. Add <code>@viewer</code> to check someone else.</td></tr>
             <tr><td><code>!ranks</code></td><td>Posts the top 5 of the leaderboard in chat.</td></tr>
-            <tr><td><code>!minichat</code></td><td>Posts how to join, with a link to this page.</td></tr>
+            <tr><td><code>!fray</code></td><td>Posts how to join, with a link to this page.</td></tr>
           </tbody>
         </table></div>
         <p class="hint" id="hp-mode-note" hidden>Duels started from Twitch chat on this channel use the HP fight right now: after <code>!fight</code>, both fighters trade <code>!attack</code>, <code>!strike</code>, <code>!heavy</code> and <code>!heal</code> until one runs out of health. StreamElements commands always use the die rolls.</p>
@@ -216,7 +216,7 @@
 </section>
 
 <main class="page">
-  <p class="caveat">Character art by <a href="https://kenney.nl" rel="noopener">Kenney</a>, <a href="https://opengameart.org/users/pzuh" rel="noopener">pzUH</a> and <a href="https://opengameart.org/users/sogomn" rel="noopener">Sogomn</a> (all CC0). Headings use <a href="https://github.com/undercasetype/Fraunces" rel="noopener">Fraunces</a> (SIL Open Font License). Signing in shares only your public Twitch name. Mini Chat never posts in chat as you.</p>
+  <p class="caveat">Character art by <a href="https://kenney.nl" rel="noopener">Kenney</a>, <a href="https://opengameart.org/users/pzuh" rel="noopener">pzUH</a> and <a href="https://opengameart.org/users/sogomn" rel="noopener">Sogomn</a> (all CC0). Headings use <a href="https://github.com/undercasetype/Fraunces" rel="noopener">Fraunces</a> (SIL Open Font License). Signing in shares only your public Twitch name. PixFray never posts in chat as you.</p>
 </main>
 <script type="module" src="/src/dashboard.js"></script>
 </body></html>

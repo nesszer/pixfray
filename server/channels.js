@@ -33,8 +33,8 @@ export const isOn = state => state === 'builtin' || state === 'on';
 export async function enabledChannel(env, channel) { return isOn(await channelState(env, channel)); }
 // The refusal for a channel that is off: 403 with off = 'paused' | 'not_enabled'.
 export const offError = state => state === 'paused'
-  ? { error: 'Mini Chat is off on this channel right now', off: 'paused' }
-  : { error: 'Mini Chat is not enabled for this channel', off: 'not_enabled' };
+  ? { error: 'PixFray is off on this channel right now', off: 'paused' }
+  : { error: 'PixFray is not enabled for this channel', off: 'not_enabled' };
 
 // Live rows under a prefix ('channel:' or 'invite:'), at most 500.
 export async function listRecords(env, prefix) {
@@ -91,7 +91,7 @@ export async function claimInvite(env, token, user) {
   if (status !== 'valid') throw fail(403, status === 'used' ? 'This invite was already used' : status === 'expired' ? 'This invite has expired' : 'This invite link is not valid', status);
   if (invite.login !== String(user.login || '').toLowerCase()) throw fail(403, 'This invite is for ' + invite.login + '. Sign in to Twitch as ' + invite.login + '.', 'wrong_account');
   const existing = await record(env, 'channel:' + invite.login);
-  if (!existing && enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'Mini Chat is full right now. Ask nesszerra for a spot.', 'full');
+  if (!existing && enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'PixFray is full right now. Ask nesszerra for a spot.', 'full');
   const taken = await consume(env, 'invite:' + token);
   if (inviteStatus(taken) !== 'valid') throw fail(403, 'This invite was already used', 'used');
   const now = Date.now();
@@ -104,7 +104,7 @@ export async function setPaused(env, login, paused) {
   if (CHANNELS.includes(login)) throw fail(400, login + ' is built in and always on', 'builtin');
   const rec = await record(env, 'channel:' + login);
   if (!rec) throw fail(404, login + ' is not set up', 'not_found');
-  if (!paused && rec.pausedAt && enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'Mini Chat is full right now', 'full');
+  if (!paused && rec.pausedAt && enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'PixFray is full right now', 'full');
   const { pausedAt, ...rest } = rec;
   const next = paused ? { ...rest, pausedAt: pausedAt || Date.now() } : rest;
   await saveChannel(env, next);

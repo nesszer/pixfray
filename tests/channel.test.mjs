@@ -376,7 +376,7 @@ test('StreamElements commands run a duel with chat replies; the key and command 
   // Quick duels are off in this room, but StreamElements has no attack commands, so !fight settles the duel at once.
   assert.equal((await cmd('u2', 'bob', 'accept')).body.reply, 'Fight on: alice vs bob! Watch the stream for the winner.');
   assert.equal(r.readState('nesszerra').duels.filter((d) => d.status === 'active').length, 0);
-  assert.equal((await cmd('u1', 'alice', 'heavy')).body.reply, 'Lost in the arena? Type !minichat');
+  assert.equal((await cmd('u1', 'alice', 'heavy')).body.reply, 'Lost in the arena? Type !fray');
   // Renamed commands show up in replies; duplicates and bad names are refused.
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!yes', decline: 'no' } } })).body.streamelements.names.decline, '!no');
   assert.equal((await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { accept: '!challenge' } } })).status, 400);
@@ -508,13 +508,13 @@ test('StreamElements !rematch challenges the last opponent, saved with the profi
 });
 
 
-test('StreamElements !ranks, !elo and !minichat work even while duels are paused', async () => {
+test('StreamElements !ranks, !elo and !fray work even while duels are paused', async () => {
   const r = room();
   const se = (await r.call('/admin')).body.streamelements;
-  assert.deepEqual([se.names.top, se.names.elo, se.names.help], ['!ranks', '!elo', '!minichat']);
+  assert.deepEqual([se.names.top, se.names.elo, se.names.help], ['!ranks', '!elo', '!fray']);
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 't' + (++m) } });
-  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'Mini Chat duels: gear up at https://test.example/?channel=nesszerra, then name your rival with !challenge @name. They answer !fight. Again? !rematch');
+  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'PixFray duels: gear up at https://test.example/?channel=nesszerra, then name your rival with !challenge @name. They answer !fight. Again? !rematch');
   assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'The arena has no champions yet! Gear up at https://test.example/?channel=nesszerra and win a duel.');
   assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra');
   await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
@@ -531,7 +531,10 @@ test('StreamElements !ranks, !elo and !minichat work even while duels are paused
   // The same for a stored !give: StreamElements' !givepoints answers to it, so it becomes !pay.
   await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { give: '!give' } } });
   assert.equal((await r.call('/admin')).body.streamelements.names.give, '!pay');
-  // Renamed commands show up in !minichat.
+  // A stored !minichat (the name before PixFray) becomes !fray.
+  await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { help: '!minichat' } } });
+  assert.equal((await r.call('/admin')).body.streamelements.names.help, '!fray');
+  // Renamed commands show up in !fray.
   await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { challenge: '!duel', accept: '!yes' } } });
   assert.match((await cmd('u1', 'alice', 'help')).body.reply, /!duel @name\. They answer !yes\. Again\? !rematch$/);
 });
@@ -600,7 +603,7 @@ test('dollars: paid once per finished duel and hidden until the stream shows it;
   const [win, lose] = duel.winnerId === 'u1' ? ['alice', 'bob'] : ['bob', 'alice'];
   assert.deepEqual([dollars()[win], dollars()[lose], duel.paid], [5, 3, true], 'paid in the same transaction as the result');
   // Until the stream has shown the fight, !wallet and the website show the old balance.
-  assert.equal(await cmd('u1', 'alice', 'wallet'), '@alice: $0 Mini Chat dollars, 0 of 20 upgrade points, 0-stream streak.');
+  assert.equal(await cmd('u1', 'alice', 'wallet'), '@alice: $0 PixFray dollars, 0 of 20 upgrade points, 0-stream streak.');
   assert.equal((await r.call('/profile?userId=u1')).body.dollars, 0);
   const winId = win === 'alice' ? 'u1' : 'u2', point = { stats: { power: 1, guard: 0, luck: 0 } };
   assert.equal((await r.save(winId, win, point)).body.error, 'invalid_upgrades', 'a save cannot spend (or reveal) a win the stream has not shown');
@@ -608,7 +611,7 @@ test('dollars: paid once per finished duel and hidden until the stream shows it;
   Date.now = () => duel.revealAt + 1;
   try {
     assert.equal((await r.save(winId, win, point)).body.profile.stats.power, 1, 'the point is spendable once shown');
-    assert.equal(await cmd(win === 'alice' ? 'u1' : 'u2', win, 'wallet'), `@${win}: $5 Mini Chat dollars, 1 of 20 upgrade points, 0-stream streak.`);
+    assert.equal(await cmd(win === 'alice' ? 'u1' : 'u2', win, 'wallet'), `@${win}: $5 PixFray dollars, 1 of 20 upgrade points, 0-stream streak.`);
     r.advance('nesszerra', { type: 'tick' }, Date.now());
     assert.deepEqual([dollars()[win], dollars()[lose]], [5, 3], 'never paid twice');
   } finally { Date.now = realNow; }
@@ -649,7 +652,7 @@ test('dollars: paid once per finished duel and hidden until the stream shows it;
   assert.deepEqual([log[0].context.reason, log[0].context.amount], ['given', 10]);
   // The dev chat (test site) answers like the bot would.
   const dev = async (text) => (await r.call('/dev-chat', { method: 'POST', body: { userId: 'u3', username: 'cara', displayName: 'cara', text } })).body.reply;
-  assert.equal(await dev('!wallet'), '@cara: $140 Mini Chat dollars, 3 of 20 upgrade points, 0-stream streak.');
+  assert.equal(await dev('!wallet'), '@cara: $140 PixFray dollars, 3 of 20 upgrade points, 0-stream streak.');
   assert.equal(await dev('!pay @bob 5'), '@cara gave $5 to @bob. You have $135 left.');
   // Mods tune it or turn !give off; payouts follow the config.
   const cfg = (patch) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'config', payload: { patch } } });
@@ -831,7 +834,7 @@ test('shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.equal((await cfg({ hatPricePerWin: 0 })).status, 200);
   assert.equal((await buy('u1', 'hat', 'crown')).body.error, 'hats_not_for_sale');
   // Equip: only owned pets; the profile, the game state and /looks carry it.
-  assert.equal(await cmd('u1', 'alice'), '@alice, you have no pet yet. Buy one with Mini Chat dollars at https://test.example/?channel=nesszerra#pets');
+  assert.equal(await cmd('u1', 'alice'), '@alice, you have no pet yet. Buy one with PixFray dollars at https://test.example/?channel=nesszerra#pets');
   assert.equal((await r.save('u1', 'alice', { pet: 'wolf' })).body.error, 'pet_locked');
   assert.equal((await r.save('u1', 'alice', { pet: 7 })).body.error, 'invalid_profile');
   const saved = (await r.save('u1', 'alice', { pet: 'fox' })).body.profile;

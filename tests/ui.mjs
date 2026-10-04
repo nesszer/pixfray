@@ -44,7 +44,7 @@ try {
   for (const s of sizes) {
     const { context, page } = await newPage(s);
     await page.goto(base + '/?channel=nesszerra');
-    assert.match(await page.title(), /Mini Chat/);
+    assert.match(await page.title(), /PixFray/);
     await page.waitForSelector('#characters input[name=character]');
     const count = await page.locator('#characters input[name=character]').count();
     assert.ok(count >= 5, 'expected at least 5 characters, got ' + count);
@@ -564,7 +564,7 @@ try {
     assert.equal(await page.evaluate(() => document.activeElement.id), 'check-overlay');
     assert.equal(await page.locator('#check-title').textContent(), 'Stream setup: 0 of 3 steps done');
     assert.match(await page.locator('#check-overlay').textContent(), /To do.*No overlay is open/s);
-    assert.match(await page.locator('#check-commands').textContent(), /2 of 7 commands have reached Mini Chat\. Not used yet: !accept, !rematch, !top, !elo, !help\./);
+    assert.match(await page.locator('#check-commands').textContent(), /2 of 7 commands have reached PixFray\. Not used yet: !accept, !rematch, !top, !elo, !help\./);
     assert.match(await page.locator('#check-mods').textContent(), /Done.*moderators of nesszerra can sign in/s);
     assert.deepEqual(await page.locator('#se-table [data-seen]').allTextContents(), ['Working · 2 min ago', 'Not used yet', 'Working · 2 min ago', 'Not used yet', 'Not used yet', 'Not used yet', 'Not used yet']);
     // the command table uses the full step width: badges stay on one line, nothing is cut off, narrow screens scroll inside the wrap
@@ -606,7 +606,7 @@ try {
       { name: 'owner, expired', channel: 'miolafff', session: owner, owner: true, access: ownerAccess, extra: { modsReady: false, modsLapsed: true },
         text: /^Mod access expired\. miolafff has to reconnect it from their own Stream setup page\.$/, badge: 'Expired', link: null },
       { name: 'broadcaster, not connected', channel: 'newstreamer', session: newstreamer, owner: false, access: broadcasterAccess, extra: { modsReady: false },
-        text: /^Your Twitch moderators can't sign in yet\. Mini Chat needs permission to read your moderator list\. Connect mod access$/, badge: 'Optional', link: ['Connect mod access', reconnect] },
+        text: /^Your Twitch moderators can't sign in yet\. PixFray needs permission to read your moderator list\. Connect mod access$/, badge: 'Optional', link: ['Connect mod access', reconnect] },
       { name: 'broadcaster, expired', channel: 'newstreamer', session: newstreamer, owner: false, access: broadcasterAccess, extra: { modsReady: false, modsLapsed: true },
         text: /^Mod access expired, so your Twitch moderators can't sign in until you reconnect it\. Reconnect mod access$/, badge: 'Expired', link: ['Reconnect mod access', reconnect] },
       { name: 'moderator, not connected, duels paused', channel: 'miolafff', session: mod, owner: false, access: { owner: false, moderator: true, canManage: true }, extra: { modsReady: false }, paused: true,
@@ -646,10 +646,10 @@ try {
     await page.route('**/api/invite/*', (r) => json(r, invite));
     await page.goto(base + '/start/');
     await page.waitForFunction(() => !document.querySelector('#invite-title').textContent.includes('Checking'));
-    assert.equal(await page.locator('#invite-title').textContent(), 'Mini Chat is invite-only right now');
+    assert.equal(await page.locator('#invite-title').textContent(), 'PixFray is invite-only right now');
     await page.goto(base + '/start/?invite=' + tok);
     await page.waitForFunction(() => !document.querySelector('#invite-title').textContent.includes('Checking'));
-    assert.equal(await page.locator('#invite-title').textContent(), 'Set up Mini Chat for newstreamer');
+    assert.equal(await page.locator('#invite-title').textContent(), 'Set up PixFray for newstreamer');
     assert.equal(await page.locator('#invite-actions a.btn-primary').getAttribute('href'), '/auth/login?invite=' + tok);
     assert.equal(await page.locator('#invite-actions a').count(), 1);
     assert.equal(await page.locator('#invite-problem').isHidden(), true);
@@ -683,7 +683,7 @@ try {
     await context.close();
   }
 
-  // 9. An invited channel's own admin page: connect mod access later, turn Mini Chat off and back on.
+  // 9. An invited channel's own admin page: connect mod access later, turn PixFray off and back on.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
     const me = { id: '5505', login: 'newstreamer', displayName: 'NewStreamer' };
@@ -715,8 +715,8 @@ try {
     await page.click('#power-toggle');
     await page.waitForSelector('#paused-note:not([hidden])');
     assert.deepEqual(posts.at(-1), { action: 'pauseChannel' });
-    assert.equal(await page.locator('#power-title').textContent(), 'Mini Chat is off on newstreamer');
-    assert.equal(await page.locator('#power-toggle').textContent(), 'Turn Mini Chat back on');
+    assert.equal(await page.locator('#power-title').textContent(), 'PixFray is off on newstreamer');
+    assert.equal(await page.locator('#power-toggle').textContent(), 'Turn PixFray back on');
     await noOverflow(page, 'admin paused ' + s.name);
     await page.screenshot({ path: shots + '/admin-paused-' + s.name + '.png' });
     await page.locator('#channel-power').screenshot({ path: shots + '/admin-power-' + s.name + '.png' });
@@ -733,7 +733,7 @@ try {
     await page.route('**/api/state/*', (r) => json(r, { error: 'off', off }, 403));
     await page.goto(base + '/?channel=newstreamer');
     await page.waitForSelector('#off-note:not([hidden])');
-    assert.match(await page.locator('#off-note').textContent(), /Mini Chat is off on newstreamer's channel right now/);
+    assert.match(await page.locator('#off-note').textContent(), /PixFray is off on newstreamer's channel right now/);
     assert.equal(await page.locator('.fighter-card').isVisible(), true);
     off = 'not_enabled';
     await page.goto(base + '/?channel=nobodyhere');
@@ -770,7 +770,7 @@ try {
     } else {
       await page.waitForSelector('#off-note:not([hidden])');
       assert.equal(await page.locator('#save').isDisabled(), true);
-      assert.match(await page.locator('#save-status').textContent(), /Mini Chat is off on this channel right now, so saving and buying are closed. Your fighter is kept./);
+      assert.match(await page.locator('#save-status').textContent(), /PixFray is off on this channel right now, so saving and buying are closed. Your fighter is kept./);
       assert.equal(await page.locator('#next-step').isHidden(), true);
       await page.locator('#tab-shop').click();
       assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $50' }).isDisabled(), true, 'buying is closed');

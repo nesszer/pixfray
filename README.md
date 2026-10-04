@@ -1,4 +1,4 @@
-# Mini Chat
+# PixFray
 Open-source Twitch mini-character overlay for nesszerra and other channels. Transparent Canvas rendering, 56 free CC0 characters, chat duels with Elo ranks, and demo mode.
 
 Live: https://chat.miolaf.xyz (deployed on Cloudflare Workers Free; the test site is test.chat.miolaf.xyz)
@@ -40,7 +40,7 @@ Chat commands for v2 duels:
   the winner and the Elo change. `!elo`, `!ranks` and the website show the old numbers until the
   replay has played on stream (plus the channel's stream delay, 6 s by default and set in the admin Rules tab), so chat replies and ranks don't spoil the stream. The overlay itself gets the result at once, so someone who opens the overlay page can see it early. The default ability only changes how blows look. Each win earns an upgrade point
   (power, guard, luck) and unlocks hats. `!checkin`, once per live stream, adds a point too, with
-  streak bonuses; 20 points in all, 8 per stat. Each finished duel pays Mini Chat dollars ($5 a win,
+  streak bonuses; 20 points in all, 8 per stat. Each finished duel pays PixFray dollars ($5 a win,
   $3 a loss): `!wallet` shows them, `!pay @name 10` passes them on while the stream is live, and
   mods gift them from the Players tab. See CONTRACTS.md section 6. The HP fight with `!strike`,
   `!heavy` and `!heal` runs only if a mod's config sets `quickDuel` to false.
@@ -63,7 +63,7 @@ Tests: `npm run test:all` runs these in order:
    signed EventSub webhooks, using the `AUTH_SECRET` from `.dev.vars` (or `MINI_AUTH_SECRET`).
 
 `npm run test:live` is separate and runs against prod through real Twitch chat and the StreamElements
-bot. It needs two headed Chromes with remote debugging, each signed in to Twitch and Mini Chat with a
+bot. It needs two headed Chromes with remote debugging, each signed in to Twitch and PixFray with a
 saved fighter: the broadcaster on port 9333 and a second account on 9334 (`LIVE_A_CDP`, `LIVE_B_CDP`).
 It refuses to post while the channel (`LIVE_CHANNEL`, default nesszerra) is live. Both accounts send
 every command and every refusal (no name, self, no fighter, busy, wrong challenger, rematch lock,

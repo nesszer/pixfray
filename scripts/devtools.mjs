@@ -238,7 +238,7 @@ Bots on the test site
   equip <bot> <pet|none|-> [field=id ...]
                               the bot brings a pet it owns (- keeps it) and wears cosmetics it owns, e.g.
                               recolor=crimson petColor=gold accessory=cape trail=flames winEffect=confetti taunt=gg title=legend build=1
-  gift <bot> <amount>         a mod gift of Mini Chat dollars (negative takes them back)
+  gift <bot> <amount>         a mod gift of PixFray dollars (negative takes them back)
   clean                       remove the bots and their profiles
 
 Alt account in real Twitch chat (posts only while the channel is offline)

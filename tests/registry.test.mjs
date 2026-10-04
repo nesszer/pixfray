@@ -164,7 +164,7 @@ test('turning a channel off keeps its admin page; overlay feed, viewer page and 
   assert.ok((await record(env, 'channel:newstreamer')).pausedAt > 0);
   const off = await worker.fetch(req('/api/state/newstreamer'), env);
   assert.equal(off.status, 403);
-  assert.deepEqual(await off.json(), { error: 'Mini Chat is off on this channel right now', off: 'paused' });
+  assert.deepEqual(await off.json(), { error: 'PixFray is off on this channel right now', off: 'paused' });
   assert.equal((await worker.fetch(req('/api/looks/newstreamer?u=a'), env)).status, 403);
   assert.equal(await (await worker.fetch(req('/api/se/newstreamer/help?k=' + 'a1'.repeat(24)), env)).text(), OFF_TEXT);
   assert.equal((await worker.fetch(req('/api/leaderboard/newstreamer'), env)).status, 200);
@@ -183,7 +183,7 @@ test('turning a channel off keeps its admin page; overlay feed, viewer page and 
   // built-ins are always on; channels never set up stay closed
   const owner = await signIn(env, OWNER);
   assert.equal((await worker.fetch(req('/api/admin/miolafff', 'POST', { action: 'pauseChannel' }, owner), env)).status, 400);
-  assert.deepEqual(await (await worker.fetch(req('/api/state/nobodyhere'), env)).json(), { error: 'Mini Chat is not enabled for this channel', off: 'not_enabled' });
+  assert.deepEqual(await (await worker.fetch(req('/api/state/nobodyhere'), env)).json(), { error: 'PixFray is not enabled for this channel', off: 'not_enabled' });
   assert.equal((await worker.fetch(req('/api/se/nobodyhere/help?k=' + 'a1'.repeat(24)), env)).status, 404);
   assert.equal((await login(env, 'channel=nobodyhere')).r.status, 403);
 });

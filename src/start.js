@@ -19,9 +19,9 @@ fitStage();
 const PROBLEMS = {
   invalid: () => "This invite link isn't valid. Check that you copied the whole link, or ask nesszerra for a new one.",
   expired: () => "This invite has expired. Invites work for 7 days; ask nesszerra for a new one.",
-  used: (login) => "This invite was already used. If you set up Mini Chat with it, sign in to your mod controls instead.",
+  used: (login) => "This invite was already used. If you set up PixFray with it, sign in to your mod controls instead.",
   wrong_account: (login) => "You signed in to Twitch with a different account. This invite is for " + login + ". Log out of twitch.tv, then sign in again as " + login + ".",
-  full: () => "Mini Chat is full right now. Ask nesszerra for a spot.",
+  full: () => "PixFray is full right now. Ask nesszerra for a spot.",
   denied: () => "You cancelled the Twitch permission. You can set up without it: only you can open your mod controls until you connect it from the Stream setup page.",
   failed: () => "Twitch sign-in didn't finish. Try again.",
 };
@@ -39,7 +39,7 @@ const signIn = (login, mods = true) => h("a", { class: mods ? "btn btn-primary" 
 
 async function init() {
   if (!token) {
-    show("Mini Chat is invite-only right now", "Ask nesszerra for an invite link. It names your Twitch account and works for 7 days.",
+    show("PixFray is invite-only right now", "Ask nesszerra for an invite link. It names your Twitch account and works for 7 days.",
       [h("a", { class: "btn", href: "/" }, "Pick a fighter on nesszerra's channel")]);
     return;
   }
@@ -55,7 +55,7 @@ async function init() {
   }
   if (status !== "valid") { show("This invite doesn't work", "", [], PROBLEMS[status]?.(login) || PROBLEMS.invalid()); return; }
   const problem = PROBLEMS[error]?.(login) || "";
-  show("Set up Mini Chat for " + login,
+  show("Set up PixFray for " + login,
     "Sign in with the Twitch account " + login + ". Twitch asks you to allow reading your moderator list; then the Stream setup page opens.",
     error === "denied" ? [signIn(login), signIn(login, false)] : [signIn(login)], problem);
   if (error) history.replaceState(null, "", location.pathname + "?invite=" + encodeURIComponent(token));

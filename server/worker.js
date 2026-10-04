@@ -115,7 +115,7 @@ export default {async fetch(request,env,ctx){
     }
     // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
     if(path.startsWith('/api/se/')){
-      if(!env.INTERNAL_SECRET)return new Response('Mini Chat is not configured',{status:503});
+      if(!env.INTERNAL_SECRET)return new Response('PixFray is not configured',{status:503});
       return await handleStreamElements(request,env,{url,origin:env.PUBLIC_ORIGIN||url.origin,channelState:channel=>channelState(env,channel),roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),
         // StreamElements took over from a Twitch EventSub subscription: delete it so Twitch stops sending chat.
         dropSubscription:subscriptionId=>ctx?.waitUntil?.(disconnectChat(env,{subscriptionId,url}).catch(e=>console.warn('eventsub drop failed',e?.message)))});
@@ -156,7 +156,7 @@ export default {async fetch(request,env,ctx){
     if(route==='assets')return await handleUploads(request,env,{user,owner,channel,id:id||'',url,bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
     // Pets (server/pets.js): the public catalog and images; mods upload and delete their own.
     if(route==='pets')return await handlePets(request,env,{user,id:id||'',bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
-    // Shop: the public list with this channel's prices (GET), and a signed-in viewer buying with Mini Chat dollars (POST).
+    // Shop: the public list with this channel's prices (GET), and a signed-in viewer buying with PixFray dollars (POST).
     if(route==='shop'){
       if(request.method==='GET'&&!id)return internal(request,env,channel,'/shop');
       if(request.method!=='POST'||id)return json({error:'Use GET or POST'},405);
@@ -193,9 +193,9 @@ export default {async fetch(request,env,ctx){
         return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',modsReady,modsLapsed,channelState:state});
       }
       const data=await bodyJson(request,12000);
-      // Turn Mini Chat off or back on: the broadcaster or the owner, never a mod. Fighters and ranks are kept.
+      // Turn PixFray off or back on: the broadcaster or the owner, never a mod. Fighters and ranks are kept.
       if(data.action==='pauseChannel'||data.action==='resumeChannel'){
-        if(!roles.owner&&!roles.broadcaster)return json({error:'Only '+channel+' can turn Mini Chat off or on'},403);
+        if(!roles.owner&&!roles.broadcaster)return json({error:'Only '+channel+' can turn PixFray off or on'},403);
         await setPaused(env,channel,data.action==='pauseChannel');
         return json({ok:true,channelState:data.action==='pauseChannel'?'paused':'on'});
       }

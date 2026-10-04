@@ -1,18 +1,18 @@
 # Streamer setup
 
-This guide is for a streamer adding Mini Chat to their Twitch channel. After you sign in (step 1),
+This guide is for a streamer adding PixFray to their Twitch channel. After you sign in (step 1),
 steps 2 to 5 match the 4 numbered steps of **Stream setup** on the mod controls page
 (`/admin/?channel=<you>#chat`). Each step holds its own buttons and turns Done by itself once it
 works. Setup takes about 10 minutes.
 
 ## 1. Sign in with your invite
 
-Mini Chat is invite-only. nesszerra creates an invite on `/admin/dev` (Channels) and sends you a
+PixFray is invite-only. nesszerra creates an invite on `/admin/dev` (Channels) and sends you a
 link like `https://chat.miolaf.xyz/start/?invite=<token>`.
 
 - The invite names one Twitch account, works once, and expires after 7 days.
-- Click **Sign in with Twitch as <you>**. Twitch asks to let Mini Chat read your moderator list
-  (`moderation:read`), so your mods can open your mod controls too. Mini Chat never posts in chat as
+- Click **Sign in with Twitch as <you>**. Twitch asks to let PixFray read your moderator list
+  (`moderation:read`), so your mods can open your mod controls too. PixFray never posts in chat as
   you and never changes your channel.
 - If you cancel that permission, /start offers **Set up without mod access**. Only you can then
   open your mod controls, until you click **Connect mod access** in the checklist.
@@ -30,14 +30,14 @@ The checklist row **Overlay open in OBS** turns to Done within 10 seconds of the
 
 ## 3. Turn off the StreamElements Duel module
 
-StreamElements' own Duel game answers `!duel`, `!accept` and `!deny` at the same time as Mini Chat.
+StreamElements' own Duel game answers `!duel`, `!accept` and `!deny` at the same time as PixFray.
 In StreamElements go to Chat bot, then Modules, and switch off Duel, or type
 `!module duel disable` in chat. Then tick **I turned off the Duel module**.
 
 ## 4. Add the commands to StreamElements
 
 The table in step 3, "Add the chat commands to StreamElements", lists 10 commands: `!challenge`, `!fight`, `!decline`,
-`!rematch`, `!checkin`, `!wallet`, `!pay`, `!elo`, `!ranks` and `!minichat`. You can rename them first and click **Save names**.
+`!rematch`, `!checkin`, `!wallet`, `!pay`, `!elo`, `!ranks` and `!fray`. You can rename them first and click **Save names**.
 Keep `!pay` off `!give`: StreamElements' built-in `!givepoints` already answers to `!give`.
 
 For each row, in StreamElements go to Chat bot, then Commands, then Custom commands, and click Add
@@ -61,7 +61,7 @@ Type `!decline` in your chat to test. Each row shows **Working** once its comman
 first command switches the channel to StreamElements on its own.
 
 Optional: add a StreamElements timer every 15 to 20 minutes with the text from **Copy timer
-message**, so new viewers learn how to join. Mini Chat never posts on its own.
+message**, so new viewers learn how to join. PixFray never posts on its own.
 
 ## 5. Let your moderators help (optional)
 
@@ -86,10 +86,10 @@ The same answers are under "If something doesn't work" at the bottom of Stream s
 - **Mod access expired:** your moderators can't open the mod controls. Click **Reconnect mod
   access** in step 4 of Stream setup while signed in to Twitch as yourself.
 
-## Turning Mini Chat off
+## Turning PixFray off
 
-At the bottom of the Stream setup tab, **Turn Mini Chat off** stops the overlay, the chat commands
-and the viewer page on your channel. Fighters, ranks and settings are kept, and **Turn Mini Chat
+At the bottom of the Stream setup tab, **Turn PixFray off** stops the overlay, the chat commands
+and the viewer page on your channel. Fighters, ranks and settings are kept, and **Turn PixFray
 back on** picks up where you left off. Other servers notice the change within about a minute. An
 overlay that was already open keeps showing chatters until OBS reloads it; a stopped overlay checks
-again every 5 minutes, so turning Mini Chat back on needs no OBS refresh.
+again every 5 minutes, so turning PixFray back on needs no OBS refresh.

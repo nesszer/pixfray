@@ -366,7 +366,7 @@ $("#play-win").addEventListener("click", () => stage.play());
 function renderSave() {
   saveBtn.disabled = Boolean(state.off);
   if (signedIn() && state.off === "paused") {
-    setStatus(status, state.profile ? "Mini Chat is off on this channel right now, so saving and buying are closed. Your fighter is kept." : "Mini Chat is off on this channel right now. You can save a fighter when it's back.");
+    setStatus(status, state.profile ? "PixFray is off on this channel right now, so saving and buying are closed. Your fighter is kept." : "PixFray is off on this channel right now. You can save a fighter when it's back.");
   } else if (signedIn() && state.profile) {
     const locked = lockedWorn();
     const msg = locked.length ? "Trying on " + locked.map(([k, id]) => itemLabel(k, id)).join(", ") + ". Buy " + (locked.length === 1 ? "it" : "them") + " to save this look."
@@ -449,7 +449,7 @@ function renderSignedIn() {
     $("#stat-dollars").textContent = money(state.profile.dollars);
     $("#stat-streak").textContent = state.profile.streak || 0;
   }
-  $("#shop-note").textContent = (canShop() ? "You have " + money(state.profile.dollars) + ". " : "") + "Spend the Mini Chat dollars you earn in duels. Everything here changes looks only, not stats, and you can wear it in any build.";
+  $("#shop-note").textContent = (canShop() ? "You have " + money(state.profile.dollars) + ". " : "") + "Spend the PixFray dollars you earn in duels. Everything here changes looks only, not stats, and you can wear it in any build.";
 }
 
 function renderLeaderboard() {
@@ -506,8 +506,8 @@ form.addEventListener("submit", async (event) => {
 function showOff(off) {
   const note = $("#off-note");
   note.hidden = false;
-  if (off === "paused") { note.textContent = "Mini Chat is off on " + CHANNEL + "'s channel right now. Saved fighters and ranks are kept for when it's back."; return; }
-  note.replaceChildren("Mini Chat isn't set up on " + CHANNEL + "'s channel. ", h("a", { href: "/" }, "Pick another channel"), ".");
+  if (off === "paused") { note.textContent = "PixFray is off on " + CHANNEL + "'s channel right now. Saved fighters and ranks are kept for when it's back."; return; }
+  note.replaceChildren("PixFray isn't set up on " + CHANNEL + "'s channel. ", h("a", { href: "/" }, "Pick another channel"), ".");
   for (const el of [form, $(".fighter-card"), $(".hero-pick .tabs")]) el.hidden = true;
   $("#panel-ranks").hidden = false;
 }
@@ -540,7 +540,7 @@ async function init() {
 }
 // The bare site (no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
 async function pickChannel() {
-  document.title = "Mini Chat: pick your stream";
+  document.title = "PixFray: pick your stream";
   for (const el of [$("#fighter"), $("main.page:not(#pick)"), $(".topbar nav")]) if (el) el.hidden = true;
   $("#pick").hidden = false;
   const [session, list] = await Promise.all([api("/api/session"), api("/api/channels")]);

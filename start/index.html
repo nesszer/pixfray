@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Set up Mini Chat on your Twitch channel</title>
-<meta name="description" content="Mini Chat lets viewers pick a pixel fighter and duel each other with chat commands, live on your stream.">
+<title>Set up PixFray on your Twitch channel</title>
+<meta name="description" content="PixFray lets viewers pick a pixel fighter and duel each other with chat commands, live on your stream.">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#17110c">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -9,19 +9,19 @@
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/">Mini Chat</a>
+  <a class="brand" href="/">PixFray</a>
   <nav aria-label="Sections"><a href="#setup">What setup takes</a><a href="#permissions">Permissions</a></nav>
 </div></header>
 
 <section class="hero" aria-labelledby="start-title">
   <div class="hero-grid">
     <header class="hero-copy">
-      <h1 id="start-title">Set up Mini Chat on your Twitch channel</h1>
+      <h1 id="start-title">Set up PixFray on your Twitch channel</h1>
       <p class="lead">Viewers pick a pixel fighter on this site, then challenge each other with chat commands. The duels play out on your stream through an OBS browser source, and the StreamElements bot posts the results.</p>
     </header>
 
     <figure class="hero-pick stage-figure">
-      <div class="stage"><iframe src="/overlay.html?channel=nesszerra&amp;arena=1&amp;demo=1&amp;size=64" title="Mini Chat overlay demo: fighters walk in and duel" loading="lazy" tabindex="-1"></iframe></div>
+      <div class="stage"><iframe src="/overlay.html?channel=nesszerra&amp;arena=1&amp;demo=1&amp;size=64" title="PixFray overlay demo: fighters walk in and duel" loading="lazy" tabindex="-1"></iframe></div>
       <figcaption class="hint">The overlay as it looks on stream, with demo fighters. On your stream it's transparent, over your game.</figcaption>
     </figure>
 
@@ -41,15 +41,15 @@
     <ol class="rules">
       <li><strong>Add the overlay to OBS</strong> as a Browser Source, 1920×1080. The setup page gives you the link.</li>
       <li><strong>Turn off the StreamElements Duel module</strong>, so only one bot answers duel commands.</li>
-      <li><strong>Paste 7 commands into StreamElements.</strong> Each reply is ready to copy: <code>!challenge</code>, <code>!fight</code>, <code>!decline</code>, <code>!rematch</code>, <code>!elo</code>, <code>!ranks</code> and <code>!minichat</code>. You can rename them.</li>
+      <li><strong>Paste 7 commands into StreamElements.</strong> Each reply is ready to copy: <code>!challenge</code>, <code>!fight</code>, <code>!decline</code>, <code>!rematch</code>, <code>!elo</code>, <code>!ranks</code> and <code>!fray</code>. You can rename them.</li>
       <li><strong>Optional: let your Twitch moderators help</strong> with fighters, ranks and settings.</li>
     </ol>
   </section>
 
   <section class="section" id="permissions" aria-labelledby="perm-title">
-    <h2 id="perm-title">Mini Chat asks Twitch for one permission: your moderator list</h2>
-    <p>Sign-in shares your public Twitch name. The <code>moderation:read</code> permission lets Mini Chat check who your moderators are, so they can open your mod controls. Mini Chat never posts in chat as you and never changes your channel.</p>
-    <p class="caveat">You can turn Mini Chat off at any time from the Stream setup page. Fighters and ranks are kept, so turning it back on picks up where you left off.</p>
+    <h2 id="perm-title">PixFray asks Twitch for one permission: your moderator list</h2>
+    <p>Sign-in shares your public Twitch name. The <code>moderation:read</code> permission lets PixFray check who your moderators are, so they can open your mod controls. PixFray never posts in chat as you and never changes your channel.</p>
+    <p class="caveat">You can turn PixFray off at any time from the Stream setup page. Fighters and ranks are kept, so turning it back on picks up where you left off.</p>
   </section>
 </main>
 <script type="module" src="/src/start.js"></script>

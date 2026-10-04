@@ -100,7 +100,7 @@ function normalizeProfileRow(row, config) {
     bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0,   // check-in points (checkin below)
     checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
     streak: Number.isInteger(row.streak) ? row.streak : 0,
-    dollars: Number.isInteger(row.dollars) ? row.dollars : 0,   // Mini Chat dollars (payDuels, give, giftDollars)
+    dollars: Number.isInteger(row.dollars) ? row.dollars : 0,   // PixFray dollars (payDuels, give, giftDollars)
     ...petFieldsOf(row),
     ...cleanCosmetics(Object.fromEntries(Object.entries(COSMETIC_COLUMNS).map(([field, column]) => [field, row[column]]))),
     build: Number.isInteger(row.build) ? row.build : 0,   // the active build slot (builds table)
@@ -150,7 +150,7 @@ export class ChannelRoom extends DurableObject {
     // v2.6: !checkin. Check-in points live apart from wins, so a rank reset keeps them; upsertProfile never writes them.
     for (const column of ["bonus_points", "checkins", "streak", "last_stream_seq", "free_miss_at"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("last_stream")) sql.exec("ALTER TABLE profiles ADD COLUMN last_stream TEXT NOT NULL DEFAULT ''");
-    // v2.7: Mini Chat dollars, and what each viewer gave away in which stream (!give). upsertProfile never writes them either.
+    // v2.7: PixFray dollars, and what each viewer gave away in which stream (!give). upsertProfile never writes them either.
     for (const column of ["dollars", "given_in_stream"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("give_stream")) sql.exec("ALTER TABLE profiles ADD COLUMN give_stream TEXT NOT NULL DEFAULT ''");
     // v2.8: the active pet, plus bought items and uploaded pets (server/pets.js). PROFILE_COLUMNS reads custom_pets.
@@ -231,7 +231,7 @@ export class ChannelRoom extends DurableObject {
       return json({ pets: petCatalog(this.ctx.storage.sql, channel, config), hatPricePerWin: config.hatPricePerWin, items: cosmeticCatalog(config),
         slots: { max: MAX_BUILDS, prices: Array.from({ length: MAX_BUILDS - 1 }, (_, i) => slotPrice(i + 1, config)) } });
     }
-    // Buy a pet, a hat, a cosmetic or a build slot with Mini Chat dollars (signed-in viewer; the Worker sets the user header).
+    // Buy a pet, a hat, a cosmetic or a build slot with PixFray dollars (signed-in viewer; the Worker sets the user header).
     if (path === "/shop" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
@@ -763,6 +763,7 @@ export class ChannelRoom extends DurableObject {
       if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;   // StreamElements' Duel module owns !accept
       if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top;   // and its built-in !top can't be replaced
       if (names.give === "!give") names.give = DEFAULT_SE_NAMES.give;   // nor its !givepoints alias !give
+      if (names.help === "!minichat") names.help = DEFAULT_SE_NAMES.help;   // the old name, from before the rename to PixFray
       const stored = safeJsonParse(row.seen_json, {}), seen = {};
       for (const action of SE_ACTIONS) if (Number(stored?.[action]) > 0) seen[action] = Number(stored[action]);
       return { secret: row.secret, names, lastCommandAt: Number(row.last_command_at) || 0, rejectedAt: Number(row.rejected_at) || 0, seen, duelModuleOff: row.duel_module_off === 1 };
@@ -781,7 +782,7 @@ export class ChannelRoom extends DurableObject {
     const settings = this.seSettings();
     if (!timingSafeEqual(String(input.key || ""), settings.secret)) {
       if (Date.now() - settings.rejectedAt > REJECTED_WRITE_MS) this.ctx.storage.sql.exec("UPDATE se_settings SET rejected_at = ? WHERE id = 1", Date.now());
-      return json({ reply: "Mini Chat: wrong key. Copy the commands again from the admin page." }, 403);
+      return json({ reply: "PixFray: wrong key. Copy the commands again from the admin page." }, 403);
     }
     const action = SE_ACTIONS.includes(input.action) ? input.action : "";
     if (action && Date.now() - (settings.seen[action] || 0) > SEEN_WRITE_MS) {
@@ -810,7 +811,7 @@ export class ChannelRoom extends DurableObject {
       return json(switchedFrom ? { reply, switchedFrom } : { reply });
     };
     if (!action) return done(`Lost in the arena? Type ${names.help}`, "unknown_action");
-    if (!userId || !username) return done("Mini Chat: this command is missing sender details. Copy it again from the admin page.", "missing_sender");
+    if (!userId || !username) return done("PixFray: this command is missing sender details. Copy it again from the admin page.", "missing_sender");
     if (action === "checkin") {   // works while duels are paused: it only needs the stream to be live
       const checked = await this.checkin(channel, { userId }, now);
       return done(seCheckinText(checked, { who: input.displayName || username, origin, channel, maxPoints: MAX_POINTS }), checked.reason, checked.reason === "checked_in" ? { streak: checked.streak, points: checked.points } : {});

@@ -103,7 +103,7 @@ export async function handleAuth(request,env){
     }else{
       const channel=url.searchParams.get('channel')||'nesszerra';
       // A turned-off channel still signs in, so its broadcaster can turn it back on.
-      if(!await channelState(env,channel))return Response.json({error:'Mini Chat is not enabled for this channel'},{status:403});
+      if(!await channelState(env,channel))return Response.json({error:'PixFray is not enabled for this channel'},{status:403});
       const connect=url.searchParams.get('connect')==='1', connectMods=url.searchParams.get('connect')==='mods';
       if(connect&&channel!=='nesszerra')return Response.json({error:'Chat for this channel comes through StreamElements; no Twitch connection needed'},{status:403});
       const asked=url.searchParams.get('next'),next=connectMods?'/admin/':['/admin/','/admin/dev/'].includes(asked)?asked:'/';

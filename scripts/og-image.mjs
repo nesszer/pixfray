@@ -27,7 +27,7 @@ p { margin: 20px 0 0; font-size: 36px; color: #d6c6a8; }
 .row { margin-top: auto; display: flex; align-items: flex-end; justify-content: space-between; padding-bottom: 36px; border-bottom: 2px solid #6b5234; }
 .s { flex: none; }
 </style></head><body><div class="wrap">
-<h1>Mini Chat</h1><p>Pick your fighter and duel in nesszerra's Twitch chat.</p>
+<h1>PixFray</h1><p>Pick your fighter and duel in nesszerra's Twitch chat.</p>
 <div class="row">${picks.map(sprite).join('')}</div></div></body></html>`;
 
 const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });

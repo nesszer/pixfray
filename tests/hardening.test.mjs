@@ -48,13 +48,13 @@ test('SE key shape matches how the room generates keys (24 random bytes as hex)'
 test('SE: malformed key, unknown action, unknown or paused channel and wrong method are answered without a room call', async () => {
   const f = environment();
   f.entries.set('channel:oldone', { id: '5', login: 'oldone', enabledAt: 1, pausedAt: 2 });
-  assert.deepEqual(await text(await se(f, '/api/se/nesszerra/help')), [200, 'Mini Chat: missing key. Copy the commands again from the admin page.']);
-  assert.deepEqual(await text(await se(f, '/api/se/nesszerra/help?k=' + 'x'.repeat(129))), [200, 'Mini Chat: missing key. Copy the commands again from the admin page.']);
+  assert.deepEqual(await text(await se(f, '/api/se/nesszerra/help')), [200, 'PixFray: missing key. Copy the commands again from the admin page.']);
+  assert.deepEqual(await text(await se(f, '/api/se/nesszerra/help?k=' + 'x'.repeat(129))), [200, 'PixFray: missing key. Copy the commands again from the admin page.']);
   for (const k of ['key', 'AB'.repeat(24), 'ab'.repeat(23), 'ab'.repeat(32)]) assert.deepEqual(await text(await se(f, '/api/se/nesszerra/help?k=' + k)), [200, WRONG_KEY_TEXT], k);
   assert.deepEqual(await text(await se(f, '/api/se/nesszerra/attack?k=' + KEY)), [200, LOST_TEXT]);
   assert.deepEqual(await text(await se(f, '/api/se/nesszerra/' + 'a'.repeat(20) + '?k=' + KEY)), [404, 'Unknown command']);
   assert.deepEqual(await text(await se(f, '/api/se/Not-A-Channel/help?k=' + KEY)), [404, 'Unknown command']);
-  assert.deepEqual(await text(await se(f, '/api/se/nobodyhere/help?k=' + KEY)), [404, 'Mini Chat is not enabled for this channel']);
+  assert.deepEqual(await text(await se(f, '/api/se/nobodyhere/help?k=' + KEY)), [404, 'PixFray is not enabled for this channel']);
   assert.deepEqual(await text(await se(f, '/api/se/oldone/help?k=' + KEY)), [200, OFF_TEXT]);
   assert.deepEqual(await text(await se(f, '/api/se/nesszerra/help?k=' + KEY, { method: 'POST' })), [405, 'Use GET']);
   assert.equal(f.fetched.length, 0, 'no ChannelRoom request for any of them');
@@ -138,7 +138,7 @@ test('SE with a real room: the first refusal records rejected_at, repeats are se
   assert.equal(asked - before, 1);
   const ok = await text(await se(f, '/api/se/nesszerra/help?k=' + secret + '&id=7&u=bob&d=Bob&t=-&m=m1'));
   assert.equal(ok[0], 200);
-  assert.match(ok[1], /Mini Chat duels/);
+  assert.match(ok[1], /PixFray duels/);
   assert.ok((await admin()).lastCommandAt > 0);
 });
 
