@@ -679,7 +679,7 @@ test('/looks returns saved looks by login for the overlay: saved profiles only, 
   const r = room();
   await r.save('u1', 'Alice', { avatar: 'toon-ghoul', color: '#112233' });
   const looks = (await r.call('/looks?u=alice,nobody,bad%20name,ALICE')).body;
-  assert.deepEqual(looks, { alice: { avatar: 'toon-ghoul', color: '#112233', hat: '', pet: '', petTier: '', displayName: 'Alice', elo: 1000 } });
+  assert.deepEqual(looks, { alice: { avatar: 'toon-ghoul', color: '#112233', hat: '', pet: '', petTier: '', recolor: '', petColor: '', accessory: '', trail: '', winEffect: '', taunt: '', title: '', displayName: 'Alice', elo: 1000 } });
   assert.deepEqual((await r.call('/looks')).body, {});
   for (let i = 0; i < 25; i++) await r.save('x' + i, 'v' + i);
   const many = (await r.call('/looks?u=' + Array.from({ length: 25 }, (_, i) => 'v' + i).join(','))).body;
@@ -806,7 +806,7 @@ test('shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.deepEqual((({ status, body }) => [status, body.error, body.price, body.dollars])(await buy('u1', 'pet', 'fox')), [409, 'not_enough', 180, 0]);
   await gift('alice', 250);
   const bought = (await buy('u1', 'pet', 'fox')).body;
-  assert.deepEqual([bought.ok, bought.price, bought.dollars, bought.owned], [true, 180, 70, { pets: ['fox'], hats: [] }]);
+  assert.deepEqual([bought.ok, bought.price, bought.dollars, bought.owned.pets, bought.owned.hats, bought.owned.slots], [true, 180, 70, ['fox'], [], 1]);
   assert.equal((await buy('u1', 'pet', 'fox')).body.error, 'owned');
   // Hats: free ones are already unlocked; locked ones cost wins x hatPricePerWin; 0 turns hat sales off.
   assert.equal((await buy('u1', 'hat', 'cap')).body.error, 'already_unlocked');
@@ -823,7 +823,7 @@ test('shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.equal((await r.save('u1', 'alice', { pet: 7 })).body.error, 'invalid_profile');
   const saved = (await r.save('u1', 'alice', { pet: 'fox' })).body.profile;
   assert.deepEqual([saved.pet, saved.petTier, saved.petBoost, saved.dollars], ['fox', 'rare', { power: 2, guard: 0, luck: 0 }, 40]);
-  assert.deepEqual((await r.call('/profile?userId=u1')).body.owned, { pets: ['fox'], hats: ['wizard'] });
+  assert.deepEqual((({ pets, hats }) => ({ pets, hats }))((await r.call('/profile?userId=u1')).body.owned), { pets: ['fox'], hats: ['wizard'] });
   assert.equal(r.readState('nesszerra').players.find((p) => p.userId === 'u1').petBoost.power, 2, 'duels count the boost');
   assert.deepEqual((({ pet, petTier }) => [pet, petTier])((await r.call('/looks?u=alice')).body.alice), ['fox', 'rare']);
   assert.equal((await r.save('u1', 'alice', { avatar: 'toon-ghoul' })).body.profile.pet, 'fox', 'a save without pet keeps it');
@@ -861,6 +861,73 @@ test('shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   // A deleted profile takes its purchases with it.
   await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'removePlayer', payload: { userId: 'u1' } } });
   assert.equal(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM owned_items WHERE user_id = 'u1'").toArray()[0].n, 0);
+});
+
+test('cosmetics and builds: the shop list, buying, wearing, build slots with their own loadout, duels keep them', async () => {
+  const r = room({}, { quick: true });
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  const gift = (username, amount) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'giftDollars', payload: { username, amount } } });
+  const buy = (kind, id) => r.call('/shop', { method: 'POST', userId: 'u1', body: { userId: 'u1', kind, id } });
+  // The public list: every kind with the config price, and the build slot prices.
+  const shop = (await r.call('/shop')).body;
+  assert.equal(shop.pets.length, 14);
+  assert.deepEqual(Object.keys(shop.items), ['recolor', 'petcolor', 'accessory', 'trail', 'effect', 'taunt', 'title']);
+  assert.deepEqual(shop.items.trail.find((x) => x.id === 'flames'), { id: 'flames', label: 'Flames', price: 120 });
+  assert.deepEqual(shop.slots, { max: 5, prices: [200, 400, 400, 400] });
+  // Buying: unknown ids, money, owned.
+  assert.equal((await buy('accessory', 'jetpack')).body.error, 'unknown_item');
+  assert.equal((await buy('trail', 'flames')).body.error, 'not_enough');
+  await gift('alice', 2000);
+  assert.deepEqual((({ price, dollars }) => [price, dollars])((await buy('trail', 'flames')).body), [120, 1880]);
+  assert.equal((await buy('trail', 'flames')).status, 409);
+  for (const [kind, id] of [['recolor', 'crimson'], ['petcolor', 'gold'], ['accessory', 'cape'], ['effect', 'fireworks'], ['taunt', 'gg'], ['title', 'legend']]) assert.equal((await buy(kind, id)).body.ok, true, kind);
+  // Wearing: only bought ones; "" takes one off; left out keeps it.
+  assert.equal((await r.save('u1', 'alice', { accessory: 'glasses' })).body.error, 'item_locked');
+  assert.equal((await r.save('u1', 'alice', { title: 'Supreme Leader' })).body.error, 'invalid_profile');
+  const worn = { recolor: 'crimson', petColor: 'gold', accessory: 'cape', trail: 'flames', winEffect: 'fireworks', taunt: 'gg', title: 'legend' };
+  let p = (await r.save('u1', 'alice', worn)).body.profile;
+  assert.deepEqual((({ recolor, petColor, accessory, trail, winEffect, taunt, title }) => ({ recolor, petColor, accessory, trail, winEffect, taunt, title }))(p), worn);
+  assert.equal((await r.save('u1', 'alice', { avatar: 'toon-ghoul' })).body.profile.trail, 'flames', 'a save without cosmetics keeps them');
+  assert.equal((await r.save('u1', 'alice', { title: '' })).body.profile.title, '');
+  await r.save('u1', 'alice', { title: 'legend' });
+  const looks = (await r.call('/looks?u=alice')).body.alice;
+  assert.deepEqual([looks.recolor, looks.accessory, looks.trail, looks.winEffect, looks.taunt, looks.title], ['crimson', 'cape', 'flames', 'fireworks', 'gg', 'legend']);
+  assert.equal(r.readState('nesszerra').players.find((x) => x.userId === 'u1').trail, 'flames', 'the overlay state carries them');
+  // Build slots: 1 free, the 2nd costs 200, then 400 each, up to 5.
+  assert.equal((await r.save('u1', 'alice', { build: 1 })).body.error, 'invalid_build');
+  assert.deepEqual((({ price, owned }) => [price, owned.slots])((await buy('slot', '')).body), [200, 2]);
+  // Slot 1 keeps its own character, stats and cosmetics; slot 0 is untouched.
+  p = (await r.save('u1', 'alice', { build: 1, avatar: 'soldier', stats: { power: 0, guard: 0, luck: 0 }, recolor: '', trail: '', title: 'legend' })).body.profile;
+  assert.deepEqual([p.build, p.avatar, p.recolor, p.trail], [1, 'soldier', '', '']);
+  let prof = (await r.call('/profile?userId=u1')).body;
+  assert.deepEqual([prof.build, prof.builds.length, prof.builds[0].avatar, prof.builds[0].trail, prof.builds[1].avatar, prof.builds[1].trail], [1, 2, 'player', 'flames', 'soldier', '']);
+  // Switching back = saving slot 0's loadout to slot 0.
+  p = (await r.save('u1', 'alice', { ...prof.builds[0], build: 0 })).body.profile;
+  assert.deepEqual([p.build, p.avatar, p.trail], [0, 'player', 'flames']);
+  for (const price of [400, 400, 400]) assert.equal((await buy('slot', '')).body.price, price);
+  assert.equal((await buy('slot', '')).body.error, 'max_slots');
+  prof = (await r.call('/profile?userId=u1')).body;
+  assert.deepEqual([prof.owned.slots, prof.builds.length, prof.builds[2]], [5, 5, null]);
+  // A duel's result write keeps the cosmetics; a removed fighter loses builds and purchases.
+  const se = (await r.call('/admin')).body.streamelements;
+  await r.call('/chat', { method: 'POST', body: { action: 'connected', subscriptionId: 'se-streamelements', status: 'enabled', createdAt: Date.now() } });
+  const duel = (id, login, action, target = '') => r.call('/se', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target } });
+  await duel('u1', 'alice', 'challenge', 'bob'); await duel('u2', 'bob', 'accept');
+  assert.ok(r.readState('nesszerra').duels.some((d) => d.status === 'completed'));
+  assert.deepEqual(r.ctx.storage.sql.exec("SELECT trail, title, build FROM profiles WHERE user_id = 'u1'").toArray()[0], { trail: 'flames', title: 'legend', build: 0 });
+  await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'removePlayer', payload: { userId: 'u1' } } });
+  assert.equal(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM builds WHERE user_id = 'u1'").toArray()[0].n, 0);
+});
+
+test('cosmetic ids: the overlay drawings (public/cosmetics.js) match the server lists', async () => {
+  const server = await import('../server/cosmetics.js');
+  const client = await import('../public/cosmetics.js');
+  for (const kind of server.COSMETIC_KINDS) {
+    const ids = server.COSMETICS[kind].map((x) => x.id);
+    assert.deepEqual(client.COSMETIC_IDS[kind], ids, kind);
+  }
+  assert.deepEqual(Object.keys(client.TAUNTS), server.COSMETICS.taunt.map((x) => x.id));
+  assert.deepEqual(Object.values(client.TITLES), server.COSMETICS.title.map((x) => x.label));
 });
 
 test('pet boost text: legendary pets read "+1 to all stats", like the viewer page', () => {

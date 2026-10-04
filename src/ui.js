@@ -94,7 +94,9 @@ export async function signOut() {
 const images = new Map();
 const sprites = new Set();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
-reducedMotion.addEventListener("change", () => { for (const s of sprites) s.drawn = ""; start(); });
+const redraws = new Set();   // stills and stages that redraw once a module or image arrives
+const redrawAll = () => { for (const s of sprites) s.drawn = ""; start(); for (const d of redraws) d(); };
+reducedMotion.addEventListener("change", redrawAll);
 function image(url) {
   if (!images.has(url)) { const img = new Image(); img.decoding = "async"; img.src = url; images.set(url, img); }
   return images.get(url);
@@ -107,25 +109,49 @@ export const framesFor = (entry, anim) => {
 // Hats are drawn by public/hats.js, the same module the overlay uses. It is a static file, so it loads at runtime.
 let hats = null;
 const HATS_URL = new URL("/hats.js", location.href).href;   // a full URL, so the Vite dev server serves the public file as-is
-import(/* @vite-ignore */ HATS_URL).then((m) => { hats = m; for (const s of sprites) s.drawn = ""; start(); }).catch(() => {});
+import(/* @vite-ignore */ HATS_URL).then((m) => { hats = m; redrawAll(); }).catch(() => {});
 // Pets come from public/pets.js the same way. A pet is { id, tier, url? }; uploaded pets have a url to their PNG.
 let pets = null;
-const petDraws = new Set();
 const PETS_URL = new URL("/pets.js", location.href).href;
-import(/* @vite-ignore */ PETS_URL).then((m) => { pets = m; for (const s of sprites) s.drawn = ""; start(); for (const d of petDraws) d(); }).catch(() => {});
+import(/* @vite-ignore */ PETS_URL).then((m) => { pets = m; redrawAll(); }).catch(() => {});
+// Cosmetics (recolors, accessories, trails, win effects, taunts, titles) come from public/cosmetics.js, as on stream.
+let cosmetics = null;
+const COSMETICS_URL = new URL("/cosmetics.js", location.href).href;
+export const cosmeticsReady = import(/* @vite-ignore */ COSMETICS_URL).then((m) => { cosmetics = m; redrawAll(); return m; }).catch(() => null);
+const tint = (id) => cosmetics?.recolorFilter(id) || "none";
 const petArg = (pet) => pet?.url ? { image: image(pet.url) } : pet?.id || "";
-// A still pet on its own canvas (the dashboard's pet list).
-export function addPet(canvas, pet) {
+// A still pet on its own canvas (the dashboard's pet list), in a pet color (cosmetics.js) if one is given.
+export function addPet(canvas, pet, { color = "" } = {}) {
   const draw = () => {
+    if (!canvas.isConnected && canvas.dataset.drawn) { redraws.delete(draw); return; }
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (pets && pet?.id) pets.drawPet(ctx, petArg(pet), canvas.width / 2, canvas.height - 2, canvas.height * 0.62, { tier: pet.tier, still: true });
+    if (!pets || !pet?.id) return;
+    canvas.dataset.drawn = "1";
+    ctx.save(); ctx.filter = tint(color);
+    pets.drawPet(ctx, petArg(pet), canvas.width / 2, canvas.height - 2, canvas.height * 0.62, { tier: pet.tier, still: true });
+    ctx.restore();
   };
-  petDraws.add(draw);
+  redraws.add(draw);
   if (pet?.url) image(pet.url).addEventListener("load", draw, { once: true });
   draw();
 }
-export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0) {
+// A still sample of a trail or a win effect for the shop lists.
+export function addCosmeticSample(canvas, kind, id) {
+  const draw = () => {
+    if (!canvas.isConnected && canvas.dataset.drawn) { redraws.delete(draw); return; }
+    const ctx = canvas.getContext("2d"), w = canvas.width, hgt = canvas.height;
+    ctx.clearRect(0, 0, w, hgt);
+    if (!cosmetics || !id) return;
+    canvas.dataset.drawn = "1";
+    if (kind === "trail") cosmetics.drawTrailSample(ctx, id, w * 0.78, hgt * 0.78, hgt * 0.9);
+    else if (kind === "effect") cosmetics.drawWinEffect(ctx, id, w / 2, hgt * 1.25, hgt * 0.42, id === "fireworks" ? 0.42 : id === "banner" ? 0.5 : 0.12, 7);
+  };
+  redraws.add(draw);
+  draw();
+}
+// looks: { recolor, accessory, petColor } (cosmetics.js ids), drawn as on stream.
+export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0, looks = {}) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const img = entry && image(entry.url);
@@ -134,22 +160,32 @@ export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0) {
   const w = Math.round(frame.w * scale), h2 = Math.round(frame.h * scale);
   ctx.imageSmoothingEnabled = false;
   // With a hat, the figure is shrunk a little so the hat stays inside the canvas.
-  const room = hat && hats ? 0.8 : 1;
+  const room = (hat && hats) || (looks.accessory && cosmetics) ? 0.8 : 1;
   const dw = Math.round(w * room), dh = Math.round(h2 * room), dx = Math.round((canvas.width - dw) / 2), dy = canvas.height - dh;
   // A pet stands behind the fighter, on its left, like on stream.
-  if (pet?.id && pets) pets.drawPet(ctx, petArg(pet), canvas.width * 0.2, canvas.height - 1, canvas.height * 0.3, { tier: pet.tier, t, moving: t > 0, still: !t });
+  if (pet?.id && pets) {
+    ctx.save(); ctx.filter = tint(looks.petColor);
+    pets.drawPet(ctx, petArg(pet), canvas.width * 0.2, canvas.height - 1, canvas.height * 0.3, { tier: pet.tier, t, moving: t > 0, still: !t });
+    ctx.restore();
+  }
+  const look = { headHint: entry.head, t, moving: t > 0 };
+  if (looks.accessory && cosmetics) cosmetics.drawAccessory(ctx, looks.accessory, img, frame, dx, dy, dw, dh, { ...look, layer: "back" });
+  ctx.save(); ctx.filter = tint(looks.recolor);   // the recolor tints the body only
   ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
+  ctx.restore();
   if (hat && hats) hats.drawHat(ctx, hat, img, frame, dx, dy, dw, dh, entry.head);
+  if (looks.accessory && cosmetics) cosmetics.drawAccessory(ctx, looks.accessory, img, frame, dx, dy, dw, dh, look);
   return true;
 }
 // sprite = {canvas, entry, anim, active()} ; returns a handle with .set(entry) and .destroy()
-export function addSprite(canvas, entry, { anim = "walk", active = () => true, hat = "", pet = null } = {}) {
-  const s = { canvas, entry, anim, active, hat, pet, drawn: "" };
+export function addSprite(canvas, entry, { anim = "walk", active = () => true, hat = "", pet = null, looks = {} } = {}) {
+  const s = { canvas, entry, anim, active, hat, pet, looks, drawn: "" };
   sprites.add(s);
   const img = entry && image(entry.url);
   img?.addEventListener("load", () => { s.drawn = ""; start(); }, { once: true });
   start();
   return { hat(id) { s.hat = id || ""; s.drawn = ""; start(); },
+    looks(next) { s.looks = next || {}; s.drawn = ""; start(); },
     pet(next) { s.pet = next?.id ? next : null; s.drawn = ""; if (next?.url) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); },
     set(next) { s.entry = next; s.drawn = ""; if (next) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); }, destroy() { sprites.delete(s); } };
 }
@@ -163,9 +199,131 @@ function tick(now) {
     const index = moving && frames.length ? Math.floor(now / (1000 / (s.entry?.fps || 8))) % frames.length : 0;
     // A pet animates on its own clock (hop, hover, wings), so a moving sprite with a pet redraws every frame.
     const petT = s.pet && moving ? Math.round(now) : 0;
-    const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index + ":" + s.hat + ":" + (s.pet?.id || "") + ":" + petT;
-    if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index], s.hat, s.pet, petT)) s.drawn = key;
+    const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index + ":" + s.hat + ":" + (s.pet?.id || "") + ":" + petT + ":" + JSON.stringify(s.looks);
+    if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index], s.hat, s.pet, petT, s.looks)) s.drawn = key;
   }
   // With reduced motion every sprite is a still frame, so the loop sleeps until something needs redrawing.
   if (sprites.size && !reducedMotion.matches) requestAnimationFrame(tick); else running = false;
+}
+
+// ---------- the on-stream preview ----------
+// The viewer page's stage: the fighter walking in place as the overlay draws it (public/overlay.js), with its pet,
+// trail, recolor, hat, accessory, the nameplate "name · Elo" and title, and on play() its win effect and taunt.
+// Sizes follow the overlay's 60 px fighter, 20 px nameplate and 14 px title, scaled to the canvas height.
+// set({ entry, hat, pet, color, name, elo, looks }) changes what it shows; looks holds the cosmetics.js ids.
+const fits = new Map();
+function fitOf(entry, img, frame) {   // the overlay's bulkFit: big, square sprites are drawn a little smaller
+  if (fits.has(entry.id)) return fits.get(entry.id);
+  let fit = 1;
+  try {
+    const c = document.createElement("canvas"); c.width = frame.w; c.height = frame.h;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.drawImage(img, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
+    const data = g.getImageData(0, 0, frame.w, frame.h).data;
+    let left = frame.w, right = -1, top = frame.h, bottom = -1;
+    for (let y = 0; y < frame.h; y++) for (let x = 0; x < frame.w; x++) {
+      if (data[(y * frame.w + x) * 4 + 3] <= 40) continue;
+      if (x < left) left = x; if (x > right) right = x; if (y < top) top = y; if (y > bottom) bottom = y;
+    }
+    if (right >= left) fit = Math.min(1, 0.78 / (Math.sqrt((right - left + 1) * (bottom - top + 1)) / frame.h));
+  } catch {}
+  fits.set(entry.id, fit);
+  return fit;
+}
+export function addStage(canvas) {
+  const st = { entry: null, hat: "", pet: null, color: DEFAULT_COLOR, name: "you", elo: null, looks: {}, win: null };
+  let trail = null, trailId = "", raf = 0;
+  const kick = () => { if (!raf) raf = requestAnimationFrame(loop); };
+  function loop(now) {
+    raf = 0;
+    if (!canvas.isConnected) return;
+    draw(now);
+    const playing = st.win && now - st.win.start < 4500;
+    if (!reducedMotion.matches || playing) raf = requestAnimationFrame(loop);
+  }
+  function draw(now) {
+    const dpr = Math.min(2, devicePixelRatio || 1), cw = canvas.clientWidth, ch = canvas.clientHeight;
+    if (!cw || !ch) return;
+    if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) { canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr); }
+    const W = canvas.width, H = canvas.height, ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const still = reducedMotion.matches, k = Math.max(H / 170, 0.8 * dpr), s = 60 * k, ground = Math.round(H - 46 * k), x = Math.round(W * 0.56);
+    const win = st.win && now - st.win.start < 4500 ? st.win : null, effectOn = win && now - win.start < (cosmetics?.WIN_EFFECT_MS || 3000);
+    const moving = !still && !effectOn, L = st.looks || {};
+    // The floor, with marks that slide back while the fighter walks in place.
+    ctx.fillStyle = "rgba(201,164,92,.35)";
+    ctx.fillRect(0, ground + Math.round(2 * k), W, Math.max(1, Math.round(k)));
+    const gap = 46 * k, slide = moving ? (now / 1000 * s * 1.4) % gap : 0;
+    for (let mx = -slide; mx < W; mx += gap) ctx.fillRect(Math.round(mx), ground + Math.round(5 * k), Math.round(10 * k), Math.max(1, Math.round(k)));
+    ctx.imageSmoothingEnabled = false;
+    // Trail particles drift backwards, as if left behind on the walk; a still page shows a sample instead.
+    if (trailId !== (L.trail || "")) { trailId = L.trail || ""; trail?.clear(); }
+    if (cosmetics && trailId) {
+      trail ||= cosmetics.createTrail(160);
+      if (moving) trail.spawn("me", trailId, x, ground, s, 1, now, -s * 1.4);
+      trail.draw(ctx, now);
+      if (still) cosmetics.drawTrailSample(ctx, trailId, x - s * 0.35, ground - s * 0.05, s);
+    }
+    if (st.pet?.id && pets) {
+      ctx.save(); ctx.filter = tint(L.petColor);
+      pets.drawPet(ctx, petArg(st.pet), x - s * 0.55, ground, s * 0.42, { facing: 1, t: still ? 0 : now, moving, tier: st.pet.tier, still });
+      ctx.restore();
+    }
+    const img = st.entry && image(st.entry.url);
+    const frames = framesFor(st.entry, moving ? "walk" : effectOn ? "cheer" : "idle");
+    const frame = frames.length ? frames[still ? 0 : Math.floor(now / (1000 / (st.entry.fps || 8))) % frames.length] : null;
+    if (frame && img.complete && img.naturalWidth) {
+      const dh = s * fitOf(st.entry, img, frames[0]), dw = dh * frame.w / frame.h, dx = x - dw / 2, dy = ground - dh;
+      const look = { headHint: st.entry.head, t: now, moving };
+      if (L.accessory && cosmetics) cosmetics.drawAccessory(ctx, L.accessory, img, frame, dx, dy, dw, dh, { ...look, layer: "back" });
+      ctx.save(); ctx.filter = tint(L.recolor);
+      ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
+      ctx.restore();
+      if (st.hat && hats) hats.drawHat(ctx, st.hat, img, frame, dx, dy, dw, dh, st.entry.head);
+      if (L.accessory && cosmetics) cosmetics.drawAccessory(ctx, L.accessory, img, frame, dx, dy, dw, dh, look);
+    }
+    // The win effect, shrunk if the stage is too short for it; a still page shows one frame of it.
+    if (effectOn && L.winEffect && cosmetics) {
+      const size = Math.min(s, (ground - 4 * k) / 2.85);
+      cosmetics.drawWinEffect(ctx, L.winEffect, x, ground, size, still ? 0.45 : (now - win.start) / cosmetics.WIN_EFFECT_MS, win.seed);
+    }
+    // Nameplate and title, as on stream.
+    ctx.textAlign = "center"; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(0,0,0,.85)";
+    ctx.font = "bold " + Math.round(20 * k) + "px system-ui, sans-serif"; ctx.lineWidth = 4 * k;
+    const label = st.name + (Number.isFinite(st.elo) ? " · " + st.elo : ""), lw = ctx.measureText(label).width;
+    const fit = W - 8 * k, half = Math.min(lw, fit) / 2, lx = Math.max(half + 4 * k, Math.min(W - half - 4 * k, x));   // long names squeeze to fit the stage
+    ctx.fillStyle = st.color; ctx.strokeText(label, lx, ground + 23 * k, fit); ctx.fillText(label, lx, ground + 23 * k, fit);
+    const title = cosmetics?.TITLES[L.title];
+    if (title) {
+      ctx.font = "bold " + Math.round(14 * k) + "px system-ui, sans-serif"; ctx.lineWidth = 3 * k;
+      ctx.fillStyle = "#fde68a"; ctx.strokeText(title, lx, ground + 39 * k); ctx.fillText(title, lx, ground + 39 * k);
+    }
+    const taunt = win && cosmetics?.TAUNTS[L.taunt];
+    if (taunt) {
+      ctx.font = "bold " + Math.round(14 * k) + "px system-ui, sans-serif";
+      const bw = Math.min(W, ctx.measureText(taunt).width + 16 * k), top = ground - s - 33 * k, bx = Math.max(bw / 2, Math.min(W - bw / 2, x));
+      ctx.fillStyle = "rgba(18,18,26,.88)"; ctx.fillRect(bx - bw / 2, top, bw, 25 * k);
+      ctx.fillStyle = "#ffffff"; ctx.fillText(taunt, bx, top + 18 * k, Math.max(1, bw - 8 * k));
+    }
+  }
+  redraws.add(kick);
+  new ResizeObserver(kick).observe(canvas);
+  kick();
+  return {
+    set(next) {
+      Object.assign(st, next);
+      if (next.entry) image(next.entry.url).addEventListener("load", kick, { once: true });
+      if (next.pet?.url) image(next.pet.url).addEventListener("load", kick, { once: true });
+      kick();
+    },
+    // Plays the win effect and taunt once; false when there is neither.
+    play() {
+      if (!st.looks?.winEffect && !st.looks?.taunt) return false;
+      st.win = { start: performance.now(), seed: Math.floor(Math.random() * 996) + 1 };
+      kick();
+      setTimeout(kick, 4600);   // a still page clears the win frame afterwards
+      return true;
+    },
+  };
 }

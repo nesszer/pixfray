@@ -1,5 +1,6 @@
 import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, STAT_STEP } from "./upgrades.js";
 import { cleanBoost, TIERS } from "./pets.js";
+import { cleanCosmetics } from "./cosmetics.js";
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -39,6 +40,16 @@ const DEFAULT_CONFIG = {
   petPriceEpic: 420,
   petPriceLegendary: 900,
   hatPricePerWin: 10,
+  // Stage 4 (server/cosmetics.js): each cosmetic kind has one price, and build slots cost 200 for the 2nd, then 400 each.
+  recolorPrice: 60,
+  petColorPrice: 40,
+  accessoryPrice: 80,
+  trailPrice: 120,
+  effectPrice: 150,
+  tauntPrice: 25,
+  titlePrice: 50,
+  buildSlotPrice: 200,
+  buildSlotPriceMore: 400,
   abilities: {
     strike: { damage: 20, cooldownMs: 2_000 },
     heavy: { damage: 35, cooldownMs: 5_000 },
@@ -95,6 +106,7 @@ function defaultProfile(userId, config, now) {
     pet: "",    // the active pet's id (server/pets.js), its tier for the overlay, and its stat boost
     petTier: "",
     petBoost: emptyStats(),
+    ...cleanCosmetics(null),   // recolor, petColor, accessory, trail, winEffect, taunt, title (server/cosmetics.js)
   };
 }
 
@@ -205,6 +217,7 @@ function recentProfile(state, profile, now) {
   if (profile.registered && typeof profile.hat === "string") merged.hat = knownHat(profile.hat) ? profile.hat : "";
   if (profile.registered && Number.isInteger(profile.bonus)) merged.bonus = Math.max(0, profile.bonus);
   if (profile.registered && typeof profile.pet === "string") Object.assign(merged, petFields(profile));
+  if (profile.registered && typeof profile.recolor === "string") Object.assign(merged, cleanCosmetics(profile));
   // hp/respawnAt only seed a new player, so a later chat message can never undo a KO.
   if (!existing && Number.isInteger(profile.hp) && profile.registered) merged.hp = Math.min(state.config.maxHp, Math.max(0, profile.hp));
   if (!existing && Number.isInteger(profile.respawnAt)) merged.respawnAt = profile.respawnAt;
@@ -633,6 +646,15 @@ function validateConfigPatch(patch) {
     petPriceEpic: [1, 100_000],
     petPriceLegendary: [1, 100_000],
     hatPricePerWin: [0, 1_000],
+    recolorPrice: [1, 100_000],
+    petColorPrice: [1, 100_000],
+    accessoryPrice: [1, 100_000],
+    trailPrice: [1, 100_000],
+    effectPrice: [1, 100_000],
+    tauntPrice: [1, 100_000],
+    titlePrice: [1, 100_000],
+    buildSlotPrice: [1, 100_000],
+    buildSlotPriceMore: [1, 100_000],
   };
   for (const key of Object.keys(patch)) {
     if (key === "enabled" || key === "quickDuel" || key === "streakBonus" || key === "giveEnabled") {
@@ -838,6 +860,7 @@ export function applyProfile(state, profile, now) {
     stats: cleanStats(profile?.stats),
     hat: knownHat(profile?.hat) ? profile.hat : "",
     ...petFields(profile),
+    ...cleanCosmetics(profile),
     registered: true,
   };
   if (!normalized.userId || !normalized.username) return { ok: false, reason: "invalid_profile" };
@@ -857,6 +880,7 @@ export function applyProfile(state, profile, now) {
     pet: normalized.pet,
     petTier: normalized.petTier,
     petBoost: normalized.petBoost,
+    ...cleanCosmetics(normalized),
     ...(Number.isInteger(profile?.bonus) ? { bonus: Math.max(0, profile.bonus) } : {}),
     registered: true,
     lastSeen: now,

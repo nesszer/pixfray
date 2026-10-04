@@ -1,0 +1,10 @@
+// Character groups for the viewer page's filter buttons. Ids not listed here (and channel originals, which have
+// their own group) only show under "All".
+export const CHARACTER_GROUPS = [
+  { id: "people", label: "People", ids: ["adventurer", "female", "player", "soldier", "toon-citizen", "toon-traveler", "toon-ranger", "toon-scout", "knight", "santa", "ninja",
+    "cowgirl", "cowboy", "cute-girl", "ninja-girl", "red-hat-boy", "flat-boy", "npp-mint", "npp-violet", "npp-rose", "npp-gold", "npp-sand",
+    "pixel-diver", "pixel-green", "pixel-blue", "pixel-pink", "pixel-yellow"] },
+  { id: "animals", label: "Animals", ids: ["cat", "dog", "dino", "bunny-brown", "bunny-purple", "wing-man", "npp-ladybug", "npp-snail", "npp-mouse", "npp-frog", "pixel-bat", "turtle"] },
+  { id: "robots", label: "Robots & aliens", ids: ["toon-robot", "alien-beige", "alien-blue", "alien-green", "alien-pink", "robot", "pixel-bot"] },
+  { id: "monsters", label: "Monsters", ids: ["zombie", "toon-ghoul", "pumpkin", "spike-man", "fly-man", "pixel-block", "pixel-spike", "blob-blue", "blob-green", "blob-red"] },
+];

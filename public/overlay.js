@@ -2,6 +2,7 @@ import { connectChat } from './chat.js';
 import { createArenaClient } from './arena-client.js';
 import { drawHat } from './hats.js';
 import { drawPet } from './pets.js';
+import { recolorFilter, drawAccessory, createTrail, drawWinEffect, WIN_EFFECT_MS, TAUNTS, TITLES } from './cosmetics.js';
 
 export function sanitizeColor(value) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : null;
@@ -93,6 +94,7 @@ async function start() {
   const missingAvatars = new Set();
   let lastFrame = performance.now(), lastCleanup = 0;
   const particles = [];
+  const trail = createTrail();   // walking trails (cosmetics.js), in screen space
   function updateStatus(detail = '') {
     if (!status) return;
     const chatStatus = channel + ' · ' + connectionState + ' · ' + players.size + '/' + cap + ' characters';
@@ -272,6 +274,7 @@ async function start() {
     p.defaultAbility = '';
     p.hat = '';
     p.pet = ''; p.petTier = '';
+    p.recolor = p.petColor = p.accessory = p.trail = p.winEffect = p.taunt = p.title = '';
     if (!profile) return;
     if (profile.displayName || profile.username) p.label = String(profile.displayName || profile.username).slice(0, 24);
     if (!profile.registered) return;
@@ -284,6 +287,8 @@ async function start() {
     p.hat = typeof profile.hat === 'string' ? profile.hat : '';
     p.pet = typeof profile.pet === 'string' ? profile.pet : '';
     p.petTier = typeof profile.petTier === 'string' ? profile.petTier : '';
+    // Cosmetics (cosmetics.js): ids only; unknown ones draw nothing.
+    for (const field of ['recolor', 'petColor', 'accessory', 'trail', 'winEffect', 'taunt', 'title']) p[field] = typeof profile[field] === 'string' ? profile[field].slice(0, 32) : '';
   }
   function acceptArenaSnapshot(snapshot, metadata = {}) {
     if (!snapshot || typeof snapshot !== 'object') return;
@@ -510,6 +515,9 @@ async function start() {
         // Both stay big and in place for the afterglow, then walk off.
         for (const f of [winner, loser]) if (f) { f.bigUntil = now + KO_HOLD_MS; f.holdUntil = now + KO_HOLD_MS; }
         if (winner) { winner.anim = { kind: 'cheer', start: now, until: now + 1400 }; hop(winner, 220); }
+        // The winner's win effect and taunt (preset lines only).
+        if (winner?.winEffect) winner.winFx = { id: winner.winEffect, start: now, seed: (now % 997) + 1 };
+        if (winner && TAUNTS[winner.taunt]) { winner.text = TAUNTS[winner.taunt]; winner.messageId = ''; winner.bubbleUntil = now + 4500; }
         const rw = event.ratings?.[event.winnerId], rl = event.ratings?.[event.loserId];
         if (Number.isFinite(rw?.delta)) floatText(winner, signed(rw.delta) + ' Elo', '#4ade80', 2200);
         if (Number.isFinite(rl?.delta)) floatText(loser, signed(rl.delta) + ' Elo', '#fb7185', 2200);
@@ -798,7 +806,7 @@ async function start() {
   // Nameplates: fighters in a duel first, then the most recent chatters; one that would cover a placed nameplate is
   // skipped this frame (it shows again once the walkers separate). Bubbles: the oldest keeps its spot, newer ones stack
   // up to three high above it, clear of duel health bars.
-  const LABEL_ROW = 20, BUBBLE_H = 25;
+  const LABEL_ROW = 20, TITLE_ROW = 16, BUBBLE_H = 25;
   const overlaps = (a, b) => a.lo < b.hi && a.hi > b.lo && a.top < b.bottom && a.bottom > b.top;
   function drawLabels(labels, bubbles, bars) {
     ctx.save();
@@ -807,10 +815,16 @@ async function start() {
     const placed = [];
     for (const l of labels.sort((a, b) => b.rank - a.rank)) {
       const x = Math.max(l.w / 2 + 4, Math.min(width - l.w / 2 - 4, l.x));
-      const box = { lo: x - l.w / 2 - 4, hi: x + l.w / 2 + 4, top: l.y - LABEL_ROW + 2, bottom: l.y + 2 };
+      if (l.title) l.y = Math.min(l.y, height - TITLE_ROW - 5);   // a fighter on a low lane lifts its nameplate so the title stays on screen
+      const box = { lo: x - l.w / 2 - 4, hi: x + l.w / 2 + 4, top: l.y - LABEL_ROW + 2, bottom: l.y + 2 + (l.title ? TITLE_ROW : 0) };
       if (placed.some(o => overlaps(box, o))) continue;
       placed.push(box);
       ctx.fillStyle = l.color; ctx.strokeText(l.text, x, l.y); ctx.fillText(l.text, x, l.y);
+      if (l.title) {   // a bought title, in a smaller line under the name
+        ctx.font = 'bold 14px system-ui, sans-serif'; ctx.lineWidth = 3;
+        ctx.fillStyle = '#fde68a'; ctx.strokeText(l.title, x, l.y + TITLE_ROW); ctx.fillText(l.title, x, l.y + TITLE_ROW);
+        ctx.font = 'bold 20px system-ui, sans-serif'; ctx.lineWidth = 4;
+      }
     }
     ctx.font = 'bold 14px system-ui, sans-serif';
     const stacked = [...bars];
@@ -840,7 +854,8 @@ async function start() {
       for (const [key, p] of players) if (!p.fromArena && clock - p.lastSeen > 600000) players.delete(key);
       lastCleanup = clock; updateStatus();
     }
-    const gap = duelGap(), labels = [], bubbles = [], bars = [];
+    const gap = duelGap(), labels = [], bubbles = [], bars = [], wins = [];
+    trail.draw(ctx, clock);   // behind every fighter
     // Ground taken by running duels: where the two fighters stand, plus room for their nameplates (fixed 20px
     // text, often wider than the sprite). labelWidth is measured when the nameplate is drawn (last frame).
     const duelZones = openDuels().filter(d => meetPoints.has(d.id)).map(d => ({ x: meetPoints.get(d.id).x,
@@ -910,7 +925,13 @@ async function start() {
       if (anim?.kind === 'hit' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * (anim.heavy ? .3 : .16) * p.direction;
       if (anim?.kind === 'dodge' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * .4 * p.direction;
       // The pet trots behind its fighter, facing the same way; it is drawn first so the fighter stays in front.
-      if (p.pet) drawPet(ctx, petArt(p.pet), p.x - p.direction * s * .55, y, s * .42, { facing: p.direction, t: clock + p.phase, moving, tier: p.petTier });
+      if (p.pet) {
+        ctx.save();
+        if (recolorFilter(p.petColor)) ctx.filter = recolorFilter(p.petColor);
+        drawPet(ctx, petArt(p.pet), p.x - p.direction * s * .55, y, s * .42, { facing: p.direction, t: clock + p.phase, moving, tier: p.petTier });
+        ctx.restore();
+      }
+      if (p.trail && moving && !ko) trail.spawn(p.key, p.trail, p.x, y, s, p.direction, clock);
       ctx.save();
       if (sprite?.loaded) {
         const { frame, drawn } = frameFor(sprite, p, ac, moving);
@@ -924,12 +945,19 @@ async function start() {
           ctx.globalAlpha = .55;
           ctx.rotate(-p.direction * fall * Math.PI / 2);
         }
-        if (anim?.kind === 'hit' && progress > 0 && progress < .6) ctx.filter = 'brightness(2.2) saturate(0.4)';
-        else if (anim?.kind === 'attack' && !drawn && progress > 0) ctx.filter = 'brightness(1.35)';
+        const flash = anim?.kind === 'hit' && progress > 0 && progress < .6 ? 'brightness(2.2) saturate(0.4)'
+          : anim?.kind === 'attack' && !drawn && progress > 0 ? 'brightness(1.35)' : '';
         // Sources face right; mirror left walking.
         ctx.scale(p.direction / squash, squash);
+        const look = { headHint: sprite.head, t: clock + p.phase, moving };
+        // The recolor tints the body only; the hit flash covers everything. A cape hangs behind the body.
+        ctx.filter = flash || 'none';
+        if (p.accessory) drawAccessory(ctx, p.accessory, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, { ...look, layer: 'back' });
+        ctx.filter = [recolorFilter(p.recolor), flash].filter(Boolean).join(' ') || 'none';
         ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
+        ctx.filter = flash || 'none';
         if (p.hat) drawHat(ctx, p.hat, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, sprite.head);
+        if (p.accessory) drawAccessory(ctx, p.accessory, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, look);
       } else {
         if (ko) ctx.globalAlpha = .5;
         ctx.translate(p.x + offset, y); ctx.scale(p.grow, p.grow);
@@ -949,7 +977,9 @@ async function start() {
         ? p.label + ' · ' + Math.round(Number(shownElo))
         : p.label;
       p.labelWidth = ctx.measureText(rankedLabel).width;
-      labels.push({ text: rankedLabel, color: p.color, x: p.x, y: y + 23, w: p.labelWidth, rank: duel ? Infinity : p.lastSeen });
+      labels.push({ text: rankedLabel, color: p.color, x: p.x, y: y + 23, w: p.labelWidth, rank: duel ? Infinity : p.lastSeen, title: p.arenaProfile?.registered ? TITLES[p.title] || '' : '' });
+      if (p.winFx && clock - p.winFx.start < WIN_EFFECT_MS) wins.push({ fx: p.winFx, x: p.x, y, s });
+      else p.winFx = null;
       if (p.text && clock < p.bubbleUntil && !health) {
         ctx.font = 'bold 14px system-ui, sans-serif';
         const text = p.text.length > 38 ? p.text.slice(0, 37) + '…' : p.text;
@@ -958,6 +988,7 @@ async function start() {
     }
     drawLabels(labels, bubbles, bars);
     drawParticles(clock, dt);
+    for (const w of wins) drawWinEffect(ctx, w.fx.id, w.x, w.y, w.s, (clock - w.fx.start) / WIN_EFFECT_MS, w.fx.seed);
     drawBanners(clock);
     ctx.restore();
     drawAnnouncement();
@@ -981,6 +1012,13 @@ async function start() {
       hat: ['crown', 'cap', 'halo', 'tophat', 'horns', 'wizard', 'beanie', 'bandana'][index],
       pet: ['dragon', 'fox', 'cat', '', 'owl', 'slime', 'phoenix', 'frog'][index],
       petTier: ['legendary', 'rare', 'uncommon', '', 'epic', 'common', 'legendary', 'uncommon'][index],
+      recolor: ['', '', 'violet', '', '', 'gold', '', ''][index],
+      petColor: ['', 'ocean', '', '', '', '', '', 'crimson'][index],
+      accessory: ['cape', 'glasses', '', 'shades', '', 'scarf', 'monocle', 'bowtie'][index],
+      trail: ['flames', '', 'hearts', '', 'sparkles', '', 'notes', ''][index],
+      winEffect: ['fireworks', 'confetti', 'banner', 'confetti', 'fireworks', 'banner', 'confetti', 'banner'][index],
+      taunt: ['gg', 'easy', 'next', 'bow', 'rematch', 'nap', 'luck', 'chat'][index],
+      title: ['legend', 'champion', 'lucky', 'wall', '', 'menace', 'owl', 'rookie'][index],
     }));
     arenaTransport = 'demo';
     arenaChat = { connected: true, lastSeen: Date.now(), status: 'enabled' };

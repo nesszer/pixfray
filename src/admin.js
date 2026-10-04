@@ -41,6 +41,15 @@ const GROUPS = [
     { key: "petPriceEpic", label: "Epic pet", unit: "$", min: 1, max: 100000 },
     { key: "petPriceLegendary", label: "Legendary pet", unit: "$", min: 1, max: 100000 },
     { key: "hatPricePerWin", label: "Hat price per win it needs", unit: "$", min: 0, max: 1000 },
+    { key: "recolorPrice", label: "Character recolor", unit: "$", min: 1, max: 100000 },
+    { key: "petColorPrice", label: "Pet color", unit: "$", min: 1, max: 100000 },
+    { key: "accessoryPrice", label: "Accessory", unit: "$", min: 1, max: 100000 },
+    { key: "trailPrice", label: "Walking trail", unit: "$", min: 1, max: 100000 },
+    { key: "effectPrice", label: "Win effect", unit: "$", min: 1, max: 100000 },
+    { key: "tauntPrice", label: "Win taunt", unit: "$", min: 1, max: 100000 },
+    { key: "titlePrice", label: "Title", unit: "$", min: 1, max: 100000 },
+    { key: "buildSlotPrice", label: "2nd build slot", unit: "$", min: 1, max: 100000 },
+    { key: "buildSlotPriceMore", label: "Each build slot after that", unit: "$", min: 1, max: 100000 },
   ] },
   // Only used when config.quickDuel is false, and no screen turns that off, so the group stays hidden (but in the form, so saving keeps its values).
   { title: "HP fight abilities", visible: (c) => c.quickDuel === false, fields: [

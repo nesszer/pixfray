@@ -15,6 +15,7 @@ const json = (route, data, status = 200) => route.fulfill({ status, contentType:
 const user = { id: '1001', login: 'viewer_one', displayName: 'Viewer_One' };
 const mod = { id: '2002', login: 'mod_two', displayName: 'Mod_Two' };
 const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24, checkinPoints: 1, streakBonus: true, winDollars: 5, lossDollars: 3, giveEnabled: true, giveMaxPerStream: 100, giveMinDuels: 5, petPriceCommon: 30, petPriceUncommon: 75, petPriceRare: 180, petPriceEpic: 420, petPriceLegendary: 900, hatPricePerWin: 10,
+  recolorPrice: 60, petColorPrice: 40, accessoryPrice: 80, trailPrice: 120, effectPrice: 150, tauntPrice: 25, titlePrice: 50, buildSlotPrice: 200, buildSlotPriceMore: 400,
   abilities: { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } } };
 const board = [
   { userId: '3003', username: 'top_dog', displayName: 'top_dog', avatar: 'soldier', color: '#34d399', defaultAbility: 'heavy', elo: 1048, wins: 4, losses: 1 },
@@ -58,6 +59,37 @@ try {
     if (await page.locator('#leaderboard tr.empty').count()) assert.match(await page.locator('#leaderboard tr.empty').textContent(), /To get on the board: sign in and save your fighter.*!challenge @viewer/);
     await page.locator('#char-soldier').check({ force: true });
     assert.match(await page.locator('#preview-caption').textContent(), /Soldier/);
+    // Character search and type filters.
+    await page.fill('#char-search', 'zomb');
+    assert.equal(await page.locator('#characters .char-option:visible').count(), 1, 'search finds the zombie');
+    await page.fill('#char-search', '');
+    await page.locator('#char-groups [data-group=robots]').click();
+    const robots = await page.locator('#characters .char-option:visible label span:first-of-type').allTextContents();
+    assert.ok(robots.length >= 3 && robots.some((t) => /robot/i.test(t)) && !robots.some((t) => /zombie/i.test(t)), 'Robots & aliens filter: ' + robots.join(', '));
+    assert.equal(await page.locator('#more-chars').isHidden(), true, 'no Show all while filtered');
+    await page.locator('#char-groups [data-group=all]').click();
+    // Tabs: the rules link opens Ranks; the hash picks the tab on load.
+    assert.equal(await page.locator('#panel-shop').isHidden(), true);
+    await page.locator('.hero-copy a[href="#duels"]').click();
+    assert.equal(await page.locator('#tab-ranks').getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('#duels').isVisible(), true);
+    assert.equal(new URL(page.url()).hash, '#duels');
+    await page.locator('#tab-shop').click();
+    assert.equal(await page.locator('#panel-shop').isVisible(), true);
+    assert.equal(await page.locator('#panel-ranks').isHidden(), true);
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator('#tab-pets').getAttribute('aria-selected'), 'true', 'arrow keys move between tabs');
+    assert.equal(new URL(page.url()).hash, '#pets');
+    // Shop tiles and try-on while signed out: the preview wears it; buying needs a sign-in.
+    await page.locator('#tab-shop').click();
+    await page.waitForSelector('#trail-flames');
+    await page.locator('label[for=trail-flames]').click();
+    assert.match(await page.locator('#status-trail').textContent(), /Trying on Flames in the preview\. Sign in to buy it\./);
+    assert.equal(await page.locator('#play-win').isDisabled(), true, 'no win effect or taunt yet');
+    await page.locator('label[for=effect-confetti]').click();
+    assert.equal(await page.locator('#play-win').isDisabled(), false);
+    assert.match(await page.locator('#preview').getAttribute('aria-label'), /Flames trail/);
+    await page.locator('#tab-fighter').click();
     await noOverflow(page, 'viewer signed-out ' + s.name);
     await page.screenshot({ path: shots + '/viewer-signed-out-real-' + s.name + '.png', fullPage: true });
     await page.goto(base + '/admin/');
@@ -103,7 +135,7 @@ try {
   for (const s of sizes) {
     const { context, page } = await newPage(s);
     let posted = null, bought = null;
-    await page.route('**/api/shop/nesszerra', (r) => { bought = r.request().postDataJSON(); return json(r, { ok: true, reason: 'bought', kind: 'pet', id: bought.id, price: 30, dollars: 12, owned: { pets: [bought.id], hats: [] } }); });
+    await page.route('**/api/shop/nesszerra', (r) => { if (r.request().method() === 'GET') return r.continue(); bought = r.request().postDataJSON(); return json(r, { ok: true, reason: 'bought', kind: 'pet', id: bought.id, price: 30, dollars: 12, owned: { pets: [bought.id], hats: [], slots: 1 } }); });
     await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
@@ -122,18 +154,34 @@ try {
     assert.equal((await page.locator('#stat-streak').textContent()).trim(), '3');
     assert.equal(await page.locator('#stat-dollars').textContent(), '$42');
     assert.match(await page.locator('#cmd-give').textContent(), /up to \$100 per stream, after your first 5 duels/);
-    await page.waitForSelector('#leaderboard tr.me');
+    await page.waitForSelector('#leaderboard tr.me', { state: 'attached' });
     await page.locator('label[for=char-adventurer]').click();
     await page.locator('.swatch[data-color="#34d399"]').click();
+    // Builds: one free slot; the next costs $200.
+    assert.match(await page.locator('#build-list').textContent(), /Build 1\s*On stream/);
+    assert.equal(await page.getByRole('button', { name: 'Buy build slot 2 for $200' }).isDisabled(), true, '$42 is not enough for a slot');
     // Hats and upgrades: 2 wins + 1 check-in point = 3 points; the crown needs 20 wins.
-    assert.equal(await page.locator('#hat-crown').isDisabled(), true);
-    await page.locator('label[for=hat-cap]').click();
     assert.match(await page.locator('#points-note').textContent(), /3 of 3 points/);
+    await page.locator('#tab-shop').click();
+    assert.match(await page.locator('#shop-note').textContent(), /^You have \$42\./);
+    assert.equal(await page.locator('#hats .char-option:has(#hat-crown)').getAttribute('class'), 'char-option locked');
+    await page.locator('label[for=hat-cap]').click();
     assert.ok((await page.locator('#upgrades-help').textContent()).includes('2 from wins and 1 from check-ins'));
     // Shop: hats past the wins can be bought; a pet buy needs a second click to confirm, then the pet is picked.
     assert.equal(await page.getByRole('button', { name: /^Buy Crown hat for \$200$/ }).isDisabled(), true, '$42 is not enough for the crown');
+    // Cosmetics: every price is the channel's config default; trying one on blocks Save until it's bought.
+    assert.equal(await page.getByRole('button', { name: 'Buy Cape for $80' }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $50' }).isDisabled(), true);
+    await page.locator('label[for=title-wall]').click();
+    assert.match(await page.locator('#save-status').textContent(), /Trying on Iron Wall\. Buy it to save this look\./);
+    await page.locator('#save').click();
+    assert.match(await page.locator('#save-status').textContent(), /Not saved: buy Iron Wall first/);
+    assert.equal(posted, null);
+    await page.locator('label[for=title-none]').click();
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.screenshot({ path: shots + '/viewer-shop-' + s.name + '.png', fullPage: true });
+    await page.locator('#tab-pets').click();
     assert.equal(await page.locator('#pet-none').isChecked(), true);
-    assert.equal(await page.locator('#pet-mouse').isDisabled(), true, 'an unowned pet cannot be picked');
     assert.equal(await page.getByRole('button', { name: 'Buy Dragon for $900' }).isDisabled(), true);
     const buyMouse = page.getByRole('button', { name: 'Buy Mouse for $30' });
     await buyMouse.click();
@@ -145,6 +193,10 @@ try {
     assert.equal(await page.locator('#pet-mouse').isChecked(), true);
     assert.equal(await page.locator('#stat-dollars').textContent(), '$12');
     assert.match(await page.locator('#pet-note').textContent(), /you own 1, you have \$12/);
+    assert.equal(await page.locator('#items-petcolor input').count(), 9, 'eight pet colors and none');
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.screenshot({ path: shots + '/viewer-pets-' + s.name + '.png', fullPage: true });
+    await page.locator('#tab-fighter').click();
     await page.getByRole('button', { name: 'Put a point into Power' }).click();
     await page.getByRole('button', { name: 'Put a point into Power' }).click();
     await page.getByRole('button', { name: 'Put a point into Luck' }).click();
@@ -153,18 +205,24 @@ try {
     if (s.name === '1280') await page.screenshot({ path: shots + '/viewer-signed-in-editing-1280.png', fullPage: true });
     await page.locator('#save').click();
     await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('Saved'));
-    assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heal', stats: { power: 2, guard: 0, luck: 1 }, hat: 'cap', pet: 'mouse' });   // the saved ability is kept as is
+    assert.deepEqual(posted, { avatar: 'adventurer', color: '#34d399', defaultAbility: 'heal', stats: { power: 2, guard: 0, luck: 1 }, hat: 'cap', pet: 'mouse',
+      recolor: '', petColor: '', accessory: '', trail: '', winEffect: '', taunt: '', title: '', build: 0 });   // the saved ability is kept as is
     assert.match(await page.locator('#upgrade-list').textContent(), /2 \/ 8 \+1/, 'the mouse adds +1 power past the points');
+    assert.match(await page.locator('#upgrade-list').textContent(), /\+12% damage dealt \(1 from your pet\)/, 'plain numbers, pet included');
     await noOverflow(page, 'viewer signed-in ' + s.name);
     if (s.name !== '1280') {
       // phones: explanation tables wrap instead of scrolling sideways, and the fighter bar stays at the bottom while picking
+      await page.locator('#tab-ranks').click();
       for (const w of await page.locator('.table-wrap:has(.prose-table)').all()) assert.ok(await w.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), 'duel table fits at ' + s.name);
       const lb = page.locator('#leaderboard');
       assert.equal(await lb.locator('th.col-char').isVisible(), false, 'no Character column on phones');
       assert.ok(await lb.evaluate((t) => t.parentElement.scrollWidth <= t.parentElement.clientWidth + 1), 'leaderboard fits without sideways scrolling at ' + s.name);
-      await page.locator('#swatches').scrollIntoViewIfNeeded();
+      await page.locator('#tab-fighter').click();
+      await page.locator('#upgrade-list').evaluate((n) => n.scrollIntoView({ block: 'start' }));
       const bar = await page.locator('.hero-card').boundingBox(), vh = page.viewportSize().height;
-      assert.ok(bar.y + bar.height <= vh + 1 && bar.y > vh / 2, 'fighter bar sits at the bottom of the screen at ' + s.name);
+      assert.ok(Math.abs(bar.y) <= 1 && bar.height < vh / 2, 'preview bar sticks to the top of the screen at ' + s.name + ': ' + JSON.stringify(bar));
+      const up = await page.locator('#upgrade-list').boundingBox();
+      assert.ok(up.y >= bar.y + bar.height - 1, 'the picked section scrolls clear of the preview bar');
       await page.screenshot({ path: shots + '/viewer-signed-in-picking-' + s.name + '.png' });
     }
     await page.screenshot({ path: shots + '/viewer-signed-in-' + s.name + '.png', fullPage: true });
@@ -194,7 +252,7 @@ try {
     assert.equal(await page.locator('#save-status').textContent(), '', 'the next step replaces the plain saved line');
     if (s.name !== '1280') {
       const bar = await page.locator('.hero-card').boundingBox(), vh = page.viewportSize().height;
-      assert.ok(bar.y + bar.height <= vh + 1 && bar.height < vh / 2, 'fighter bar with the next step still fits at ' + s.name);
+      assert.ok(bar.height < vh / 2, 'preview bar with the next step still fits at ' + s.name);
     }
     await noOverflow(page, 'viewer first run ' + s.name);
     await page.screenshot({ path: shots + '/viewer-first-run-' + s.name + '.png' });

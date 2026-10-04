@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Chat: pick your fighter on nesszerra</title>
-<meta data-channel name="description" content="Pick your Mini Chat character and nameplate color for the nesszerra Twitch channel.">
+<meta data-channel name="description" content="Pick your Mini Chat character, colors, gear and pet for the nesszerra Twitch channel.">
 <link rel="canonical" href="https://chat.miolaf.xyz/">
 <meta name="theme-color" content="#17110c">
 <meta property="og:type" content="website"><meta property="og:site_name" content="Mini Chat"><meta property="og:url" content="https://chat.miolaf.xyz/">
@@ -16,7 +16,7 @@
 <body>
 <header class="topbar"><div class="topbar-inner">
   <a class="brand" href="/" data-keep-channel>Mini Chat</a>
-  <nav aria-label="Sections"><a href="#fighter">Fighter</a><a href="#ranks">Ranks</a><a href="#duels">Duels</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
+  <nav aria-label="Pages"><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 
@@ -31,54 +31,17 @@
   <div class="hero-grid">
     <header class="hero-copy">
       <h1 id="hero-title" data-channel>Your fighter in nesszerra's chat</h1>
-      <p class="lead" data-channel>Pick a character and a nameplate color. Your profile is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
+      <p class="lead" data-channel>Pick a character, colors and gear. Your fighter is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
       <p class="how">To duel: save a fighter, then type <code>!challenge @name</code> in chat while the stream is live. They accept with <code>!fight</code>, and your fighters walk in to settle it. <a href="#duels">Full rules</a></p>
       <p class="note" id="signin-note" hidden></p>
       <p class="callout warning" id="off-note" role="status" hidden></p>
     </header>
 
-    <form id="profile-form" class="hero-pick form-stack" novalidate>
-      <fieldset>
-        <legend>Character <span class="muted small" id="char-count"></span></legend>
-        <div class="char-grid collapsed" id="characters" role="radiogroup" aria-label="Character"><p class="muted small">Loading characters…</p></div>
-        <button class="btn btn-small more-chars" id="more-chars" type="button" aria-controls="characters" aria-expanded="false" hidden>Show all characters</button>
-      </fieldset>
-      <fieldset>
-        <legend>Nameplate color</legend>
-        <div class="swatches" id="swatches">
-          <label class="custom-color" for="color"><input type="color" id="color" value="#a78bfa" aria-label="Custom nameplate color"><span>Custom</span></label>
-        </div>
-      </fieldset>
-      <fieldset>
-        <legend>Hat <span class="muted small" id="hat-note"></span></legend>
-        <div class="char-grid hat-grid" id="hats" role="radiogroup" aria-label="Hat"></div>
-        <p class="status" id="hat-status" role="status"></p>
-      </fieldset>
-      <fieldset id="pets">
-        <legend>Pet <span class="muted small" id="pet-note"></span></legend>
-        <p class="muted small">A pet follows your fighter on stream and adds to its stats, on top of the upgrade limit. Buy pets with the Mini Chat dollars you earn in duels. You keep every pet you buy and bring one at a time.</p>
-        <div class="char-grid hat-grid" id="pet-list" role="radiogroup" aria-label="Pet"></div>
-        <p class="status" id="pet-status" role="status"></p>
-      </fieldset>
-      <fieldset id="upgrades">
-        <legend>Upgrades <span class="muted small" id="points-note"></span></legend>
-        <p class="muted small" id="upgrades-help">Each win and each stream check-in (!checkin in chat) gives a point, up to 20. Move points between stats whenever you're not in a duel.</p>
-        <div class="upgrade-list" id="upgrade-list"></div>
-      </fieldset>
-    </form>
-
-    <aside class="hero-card fighter-card" aria-label="Preview and save">
-      <div class="preview" aria-live="polite">
-        <canvas class="sprite" id="preview" width="128" height="128" role="img" aria-label="Selected character preview"></canvas>
-        <span class="nameplate" id="nameplate">you</span>
-        <span class="caption" id="preview-caption"></span>
-      </div>
-      <div class="stat-strip" id="my-stats" hidden>
-        <div class="stat"><div class="label">Elo</div><div class="value" id="stat-elo">—</div></div>
-        <div class="stat"><div class="label">Wins / losses</div><div class="value" id="stat-wl">—</div></div>
-        <div class="stat"><div class="label">Dollars</div><div class="value" id="stat-dollars">—</div></div>
-        <div class="stat"><div class="label">Stream streak</div><div class="value" id="stat-streak">—</div></div>
-      </div>
+    <aside class="hero-card fighter-card" aria-label="On-stream preview and save">
+      <figure class="preview">
+        <canvas class="stage-canvas" id="preview" role="img" aria-label="Your fighter as it looks on stream"></canvas>
+        <figcaption class="preview-bar"><span class="caption" id="preview-caption"></span><button class="btn btn-small" id="play-win" type="button">Preview a win</button></figcaption>
+      </figure>
       <a class="points-link" id="points-link" href="#upgrades" hidden></a>
       <div class="toolbar">
         <button class="btn btn-primary" id="save" type="submit" form="profile-form" hidden>Save profile</button>
@@ -87,11 +50,113 @@
       <p class="status" id="save-status" role="status"></p>
       <p class="callout small next-step" id="next-step" hidden></p>
     </aside>
-  </div>
-</section>
 
-<main class="page">
-  <section class="section" id="ranks" aria-labelledby="lb-title">
+    <div class="hero-pick">
+      <div class="tabs" role="tablist" aria-label="Fighter sections">
+        <button type="button" role="tab" id="tab-fighter" aria-controls="panel-fighter" aria-selected="true">Fighter</button>
+        <button type="button" role="tab" id="tab-shop" aria-controls="panel-shop" aria-selected="false" tabindex="-1">Shop</button>
+        <button type="button" role="tab" id="tab-pets" aria-controls="panel-pets" aria-selected="false" tabindex="-1">Pets</button>
+        <button type="button" role="tab" id="tab-ranks" aria-controls="panel-ranks" aria-selected="false" tabindex="-1">Ranks</button>
+      </div>
+      <form id="profile-form" novalidate>
+        <div class="form-stack" role="tabpanel" id="panel-fighter" aria-labelledby="tab-fighter">
+          <div class="stat-strip" id="my-stats" hidden>
+            <div class="stat"><div class="label">Elo</div><div class="value" id="stat-elo">—</div></div>
+            <div class="stat"><div class="label">Wins / losses</div><div class="value" id="stat-wl">—</div></div>
+            <div class="stat"><div class="label">Dollars</div><div class="value" id="stat-dollars">—</div></div>
+            <div class="stat"><div class="label">Stream streak</div><div class="value" id="stat-streak">—</div></div>
+          </div>
+          <fieldset id="builds" hidden>
+            <legend>Builds <span class="muted small" id="build-note"></span></legend>
+            <p class="muted small">Each build keeps its own character, colors, upgrades, hat, pet and cosmetics. Saving a build puts it on stream.</p>
+            <div class="build-bar" id="build-list" role="group" aria-label="Build"></div>
+            <p class="status" id="status-slot" role="status"></p>
+          </fieldset>
+          <fieldset>
+            <legend>Character <span class="muted small" id="char-count"></span></legend>
+            <div class="char-filter">
+              <label class="sr-only" for="char-search">Search characters</label>
+              <input type="search" id="char-search" placeholder="Search characters" autocomplete="off" spellcheck="false">
+              <div class="filter-buttons" id="char-groups" role="group" aria-label="Character type"></div>
+            </div>
+            <div class="char-grid collapsed" id="characters" role="radiogroup" aria-label="Character"><p class="muted small">Loading characters…</p></div>
+            <p class="muted small" id="char-empty" hidden>No characters match.</p>
+            <button class="btn btn-small more-chars" id="more-chars" type="button" aria-controls="characters" aria-expanded="false" hidden>Show all characters</button>
+          </fieldset>
+          <fieldset>
+            <legend>Nameplate color</legend>
+            <div class="swatches" id="swatches">
+              <label class="custom-color" for="color"><input type="color" id="color" value="#a78bfa" aria-label="Custom nameplate color"><span>Custom</span></label>
+            </div>
+          </fieldset>
+          <fieldset id="recolor">
+            <legend>Recolor <span class="muted small" id="note-recolor"></span></legend>
+            <p class="muted small">Tints your character on stream. Hats and gear keep their own colors.</p>
+            <div class="char-grid item-grid" id="items-recolor" role="radiogroup" aria-label="Recolor"></div>
+            <p class="status" id="status-recolor" role="status"></p>
+          </fieldset>
+          <fieldset id="upgrades">
+            <legend>Upgrades <span class="muted small" id="points-note"></span></legend>
+            <p class="muted small" id="upgrades-help">Each win and each stream check-in (!checkin in chat) gives a point, up to 20. Move points between stats whenever you're not in a duel.</p>
+            <div class="upgrade-list" id="upgrade-list"></div>
+          </fieldset>
+        </div>
+
+        <div class="form-stack" role="tabpanel" id="panel-shop" aria-labelledby="tab-shop" hidden>
+          <p class="note" id="shop-note">Spend the Mini Chat dollars you earn in duels. Everything here changes looks only, not stats. You keep what you buy and can wear it in any build.</p>
+          <fieldset id="hat-picker">
+            <legend>Hat <span class="muted small" id="hat-note"></span></legend>
+            <div class="char-grid item-grid" id="hats" role="radiogroup" aria-label="Hat"></div>
+            <p class="status" id="hat-status" role="status"></p>
+          </fieldset>
+          <fieldset>
+            <legend>Accessory <span class="muted small" id="note-accessory"></span></legend>
+            <div class="char-grid item-grid" id="items-accessory" role="radiogroup" aria-label="Accessory"></div>
+            <p class="status" id="status-accessory" role="status"></p>
+          </fieldset>
+          <fieldset>
+            <legend>Walking trail <span class="muted small" id="note-trail"></span></legend>
+            <div class="char-grid item-grid" id="items-trail" role="radiogroup" aria-label="Walking trail"></div>
+            <p class="status" id="status-trail" role="status"></p>
+          </fieldset>
+          <fieldset>
+            <legend>Win effect <span class="muted small" id="note-effect"></span></legend>
+            <p class="muted small">Plays over your fighter when you win a duel.</p>
+            <div class="char-grid item-grid" id="items-effect" role="radiogroup" aria-label="Win effect"></div>
+            <p class="status" id="status-effect" role="status"></p>
+          </fieldset>
+          <fieldset>
+            <legend>Win taunt <span class="muted small" id="note-taunt"></span></legend>
+            <p class="muted small">Your fighter says it after a win. The lines are fixed, so nothing typed reaches the stream.</p>
+            <div class="char-grid item-grid text-grid" id="items-taunt" role="radiogroup" aria-label="Win taunt"></div>
+            <p class="status" id="status-taunt" role="status"></p>
+          </fieldset>
+          <fieldset>
+            <legend>Title <span class="muted small" id="note-title"></span></legend>
+            <p class="muted small">Shown under your name on stream.</p>
+            <div class="char-grid item-grid text-grid" id="items-title" role="radiogroup" aria-label="Title"></div>
+            <p class="status" id="status-title" role="status"></p>
+          </fieldset>
+        </div>
+
+        <div class="form-stack" role="tabpanel" id="panel-pets" aria-labelledby="tab-pets" hidden>
+          <fieldset id="pets">
+            <legend>Pet <span class="muted small" id="pet-note"></span></legend>
+            <p class="muted small">A pet follows your fighter on stream and adds to its stats, on top of the upgrade limit. Buy pets with the Mini Chat dollars you earn in duels. You keep every pet you buy and bring one at a time.</p>
+            <div class="char-grid item-grid" id="pet-list" role="radiogroup" aria-label="Pet"></div>
+            <p class="status" id="pet-status" role="status"></p>
+          </fieldset>
+          <fieldset id="pet-color">
+            <legend>Pet color <span class="muted small" id="note-petcolor"></span></legend>
+            <p class="muted small" id="petcolor-help">Tints your pet on stream.</p>
+            <div class="char-grid item-grid" id="items-petcolor" role="radiogroup" aria-label="Pet color"></div>
+            <p class="status" id="status-petcolor" role="status"></p>
+          </fieldset>
+        </div>
+      </form>
+
+      <div role="tabpanel" id="panel-ranks" aria-labelledby="tab-ranks" hidden>
+  <section class="section panel-section" id="ranks" aria-labelledby="lb-title">
     <h2 id="lb-title">Leaderboard: the top 10 by Elo</h2>
     <p class="muted small" id="lb-note">Ranked duels need a saved profile. Everyone starts at 1000 Elo.</p>
     <div class="table-wrap"><table class="data" id="leaderboard">
@@ -100,7 +165,7 @@
     </table></div>
   </section>
 
-  <section class="section" id="duels" aria-labelledby="cmd-title">
+  <section class="section panel-section" id="duels" aria-labelledby="cmd-title">
     <h2 id="cmd-title">Duels take two chat commands and settle in one die-rolling exchange</h2>
     <div class="grid-2">
       <div>
@@ -145,8 +210,12 @@
     </ul>
     <p class="caveat">The loser is knocked out for a few seconds, and the same two viewers wait <span id="cmd-rematch">30 s</span> before a rematch.</p>
   </section>
+      </div>
+    </div>
+  </div>
+</section>
 
-
+<main class="page">
   <p class="caveat">Character art by <a href="https://kenney.nl" rel="noopener">Kenney</a>, <a href="https://opengameart.org/users/pzuh" rel="noopener">pzUH</a> and <a href="https://opengameart.org/users/sogomn" rel="noopener">Sogomn</a> (all CC0). Headings use <a href="https://github.com/undercasetype/Fraunces" rel="noopener">Fraunces</a> (SIL Open Font License). Signing in shares only your public Twitch name. Mini Chat never posts in chat as you.</p>
 </main>
 <script type="module" src="/src/dashboard.js"></script>

@@ -397,11 +397,20 @@ test('pets: the catalog and images are public; uploads and deletes need a mod; t
   const viewer = await signedIn(f);
   assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'car', id: 'fox' }, viewer), f.env)).status, 400);
   assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'pet', id: 'x'.repeat(65) }, viewer), f.env)).status, 400);
-  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'GET', undefined, viewer), f.env)).status, 405);
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'GET'), f.env)).status, 200, 'the shop list is public');
+  assert.equal(f.forwarded.at(-1).path, '/shop');
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra/x', 'GET'), f.env)).status, 405);
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'trail', id: 'flames' }, viewer), f.env)).status, 200);
+  assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'slot' }, viewer), f.env)).status, 200);
+  assert.deepEqual(f.forwarded.at(-1).body, { userId: '2', kind: 'slot', id: '' });
   assert.equal((await worker.fetch(req('/api/shop/nesszerra', 'POST', { kind: 'pet', id: 'fox', userId: 'forged' }, viewer), f.env)).status, 200);
   assert.deepEqual(f.forwarded.at(-1).body, { userId: '2', kind: 'pet', id: 'fox' });
   assert.equal(f.forwarded.at(-1).path, '/shop');
   assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'player', color: '#aabbcc', defaultAbility: 'heal', pet: 7 }, viewer), f.env)).status, 400);
   assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'player', color: '#aabbcc', defaultAbility: 'heal', pet: 'fox' }, viewer), f.env)).status, 200);
   assert.equal(f.forwarded.at(-1).body.pet, 'fox');
+  // Cosmetics and the build slot ride along; the room checks ownership.
+  for (const bad of [{ title: 7 }, { trail: 'x'.repeat(33) }, { build: 5 }, { build: 1.5 }, { build: '1' }]) assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'player', color: '#aabbcc', defaultAbility: 'heal', ...bad }, viewer), f.env)).status, 400, JSON.stringify(bad));
+  assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'player', color: '#aabbcc', defaultAbility: 'heal', title: 'legend', winEffect: '', build: 2 }, viewer), f.env)).status, 200);
+  assert.deepEqual((({ title, winEffect, build, trail }) => [title, winEffect, build, trail])(f.forwarded.at(-1).body), ['legend', '', 2, undefined]);
 });

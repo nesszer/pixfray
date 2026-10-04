@@ -15,6 +15,7 @@ import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent 
 import { checkChatSubscription, liveStream } from "./eventsub.js";
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
+import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
 import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
@@ -42,7 +43,7 @@ const MAX_BONUS = 1_000;                   // stored check-in points; only MAX_P
 const MAX_DOLLARS = 1_000_000;             // a wallet never holds more
 const MAX_GIFT = 10_000;                   // the most a mod can add or take back in one gift
 // Every query that builds a profile with normalizeProfileRow reads these columns.
-const PROFILE_COLUMNS = "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak, dollars, pet, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom";
+const PROFILE_COLUMNS = "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak, dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom";
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -68,6 +69,9 @@ function validUserId(value) {
 function normalizeUsername(value) {
   return String(value || "").trim().replace(/^@/, "").toLowerCase().slice(0, 25);
 }
+
+// Stage 4 cosmetics: profile field -> profiles column (server/cosmetics.js).
+const COSMETIC_COLUMNS = { recolor: "recolor", petColor: "pet_color", accessory: "accessory", trail: "trail", winEffect: "win_effect", taunt: "taunt", title: "title" };
 
 // Leaderboard order, as in the SQL: Elo, then wins, then name.
 function boardOrder(a, b) {
@@ -98,6 +102,8 @@ function normalizeProfileRow(row, config) {
     streak: Number.isInteger(row.streak) ? row.streak : 0,
     dollars: Number.isInteger(row.dollars) ? row.dollars : 0,   // Mini Chat dollars (payDuels, give, giftDollars)
     ...petFieldsOf(row),
+    ...cleanCosmetics(Object.fromEntries(Object.entries(COSMETIC_COLUMNS).map(([field, column]) => [field, row[column]]))),
+    build: Number.isInteger(row.build) ? row.build : 0,   // the active build slot (builds table)
     ...(row.last_opponent ? { lastOpponentId: String(row.last_opponent) } : {}),   // only getProfile reads it
   };
 }
@@ -150,6 +156,11 @@ export class ChannelRoom extends DurableObject {
     // v2.8: the active pet, plus bought items and uploaded pets (server/pets.js). PROFILE_COLUMNS reads custom_pets.
     if (!profileColumns.includes("pet")) sql.exec("ALTER TABLE profiles ADD COLUMN pet TEXT NOT NULL DEFAULT ''");
     ensurePetSchema(sql);
+    // v2.9: cosmetics worn (server/cosmetics.js) and the active build slot. Each slot's loadout is a JSON row in builds;
+    // the profile columns always hold the active one. Bought build slots are owned_items rows of kind "slot".
+    for (const column of ["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`);
+    if (!profileColumns.includes("build")) sql.exec("ALTER TABLE profiles ADD COLUMN build INTEGER NOT NULL DEFAULT 0");
+    sql.exec("CREATE TABLE IF NOT EXISTS builds (user_id TEXT NOT NULL, slot INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (user_id, slot))");
     // Streams with at least one check-in, numbered in order: a streak counts these, so a gap of one seq is one missed stream.
     sql.exec("CREATE TABLE IF NOT EXISTS streams (seq INTEGER PRIMARY KEY, stream_id TEXT NOT NULL UNIQUE, started_at INTEGER NOT NULL)");
     // Test site only (DEV_TOOLS_TOKEN): a pretend live stream for !checkin. stream_id '' = pretend offline.
@@ -214,14 +225,20 @@ export class ChannelRoom extends DurableObject {
       if (cleared) this.broadcast(cleared);
       return response;
     }
-    // Buy a pet or a hat with Mini Chat dollars (signed-in viewer; the Worker sets the user header).
+    // The shop list with this channel's prices (public): pets, hat price per win, cosmetics and build slot prices.
+    if (path === "/shop" && request.method === "GET") {
+      const config = this.readState(channel).config;
+      return json({ pets: petCatalog(this.ctx.storage.sql, channel, config), hatPricePerWin: config.hatPricePerWin, items: cosmeticCatalog(config),
+        slots: { max: MAX_BUILDS, prices: Array.from({ length: MAX_BUILDS - 1 }, (_, i) => slotPrice(i + 1, config)) } });
+    }
+    // Buy a pet, a hat, a cosmetic or a build slot with Mini Chat dollars (signed-in viewer; the Worker sets the user header).
     if (path === "/shop" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
       const userId = validUserId(request.headers.get(USER_HEADER));
       if (!userId || userId !== validUserId(body.value.userId)) return json({ error: "profile identity mismatch" }, 403);
       const bought = this.buy(channel, userId, body.value);
-      return json(bought.ok ? bought : { ...bought, error: bought.reason }, bought.ok ? 200 : bought.reason === "no_fighter" ? 404 : bought.reason === "not_enough" || bought.reason === "owned" ? 409 : 400);
+      return json(bought.ok ? bought : { ...bought, error: bought.reason }, bought.ok ? 200 : bought.reason === "no_fighter" ? 404 : ["not_enough", "owned", "max_slots"].includes(bought.reason) ? 409 : 400);
     }
 
     if (path === "/admin" && request.method === "GET") {
@@ -244,7 +261,7 @@ export class ChannelRoom extends DurableObject {
       const rows = this.ctx.storage.sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`, ...logins).toArray();
       for (const row of rows) {
         const p = shownProfile(normalizeProfileRow(row, config), hidden);
-        out[p.username.toLowerCase()] = { avatar: p.avatar, color: p.color, hat: p.hat || "", pet: p.pet || "", petTier: p.petTier || "", displayName: p.displayName, elo: p.elo };
+        out[p.username.toLowerCase()] = { avatar: p.avatar, color: p.color, hat: p.hat || "", pet: p.pet || "", petTier: p.petTier || "", ...cleanCosmetics(p), displayName: p.displayName, elo: p.elo };
       }
       return json(out);
     }
@@ -258,7 +275,7 @@ export class ChannelRoom extends DurableObject {
       if (!profile) return json(null);
       // A knocked-out fighter (hp 0, respawnAt) would give away a result the stream hasn't shown yet.
       const active = !hidden.has(userId) && state.players.find((item) => item.userId === userId);
-      return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins, profile.bonus), owned: this.owned(userId) });
+      return json({ ...profile, ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}), upgrades: upgradeRules(profile.wins, profile.bonus), owned: this.owned(userId), builds: this.builds(profile) });
     }
 
     if (path === "/profile" && request.method === "POST") {
@@ -272,7 +289,7 @@ export class ChannelRoom extends DurableObject {
       this.broadcast(result.state);
       await this.scheduleAlarm(result.state);
       const shown = shownProfile(result.profile, hiddenResults(result.state, Date.now()));
-      return json({ profile: { ...shown, upgrades: upgradeRules(shown.wins, shown.bonus), owned: this.owned(actorId) }, revision: result.state.revision });
+      return json({ profile: { ...shown, upgrades: upgradeRules(shown.wins, shown.bonus), owned: this.owned(actorId), builds: this.builds(shown) }, revision: result.state.revision });
     }
 
     if (path === "/admin" && request.method === "POST") {
@@ -507,6 +524,17 @@ export class ChannelRoom extends DurableObject {
       const custom = petId ? this.ctx.storage.sql.exec("SELECT tier || ':' || stat || ':' || stat2 AS c FROM custom_pets WHERE id = ?", petId).toArray()[0]?.c : "";
       const pet = petId ? petOf(petId, custom) : null;
       if (petId && (!pet || !owns("pet", petId))) return { ok: false, reason: "pet_locked" };
+      // Cosmetics: "" (none) or one the fighter bought. Left out = keep the saved one.
+      const cosmetics = {};
+      for (const kind of COSMETIC_KINDS) {
+        const field = COSMETIC_FIELDS[kind], id = input[field] === undefined ? existing?.[field] || "" : input[field];
+        if (typeof id !== "string" || id && !cosmeticItem(kind, id)) return { ok: false, reason: "invalid_profile" };
+        if (id && id !== (existing?.[field] || "") && !owns(kind, id)) return { ok: false, reason: "item_locked" };
+        cosmetics[field] = id;
+      }
+      // Build slot: the one this loadout is saved to, which becomes the active one. Left out = the active slot.
+      const build = input.build === undefined ? existing?.build || 0 : input.build;
+      if (!Number.isInteger(build) || build < 0 || build >= this.buildSlots(userId)) return { ok: false, reason: "invalid_build" };
       const profile = {
         ...(existing || {
           userId,
@@ -534,6 +562,8 @@ export class ChannelRoom extends DurableObject {
         pet: pet ? pet.id : "",
         petTier: pet ? pet.tier : "",
         petBoost: pet ? pet.boost : emptyStats(),
+        ...cosmetics,
+        build,
         registered: true,
       };
       const result = reduceGame(state, { type: "profile_saved", profile }, now);
@@ -541,8 +571,10 @@ export class ChannelRoom extends DurableObject {
       this.writeState(result.state);
       const active = result.state.players.find((item) => item.userId === userId);
       this.upsertProfile(active || profile);
+      this.ctx.storage.sql.exec("UPDATE profiles SET build = ? WHERE user_id = ?", build, userId);
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO builds (user_id, slot, data) VALUES (?, ?, ?)", userId, build, JSON.stringify(buildOf(profile)));
       // The state player has no streak, check-in count or dollars; they live only in the profiles table.
-      const saved = { ...(active || profile), bonus: existing?.bonus || 0, checkins: existing?.checkins || 0, streak: existing?.streak || 0, dollars: existing?.dollars || 0 };
+      const saved = { ...(active || profile), build, bonus: existing?.bonus || 0, checkins: existing?.checkins || 0, streak: existing?.streak || 0, dollars: existing?.dollars || 0 };
       return { ok: true, profile: saved, state: result.state };
     });
   }
@@ -596,11 +628,17 @@ export class ChannelRoom extends DurableObject {
       typeof profile.pet === "string" ? profile.pet : null,
       typeof profile.pet === "string" ? profile.pet : null,
     );
+    // A game state player from before cosmetics has none of the fields; keep the stored ones then.
+    if (typeof profile.recolor === "string") {
+      const worn = cleanCosmetics(profile);
+      this.ctx.storage.sql.exec(`UPDATE profiles SET ${Object.values(COSMETIC_COLUMNS).map((c) => c + " = ?").join(", ")} WHERE user_id = ?`, ...Object.keys(COSMETIC_COLUMNS).map((f) => worn[f]), profile.userId);
+    }
   }
 
   deleteProfile(userId) {
     this.ctx.storage.sql.exec("DELETE FROM profiles WHERE user_id = ?", userId);
     this.ctx.storage.sql.exec("DELETE FROM owned_items WHERE user_id = ?", userId);
+    this.ctx.storage.sql.exec("DELETE FROM builds WHERE user_id = ?", userId);
   }
 
   resetAllRanks(initialElo) {
@@ -882,12 +920,26 @@ export class ChannelRoom extends DurableObject {
     });
   }
 
-  // What a fighter bought: { pets: [ids], hats: [ids] }.
+  // What a fighter bought: { pets: [ids], hats: [ids], <cosmetic kind>: [ids], slots: build slots (1 free + bought) }.
   owned(userId) {
-    const out = { pets: [], hats: [] };
+    const out = { pets: [], hats: [], ...Object.fromEntries(COSMETIC_KINDS.map((k) => [k, []])), slots: 1 };
     for (const r of this.ctx.storage.sql.exec("SELECT kind, item_id FROM owned_items WHERE user_id = ? ORDER BY bought_at", userId).toArray()) {
       if (r.kind === "pet") out.pets.push(r.item_id); else if (r.kind === "hat") out.hats.push(r.item_id);
+      else if (r.kind === "slot") out.slots += 1; else if (out[r.kind]) out[r.kind].push(r.item_id);
     }
+    return out;
+  }
+
+  buildSlots(userId) {
+    return 1 + this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM owned_items WHERE user_id = ? AND kind = 'slot'", userId).toArray()[0].n;
+  }
+
+  // Every build slot's loadout, in slot order; null for a bought slot that was never saved. The active slot is
+  // always the profile itself (a fighter saved before builds has no row yet).
+  builds(profile) {
+    const out = Array.from({ length: this.buildSlots(profile.userId) }, () => null);
+    for (const r of this.ctx.storage.sql.exec("SELECT slot, data FROM builds WHERE user_id = ?", profile.userId).toArray()) if (r.slot < out.length) out[r.slot] = safeJsonParse(r.data, null);
+    if ((profile.build || 0) < out.length) out[profile.build || 0] = buildOf(profile);
     return out;
   }
 
@@ -907,6 +959,12 @@ export class ChannelRoom extends DurableObject {
         if (hat && hatPrice(hat, config) === null) return { ok: false, reason: "hats_not_for_sale" };
         price = hat ? hatPrice(hat, config) : null;
       }
+      else if (kind === "slot") {
+        const slots = this.buildSlots(userId);
+        if (slots >= MAX_BUILDS) return { ok: false, reason: "max_slots" };
+        price = slotPrice(slots, config);
+        id = String(slots + 1);   // the slot number it adds, so each bought slot is its own owned_items row
+      } else if (COSMETIC_KINDS.includes(kind)) price = cosmeticItem(kind, id) ? cosmeticPrice(kind, config) : null;
       if (price === null) return { ok: false, reason: "unknown_item" };
       if (sql.exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id).toArray().length) return { ok: false, reason: "owned" };
       const dollars = Math.max(0, row.dollars - h.dollars);

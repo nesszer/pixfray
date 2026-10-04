@@ -168,6 +168,8 @@ test('turning a channel off keeps its admin page; overlay feed, viewer page and 
   assert.equal((await worker.fetch(req('/api/looks/newstreamer?u=a'), env)).status, 403);
   assert.equal(await (await worker.fetch(req('/api/se/newstreamer/help?k=' + 'a1'.repeat(24)), env)).text(), OFF_TEXT);
   assert.equal((await worker.fetch(req('/api/leaderboard/newstreamer'), env)).status, 200);
+  assert.equal((await worker.fetch(req('/api/shop/newstreamer'), env)).status, 200, 'the shop list stays readable');
+  assert.equal((await worker.fetch(req('/api/shop/newstreamer', 'POST', { kind: 'pet', id: 'fox' }, viewer), env)).status, 403, 'buying is closed');
   const admin = await worker.fetch(req('/api/admin/newstreamer', 'GET', undefined, streamer), env);
   assert.equal(admin.status, 200);
   assert.equal((await admin.json()).channelState, 'paused');

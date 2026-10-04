@@ -1,8 +1,9 @@
 # Plan: check-ins, Mini Chat dollars, pets and builds
 
 Status: agreed with the owner on 2026-10-04. Stage 1 (check-ins, streaks, 20/8 caps) and
-Stage 2 (dollars, `!wallet`, `!pay`, mod gifts) and Stage 3 (pets, the shop, `!pet`, uploaded pets) are built and
-run on the test site only; production stays on the earlier release until the owner approves. Stage 4 is not built. Every number below is a default that
+Stage 2 (dollars, `!wallet`, `!pay`, mod gifts), Stage 3 (pets, the shop, `!pet`, uploaded pets) and Stage 4 (builds,
+cosmetics, the tabbed viewer page) are built and run on the test site only; production stays on the earlier release until
+the owner approves. Every number below is a default that
 mods can tune in the balance editor (versioned, undoable). All data is per channel, like fighters
 and ranks today.
 

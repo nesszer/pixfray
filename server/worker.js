@@ -6,11 +6,21 @@ import { handlePets } from './pets.js';
 import { EVENTSUB_PATH,handleEventsub,connectChat,disconnectChat } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
 import { channelState,isOn,offError,readInvite,setPaused,publicChannels } from './channels.js';
+import { COSMETIC_KINDS,COSMETIC_FIELDS,MAX_BUILDS } from './cosmetics.js';
 export {ChannelRoom,AuthStore};
 // A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
 // page's state and profile saves are refused.
 const OPEN_WHEN_PAUSED=['access','admin','leaderboard','catalog','assets','pets'];
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
+// Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.js (the room checks the ids and prices).
+const SHOP_KINDS=['pet','hat','slot',...COSMETIC_KINDS];
+// The cosmetics and build slot a profile save may carry, all optional: { ok, fields }.
+function loadoutFields(data){
+  const fields={};
+  for(const kind of COSMETIC_KINDS){const f=COSMETIC_FIELDS[kind],v=data[f];if(v===undefined)continue;if(typeof v!=='string'||v.length>32)return {ok:false};fields[f]=v;}
+  if(data.build!==undefined){if(!Number.isInteger(data.build)||data.build<0||data.build>=MAX_BUILDS)return {ok:false};fields.build=data.build;}
+  return {ok:true,fields};
+}
 const validProfile=({avatar,color,defaultAbility})=>typeof avatar==='string'&&/^[a-z0-9_-]{1,64}$/.test(avatar)&&typeof color==='string'&&/^#[a-f0-9]{6}$/i.test(color)&&['strike','heavy','heal'].includes(defaultAbility);
 // Raw call into a ChannelRoom. Adds the internal secret and channel binding; the caller owns method/body.
 function roomFetch(request,env,channel,path,init={}){
@@ -75,14 +85,14 @@ async function handleDevtools(request,env,channel,action,data){
   const userId=String(data.userId||''),username=String(data.username||'').toLowerCase(),displayName=String(data.displayName||username).slice(0,48);
   if(!/^[a-zA-Z0-9_:-]{1,64}$/.test(userId)||!/^[a-z0-9_]{1,25}$/.test(username))return json({error:'userId and username required'},400);
   if(action==='profile'){
-    const {avatar='player',color='#4FA3FF',defaultAbility='strike',pet}=data;
-    if(!validProfile({avatar,color,defaultAbility})||pet!==undefined&&(typeof pet!=='string'||pet.length>64))return json({error:'Invalid profile fields'},400);
-    return internal(request,env,channel,'/profile',{userId,username,displayName,avatar,color,defaultAbility,pet});
+    const {avatar='player',color='#4FA3FF',defaultAbility='strike',pet}=data,loadout=loadoutFields(data);
+    if(!validProfile({avatar,color,defaultAbility})||pet!==undefined&&(typeof pet!=='string'||pet.length>64)||!loadout.ok)return json({error:'Invalid profile fields'},400);
+    return internal(request,env,channel,'/profile',{userId,username,displayName,avatar,color,defaultAbility,pet,...loadout.fields});
   }
-  // A bot buys a pet or a hat, the same room call as POST /api/shop.
+  // A bot buys a pet, a hat, a cosmetic or a build slot, the same room call as POST /api/shop.
   if(action==='shop'){
-    const {kind,id}=data;
-    if(!['pet','hat'].includes(kind)||typeof id!=='string'||id.length>64)return json({error:'Invalid item'},400);
+    const {kind,id=''}=data;
+    if(!SHOP_KINDS.includes(kind)||typeof id!=='string'||id.length>64)return json({error:'Invalid item'},400);
     return internal(request,env,channel,'/shop',{userId,kind,id});
   }
   if(action==='chat'){
@@ -135,31 +145,34 @@ export default {async fetch(request,env,ctx){
     if(!match)return json({error:'Not found'},404);
     const [,route,channel,id]=match;
     const state=await channelState(env,channel);
-    if(!isOn(state)&&!(state==='paused'&&OPEN_WHEN_PAUSED.includes(route)))return json(offError(state),403);
+    // The shop list stays readable while paused (like pets), so viewers still see what they own; buying stays closed.
+    const openWhenPaused=OPEN_WHEN_PAUSED.includes(route)||(route==='shop'&&request.method==='GET');
+    if(!isOn(state)&&!(state==='paused'&&openWhenPaused))return json(offError(state),403);
     if(route==='live'&&request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return json({error:'WebSocket upgrade required'},426);
     if(route==='access')return json(await access(env,user,channel));
     if(route==='assets')return await handleUploads(request,env,{user,owner,channel,id:id||'',url,bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
     // Pets (server/pets.js): the public catalog and images; mods upload and delete their own.
     if(route==='pets')return await handlePets(request,env,{user,id:id||'',bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
-    // Shop: a signed-in viewer buys a pet or a hat with their Mini Chat dollars.
+    // Shop: the public list with this channel's prices (GET), and a signed-in viewer buying with Mini Chat dollars (POST).
     if(route==='shop'){
+      if(request.method==='GET'&&!id)return internal(request,env,channel,'/shop');
+      if(request.method!=='POST'||id)return json({error:'Use GET or POST'},405);
       if(!user)return json({error:'Sign in to shop'},401);
-      if(request.method!=='POST'||id)return json({error:'Use POST'},405);
-      const {kind,id:item}=await bodyJson(request,1000);
-      if(!['pet','hat'].includes(kind)||typeof item!=='string'||item.length>64)return json({error:'Invalid item'},400);
+      const {kind,id:item=''}=await bodyJson(request,1000);
+      if(!SHOP_KINDS.includes(kind)||typeof item!=='string'||item.length>64)return json({error:'Invalid item'},400);
       return internal(request,env,channel,'/shop',{userId:user.id,kind,id:item});
     }
     if(route==='profile'){
       if(!user)return json({error:'Sign in to customize your profile'},401);
       if(request.method==='GET')return internal(request,env,channel,'/profile?userId='+encodeURIComponent(user.id));
       if(request.method!=='POST')return json({error:'Use GET or POST'},405);
-      const {avatar,color,defaultAbility,stats,hat,pet}=await bodyJson(request,4000);
-      if(!validProfile({avatar,color,defaultAbility}))return json({error:'Invalid profile fields'},400);
+      const body=await bodyJson(request,4000),{avatar,color,defaultAbility,stats,hat,pet}=body,loadout=loadoutFields(body);
+      if(!validProfile({avatar,color,defaultAbility})||!loadout.ok)return json({error:'Invalid profile fields'},400);
       // stats/hat are optional; the room checks them against the saved wins (server/upgrades.js).
       if(stats!==undefined&&(!stats||typeof stats!=='object'||Array.isArray(stats))||hat!==undefined&&typeof hat!=='string'||pet!==undefined&&(typeof pet!=='string'||pet.length>64))return json({error:'Invalid profile fields'},400);
       const dynamicRes=await internal(request,env,channel,'/catalog');const dynamic=dynamicRes.ok?await dynamicRes.json():[];
       if(![...await staticCatalog(env,url),...dynamic].some(x=>x.id===avatar))return json({error:'Unknown character'},400);
-      return internal(request,env,channel,'/profile',{userId:user.id,username:user.login,displayName:user.displayName,avatar,color,defaultAbility,stats,hat,pet});
+      return internal(request,env,channel,'/profile',{userId:user.id,username:user.login,displayName:user.displayName,avatar,color,defaultAbility,stats,hat,pet,...loadout.fields});
     }
     if(route==='admin'){
       if(request.method!=='GET'&&request.method!=='POST')return json({error:'Use GET or POST'},405);
