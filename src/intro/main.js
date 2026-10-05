@@ -13,7 +13,6 @@ import { loadImage, sampleSprite, VoxelFighter } from './voxels.js';
 import { buildSky, buildIsland, buildLanterns, buildEmbers, buildIslets, buildDie, FACE_UP, buildPodium, buildCoins, buildClouds, buildChest, buildHoard, buildFrame } from './world.js';
 
 const $ = (s) => document.querySelector(s);
-const CHANNEL = 'nesszerra';
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const small = matchMedia('(max-width: 760px)').matches;
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
@@ -48,21 +47,19 @@ function finishLoading() {
   setTimeout(() => { bornAt = now; loader.classList.add('is-done'); document.body.classList.remove('is-loading'); }, reduced ? 0 : 350);
 }
 
-// ---------- live ladder (DOM) ----------
-async function loadBoard() {
-  try {
-    const r = await fetch('/api/leaderboard/' + CHANNEL, { headers: { Accept: 'application/json' } });
-    if (!r.ok) throw new Error(String(r.status));
-    const rows = (await r.json()).filter((x) => x && x.username).slice(0, 5);
-    if (!rows.length) throw new Error('empty');
-    $('#board').innerHTML = rows.map((x) => `<li><span>${esc(x.displayName || x.username)}<span class="rec">${x.wins}–${x.losses}</span></span><b>${x.elo}</b></li>`).join('');
-    $('#board-source').innerHTML = `Live from nesszerra's channel, Elo with wins–losses. <a href="/?channel=${CHANNEL}#ranks">Full list</a>`;
-    return rows;
-  } catch {
-    $('#board').innerHTML = '<li class="muted">The live ranks did not load.</li>';
-    $('#board-source').innerHTML = `<a href="/?channel=${CHANNEL}#ranks">See the ranks on the channel page</a>`;
-    return [];
-  }
+// ---------- example ladder (DOM) ----------
+// Made-up fighters, so the page never shows a real channel's players.
+const EXAMPLE_LADDER = [
+  { username: 'emberfox', avatar: 'adventurer', color: '#ff8a3d', elo: 1086, wins: 14, losses: 5 },
+  { username: 'tinyrook', avatar: 'pixel-bot', color: '#6cc4ff', elo: 1052, wins: 11, losses: 6 },
+  { username: 'dusk_rider', avatar: 'cowgirl', color: '#e0b04a', elo: 1031, wins: 9, losses: 7 },
+  { username: 'bitbunny', avatar: 'bunny-brown', color: '#f07aa8', elo: 1008, wins: 7, losses: 7 },
+  { username: 'voxelvale', avatar: 'cute-girl', color: '#8fd47a', elo: 994, wins: 5, losses: 8 },
+];
+function loadBoard() {
+  $('#board').innerHTML = EXAMPLE_LADDER.map((x) => `<li><span>${esc(x.username)}<span class="rec">${x.wins}–${x.losses}</span></span><b>${x.elo}</b></li>`).join('');
+  $('#board-source').innerHTML = 'Example ladder: Elo with wins–losses.';
+  return Promise.resolve(EXAMPLE_LADDER);
 }
 
 // ---------- sound toggle ----------
@@ -364,7 +361,7 @@ const CROWD_SPOT = [[-2.8, -1.0], [-1.9, -2.3], [0.2, -3.1], [1.9, -2.3], [2.8, 
 
 // tags
 const T = {
-  lookReply: makeTag('tag-line tag-log', '<span><b style="color:#c9a45c">you</b> !look</span><span><b style="color:#e7c27c">PixFray</b> @you, change your look here: pixfray.xyz/?channel=nesszerra#fighter</span>'),
+  lookReply: makeTag('tag-line tag-log', '<span><b style="color:#c9a45c">you</b> !look</span><span><b style="color:#e7c27c">PixFray</b> @you, change your look here: pixfray.xyz/?channel=yourchannel#fighter</span>'),
   challenge: makeTag('tag-line', '<b style="color:#c9a45c">challenger</b> !challenge @rival'),
   fight: makeTag('tag-line', '<b style="color:#7fa7d9">rival</b> !fight'),
   roll: makeTag('tag-roll', ''),
@@ -380,7 +377,7 @@ const LOCKS = [
   { key: 'knight', title: 'Knight', sub: `${hero ? hero.count.toLocaleString('en-US') + ' cubes · ' : ''}1 of ${FIGHTERS} fighters`, pos: 'below' },
   { key: 'you', title: '@you', sub: 'walks onto the stream when you chat', pos: 'below' },
   { key: 'duel', title: '', sub: '', pos: 'none' },
-  { key: 'top', title: top1?.username ? `1. ${top1.displayName || top1.username}` : 'Top of the ladder', sub: top1?.username ? `${top1.elo} Elo · ${top1.wins}–${top1.losses}` : "live from nesszerra's channel", pos: 'above' },
+  { key: 'top', title: top1?.username ? `1. ${top1.displayName || top1.username}` : 'Top of the ladder', sub: top1?.username ? `${top1.elo} Elo · ${top1.wins}–${top1.losses}` : 'example ladder', pos: 'above' },
   { key: 'loot', title: '+$5 a win', sub: '+$3 a loss · plus an upgrade point', pos: 'left' },
 ];
 const names = crowd.map((c) => makeTag('tag-line', `<b style="color:${esc(c.person.color || '#c9a45c')}">${esc(c.person.displayName || c.person.username || c.person.avatar)}</b>`));
@@ -551,8 +548,9 @@ function frame() {
   }
 
   // crowd rains in during chapter 1, climbs the podium in chapter 3
-  const climb = ease(range(C, 2.75, 3.05)) * (1 - ease(range(C, 3.4, 3.75)));
-  const grow = range(C, 2.7, 3.0) * (1 - range(C, 3.45, 3.8));
+  // both finish before the chapter settles at C = 3, so each fighter stands square on its tower instead of still sliding in
+  const climb = ease(range(C, 2.62, 2.9)) * (1 - ease(range(C, 3.4, 3.75)));
+  const grow = range(C, 2.6, 2.88) * (1 - range(C, 3.45, 3.8));
   let pi = 0;
   crowd.forEach((c, i) => {
     const a = Math.min(range(C, 0.3 + i * 0.07, 0.68 + i * 0.06), 1 - range(C, 3.42 + i * 0.03, 3.68 + i * 0.03) + range(C, 4.4 + i * 0.05, 4.8 + i * 0.05));
