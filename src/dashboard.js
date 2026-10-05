@@ -447,8 +447,30 @@ function renderPreview() {
   $("#play-win").disabled = !d.winEffect && !d.taunt;
   $("#play-win").hidden = $("#play-win").disabled;   // nothing to preview yet: point to the Shop instead
   $("#win-link").hidden = !$("#play-win").disabled;
+  renderLoadout();
 }
 $("#play-win").addEventListener("click", () => stage.play());
+// Desktop: what the fighter is wearing, under the preview. Items only tried on show their price; the total is what buying the look costs.
+const priceOf = (kind, id) => kind === "hat" ? (state.shop?.hatPricePerWin || 0) * (rules().hats.find((x) => x.id === id)?.wins || 0)
+  : kind === "pet" ? petById(id)?.price || 0 : state.shop?.items?.[kind]?.find((x) => x.id === id)?.price || 0;
+function renderLoadout() {
+  const box = $("#loadout");
+  if (!box) return;
+  const d = state.d, entry = entryOf(d.avatar), name = (kind, id) => kind === "hat" ? itemLabel("hat", id).replace(/ hat$/, "") : itemLabel(kind, id);
+  const rows = [["Character", null, d.avatar], ["Colors", "recolor", d.recolor], ["Hat", "hat", d.hat], ["Accessory", "accessory", d.accessory],
+    ["Pet", "pet", d.pet], ["Trail", "trail", d.trail], ["Win effect", "effect", d.winEffect], ["Title", "title", d.title]];
+  let total = 0;
+  box.replaceChildren(...rows.flatMap(([label, kind, id]) => {
+    const value = !kind ? entry?.label || entry?.id || "None" : id ? name(kind, id) : kind === "recolor" ? "Original" : "None";
+    const price = kind && id && !owns(kind, id) ? priceOf(kind, id) : 0;
+    total += price;
+    return [h("dt", {}, label), h("dd", { class: id ? null : "muted" }, value, price ? h("span", { class: "badge" }, "Try-on " + money(price)) : "")];
+  }));
+  const t = $("#loadout-total");
+  t.hidden = !total;
+  t.textContent = total ? "Buying this look costs " + money(total) + ". Duels earn PixFray dollars." : "";
+}
+
 
 function renderSave() {
   saveBtn.disabled = Boolean(state.off);

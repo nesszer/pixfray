@@ -1298,7 +1298,7 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 /* admin on phones: the locked preview comes first, the list that repeats it goes */
 @media (max-width: 760px) {
   .gate { display: flex; flex-direction: column; }
-  .gate-inside { display: block; order: -1; }
+  .gate-inside { display: block; order: 1; margin-top: var(--space-5); }
   .gate-inside .gate-peek { display: grid; }
   .gate-list { display: none; }
 }
@@ -1341,3 +1341,30 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 @media (min-width: 761px) {
   .gate-inside { justify-content: flex-end; background-position: 50% 30%; min-height: 440px; }
 }
+/* desktop: what the fighter wears, under the stage, as a compact two-column list; tried-on items carry their price */
+.loadout { display: none; }
+@media (min-width: 1101px) {
+  .hero-card.has-3d .loadout { display: block; border-top: 1px solid var(--border); padding-top: var(--space-3); }
+  .loadout-title { font: 650 var(--text-sm)/1.2 var(--font-display); color: var(--text-2); margin: 0 0 var(--space-2); }
+  #loadout { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0; font-size: var(--text-sm); }
+  #loadout dt { color: var(--text-2); }
+  #loadout dd { margin: 0; color: var(--text); min-width: 0; display: flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+  #loadout dd.muted { color: var(--text-3); }
+  #loadout .badge { font-size: var(--text-xs); padding: 0 var(--space-1); }
+  .loadout-total { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--text-2); }
+}
+@media (min-width: 1101px) {
+  /* the strip's caption repeats the Wearing list, so its action moves up into the label row and the sticky card fits an 800px screen */
+  .hero-card.has-3d .preview-bar { position: absolute; top: 0; right: 0; border: 0; background: none; padding: var(--space-1) var(--space-2); }
+  .hero-card.has-3d .preview-bar .caption { display: none; }
+  .hero-card.has-3d .preview-bar .btn { min-height: 28px; padding: 2px var(--space-2); font-size: var(--text-xs); }
+  .hero-card.has-3d .preview-bar .win-link { font-size: var(--text-xs); }
+}
+@media (min-width: 1101px) {
+  .hero-card.has-3d .showcase { height: clamp(400px, calc(100vh - 376px), 640px); }
+  .hero-card.has-3d > .status:empty { display: none; }
+}
+/* builder: the tabs hold every section, so the page's own main keeps only the credits line; it no longer pads out an empty band */
+body:has(.hero-card.has-3d) main.page { padding-block: 0 var(--space-6); }
+body:has(.hero-card.has-3d) main.page .caveat { margin-top: 0; }
+body:has(.hero-card.has-3d) .site-foot { margin-top: 0; }
