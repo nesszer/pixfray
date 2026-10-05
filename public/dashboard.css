@@ -1245,3 +1245,24 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 }
 /* admin gate: the "Inside" list heading reads at body contrast */
 .gate-list h3 { color: var(--text); font-size: var(--text-md); }
+/* Round 22, desktop builder: the arena is the page's stage. It runs off the right edge of the window and fills
+   the height left above the On-stream strip and Save, so the fighter stands about as tall as on the intro */
+.hero:has(.hero-card.has-3d) { container-type: inline-size; }
+@media (min-width: 1101px) {
+  .hero-grid:has(.has-3d) { grid-template-columns: minmax(0, 1fr) 540px; column-gap: var(--space-8); }
+  .hero-card.has-3d .showcase { --bleed: max(0px, (100cqw - var(--container)) / 2) + var(--space-5);
+    margin-right: calc(-1 * (var(--bleed))); height: clamp(460px, calc(100vh - 236px), 780px);
+    border-right: 0; border-radius: var(--radius) 0 0 var(--radius); }
+  .hero-card.has-3d .showcase .readout { right: calc(var(--bleed) + 24px); }
+  .hero-card.has-3d .showcase-tag { right: calc(var(--bleed) + 16px); }
+}
+@media (min-width: 1101px) {
+  /* Save sits right under the stage, so the one primary action stays in the first screen */
+  .hero-card.has-3d > * { order: 2; }
+  .hero-card.has-3d > .showcase { order: 0; }
+  .hero-card.has-3d > .toolbar { order: 1; }
+}
+/* admin gate: the peek is a picture of the controls, not controls; dashed outlines and no underline say so */
+.peek-row .peek-btn { border-style: dashed; color: var(--text-3); background: none; }
+.peek-row .peek-link { text-decoration: none; color: var(--text-3); }
+.peek-row > span:first-child { color: var(--text-2); }
