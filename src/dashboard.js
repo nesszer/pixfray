@@ -148,7 +148,7 @@ function showTab(name, { focus = false, hash = name, scroll = true } = {}) {
     $("#panel-" + t).hidden = !on;
   }
   if (focus) $("#tab-" + name).focus();
-  requestAnimationFrame(() => voxAll?.());
+  requestAnimationFrame(() => { voxAll?.(); document.dispatchEvent(new Event("pixfray:tab")); });
   if (location.hash.slice(1) !== hash) history.replaceState(null, "", location.pathname + location.search + "#" + hash);
   if (!scroll) return;
   // A section link scrolls to its section; a plain tab switch keeps the tabs in view (under the sticky stage on phones).
@@ -184,11 +184,15 @@ new ResizeObserver(() => {
 }).observe($(".hero-card"));
 
 // The shop's section links mark the section in view, so the row reads as tabs that follow the scroll.
-{ const links = [...document.querySelectorAll(".jump a")], seen = new Map();
-  const mark = () => { const top = [...seen].filter(([, v]) => v).map(([k]) => k).sort((x, y) => x.offsetTop - y.offsetTop)[0];
-    if (top) links.forEach((a) => a.toggleAttribute("aria-current", a.getAttribute("href") === "#" + top.id)); };
-  const io = new IntersectionObserver((es) => { es.forEach((e) => seen.set(e.target, e.isIntersecting)); mark(); }, { rootMargin: "-30% 0px -55% 0px" });
-  links.forEach((a) => { const t = document.getElementById(a.getAttribute("href").slice(1)); if (t) io.observe(t); }); }
+{ const links = [...document.querySelectorAll(".jump a")], parts = links.map((a) => document.getElementById(a.getAttribute("href").slice(1)));
+  let queued = 0;
+  const mark = () => { queued = 0;
+    if (!links[0]?.offsetParent) return;
+    const line = innerHeight * 0.4; let on = 0;
+    parts.forEach((el, i) => { if (el && el.getBoundingClientRect().top <= line) on = i; });
+    links.forEach((a, i) => a.toggleAttribute("aria-current", i === on)); };
+  addEventListener("scroll", () => { queued ||= requestAnimationFrame(mark); }, { passive: true });
+  document.addEventListener("pixfray:tab", mark); mark(); }
 
 // ---------- shop ----------
 // The first click on a Buy button asks to confirm, the second spends the dollars. A bought item is worn right away;
