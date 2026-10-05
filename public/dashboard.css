@@ -1285,3 +1285,20 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
   .hero-copy .how { font-size: var(--text-sm); }
   .hero-card.has-3d .showcase { height: 216px; }
 }
+/* Round 25. Picker: both row actions share one width, so their edges line up */
+.channel-go { min-width: 168px; text-align: center; }
+@media (max-width: 480px) { .channel-go { min-width: 0; } }
+/* one header height on every page, whether the fighter link is the current tab or a bordered button */
+@media (min-width: 481px) { .topbar-inner { min-height: 60px; padding-block: 0; } .topbar nav a.nav-cta { min-height: 36px; display: inline-flex; align-items: center; } }
+/* upgrade meters: lit gold cells, empty cells a dim gold outline, readable at a glance */
+.upgrade .meter { gap: 4px; }
+.upgrade .meter i { height: 10px; border-radius: 2px; background: none; box-shadow: inset 0 0 0 1px rgb(201 164 92 / .4); }
+.upgrade .meter i.on { background: var(--trim); box-shadow: none; }
+.upgrade .meter i.pet { background: rgb(201 164 92 / .35); box-shadow: inset 0 0 0 1px var(--trim); }
+/* admin on phones: the locked preview comes first, the list that repeats it goes */
+@media (max-width: 760px) {
+  .gate { display: flex; flex-direction: column; }
+  .gate-inside { display: block; order: -1; }
+  .gate-inside .gate-peek { display: grid; }
+  .gate-list { display: none; }
+}

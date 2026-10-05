@@ -693,7 +693,7 @@ async function channelRanks(channel, link, crew, meta) {
   if (!rows.length) {
     meta.textContent = "No ranked duels yet. The top spot is open.";
     // the open spot: a character picked from the channel name, so each empty channel brings a different one on stage
-    const all = [...byId.values()], first = all[[...channel].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7) % Math.max(1, all.length)];
+    const people = new Set(CHARACTER_GROUPS[0].ids), all = [...byId.values()].filter((e) => people.has(e.id)), first = all[[...channel].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7) % Math.max(1, all.length)] || byId.values().next().value;
     if (first) add(first, "sprite is-open");
     if (first && !landing.fallback) { landing.fallback = first; if (!landing.first) landing.show?.(first); }
     if (first) for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => landing.show?.(first));

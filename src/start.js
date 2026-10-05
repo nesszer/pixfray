@@ -32,7 +32,7 @@ function show(title, text, actions = [], problem = "") {
   $("#invite-text").textContent = text;
   $("#invite-actions").replaceChildren(...actions);
   // the closing band repeats the card's main link as a plain button, so the page ends on the next step with one primary action
-  $("#ready-actions").replaceChildren(...actions.filter((n) => n.matches("a.btn-primary")).map((n) => { const c = n.cloneNode(true); c.classList.remove("btn-primary"); return c; }));
+  $("#ready-actions").replaceChildren(...actions.filter((n) => n.matches("a.btn-primary")).map((n) => n.cloneNode(true)));
   $("#ready").hidden = !$("#ready-actions").children.length;
   const box = $("#invite-problem");
   box.textContent = problem;
