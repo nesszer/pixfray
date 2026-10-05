@@ -1262,6 +1262,8 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 .peek-row > span:first-child { color: var(--text-2); }
 /* Ranks and Rules are reading tabs: on desktop the stage steps aside and the table gets the full width */
 @media (min-width: 901px) {
+  html[data-tab="ranks"] .hero-grid:has(.has-3d), html[data-tab="rules"] .hero-grid:has(.has-3d) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "pick"; }
+  html[data-tab="ranks"] .hero-card.has-3d, html[data-tab="rules"] .hero-card.has-3d { display: none; }
   #leaderboard td:nth-child(2), #leaderboard .lb-char { white-space: nowrap; }
 }
 /* admin gate: the peek sits on a solid panel, so the scene behind never shows through it */
@@ -1404,8 +1406,8 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
   .story { position: relative; display: flex; flex-direction: column; }
   .story-stage { order: -1; flex: none; position: sticky; top: 0; z-index: 0; height: 100svh; margin: 0 calc(50% - 50vw) -100svh; }
   .story-stage figcaption { display: none; }
-  .story .step-grid { position: relative; z-index: 1; display: block; margin: 0; padding: 70svh 0 30svh; }
-  .story .step-grid > li { margin: 0 0 60svh; padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius); background: rgb(13 9 6 / .92); }
+  .story .step-grid { position: relative; z-index: 1; display: block; margin: 0; padding: 48svh 0 24svh; }
+  .story .step-grid > li { margin: 0 0 36svh; padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius); background: rgb(13 9 6 / .92); }
   .story .step-grid > li:last-child { margin-bottom: 0; }
   .story .step-grid > li::before { position: static; margin-bottom: var(--space-3); }
 }
@@ -1417,3 +1419,14 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
 .topbar nav a.nav-cta[aria-current] { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--trim); border-radius: var(--radius-sm); background: var(--accent-soft); box-shadow: none; color: var(--text); }
 /* Rules: the table keeps a reading width beside the stage */
 #panel-rules .table-wrap { max-width: 840px; }
+/* the picker: each stream's fighters stand at a readable size */
+@media (min-width: 621px) {
+  .landing .channel-crew, .landing .channel-crew:empty { min-width: 88px; height: 88px; }
+  .landing .channel-crew .thumb canvas { width: 88px; height: 88px; }
+  .landing .channel-crew .thumb + .thumb { margin-left: -36px; }
+}
+/* phones: the locked controls sit on the arena they run, like the desktop gate */
+@media (max-width: 760px) {
+  .gate-inside { padding: 176px var(--space-3) var(--space-3); border-radius: var(--radius);
+    background: linear-gradient(to bottom, rgb(12 9 7 / 0) 30%, rgb(12 9 7 / .6)), url("/assets/scene/arena-top-800.webp") 50% 35% / cover no-repeat var(--bg); }
+}
