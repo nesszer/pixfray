@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PixFray: Twitch chat duels on your stream</title>
+<meta name="description" content="PixFray turns Twitch chatters into pixel fighters that duel on stream. Free and open source, added to OBS as one browser source.">
+<link rel="canonical" href="https://pixfray.xyz/intro/">
+<meta name="theme-color" content="#0d0906">
+<meta property="og:type" content="website"><meta property="og:site_name" content="PixFray"><meta property="og:url" content="https://pixfray.xyz/intro/">
+<meta property="og:title" content="PixFray: Twitch chat duels on your stream">
+<meta property="og:description" content="Chatters pick a pixel fighter once, then duel each other with !challenge and !fight. Wins move a live ladder.">
+<meta property="og:image" content="https://pixfray.xyz/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="PixFray characters lined up under the PixFray name">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/src/intro/intro.css">
+</head>
+<body class="is-loading">
+<a class="skip" href="#start-cta">Skip to the links</a>
+
+<div class="loader" id="loader" role="status" aria-live="polite">
+  <div class="loader-grid" aria-hidden="true"></div>
+  <p class="loader-text"><span>Building the arena</span> <span class="loader-pct" id="loader-pct">0%</span></p>
+</div>
+
+<canvas class="stage" id="stage" aria-hidden="true"></canvas>
+<div class="tags" id="tags" aria-hidden="true"></div>
+
+<div class="edge-fade top" aria-hidden="true"></div>
+<div class="edge-fade bottom" aria-hidden="true"></div>
+<header class="hud hud-top">
+  <a class="mark" href="/intro/" aria-label="PixFray, back to the top">
+    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>
+    <span>PixFray</span>
+  </a>
+  <nav class="hud-nav" aria-label="Site">
+    <a href="#ladder">Ranks</a>
+    <a href="/start/">For streamers</a>
+    <a class="btn btn-primary" href="/">Pick your fighter</a>
+  </nav>
+</header>
+
+<div class="hud hud-bottom">
+  <button class="sound" id="sound" type="button" aria-pressed="false">
+    <span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+    <span class="sound-label">Sound off</span>
+  </button>
+  <p class="scroll-hint" id="scroll-hint" aria-hidden="true">Scroll to enter the arena</p>
+  <ol class="rail" id="rail" aria-label="Chapters">
+    <li><a href="#top"><span>Arena</span></a></li>
+    <li><a href="#chat"><span>Chat</span></a></li>
+    <li><a href="#duel"><span>Duel</span></a></li>
+    <li><a href="#ladder"><span>Ladder</span></a></li>
+    <li><a href="#loot"><span>Loot</span></a></li>
+    <li><a href="#stream"><span>Stream</span></a></li>
+  </ol>
+</div>
+
+<main class="story" id="story">
+  <section class="chapter hero" id="top" data-chapter="0" aria-labelledby="h-top">
+    <div class="copy">
+      <h1 id="h-top" data-type>Your Twitch chat, in the ring.</h1>
+      <p class="lead">PixFray turns chatters into pixel fighters that duel on your stream. It is free, open source and runs as one OBS browser source.</p>
+      <p class="actions"><a class="btn btn-primary" href="/">Pick your fighter</a><a class="link" href="/start/">Set up your channel</a></p>
+    </div>
+  </section>
+
+  <section class="chapter" id="chat" data-chapter="1" aria-labelledby="h-chat">
+    <div class="copy">
+      <h2 id="h-chat" data-type>Save a fighter once, then just chat.</h2>
+      <p>Pick one of 56 fighters and a nameplate color. Chat while the stream is live and it walks in.</p>
+      <p class="cmd-note">Lost? <kbd>!look</kbd> in chat links you to your fighter.</p>
+    </div>
+  </section>
+
+  <section class="chapter right" id="duel" data-chapter="2" aria-labelledby="h-duel">
+    <div class="copy">
+      <h2 id="h-duel" data-type>!challenge @rival. They answer !fight.</h2>
+      <p>100 HP each, one d6 roll per swing. After 12 rolls the higher HP wins.</p>
+      <table class="odds">
+        <caption>What each roll does</caption>
+        <thead><tr><th scope="col">Roll</th><th scope="col">Result</th><th scope="col" class="num">Damage (HP)</th></tr></thead>
+        <tbody>
+          <tr class="is-key"><td>6</td><td>Crit</td><td class="num">50</td></tr>
+          <tr><td>5</td><td>Hit</td><td class="num">34</td></tr>
+          <tr><td>3–4</td><td>Miss</td><td class="num">0</td></tr>
+          <tr><td>1–2</td><td>Defender counters</td><td class="num">34</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="chapter" id="ladder" data-chapter="3" aria-labelledby="h-ladder">
+    <div class="copy">
+      <h2 id="h-ladder" data-type>Every win moves the ladder.</h2>
+      <p>Duels change Elo; a flawless win adds 3. <kbd>!ranks</kbd> waits until the duel has played on stream.</p>
+      <ol class="board" id="board" aria-label="Top five on nesszerra's channel"><li class="muted">Loading the live ranks…</li></ol>
+      <p class="source" id="board-source">Live from nesszerra's channel.</p>
+    </div>
+  </section>
+
+  <section class="chapter right" id="loot" data-chapter="4" aria-labelledby="h-loot">
+    <div class="copy">
+      <h2 id="h-loot" data-type>Dollars, points and pets.</h2>
+      <p>$5 a win, $3 a loss. Wins and <kbd>!checkin</kbd> earn up to 20 points for power, guard and luck; dollars buy hats, titles and pets.</p>
+      <ul class="cmds" aria-label="Chat commands">
+        <li><kbd>!checkin</kbd><span>once per live stream</span></li>
+        <li><kbd>!wallet</kbd><span>dollars, points, streak</span></li>
+        <li><kbd>!pay @name 10</kbd><span>send dollars</span></li>
+        <li><kbd>!pet</kbd><span>show your pet</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="chapter finale" id="stream" data-chapter="5" aria-labelledby="h-stream">
+    <div class="copy">
+      <h2 id="h-stream" data-type>One browser source. Nothing to install.</h2>
+      <p>Add one link to OBS at 1920×1080. Chat arrives through StreamElements commands, so nothing runs on your PC.</p>
+      <p class="actions" id="start-cta"><a class="btn btn-primary" href="/start/">Set up your channel</a><a class="link" href="/">Pick your fighter</a></p>
+      <p class="fine">Mods get a balance editor. Turning PixFray off keeps every fighter and rank. Open source under MIT; CC0 characters by Kenney, pzUH and Sogomn; runs on Cloudflare Workers.</p>
+    </div>
+  </section>
+</main>
+
+<noscript><p class="nojs">The 3D arena needs JavaScript. Everything it explains is in the text above.</p></noscript>
+<script type="module" src="/src/intro/main.js"></script>
+</body></html>

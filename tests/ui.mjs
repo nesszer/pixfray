@@ -791,6 +791,23 @@ try {
     await noOverflow(page, 'start ' + size.name);
     await context.close();
   }
+  // /intro/: the loader finishes (WebGL or the text-only fallback), the headline shows and nothing overflows while scrolling.
+  for (const size of sizes) {
+    const { context, page } = await newPage({ width: size.width, height: size.height });
+    await page.route('**/api/leaderboard/**', (r) => json(r, board));
+    await page.goto(base + '/intro/');
+    await page.waitForFunction(() => document.querySelector('#loader')?.classList.contains('is-done'), null, { timeout: 30000 });
+    assert.ok(await page.locator('h1').isVisible(), `intro ${size.name}: headline hidden`);
+    for (const y of [0, 0.5, 1]) {
+      await page.evaluate((f) => scrollTo(0, f * (document.documentElement.scrollHeight - innerHeight)), y);
+      await page.waitForTimeout(300);
+      await noOverflow(page, `intro ${size.name} at ${y}`);
+    }
+    await context.close();
+  }
+  // a browser without WebGL2 gets the text-only page and this one deliberate error
+  // (in dev, Vite's client also logs when it can't forward that error to the server)
+  for (let i = errors.length - 1; i >= 0; i--) if (/WebGL2 is not available|Failed to send error to Vite server/.test(errors[i])) errors.splice(i, 1);
   assert.deepEqual(errors, []);
   console.log('PASS: viewer + admin UI at 1280/390, signed-out (real server), signed-in viewer save, mod gate, admin actions, config save/409/revert; no page errors.');
 } finally { await browser.close(); }

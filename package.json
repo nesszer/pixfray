@@ -27,5 +27,8 @@
   },
   "overrides": {
     "undici": "7.30.0"
+  },
+  "dependencies": {
+    "three": "0.186.1"
   }
 }
