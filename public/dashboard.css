@@ -1245,16 +1245,10 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 }
 /* admin gate: the "Inside" list heading reads at body contrast */
 .gate-list h3 { color: var(--text); font-size: var(--text-md); }
-/* Round 22, desktop builder: the arena is the page's stage. It runs off the right edge of the window and fills
-   the height left above the On-stream strip and Save, so the fighter stands about as tall as on the intro */
-.hero:has(.hero-card.has-3d) { container-type: inline-size; }
+/* Round 22, desktop builder: a wider stage column, the arena filling the height left above Save */
 @media (min-width: 1101px) {
   .hero-grid:has(.has-3d) { grid-template-columns: minmax(0, 1fr) 540px; column-gap: var(--space-8); }
-  .hero-card.has-3d .showcase { --bleed: max(0px, (100cqw - var(--container)) / 2) + var(--space-5);
-    margin-right: calc(-1 * (var(--bleed))); height: clamp(460px, calc(100vh - 236px), 780px);
-    border-right: 0; border-radius: var(--radius) 0 0 var(--radius); }
-  .hero-card.has-3d .showcase .readout { right: calc(var(--bleed) + 24px); }
-  .hero-card.has-3d .showcase-tag { right: calc(var(--bleed) + 16px); }
+  .hero-card.has-3d .showcase { height: clamp(460px, calc(100vh - 236px), 780px); }
 }
 @media (min-width: 1101px) {
   /* Save sits right under the stage, so the one primary action stays in the first screen */
@@ -1266,3 +1260,20 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 .peek-row .peek-btn { border-style: dashed; color: var(--text-3); background: none; }
 .peek-row .peek-link { text-decoration: none; color: var(--text-3); }
 .peek-row > span:first-child { color: var(--text-2); }
+/* Ranks and Rules are reading tabs: on desktop the stage steps aside and the table gets the full width */
+@media (min-width: 901px) {
+  html[data-tab="ranks"] .hero-grid:has(.has-3d), html[data-tab="rules"] .hero-grid:has(.has-3d) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "pick"; }
+  html[data-tab="ranks"] .hero-card.has-3d, html[data-tab="rules"] .hero-card.has-3d { display: none; }
+  #leaderboard td:nth-child(2), #leaderboard .lb-char { white-space: nowrap; }
+}
+/* admin gate: the peek sits on a solid panel, so the scene behind never shows through it */
+.gate-inside .gate-peek, .gate-peek { background: var(--surface); }
+.gate-peek { opacity: 1; }
+.gate-peek .peek-row { filter: none; }
+/* phones: the bar drops the page you're already on (the heading says it) and keeps "See a duel" instead */
+@media (max-width: 480px) {
+  .topbar nav a[href="/intro/"] { display: inline-flex; }
+  .topbar nav a[aria-current] { display: none; }
+  .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/start/"] { display: inline-flex; }
+  .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/intro/"] { display: none; }
+}
