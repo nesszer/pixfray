@@ -16,7 +16,7 @@
 <body>
 <header class="topbar"><div class="topbar-inner">
   <a class="brand" href="/" data-keep-channel><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
-  <nav aria-label="Pages"><a href="/intro/">How it works</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
+  <nav aria-label="Pages"><a href="/intro/">How it works</a><a href="/start/">For streamers</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 
@@ -48,7 +48,7 @@
       <figure class="preview">
         <span class="preview-label" aria-hidden="true">On stream</span>
         <canvas class="stage-canvas" id="preview" role="img" aria-label="Your fighter as it looks on stream"></canvas>
-        <figcaption class="preview-bar"><span class="caption" id="preview-caption"></span><button class="btn btn-small" id="play-win" type="button">Preview a win</button></figcaption>
+        <figcaption class="preview-bar"><span class="caption" id="preview-caption"></span><button class="btn btn-small" id="play-win" type="button">Preview a win</button><a class="win-link" id="win-link" href="#win-effects" hidden>Add a win effect</a></figcaption>
       </figure>
       <a class="points-link" id="points-link" href="#upgrades" hidden></a>
       <div class="toolbar">
@@ -128,7 +128,7 @@
             <div class="char-grid item-grid" id="items-trail" role="radiogroup" aria-label="Walking trail"></div>
             <p class="status" id="status-trail" role="status"></p>
           </fieldset>
-          <fieldset>
+          <fieldset id="win-effects">
             <legend>Win effect <span class="muted small" id="note-effect"></span></legend>
             <p class="muted small">Plays over your fighter when you win a duel.</p>
             <div class="char-grid item-grid" id="items-effect" role="radiogroup" aria-label="Win effect"></div>
@@ -176,10 +176,15 @@
 
   <section class="section panel-section" id="duels" aria-labelledby="cmd-title">
     <h2 id="cmd-title">Duels take two chat commands and settle in one die-rolling exchange</h2>
-    <div class="grid-2">
-      <div>
-        <h3>Commands</h3>
-        <div class="table-wrap"><table class="data prose-table">
+    <h3>Each swing is one d6 roll</h3>
+    <ol class="die-strip" aria-label="What each die roll does">
+      <li class="good"><span class="die">6</span><span class="die-result">Critical hit</span><span class="die-dmg"><b>50</b>% of max HP</span></li>
+      <li class="good"><span class="die">5</span><span class="die-result">Hit</span><span class="die-dmg"><b>34</b>% of max HP</span></li>
+      <li><span class="die">3–4</span><span class="die-result">Miss</span><span class="die-dmg"><b>0</b> damage</span></li>
+      <li class="bad"><span class="die">1–2</span><span class="die-result">Countered</span><span class="die-dmg">the swinger takes <b>34</b>%</span></li>
+    </ol>
+    <h3>Commands</h3>
+    <div class="table-wrap"><table class="data prose-table">
           <thead><tr><th>Command</th><th>What it does</th></tr></thead>
           <tbody>
             <tr><td><code>!challenge @viewer</code></td><td>Challenges a viewer. They have <span id="cmd-timeout">30 s</span> to reply.</td></tr>
@@ -195,21 +200,9 @@
             <tr><td><code>!fray</code></td><td>Posts how to join, with a link to this page.</td></tr>
           </tbody>
         </table></div>
-        <p class="hint" id="hp-mode-note" hidden>Duels started from Twitch chat on this channel use the HP fight right now: after <code>!fight</code>, both fighters trade <code>!attack</code>, <code>!strike</code>, <code>!heavy</code> and <code>!heal</code> until one runs out of health. StreamElements commands always use the die rolls.</p>
-      </div>
-      <div>
-        <h3>Each swing is one d6 roll</h3>
-        <div class="table-wrap"><table class="data prose-table">
-          <thead><tr><th class="num">Die</th><th>Result</th><th class="num">Damage (% of max HP)</th></tr></thead>
-          <tbody>
-            <tr><td class="num">6</td><td><span class="outcome-good">Critical hit</span> on the other fighter</td><td class="num">50</td></tr>
-            <tr><td class="num">5</td><td><span class="outcome-good">Hit</span> on the other fighter</td><td class="num">34</td></tr>
-            <tr><td class="num">3–4</td><td>Miss</td><td class="num">0</td></tr>
-            <tr><td class="num">1–2</td><td><span class="outcome-bad">Countered</span>: the swinger takes the blow</td><td class="num">34</td></tr>
-          </tbody>
-        </table></div>
-      </div>
-    </div>
+    <p class="hint" id="hp-mode-note" hidden>Duels started from Twitch chat on this channel use the HP fight right now: after <code>!fight</code>, both fighters trade <code>!attack</code>, <code>!strike</code>, <code>!heavy</code> and <code>!heal</code> until one runs out of health. StreamElements commands always use the die rolls.</p>
+
+    <h3>Duel rules</h3>
     <ul class="rules">
       <li>The challenger swings first, then the fighters take turns.</li>
       <li>Two critical hits or three hits knock a fighter out.</li>

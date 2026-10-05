@@ -29,12 +29,19 @@ export async function api(path, { method = "GET", body } = {}) {
   const init = { method, credentials: "same-origin", headers: { Accept: "application/json" } };
   if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
   let response;
-  try { response = await fetch(path, init); } catch { return { ok: false, status: 0, data: { error: "Network error. Check your connection and try again." } }; }
+  // reads retry twice when rate-limited, waiting as asked (at most 4 s)
+  for (let attempt = 0; ; attempt++) {
+    try { response = await fetch(path, init); } catch { return { ok: false, status: 0, data: { error: "Network error. Check your connection and try again." } }; }
+    if (response.status !== 429 || method !== "GET" || attempt === 2) break;
+    const wait = Math.min(4, Number(response.headers.get("Retry-After")) || attempt + 1);
+    await new Promise((r) => setTimeout(r, wait * 1000));
+  }
   let data = null;
   try { data = await response.json(); } catch {}
   return { ok: response.ok, status: response.status, data };
 }
-export const errorText = (r, fallback = "Request failed") => (r.data && (r.data.error || r.data.reason)) || (r.status ? fallback + " (HTTP " + r.status + ")" : fallback);
+export const errorText = (r, fallback = "Request failed") => (r.data && (r.data.error || r.data.reason))
+  || (r.status === 429 ? "Too many requests right now. Try again in a minute" : r.status >= 500 ? "The server had a problem. Try again in a minute" : r.status ? fallback + " (HTTP " + r.status + ")" : fallback);
 
 // Tiny DOM builder. Strings become text nodes, so user-supplied names are never parsed as HTML.
 export function h(tag, attrs = {}, ...children) {

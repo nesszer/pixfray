@@ -577,3 +577,84 @@ body:has(.landing:not([hidden]))::before { display: none; }
 .channel-meta:empty { display: none; }
 @media (max-width: 900px) { .step-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .step-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- round 3 ---------- */
+/* header: brand left, links and sign-in on the right, like the intro's HUD */
+.topbar nav { margin-left: auto; }
+.topbar nav + .who { margin-left: 0; }
+.topbar .who:empty { display: none; }
+
+/* desktop builder: a wider card so the 3D fighter is the page's main moment */
+@media (min-width: 901px) { .hero-grid:has(.has-3d) { grid-template-columns: minmax(0, 1fr) 420px; } }
+.win-link { font-size: var(--text-sm); white-space: nowrap; }
+.char-option .tag { color: var(--text-2); }
+
+/* Ranks: the four die results as one strip, then the commands at full width, then the rules */
+#duels h3 { margin: var(--space-6) 0 var(--space-3); }
+.die-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+.die-strip li { display: grid; gap: var(--space-1); padding: var(--space-4); background: var(--panel); }
+.die-strip li + li { border-left: 1px solid var(--border-strong); }
+.die-strip .die { font: 650 var(--text-2xl)/1 var(--font-display); color: var(--text); font-variant-numeric: tabular-nums; }
+.die-strip .die-result { font-weight: 650; }
+.die-strip .good .die-result { color: var(--positive); }
+.die-strip .bad .die-result { color: var(--negative); }
+.die-strip .die-dmg { font-size: var(--text-sm); color: var(--text-2); }
+.die-strip .die-dmg b { color: var(--text); font-variant-numeric: tabular-nums; }
+#duels .prose-table td:first-child { white-space: nowrap; width: 1%; }
+@media (max-width: 760px) {
+  .die-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .die-strip li:nth-child(3) { border-left: 0; }
+  .die-strip li:nth-child(n+3) { border-top: 1px solid var(--border-strong); }
+  #duels .prose-table td:first-child { white-space: normal; }
+}
+
+/* admin gate: on the page grid, square markers replaced by gold rules */
+.gate { margin: var(--space-7) 0 var(--space-8); }
+.gate-inside li::before { top: 0.75em; width: 10px; height: 0; border: 0; border-top: 2px solid var(--trim); border-radius: 0; }
+@media (max-width: 760px) { .gate { margin: var(--space-5) 0 var(--space-6); } }
+
+/* bare /: every row has the same avatar slot; the open spot is a dimmed fighter */
+.channel-crew { width: 96px; justify-content: flex-start; }
+.channel-crew:empty { width: 96px; }
+.channel-crew canvas.is-open { opacity: 0.45; }
+.channel-go { padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); font-weight: 600; }
+.channel:hover .channel-go, .channel:focus-visible .channel-go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+@media (max-width: 760px) {
+  .channel { flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+  .channel-crew, .channel-crew:empty { width: 64px; }
+  .channel-crew canvas { width: 40px; height: 40px; margin-right: -16px; }
+  .channel-go { flex: 1 0 100%; text-align: center; }
+}
+
+/* phones: the 3D fighter fills the sticky card; the on-stream view is a picture-in-picture inset on it */
+@media (max-width: 900px) {
+  .hero-card.has-3d { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "show show" "points save" "status save" "next next"; }
+  .hero-card.has-3d .showcase { grid-area: show; height: 236px; }
+  .hero-card.has-3d .preview { grid-area: show; align-self: end; justify-self: end; width: 148px; margin: 8px; z-index: 1;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
+  .hero-card.has-3d .stage-canvas { height: 72px; }
+  .hero-card.has-3d .preview-bar { padding: 4px; }
+  .hero-card.has-3d .preview-bar .caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .hero-card.has-3d .preview-bar .btn, .hero-card.has-3d .win-link { flex: 1 0 100%; text-align: center; font-size: var(--text-xs); }
+  .hero-card.has-3d .showcase-tag { right: 164px; }
+  .hero-card.has-3d .toolbar { max-width: none; }
+  .hero-copy .lead { display: none; }
+}
+
+/* /start: each step shows what it looks like; the permission is two short lists */
+.step-mock { margin: 0 0 var(--space-3); padding: var(--space-3); min-height: 88px; display: grid; gap: var(--space-2); align-content: center;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--text-2); }
+.step-mock .field { padding: 4px var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-mock .row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.step-mock .switch { width: 30px; height: 16px; border-radius: 4px; border: 1px solid var(--border-strong); position: relative; }
+.step-mock .switch::after { content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 2px; background: var(--text-3); }
+.step-mock .mod { color: var(--text); }
+.step-mock .badge { font-size: var(--text-xs); }
+.perm-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); margin-top: var(--space-5); }
+.perm-lists h3 { font-size: var(--text-md); margin: 0 0 var(--space-2); }
+.perm-lists ul { margin: 0; padding-left: var(--space-5); color: var(--text-2); }
+.perm-lists li + li { margin-top: var(--space-1); }
+@media (max-width: 760px) {
+  .perm-lists { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .stage-figure .stage { aspect-ratio: 4 / 5; }
+}

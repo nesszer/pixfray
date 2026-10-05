@@ -381,7 +381,8 @@ function renderPreview() {
     d.pet && "with " + itemLabel("pet", d.pet), d.trail && itemLabel("trail", d.trail) + " trail", d.title && "title " + itemLabel("title", d.title)].filter(Boolean);
   $("#preview").setAttribute("aria-label", "Preview of your fighter on stream: " + (words.join(", ") || "no character yet"));
   $("#play-win").disabled = !d.winEffect && !d.taunt;
-  $("#play-win").title = $("#play-win").disabled ? "Pick a win effect or taunt in the Shop to preview it" : "";
+  $("#play-win").hidden = $("#play-win").disabled;   // nothing to preview yet: point to the Shop instead
+  $("#win-link").hidden = !$("#play-win").disabled;
 }
 $("#play-win").addEventListener("click", () => stage.play());
 
@@ -583,17 +584,21 @@ async function channelRanks(channel, link, crew, meta) {
   const [board, catalog] = await Promise.all([api("/api/leaderboard/" + channel), api("/api/catalog/" + channel)]);
   const rows = board.ok && Array.isArray(board.data) ? board.data.filter((p) => p.wins + p.losses > 0) : [];
   const byId = new Map((catalog.ok && Array.isArray(catalog.data) ? catalog.data : []).map((e) => [e.id, e]));
-  if (!rows.length) { meta.textContent = "No ranked duels yet. The top spot is open."; return; }
-  meta.textContent = "Top fighter: " + (rows[0].displayName || rows[0].username) + " · " + rows[0].elo + " Elo";
   let lit = false;
   for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => { lit = true; });
   for (const ev of ["pointerleave", "blur"]) link.addEventListener(ev, () => { lit = false; });
-  for (const p of rows.slice(0, 3)) {
-    const entry = byId.get(p.avatar);
-    if (!entry) continue;
-    const canvas = h("canvas", { class: "sprite", width: 48, height: 48 });
+  const add = (entry, cls) => {
+    const canvas = h("canvas", { class: cls, width: 48, height: 48 });
     crew.append(canvas);
     addSprite(canvas, entry, { anim: "walk", active: () => lit });
+  };
+  if (!rows.length) {
+    meta.textContent = "No ranked duels yet. The top spot is open.";
+    const first = byId.values().next().value;   // the open spot: the channel's first character, dimmed
+    if (first) add(first, "sprite is-open");
+    return;
   }
+  meta.textContent = "Top fighter: " + (rows[0].displayName || rows[0].username) + " · " + rows[0].elo + " Elo";
+  for (const p of rows.slice(0, 3)) if (byId.get(p.avatar)) add(byId.get(p.avatar), "sprite");
 }
 if (CHANNEL_PICKED) init(); else pickChannel();

@@ -107,7 +107,7 @@ async function init() {
   const session = await api("/api/session");
   S.session = session.ok ? session.data : null;
   renderWho($("#who"), S.session, signOut);
-  if (!S.session) return gate("The server can't check sign-in right now: " + errorText(session) + ". Try again in a minute.", [h("button", { class: "btn", type: "button", onclick: () => location.reload() }, "Reload")]);
+  if (!S.session) return gate("We can't check sign-in right now. Try again in a minute.", [h("button", { class: "btn btn-primary", type: "button", onclick: () => location.reload() }, "Try again")]);
   if (!S.session.user) {
     if (S.session.configured === false) return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
     $("#who").replaceChildren();   // one sign-in button: the gate's

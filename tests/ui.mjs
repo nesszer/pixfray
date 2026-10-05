@@ -654,7 +654,8 @@ try {
     assert.equal(await page.locator('#invite-actions a').count(), 1);
     assert.equal(await page.locator('#invite-problem').isHidden(), true);
     const stage = await page.locator('.stage').boundingBox(), frame = await page.locator('.stage iframe').boundingBox();
-    assert.ok(Math.abs(stage.width / stage.height - 16 / 9) < 0.03, 'demo stage is 16:9, got ' + stage.width + 'x' + stage.height);
+    const want = s.name === '390' ? 4 / 5 : 16 / 9;   // phones get a taller crop so the fighters stay readable
+    assert.ok(Math.abs(stage.width / stage.height - want) < 0.03, 'demo stage is ' + (s.name === '390' ? '4:5' : '16:9') + ', got ' + stage.width + 'x' + stage.height);
     if (s.name === '1280') assert.ok(stage.width > 900, 'demo stage spans the page at 1280, got ' + stage.width);
     assert.ok(Math.abs(frame.width - stage.width) < 4 && Math.abs(frame.height - stage.height) < 4, 'overlay frame fills the stage');
     assert.ok(await page.locator('.stage iframe').evaluate((f) => f.offsetWidth >= 640), 'overlay lays out at 640px or wider');

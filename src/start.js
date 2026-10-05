@@ -6,12 +6,12 @@ const params = new URLSearchParams(location.search);
 const token = params.get("invite") || "";
 const error = params.get("error") || "";
 
-// The overlay lays fighters out in the pixels it gets. Below 640px wide the stage renders it at 640 and scales it down,
-// so the nameplates keep the room they need instead of piling up.
+// The overlay lays fighters out in the pixels it gets. Narrow stages render it at least 640px wide (in the stage's own
+// shape: 16:9 wide, 4:5 on phones) and scale it down, so the nameplates keep their room and stay readable.
 const stage = $(".stage"), frame = stage.querySelector("iframe");
 function fitStage() {
-  const w = stage.clientWidth, v = Math.max(w, 640);
-  Object.assign(frame.style, { width: v + "px", height: Math.round(v * 9 / 16) + "px", transform: "scale(" + w / v + ")", transformOrigin: "0 0" });
+  const w = stage.clientWidth, hgt = stage.clientHeight, v = Math.max(w, 640);
+  Object.assign(frame.style, { width: v + "px", height: Math.round(v * hgt / w) + "px", transform: "scale(" + w / v + ")", transformOrigin: "0 0" });
 }
 new ResizeObserver(fitStage).observe(stage);
 fitStage();
