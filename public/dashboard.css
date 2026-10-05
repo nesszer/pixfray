@@ -876,3 +876,30 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
   .channel-crew .thumb canvas { width: 56px; height: 56px; }
 }
 @media (min-width: 901px) { .landing .channel-list { max-width: 500px; } }
+
+/* ---------- round 9 ---------- */
+/* the night sky stays behind the whole page; scrolling pushes the camera in and lets the night darken over it */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: scroll()) {
+    body::before { position: fixed; inset: 0; height: auto; transform-origin: 50% 30%; will-change: transform, opacity;
+      animation: sky-dolly linear both; animation-timeline: scroll(root); animation-range: 0 1400px; }
+    @keyframes sky-dolly { from { transform: none; opacity: 1; } to { transform: scale(1.16) translateY(-2%); opacity: .4; } }
+  }
+}
+/* tile text reads at 14px: prices, rarity and tags */
+.item-grid .char-option > .buy { font-size: var(--text-sm); min-height: 36px; }
+.char-option .tag { font-size: var(--text-sm); }
+.preview-label, .showcase-tag .hint-turn, .signin-hint { font-size: var(--text-sm); }
+/* the hint goes once the fighter has been turned */
+.showcase.turned .hint-turn { opacity: 0; transition: opacity .3s ease; }
+/* Ranks: rank and name read left to right, the numbers line up under their headings, the table fills its column */
+#leaderboard th:first-child, #leaderboard td:first-child { text-align: left; width: 4em; }
+.table-wrap > table#leaderboard { width: 100%; }
+/* the gate's preview is plainly not live */
+.gate-peek { opacity: .6; pointer-events: none; user-select: none; }
+.gate-peek .peek-tabs { font-size: var(--text-sm); }
+/* phones: the Save bar waits until you scroll into the picker, so the first screen shows the grid it would cover */
+@media (max-width: 900px) {
+  .hero-card.has-3d .toolbar { transition: transform .2s ease-out; }
+  html.at-top .hero-card.has-3d .toolbar { transform: translateY(110%); }
+}

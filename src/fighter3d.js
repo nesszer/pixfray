@@ -128,7 +128,7 @@ export function createFighter3D(canvas) {
     else if (e.pointerType === 'mouse') hover = e;
     kick();
   });
-  const release = () => { drag = null; yawTarget = Math.max(-TURN, Math.min(TURN, yawTarget)); canvas.classList.remove('is-dragging'); kick(); };
+  const release = () => { if (drag) canvas.closest('.showcase')?.classList.add('turned'); drag = null; yawTarget = Math.max(-TURN, Math.min(TURN, yawTarget)); canvas.classList.remove('is-dragging'); kick(); };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('pointerleave', () => { hover = null; kick(); });

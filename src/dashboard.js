@@ -637,4 +637,13 @@ async function channelRanks(channel, link, crew, meta) {
   meta.textContent = "Top fighter: " + (rows[0].displayName || rows[0].username) + " · " + rows[0].elo + " Elo";
   for (const p of rows.slice(0, 3)) if (byId.get(p.avatar)) add(byId.get(p.avatar), "sprite");
 }
-if (CHANNEL_PICKED) init(); else pickChannel();
+// Phones: the fixed Save bar stays tucked away on the first screen until you scroll or something needs saying,
+// so the first view shows the picker it would cover.
+function tuckSaveBar() {
+  const update = () => document.documentElement.classList.toggle("at-top", scrollY < 40 && !status.textContent && !dirty());
+  addEventListener("scroll", update, { passive: true });
+  new MutationObserver(update).observe(status, { childList: true, characterData: true, subtree: true });
+  form.addEventListener("change", update);
+  update();
+}
+if (CHANNEL_PICKED) { tuckSaveBar(); init(); } else pickChannel();

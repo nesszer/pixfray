@@ -104,7 +104,10 @@ function gate(text, actions = []) {
   $("#gate-actions").replaceChildren(...actions);
 }
 async function init() {
+  // a slow or rate-limited check shouldn't leave the gate blank: offer sign-in while it finishes
+  const slow = setTimeout(() => gate("Still checking your access. If you aren't signed in yet, sign in with Twitch.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]), 1500);
   const session = await api("/api/session");
+  clearTimeout(slow);
   S.session = session.ok ? session.data : null;
   renderWho($("#who"), S.session, signOut);
   if (!S.session) return gate("We can't check sign-in right now. Try again in a minute.", [h("button", { class: "btn btn-primary", type: "button", onclick: () => location.reload() }, "Try again")]);
