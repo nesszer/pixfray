@@ -8,6 +8,7 @@ applyChannel();
 
 const SWATCHES = ["#a78bfa", "#60a5fa", "#34d399", "#fbbf24", "#f87171", "#f472b6", "#e5e7eb", "#22d3ee"];
 const form = $("#profile-form"), saveBtn = $("#save"), saveSignin = $("#save-signin"), status = $("#save-status");
+let lastY = 0, travel = 0, away = false;   // the phone Save bar (tuckSaveBar)
 const colorInput = $("#color");
 // Cosmetic kinds (server/cosmetics.js): the profile field that wears each, how its tiles look, and its words.
 const KINDS = {
@@ -133,6 +134,7 @@ const TABS = ["fighter", "shop", "pets", "ranks", "rules"];
 const HASH_TAB = { fighter: "fighter", upgrades: "fighter", builds: "fighter", shop: "shop", hats: "shop", "hat-picker": "shop", pets: "pets", "pet-color": "pets", ranks: "ranks", leaderboard: "ranks", rules: "rules", duels: "rules" };
 const tabOf = (hash) => HASH_TAB[hash] || (document.getElementById(hash)?.closest("[role=tabpanel]")?.id.replace("panel-", "")) || null;
 function showTab(name, { focus = false, hash = name, scroll = true } = {}) {
+  document.documentElement.dataset.tab = name; tuckSaveBar();
   for (const t of TABS) {
     const tab = $("#tab-" + t), on = t === name;
     tab.setAttribute("aria-selected", String(on));
@@ -167,7 +169,12 @@ document.addEventListener("click", (e) => {
 });
 addEventListener("hashchange", () => { const hash = location.hash.slice(1), tab = tabOf(hash); if (tab) showTab(tab, { hash }); });
 // On phones the stage sticks to the top, so focused fields and section jumps scroll clear of it.
-new ResizeObserver(() => { document.documentElement.style.scrollPaddingTop = (stickyHeight() + 16) + "px"; }).observe($(".hero-card"));
+// ...and when the preview is compact the tabs stick under it, so the padding covers both.
+new ResizeObserver(() => {
+  const root = document.documentElement, card = stickyHeight(), tabs = root.classList.contains("compact") && card ? $(".hero-pick .tabs").offsetHeight : 0;
+  root.style.setProperty("--stuck-h", card + "px");
+  root.style.scrollPaddingTop = (card + tabs + 16) + "px";
+}).observe($(".hero-card"));
 
 // ---------- shop ----------
 // The first click on a Buy button asks to confirm, the second spends the dollars. A bought item is worn right away;
@@ -654,14 +661,20 @@ async function channelRanks(channel, link, crew, meta) {
   meta.textContent = "Top fighter: " + (rows[0].displayName || rows[0].username) + " · " + rows[0].elo + " Elo";
   for (const p of rows.slice(0, 3)) if (byId.get(p.avatar)) add(byId.get(p.avatar), "sprite");
 }
-// Phones: the fixed Save bar stays tucked away on the first screen until you scroll or something needs saying,
-// so the first view shows the picker it would cover.
+// Phones: the fixed Save bar stays tucked away on the first screen, while scrolling down, and on Ranks and Rules,
+// unless there is something to save or say. Scrolling back up brings it back.
 function tuckSaveBar() {
-  const update = () => document.documentElement.classList.toggle("at-top", scrollY < 40 && !status.textContent && !dirty());
-  addEventListener("scroll", update, { passive: true });
-  new MutationObserver(update).observe(status, { childList: true, characterData: true, subtree: true });
-  form.addEventListener("change", update);
-  update();
+  const root = document.documentElement, quiet = !status.textContent && !dirty();
+  travel += scrollY - lastY; lastY = scrollY;
+  if (Math.abs(travel) > 24) { away = travel > 0; travel = 0; }
+  root.classList.toggle("bar-away", quiet && (away || root.dataset.tab === "ranks" || root.dataset.tab === "rules"));
+  root.classList.toggle("at-top", quiet && scrollY < 40);
+}
+function watchSaveBar() {
+  addEventListener("scroll", tuckSaveBar, { passive: true });
+  new MutationObserver(tuckSaveBar).observe(status, { childList: true, characterData: true, subtree: true });
+  form.addEventListener("change", tuckSaveBar);
+  tuckSaveBar();
 }
 // Phones: once the tabs scroll under the stuck preview, it shrinks to a short strip so the choices get the screen.
 // Shrinking moves the page, so it switches back only after scrolling clearly above the tabs.
@@ -669,11 +682,12 @@ function compactPreview() {
   const card = $(".hero-card"), tabs = $(".tabs"), root = document.documentElement;
   const update = () => {
     if (innerWidth > 900 || !card.classList.contains("has-3d")) return root.classList.remove("compact");
-    const y = tabs.getBoundingClientRect().bottom, on = root.classList.contains("compact");
+    // where the tabs' bottom would be in the flow (they stick once compact, so measure from their section)
+    const y = tabs.parentElement.getBoundingClientRect().top + tabs.offsetHeight, on = root.classList.contains("compact");
     if (!on && y < 0) root.classList.add("compact");
     else if (on && y > 120) root.classList.remove("compact");
   };
   addEventListener("scroll", update, { passive: true });
   addEventListener("resize", update);
 }
-if (CHANNEL_PICKED) { tuckSaveBar(); compactPreview(); init(); } else pickChannel();
+if (CHANNEL_PICKED) { watchSaveBar(); compactPreview(); init(); } else pickChannel();

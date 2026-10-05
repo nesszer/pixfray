@@ -936,3 +936,13 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
   .top3 > li strong { font-size: var(--text-md); }
   .top3 .thumb canvas.vox { width: 64px; height: 64px; } .top3 > li.first .thumb canvas.vox { width: 80px; height: 80px; }
 }
+
+/* ---------- round 11 ---------- */
+@media (max-width: 900px) {
+  /* the Save bar steps aside while scrolling down and on Ranks and Rules (dashboard.js tuckSaveBar) */
+  html.bar-away .hero-card.has-3d .toolbar { transform: translateY(110%); }
+  /* with the preview compact, the tabs stick right under it so switching sections never needs a scroll back up */
+  html.compact .hero-pick .tabs { position: sticky; z-index: 2; top: var(--stuck-h, 0px); background: var(--bg); margin-inline: calc(-1 * var(--space-4)); padding-inline: var(--space-4); }
+  /* the filter chips fade at the right edge, so it reads as a row that scrolls */
+  .filter-buttons { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: var(--space-6); }
+}
