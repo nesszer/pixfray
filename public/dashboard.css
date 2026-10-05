@@ -1389,7 +1389,7 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
 @media (prefers-reduced-motion: no-preference) {
   @supports (animation-timeline: scroll()) {
     .scene-sky.is-ready { transition: none; animation: sky-dim linear both; animation-timeline: scroll(root); animation-range: 0 1400px; }
-    @keyframes sky-dim { from { opacity: 1; } to { opacity: .5; } }
+    @keyframes sky-dim { from { opacity: 1; } to { opacity: .75; } }
   }
 }
 /* /start: the four steps scroll past a scene that follows them, from the arena overhead to the ranking pillars */
@@ -1443,3 +1443,42 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
   .gate-inside { padding: 176px var(--space-3) var(--space-3); border-radius: var(--radius);
     background: linear-gradient(to bottom, rgb(12 9 7 / 0) 30%, rgb(12 9 7 / .6)), url("/assets/scene/arena-top-800.webp") 50% 35% / cover no-repeat var(--bg); }
 }
+/* Round 26. One header on every page, the intro's: no bar or rule, the cream wordmark at the page edge */
+.topbar { background: none; border-bottom: 0; }
+.topbar-inner { max-width: none; padding-inline: clamp(16px, 3.2vw, 48px); }
+.topbar .brand { color: var(--text); }
+.topbar .brand .mark { fill: var(--accent); }
+@media (min-width: 481px) {
+  .topbar-inner { min-height: 76px; }
+  .topbar .brand { font-size: 22px; gap: 10px; }
+  .topbar .brand .mark { width: 22px; height: 22px; }
+}
+/* the picker and the builder are where "Pick your fighter" leads, so they drop it */
+.topbar nav a.nav-cta[aria-current] { display: none; }
+/* the picker: both channels get the same outlined button, filled on hover; rows read larger */
+.landing .channel-list li:first-child .channel-go { background: none; border-color: var(--trim); color: var(--accent-hover); }
+.landing .channel-list li .channel:hover .channel-go, .landing .channel-list li .channel:focus-visible .channel-go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+@media (min-width: 901px) {
+  .landing .channel-list { max-width: 560px; }
+  .landing-inner > * { max-width: 560px; }
+  .landing .channel { padding-block: var(--space-5); }
+  .landing .channel-name { font-size: var(--text-2xl); }
+}
+.landing-who { position: absolute; right: clamp(16px, 3.2vw, 48px); bottom: var(--space-6); z-index: 1; margin: 0; padding: var(--space-1) var(--space-3);
+  background: rgb(13 9 6 / .8); border-left: 2px solid var(--trim); border-radius: var(--radius-sm); color: var(--text); font-size: var(--text-sm); }
+.landing-who:empty { display: none; }
+@media (max-width: 760px) { .landing-who { display: none; } .landing-inner { padding-bottom: var(--space-5); } }
+/* /start: the lead keeps a reading width beside the invite card; each step reads heading, text, then its example */
+.hero-copy .lead { max-width: 52ch; }
+.step-grid .step-mock { margin: var(--space-3) 0 0; }
+@media (min-width: 961px) { .story .step-grid > li { padding-block: var(--space-6); } }
+/* admin gate: the locked controls are the bottom of the arena card, not a panel floating on it */
+@media (min-width: 761px) {
+  .gate-inside { padding: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+  .gate-inside .gate-peek { margin: 0; border: 0; border-top: 1px solid var(--border-strong); border-radius: 0; padding: var(--space-4) var(--space-5); background: rgb(13 9 6 / .94); }
+}
+/* builder on a phone: once you scroll into the tabs, the stuck preview shrinks to a strip */
+@media (max-width: 480px) { html.compact .hero-card.has-3d .showcase { height: 120px; } }
+/* with no rule under the header, the picker's arena fades in from the top instead of starting on a hard edge */
+@media (min-width: 901px) { .landing-3d { mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 12%, rgba(0,0,0,.3) 24%, rgba(0,0,0,.62) 36%, rgba(0,0,0,.88) 48%, #000 60%), linear-gradient(to bottom, transparent, #000 96px, #000 78%, transparent); -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 12%, rgba(0,0,0,.3) 24%, rgba(0,0,0,.62) 36%, rgba(0,0,0,.88) 48%, #000 60%), linear-gradient(to bottom, transparent, #000 96px, #000 78%, transparent); } }
+@media (max-width: 900px) { .landing-3d { mask-image: linear-gradient(to bottom, transparent, #000 48px, #000 62%, transparent); -webkit-mask-image: linear-gradient(to bottom, transparent, #000 48px, #000 62%, transparent); } }

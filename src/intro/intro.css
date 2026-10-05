@@ -236,7 +236,6 @@ h2 { font-size: clamp(32px, 3.7vw, 54px); line-height: 1.04; }
   .odds th, .odds td { padding-top: 5px; padding-bottom: 5px; }
   .board { margin-top: var(--space-3); }
   .board li { padding: 3px 0; font-size: 14px; }
-  .board li:nth-child(n+4) { display: none; }   /* top three on a phone; Full list has the rest */
   .board .rec { font-size: 12px; }
   h2 { margin-bottom: var(--space-2); }
   .copy p { font-size: 15px; line-height: 1.45; }
@@ -251,7 +250,7 @@ h2 { font-size: clamp(32px, 3.7vw, 54px); line-height: 1.04; }
 }
 
 /* the labels on the corners of the 3D stream frame */
-.tag-obs { transform: translate(0, -100%); font-size: 13px; color: var(--text-2); padding-bottom: 6px; }
+.tag-obs { transform: translate(0, 8px); font-size: 13px; color: var(--text-2); padding: 4px 8px; background: rgb(13 9 6 / .8); border-radius: var(--radius-sm); }
 .tag-obs b { color: var(--accent); font-weight: 600; margin-right: 6px; }
 
 /* side shade behind the copy column, faded in by the frame loop */
@@ -276,3 +275,6 @@ h2 { font-size: clamp(32px, 3.7vw, 54px); line-height: 1.04; }
 .edge-fade.bottom { bottom: 0; height: 132px; background: linear-gradient(to top, color-mix(in srgb, var(--night) 92%, transparent) 30%, transparent); }
 body:not(.scrolled) .edge-fade.bottom { opacity: 0; }
 .edge-fade { transition: opacity .3s ease; }
+/* the ladder list keeps clear of the towers, and its figures stay legible where a tower runs behind them */
+.board { max-width: 400px; }
+.board li { text-shadow: 0 1px 3px rgb(0 0 0 / .8); }
