@@ -841,7 +841,17 @@ async function start() {
     }
     ctx.restore();
   }
+  // The demo embedded on the site (?demo=1) draws at 30 fps and stops while its page scrolls it out of view
+  // (the page posts { demoPaused }); the overlay on stream keeps the full frame rate.
+  let demoPaused = false, drawing = true;
+  if (demo) addEventListener('message', (e) => {
+    if (e.origin !== location.origin || typeof e.data?.demoPaused !== 'boolean') return;
+    demoPaused = e.data.demoPaused;
+    if (!demoPaused && !drawing) { drawing = true; lastFrame = performance.now(); requestAnimationFrame(draw); }
+  });
   function draw(now) {
+    if (demoPaused) { drawing = false; return; }
+    if (demo && now - lastFrame < 30) { requestAnimationFrame(draw); return; }
     const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
     const clock = Date.now();
     ctx.clearRect(0, 0, width, height);

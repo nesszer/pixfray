@@ -16,6 +16,9 @@ function fitStage() {
 }
 new ResizeObserver(fitStage).observe(stage);
 fitStage();
+// the demo only draws while it's on screen
+new IntersectionObserver(([en]) => frame.contentWindow?.postMessage({ demoPaused: !en.isIntersecting }, location.origin)).observe(stage);
+frame.addEventListener("load", () => { const r = stage.getBoundingClientRect(); frame.contentWindow?.postMessage({ demoPaused: r.bottom < 0 || r.top > innerHeight }, location.origin); });
 
 const PROBLEMS = {
   invalid: () => "This invite link isn't valid. Check that you copied the whole link, or ask nesszerra for a new one.",
