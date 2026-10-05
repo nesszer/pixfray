@@ -50,9 +50,9 @@ function render3d(d = state.d) {
 onLooksReady($("#preview3d"), () => render3d());
 // the intro's lock-on readout: name, then cubes and place in the roster
 function readout(entry) {
-  const i = state.catalog.indexOf(entry), n = fighter3d?.count || 0;
+  const i = state.catalog.indexOf(entry);
   $("#readout-name").textContent = entry.label || entry.id;
-  $("#readout-sub").textContent = (n ? n.toLocaleString("en-US") + " cubes · " : "") + (i >= 0 ? (i + 1) + " of " + state.catalog.length : "");
+  $("#readout-sub").textContent = i >= 0 ? "Character " + (i + 1) + " of " + state.catalog.length : "";
 }
 // Picker tiles get voxel thumbnails too (src/voxthumb.js); until it loads, or without WebGL, they show flat sprites.
 const voxJobs = new Map();
@@ -183,6 +183,13 @@ new ResizeObserver(() => {
   root.style.scrollPaddingTop = (card + tabs + 16) + "px";
 }).observe($(".hero-card"));
 
+// The shop's section links mark the section in view, so the row reads as tabs that follow the scroll.
+{ const links = [...document.querySelectorAll(".jump a")], seen = new Map();
+  const mark = () => { const top = [...seen].filter(([, v]) => v).map(([k]) => k).sort((x, y) => x.offsetTop - y.offsetTop)[0];
+    if (top) links.forEach((a) => a.toggleAttribute("aria-current", a.getAttribute("href") === "#" + top.id)); };
+  const io = new IntersectionObserver((es) => { es.forEach((e) => seen.set(e.target, e.isIntersecting)); mark(); }, { rootMargin: "-30% 0px -55% 0px" });
+  links.forEach((a) => { const t = document.getElementById(a.getAttribute("href").slice(1)); if (t) io.observe(t); }); }
+
 // ---------- shop ----------
 // The first click on a Buy button asks to confirm, the second spends the dollars. A bought item is worn right away;
 // Save brings it on stream. A bought build slot opens as a copy of the build being edited.
@@ -227,9 +234,9 @@ function tile({ kind, id, label, visual, tag, price, buyLabel, out, onPick }) {
   const input = h("input", { type: "radio", name: kind, id: inputId, value: id });
   input.addEventListener("change", () => { onPick(id); tryOnNote(kind, id, out); renderPreview(); renderSave(); });
   // Signed out, nothing can be bought yet, so the price is a quiet line instead of a row of disabled Buy buttons.
-  const quiet = !have && price > 0 && !signedIn(), note = [tag, quiet ? money(price) : null].filter(Boolean).join(" · ");
+  const quiet = !have && price > 0 && !signedIn(), note = tag || quiet ? [tag, tag && quiet ? " · " : "", quiet ? h("b", { class: "price" }, money(price)) : ""].filter(Boolean) : null;
   const option = h("div", { class: "char-option" + (have ? "" : " locked") }, input,
-    h("label", { for: inputId }, visual, h("span", {}, label), note ? h("span", { class: "tag" }, note) : null),
+    h("label", { for: inputId }, visual, h("span", {}, label), note ? h("span", { class: "tag" }, ...note) : null),
     !have && price > 0 && !quiet ? buyButton(kind, id, buyLabel || label, price, out) : null);
   const field = kind === "hat" || kind === "pet" ? kind : KINDS[kind]?.look === "char" || KINDS[kind]?.look === "pet" ? KINDS[kind].field : null;
   if (field) peekOn(option, field, id);
@@ -542,7 +549,7 @@ function renderLeaderboard() {
     return [h("span", { class: "lb-char" }, entry ? h("span", { class: "thumb" }, v, canvas) : null, h("span", {}, entry?.label || id))];
   };
   const row = (p, i) => h("tr", { class: [p.userId === me ? "me" : "", i < 3 ? "podium" : ""].filter(Boolean).join(" ") || null },
-    h("td", { class: "num" }, i + 1), h("td", {}, h("span", { style: { color: p.color }, "aria-hidden": "true" }, "■ "), p.displayName || p.username, p.userId === me ? h("span", { class: "muted" }, " (you)") : null),
+    h("td", { class: "num" }, i + 1), h("td", {}, h("span", { style: { color: p.color }, "aria-hidden": "true" }, "■ "), p.displayName || p.username, p.userId === me ? h("span", { class: "muted" }, " (you)") : null),
     h("td", { class: "col-char" }, ...character(p.avatar)), h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses));
   renderPodium(rows);
   const top = rows.slice(0, 10).map(row);

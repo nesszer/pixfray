@@ -977,13 +977,13 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
 
 /* Round 13: the picker's live arena, the preview's lock-on readout */
 .landing-3d { position: absolute; top: 0; right: 0; bottom: 0; width: 64%; height: 100%; display: block; touch-action: pan-y; cursor: grab;
-  mask-image: linear-gradient(to right, transparent, #000 28%); -webkit-mask-image: linear-gradient(to right, transparent, #000 28%); }
+  mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 12%, rgba(0,0,0,.3) 24%, rgba(0,0,0,.62) 36%, rgba(0,0,0,.88) 48%, #000 60%); -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 12%, rgba(0,0,0,.3) 24%, rgba(0,0,0,.62) 36%, rgba(0,0,0,.88) 48%, #000 60%); }
 .landing-3d.is-dragging { cursor: grabbing; }
 .landing.is-live { background: var(--bg); }
 .landing.is-live .landing-inner { position: relative; z-index: 1; pointer-events: none; }
 .landing.is-live .landing-inner > * { pointer-events: auto; }
 .showcase .readout { position: absolute; left: 24px; top: 24px; display: grid; gap: 2px; padding: 4px 10px 5px; border-left: 1px solid var(--accent);
-  background: rgb(13 9 6 / .55); font-size: var(--text-xs); line-height: 1.35; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none;
+  background: rgb(13 9 6 / .86); font-size: var(--text-xs); line-height: 1.35; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none;
   text-shadow: 0 1px 2px rgb(0 0 0 / .85); }
 .showcase .readout b { color: var(--text); font-size: var(--text-sm); font-weight: 650; }
 .showcase .readout:has(b:empty) { display: none; }
@@ -1003,3 +1003,44 @@ html[data-tab]:not([data-tab="fighter"]) .hero-copy .how { display: none; }
 .gate-peek .peek-tag { font-size: var(--text-xs); color: var(--text-2); }
 /* the sky's moon sits above the locked card instead of half behind it */
 body:has(.gate:not([hidden]))::before { background-position: center -140px; }
+/* /start step mocks: each card shows the state the step leaves behind */
+.step-mock .switch.on { border-color: var(--trim); }
+.step-mock .switch.on::after { left: auto; right: 2px; background: var(--trim); }
+.step-mock .btn-mock { font-size: var(--text-xs); padding: 2px var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--text-2); }
+/* the name keeps its color square on its line at 390 */
+#leaderboard td:nth-child(2) { overflow-wrap: anywhere; }
+/* phones: short page names so every link fits without sideways scrolling */
+.topbar nav .nav-short { display: none; }
+@media (max-width: 480px) {
+  .topbar nav .nav-long { display: none; }
+  .topbar nav .nav-short { display: inline; }
+  .topbar nav { gap: var(--space-4); padding-right: 0; mask-image: none; -webkit-mask-image: none; justify-content: flex-end; }
+}
+/* the gate's right side is a window onto the arena the controls run, the locked preview floating in front */
+@media (min-width: 761px) {
+  .gate-inside { align-self: stretch; display: flex; flex-direction: column; min-height: 360px; padding: var(--space-4); border: 1px solid var(--border-strong); border-radius: var(--radius);
+    background: linear-gradient(to bottom, rgba(12, 9, 7, .2), rgba(12, 9, 7, 0) 40%, rgba(12, 9, 7, .55)), url("/assets/scene/island.webp") 63% 0 / auto 170% no-repeat var(--bg); }
+  .gate-inside .gate-peek { background: rgba(14, 11, 9, .92); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: var(--space-4); }
+}
+/* shop section links: the section in view is marked like the main tabs */
+.jump a { min-height: 44px; border-bottom-width: 2px; border-bottom-color: transparent; }
+.jump a[aria-current] { color: var(--accent-hover); border-bottom-color: var(--trim); }
+/* /start ends on the next step: the arena scene with the invite or sign-in link over it */
+.ready { margin-top: var(--space-8); padding: var(--space-8) var(--space-6); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--bg) 0%, rgb(12 9 7 / .9) 38%, rgb(12 9 7 / .15) 75%), url("/assets/scene/island.webp") 70% 35% / cover no-repeat; }
+.ready-copy { max-width: 460px; }
+.ready h2 { font-size: var(--text-2xl); margin: 0 0 var(--space-3); }
+.ready p { color: var(--text-2); margin: 0 0 var(--space-5); }
+@media (max-width: 760px) {
+  .ready { padding: 200px var(--space-4) var(--space-5); background: linear-gradient(to bottom, rgb(12 9 7 / 0) 0, rgb(12 9 7 / .2) 120px, var(--bg) 210px), url("/assets/scene/island.webp") 72% 0 / auto 260px no-repeat var(--bg); }
+  .ready .toolbar > .btn { width: 100%; justify-content: center; min-height: 48px; }
+}
+/* the gate: the preview is blurred behind a lock, and phones see it under the sign-in */
+.gate-peek .peek-row { filter: blur(1.2px); }
+.gate-peek .peek-tag { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text); border-color: var(--trim); }
+@media (max-width: 760px) {
+  .gate-inside { display: block; }
+  .gate-inside .gate-peek { display: grid; margin: 0; }
+}
+/* shop prices read as prices */
+.char-option .tag .price { color: var(--accent-hover); font-weight: 650; }

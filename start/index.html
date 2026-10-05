@@ -10,7 +10,7 @@
 <body>
 <header class="topbar"><div class="topbar-inner">
   <a class="brand" href="/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
-  <nav aria-label="Pages"><a href="/">Your fighter</a><a href="/intro/">How it works</a><a href="/start/" aria-current="page">For streamers</a></nav>
+  <nav aria-label="Pages"><a href="/"><span class="nav-long">Your fighter</span><span class="nav-short">Fighter</span></a><a href="/intro/">How it works</a><a href="/start/" aria-current="page"><span class="nav-long">For streamers</span><span class="nav-short">Streamers</span></a></nav>
 </div></header>
 
 <section class="hero" aria-labelledby="start-title">
@@ -40,9 +40,9 @@
     <p class="muted">You need OBS and the StreamElements bot in your chat. After you sign in, the Stream setup page checks off each step as it starts working.</p>
     <ol class="step-grid">
       <li><div class="step-mock" aria-hidden="true"><span>Browser Source · URL</span><span class="field">pixfray.xyz/<wbr>overlay.html?<wbr>channel=you</span><span>Width 1920 · Height 1080</span></div><strong>Add the overlay to OBS</strong> Make it a Browser Source at 1920×1080. The setup page gives you the link.</li>
-      <li><div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">Duel module</span><span class="switch"></span></span><span class="row"><span>Off, so one bot answers</span></span></div><strong>Turn off the Duel module</strong> It's a built-in StreamElements module. With it off, only one bot answers duel commands.</li>
+      <li><div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">Duel module</span><span class="switch"></span></span><span class="row"><span class="mod">PixFray commands</span><span class="switch on"></span></span><span>One bot answers each duel</span></div><strong>Turn off the Duel module</strong> It's a built-in StreamElements module. With it off, only one bot answers duel commands.</li>
       <li><div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">!challenge</span><span class="eg">Example</span></span><span class="field">$(customapi pixfray.xyz/<wbr>api/se/you/<wbr>challenge?…)</span></div><strong>Paste 7 commands into StreamElements</strong> Each reply is ready to copy: <code>!challenge</code>, <code>!fight</code>, <code>!decline</code>, <code>!rematch</code>, <code>!elo</code>, <code>!ranks</code> and <code>!fray</code>. You can rename them.</li>
-      <li class="optional"><div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">Your moderators</span><span class="eg">Example</span></span><span>Pause duels, fix ranks, edit rules</span></div><strong>Let your moderators help <span class="badge">Optional</span></strong> They can manage fighters, ranks and settings.</li>
+      <li class="optional"><div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">Your moderators can</span><span class="eg">Example</span></span><span class="row"><span>Pause duels</span><span class="switch on"></span></span><span class="row"><span>Reset health</span><span class="btn-mock">Reset</span></span></div><strong>Let your moderators help <span class="badge">Optional</span></strong> They can manage fighters, ranks and settings.</li>
     </ol>
   </section>
 
@@ -66,6 +66,13 @@
       </div>
     </div>
     <p class="caveat">You can turn PixFray off at any time from the Stream setup page. Fighters and ranks are kept, so turning it back on picks up where you left off.</p>
+  </section>
+  <section class="section ready" id="ready" aria-labelledby="ready-title">
+    <div class="ready-copy">
+      <h2 id="ready-title">Your chat gets its own arena after one sign-in</h2>
+      <p>The invite names your Twitch account. Sign in with it, and the Stream setup page walks you through the four steps above.</p>
+      <div class="toolbar" id="ready-actions"></div>
+    </div>
   </section>
 </main>
 <script type="module" src="/src/start.js"></script>
