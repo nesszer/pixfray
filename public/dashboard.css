@@ -552,10 +552,10 @@ body:has(.landing:not([hidden]))::before { display: none; }
 .gate h2 { font: 650 var(--text-2xl)/1.15 var(--font-display); margin: 0 0 var(--space-3); }
 .gate-main p { color: var(--text-2); margin: 0 0 var(--space-5); }
 .gate-inside { border-left: 1px solid var(--border-strong); padding-left: var(--space-6); }
-.gate-inside h3 { font-size: var(--text-sm); color: var(--text-3); font-weight: 650; margin: 0 0 var(--space-3); }
-.gate-inside ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); font-size: var(--text-sm); color: var(--text-2); }
-.gate-inside li { padding-left: var(--space-5); position: relative; }
-.gate-inside li::before { content: ""; position: absolute; left: 0; top: 0.5em; width: 8px; height: 8px; border: 1px solid var(--trim); border-radius: 1px; }
+.gate-list h3 { font-size: var(--text-sm); color: var(--text-3); font-weight: 650; margin: 0 0 var(--space-3); }
+.gate-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); font-size: var(--text-sm); color: var(--text-2); }
+.gate-list li { padding-left: var(--space-5); position: relative; }
+.gate-list li::before { content: ""; position: absolute; left: 0; top: 0.5em; width: 8px; height: 8px; border: 1px solid var(--trim); border-radius: 1px; }
 @media (max-width: 760px) {
   .gate { grid-template-columns: minmax(0, 1fr); margin: var(--space-5) var(--space-4); padding: var(--space-5); gap: var(--space-5); }
   .gate-inside { border-left: 0; border-top: 1px solid var(--border-strong); padding: var(--space-5) 0 0; }
@@ -610,7 +610,7 @@ body:has(.landing:not([hidden]))::before { display: none; }
 
 /* admin gate: on the page grid, square markers replaced by gold rules */
 .gate { margin: var(--space-7) 0 var(--space-8); }
-.gate-inside li::before { top: 0.75em; width: 10px; height: 0; border: 0; border-top: 2px solid var(--trim); border-radius: 0; }
+.gate-list li::before { top: 0.75em; width: 10px; height: 0; border: 0; border-top: 2px solid var(--trim); border-radius: 0; }
 @media (max-width: 760px) { .gate { margin: var(--space-5) 0 var(--space-6); } }
 
 /* bare /: every row has the same avatar slot; the open spot is a dimmed fighter */
@@ -821,10 +821,58 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
 #leaderboard tr.podium .lb-char canvas.sprite, #leaderboard tr.podium .lb-char canvas.vox { width: 48px; height: 48px; }
 /* /start steps: equal mock-ups so the headings share a baseline, larger numbered markers */
 .step-grid > li::before { width: 32px; height: 32px; top: -17px; font-size: var(--text-md); background: var(--trim); color: var(--on-accent); border-color: var(--trim); }
-.step-grid > li:last-child::before { background: var(--bg); color: var(--trim); }
+.step-grid > li.optional::before { background: var(--bg); color: var(--trim); }
+.step-grid > li.optional > .badge { margin-bottom: var(--space-2); }
 .step-mock .eg, .step-mock .badge { font-size: var(--text-xs); }
 @media (min-width: 901px) { .step-mock { height: 144px; } }
 @media (max-width: 480px) {
   .step-grid { margin-left: var(--space-3); }
   .step-grid > li::before { top: -4px; left: -17px; }
 }
+
+/* ---------- round 8 ---------- */
+/* /start: the mock-ups read at body size; the step-3 command shows in full */
+.step-mock { font-size: var(--text-sm); }
+.step-mock .field { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.5; }
+/* builder, desktop: a wider card and a closer stage; the on-stream strip is one slim lane, not a black box */
+@media (min-width: 1100px) {
+  .hero-grid:has(.has-3d) { grid-template-columns: minmax(0, 1fr) 468px; }
+  .hero-card.has-3d .showcase { aspect-ratio: 1 / 1; }
+}
+@media (min-width: 901px) {
+  .hero-card.has-3d .stage-canvas { height: 76px; }
+  .hero-card.has-3d .preview-label { top: var(--space-2); }
+}
+/* phone: the hero is just the title; the rules sit one tab away */
+@media (max-width: 480px) {
+  .hero-copy .how { font-size: var(--text-sm); margin-top: var(--space-2); }
+  .hero-copy h1 { font-size: 32px; }
+  .hero-grid { padding-top: var(--space-5); }
+  .hero-card.has-3d .showcase { height: 196px; }
+}
+/* tabs: the new panel settles in; tiles answer the pointer */
+@media (prefers-reduced-motion: no-preference) {
+  [role="tabpanel"]:not([hidden]) { animation: panel-in .2s ease-out; }
+  @keyframes panel-in { from { opacity: 0; } to { opacity: 1; } }
+  .char-option label { transition: border-color .15s ease, background-color .15s ease; }
+}
+.char-option label:hover { border-color: var(--border-strong); background: var(--raised); }
+/* the signed-out mod gate: copy and preview share a top edge */
+.gate { align-items: start; }
+.gate-peek .peek-tag { margin-left: auto; color: var(--text-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--space-2); }
+/* the gate: what's inside sits under the sign-in, the preview stands beside it */
+.gate-list { margin-top: var(--space-6); padding-top: var(--space-5); border-top: 1px solid var(--border); }
+@media (max-width: 760px) { .gate-inside { display: none; } }
+@media (min-width: 901px) { .hero-card.has-3d .stage-canvas { height: 92px; } }
+@media (max-width: 480px) { .hero-card.has-3d .stage-canvas { height: 80px; } }
+/* picker: each channel's top fighters stand as voxels, the leader in front */
+.channel-crew, .channel-crew:empty { width: auto; min-width: 64px; height: 64px; align-items: center; }
+.channel-crew .thumb + .thumb { margin-left: -24px; }
+.channel-crew .thumb:first-child { position: relative; z-index: 1; }
+.channel-crew .thumb canvas { margin: 0; width: 64px; height: 64px; }
+.channel-crew .thumb.is-open { opacity: .5; }
+@media (max-width: 760px) {
+  .channel-crew, .channel-crew:empty { width: auto; min-width: 56px; height: 56px; }
+  .channel-crew .thumb canvas { width: 56px; height: 56px; }
+}
+@media (min-width: 901px) { .landing .channel-list { max-width: 500px; } }

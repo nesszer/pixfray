@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { sampleSprite, VoxelFighter } from './intro/voxels.js';
 
-const SIZE = 160;
+const SIZE = 160, GRID = 4;   // tiles are drawn GRID x GRID to an atlas, so reading them back costs one GPU sync per batch, not per tile
 let renderer = null, scene, camera, broken = false;
 const queue = [], cache = new Map(), waiting = new Map();   // waiting: canvas -> its latest job
 let pumping = false;
@@ -12,9 +12,9 @@ let pumping = false;
 function setup() {
   if (renderer || broken) return Boolean(renderer);
   try {
-    const canvas = document.createElement('canvas'); canvas.width = canvas.height = SIZE;
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = SIZE * GRID;
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: 'low-power' });
-    renderer.setPixelRatio(1); renderer.setSize(SIZE, SIZE, false);
+    renderer.setPixelRatio(1); renderer.setSize(SIZE * GRID, SIZE * GRID, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
   } catch { broken = true; renderer = null; return false; }
@@ -27,7 +27,8 @@ function setup() {
   return true;
 }
 
-function render(look) {
+// draws one look into atlas cell i (0 is the top left)
+function render(look, i) {
   const step = Math.max(1, Math.round(look.frameH / 30));
   const sprite = sampleSprite(look.body, { x: 0, y: 0, w: look.body.width, h: look.body.height }, step);
   if (!sprite.cells.length) return null;
@@ -41,10 +42,15 @@ function render(look) {
   const span = Math.max(y1 - y0, (x1 - x0) * 1.05) + f.size * 2;
   const dist = (span / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.08;
   camera.position.set(0, dist * 0.18, dist); camera.lookAt(0, 0, 0); camera.updateProjectionMatrix();
+  const x = (i % GRID) * SIZE, y = (GRID - 1 - Math.floor(i / GRID)) * SIZE;   // WebGL counts y from the bottom
+  renderer.setViewport(x, y, SIZE, SIZE); renderer.setScissor(x, y, SIZE, SIZE);
   renderer.render(scene, camera);
   scene.remove(turn); f.mesh.geometry.dispose(); f.mesh.material.dispose(); f.mesh.dispose();
+  return true;
+}
+function copyCell(i) {
   const out = document.createElement('canvas'); out.width = out.height = SIZE;
-  out.getContext('2d').drawImage(renderer.domElement, 0, 0);
+  out.getContext('2d').drawImage(renderer.domElement, (i % GRID) * SIZE, Math.floor(i / GRID) * SIZE, SIZE, SIZE, 0, 0, SIZE, SIZE);
   return out;
 }
 
@@ -57,23 +63,31 @@ function paint(target, img) {
 
 function pump() {
   pumping = false;
-  const t0 = performance.now();
-  while (queue.length && performance.now() - t0 < 12) {
+  const t0 = performance.now(), drawn = [], paints = [];
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, SIZE * GRID, SIZE * GRID); renderer.clear();
+  renderer.setScissorTest(true);
+  while (queue.length && drawn.length < GRID * GRID && performance.now() - t0 < 24) {
     const job = queue.shift();
     if (!job.target.isConnected || waiting.get(job.target) !== job) continue;
     const look = job.make();
     // the sprite sheet isn't loaded yet: try again shortly
     if (!look) { if (++job.tries < 40) setTimeout(() => { if (waiting.get(job.target) === job) queue.push(job), wake(); }, 250); continue; }
     waiting.delete(job.target);
-    let img = cache.get(look.key);
-    if (!img) {
-      img = render(look);
-      if (!img) continue;
-      if (cache.size > 300) cache.delete(cache.keys().next().value);
-      cache.set(look.key, img);
-    }
-    paint(job.target, img);
+    const img = cache.get(look.key);
+    if (img) { paints.push([job.target, img]); continue; }
+    // the same look twice in one batch shares its cell
+    const twin = drawn.find((d) => d.key === look.key);
+    if (twin) { twin.targets.push(job.target); continue; }
+    if (render(look, drawn.length)) drawn.push({ key: look.key, cell: drawn.length, targets: [job.target] });
   }
+  renderer.setScissorTest(false);
+  for (const d of drawn) {
+    const img = copyCell(d.cell);
+    if (cache.size > 300) cache.delete(cache.keys().next().value);
+    cache.set(d.key, img);
+    for (const t of d.targets) paints.push([t, img]);
+  }
+  for (const [t, img] of paints) paint(t, img);
   if (queue.length) wake();
 }
 function wake() { if (!pumping) { pumping = true; requestAnimationFrame(pump); } }

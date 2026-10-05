@@ -623,9 +623,10 @@ async function channelRanks(channel, link, crew, meta) {
   for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => { lit = true; });
   for (const ev of ["pointerleave", "blur"]) link.addEventListener(ev, () => { lit = false; });
   const add = (entry, cls) => {
-    const canvas = h("canvas", { class: cls, width: 48, height: 48 });
-    crew.append(canvas);
+    const canvas = h("canvas", { class: cls, width: 48, height: 48 }), v = voxCanvas();
+    crew.append(h("span", { class: "thumb" + (cls.includes("is-open") ? " is-open" : "") }, v, canvas));
     addSprite(canvas, entry, { anim: "walk", active: () => lit });
+    vox(v, () => composeLook(entry));
   };
   if (!rows.length) {
     meta.textContent = "No ranked duels yet. The top spot is open.";
