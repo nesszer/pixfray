@@ -1,6 +1,8 @@
 // Mod controls ("/admin/"): broadcaster and moderators only (GET /api/access/:channel -> canManage).
 // Uses GET/POST /api/admin/:channel (CONTRACTS.md section 2) and the read-only live socket for updates.
 import { api, errorText, h, $, setStatus, renderWho, signOut, seconds, timeAgo, dateTime, formatBytes, CHANNEL, withChannel, loginHref, applyChannel } from "./ui.js";
+import { skyBackdrop } from "./scrub.js";
+skyBackdrop();
 applyChannel();
 if (CHANNEL !== "nesszerra") document.querySelector(".page-header .subtitle").textContent = "For the " + CHANNEL + " broadcaster. Changes apply to every OBS overlay right away.";
 

@@ -4,6 +4,8 @@
 import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, addPet, addStage, addCosmeticSample, composeLook, onLooksReady, whenImage, seconds, CHANNEL, CHANNEL_PICKED, DEFAULT_COLOR, applyChannel } from "./ui.js";
 import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.js";
 import { CHARACTER_GROUPS } from "./character-groups.js";
+import { skyBackdrop } from "./scrub.js";
+skyBackdrop();
 applyChannel();
 
 const SWATCHES = ["#a78bfa", "#60a5fa", "#34d399", "#fbbf24", "#f87171", "#f472b6", "#e5e7eb", "#22d3ee"];

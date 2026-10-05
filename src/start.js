@@ -1,6 +1,7 @@
 // /start: a streamer's invite link (/start/?invite=<token>). Shows who the invite is for and the Twitch sign-in that
 // turns their channel on. The server sends people back here with ?error=<reason> when signup doesn't finish.
 import { api, h, $ } from "./ui.js";
+import { scrub, skyBackdrop } from "./scrub.js";
 
 const params = new URLSearchParams(location.search);
 const token = params.get("invite") || "";
@@ -65,3 +66,26 @@ async function init() {
   if (error) history.replaceState(null, "", location.pathname + "?invite=" + encodeURIComponent(token));
 }
 init();
+
+// The setup steps scroll past a scene that follows them: the camera starts over the arena (overlay), watches a rival
+// assemble (one bot), the duel (commands), then the ranking pillars (mods). The middle of the window picks the step.
+const steps = [...document.querySelectorAll(".story .step-grid > li")], cap = $("#story-cap");
+const CAPS = ["Your overlay draws the arena over your game.", "With the Duel module off, one bot calls each fight.",
+  "!challenge and !fight start the duel on stream.", "Every win climbs the ranks your mods look after."];
+const KEYS = [0, 0.25, 0.5, 1];   // frames: c = 1, 1.5, 2 and 3 of the intro's camera path
+let active = -1;
+function storyAt() {
+  const mid = innerHeight * 0.5, c = steps.map((li) => { const r = li.getBoundingClientRect(); return r.top + r.height / 2; });
+  let s = 0;
+  if (mid >= c[c.length - 1]) s = c.length - 1;
+  else for (let i = 0; i < c.length - 1; i++) if (mid >= c[i] && mid < c[i + 1]) { s = i + (mid - c[i]) / (c[i + 1] - c[i]); break; }
+  const k = Math.round(s);
+  if (k !== active) { active = k; steps.forEach((li, i) => li.classList.toggle("is-active", i === k)); cap.textContent = CAPS[k]; }
+  const i = Math.min(KEYS.length - 2, Math.floor(s));
+  return KEYS[i] + (KEYS[i + 1] - KEYS[i]) * (s - i);
+}
+skyBackdrop();
+if (steps.length === 4) {
+  document.documentElement.classList.add("has-story");
+  scrub($("#story-scene"), { frames: Array.from({ length: 21 }, (_, i) => "/assets/scene/seq/start-" + String(i).padStart(2, "0") + ".webp"), progress: storyAt, keys: KEYS });
+}
