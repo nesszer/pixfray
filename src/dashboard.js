@@ -47,6 +47,19 @@ function render3d(d = state.d) {
   if (pet?.url) whenImage(pet.url, () => render3d());
 }
 onLooksReady($("#preview3d"), () => render3d());
+// Picker tiles get voxel thumbnails too (src/voxthumb.js); until it loads, or without WebGL, they show flat sprites.
+const voxJobs = new Map();
+let voxThumb = null;
+function vox(canvas, make) {
+  if (voxJobs.size > 400) for (const c of voxJobs.keys()) if (!c.isConnected) voxJobs.delete(c);
+  voxJobs.set(canvas, make); voxThumb?.(canvas, make);
+}
+// a hat, pet or accessory drawing module arriving changes how the tiles' looks draw
+onLooksReady($("#preview3d"), () => { for (const [c, make] of voxJobs) if (c.isConnected) voxThumb?.(c, make); });
+if (!navigator.connection?.saveData) {
+  import("./voxthumb.js").then((m) => { voxThumb = m.voxThumb; for (const [c, make] of voxJobs) if (c.isConnected) voxThumb(c, make); }).catch(() => {});
+}
+const voxCanvas = () => h("canvas", { class: "vox", width: 128, height: 128, "aria-hidden": "true" });
 // Hovering a tile tries it on the 3D fighter for a moment; leaving puts the picked look back.
 let peekTimer = 0;
 function peekOn(el, field, value) {
@@ -214,11 +227,20 @@ const checkPicked = (box, kind, value) => { const r = box.querySelector("input[v
 
 // Thumbnails that show the picked character wearing an item; they follow the character as it changes.
 const lookSprites = [];
+const lookVox = [];
+// a pet on its own, as voxels, beside its flat sprite
+const petThumb = (canvas, pet, color) => {
+  const v = voxCanvas();
+  vox(v, () => { const l = composeLook(entryOf(state.d.avatar), { pet, looks: { petColor: color } }); return l?.pet ? { key: "pet:" + l.key, body: l.pet, frameH: l.petH } : null; });
+  return h("span", { class: "thumb" }, v, canvas);
+};
 const charThumb = (opts) => {
-  const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" });
+  const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" }), v = voxCanvas();
   const s = addSprite(canvas, entryOf(state.d.avatar), { active: () => false, ...opts });
   lookSprites.push(s);
-  return canvas;
+  const make = () => composeLook(entryOf(state.d.avatar), opts);
+  lookVox.push([v, make]); vox(v, make);
+  return h("span", { class: "thumb" }, v, canvas);
 };
 
 function renderHats() {
@@ -239,7 +261,7 @@ function renderItems(kind) {
   const pet = petById(state.d.pet) || state.shop.pets[0];
   const visual = (id) => {
     if (k.look === "char") return charThumb({ looks: { [k.field]: id } });
-    if (k.look === "pet") { const c = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" }); if (pet) addPet(c, pet, { color: id }); return c; }
+    if (k.look === "pet") { const c = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" }); if (pet) addPet(c, pet, { color: id }); return pet ? petThumb(c, pet, id) : c; }
     if (k.look === "sample") { const c = h("canvas", { class: "sprite sample", width: 64, height: 48, "aria-hidden": "true" }); if (id) addCosmeticSample(c, kind, id); return c; }
     return null;
   };
@@ -261,7 +283,7 @@ function renderPets() {
   const option = (pet) => {
     const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" });
     if (pet) addPet(canvas, pet, { color: state.d.petColor });
-    return tile({ kind: "pet", id: pet?.id || "", label: pet ? pet.label : "No pet", visual: canvas, price: pet?.price, out,
+    return tile({ kind: "pet", id: pet?.id || "", label: pet ? pet.label : "No pet", visual: pet ? petThumb(canvas, pet, state.d.petColor) : canvas, price: pet?.price, out,
       tag: pet ? TIER_NAMES[pet.tier] + ", " + boostText(pet.boost) : null, onPick: (id) => { state.d.pet = id; renderUpgrades(); renderItems("petcolor"); } });
   };
   box.replaceChildren(option(null), ...state.shop.pets.map(option));
@@ -330,9 +352,10 @@ function renderCharacters() {
     const id = "char-" + entry.id;
     const input = h("input", { type: "radio", name: "character", id, value: entry.id });
     input.addEventListener("change", () => { state.d.avatar = entry.id; renderPreview(); renderSave(); });
-    const canvas = h("canvas", { class: "sprite", width: 64, height: 64, "aria-hidden": "true" });
+    const canvas = h("canvas", { class: "sprite", width: 64, height: 64, "aria-hidden": "true" }), v = voxCanvas();
+    vox(v, () => composeLook(entry));
     const option = h("div", { class: "char-option", "data-groups": groupsOf(entry).join(" "), "data-name": (entry.label || entry.id).toLowerCase() + " " + entry.id }, input,
-      h("label", { for: id }, canvas, h("span", {}, entry.label || entry.id), entry.custom ? h("span", { class: "tag" }, "Channel original") : null));
+      h("label", { for: id }, h("span", { class: "thumb" }, v, canvas), h("span", {}, entry.label || entry.id), entry.custom ? h("span", { class: "tag" }, "Channel original") : null));
     let hover = false;
     option.addEventListener("pointerenter", () => { hover = true; });
     option.addEventListener("pointerleave", () => { hover = false; });
@@ -383,7 +406,7 @@ function renderPreview() {
   const plate = $("#showcase-plate");
   plate.textContent = (user?.displayName || user?.login || "you") + " · " + (state.profile?.elo ?? state.config?.initialElo ?? 1000);
   plate.style.setProperty("--plate", d.color);
-  if (lookSprites.entry !== entry) { lookSprites.entry = entry; for (const s of lookSprites) s.set(entry); }
+  if (lookSprites.entry !== entry) { lookSprites.entry = entry; for (const s of lookSprites) s.set(entry); for (const [v, make] of lookVox) if (v.isConnected) vox(v, make); }
   for (const s of document.querySelectorAll(".swatch")) s.setAttribute("aria-pressed", String(s.dataset.color === d.color));
   colorInput.value = d.color;
   const several = (state.owned.slots || 1) > 1;
@@ -416,7 +439,7 @@ function renderSave() {
 }
 
 function renderAll() {
-  lookSprites.length = 0;
+  lookSprites.length = 0; lookVox.length = 0;
   lookSprites.entry = entryOf(state.d.avatar);
   checkPicked($("#characters"), "character", state.d.avatar);
   renderBuilds(); renderUpgrades(); renderHats(); renderPets();
@@ -497,9 +520,9 @@ function renderLeaderboard() {
     return;
   }
   const character = (id) => {   // still thumbnail; it never animates in the table
-    const entry = entryOf(id), canvas = h("canvas", { class: "sprite", width: 32, height: 32, "aria-hidden": "true" });
-    if (entry) addSprite(canvas, entry, { active: () => false });
-    return [entry ? canvas : null, entry?.label || id];
+    const entry = entryOf(id), canvas = h("canvas", { class: "sprite", width: 32, height: 32, "aria-hidden": "true" }), v = voxCanvas();
+    if (entry) { addSprite(canvas, entry, { active: () => false }); vox(v, () => composeLook(entry)); }
+    return [h("span", { class: "lb-char" }, entry ? h("span", { class: "thumb" }, v, canvas) : null, h("span", {}, entry?.label || id))];
   };
   const row = (p, i) => h("tr", { class: [p.userId === me ? "me" : "", i < 3 ? "podium" : ""].filter(Boolean).join(" ") || null },
     h("td", { class: "num" }, i + 1), h("td", {}, h("span", { style: { color: p.color }, "aria-hidden": "true" }, "■ "), p.displayName || p.username, p.userId === me ? h("span", { class: "muted" }, " (you)") : null),

@@ -764,3 +764,67 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
 }
 /* keyboard focus and scrolled-to items stay clear of the fixed Save bar */
 @media (max-width: 900px) { html:has(.hero-card.has-3d) { scroll-padding-bottom: 88px; } }
+
+/* round 7: voxel thumbnails on the picker tiles (src/voxthumb.js); the flat sprite shows until one is drawn */
+.thumb { display: grid; place-items: center; }
+.thumb > * { grid-area: 1 / 1; }
+.thumb canvas.vox { display: block; width: 72px; height: 72px; visibility: hidden; }
+.thumb.has-vox canvas.vox { visibility: visible; }
+.thumb.has-vox canvas.sprite { visibility: hidden; }
+.item-grid .char-option canvas.vox { width: 80px; height: 80px; }
+@media (prefers-reduced-motion: no-preference) {
+  .char-option canvas.vox { transition: transform .18s ease; }
+  .char-option label:hover canvas.vox, .char-option input:checked + label canvas.vox { transform: translateY(-3px) scale(1.06); }
+}
+/* phone: the on-stream strip sits under the 3D view as one slim row, not over it; the Save bar is slimmer */
+@media (max-width: 900px) {
+  .hero-card.has-3d { grid-template-areas: "show" "preview" "points" "status" "next"; }
+  .hero-card.has-3d .showcase { height: 232px; }
+  .hero-card.has-3d .preview { position: static; grid-area: preview; width: auto; margin-top: var(--space-2); padding: 0 var(--space-3); background: var(--bg);
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); }
+  .hero-card.has-3d .preview-label { position: static; display: block; }
+  .hero-card.has-3d .stage-canvas { height: 56px; }
+  .hero-card.has-3d .preview-bar { padding: 0; border: 0; background: none; flex-wrap: nowrap; }
+  .hero-card.has-3d .preview-bar .btn, .hero-card.has-3d .win-link { flex: none; font-size: var(--text-xs); min-height: 44px; display: inline-flex; align-items: center; }
+  .hero-card.has-3d .toolbar { padding-top: var(--space-1); padding-bottom: calc(var(--space-1) + env(safe-area-inset-bottom)); }
+  .hero-card.has-3d .toolbar > .btn { min-height: 44px; }
+  body:has(.hero-card.has-3d) { padding-bottom: 56px; }
+}
+/* phone header: one row, the mark stands in for the wordmark */
+@media (max-width: 480px) {
+  .topbar-inner { flex-wrap: wrap; gap: 0 var(--space-3); padding-block: 0; }
+  .topbar .who:not(:empty) { padding-bottom: var(--space-2); }
+  .topbar .brand { font-size: 0; gap: 0; min-height: 44px; }
+  .topbar .brand .mark { width: 24px; height: 24px; }
+  .topbar nav { flex-wrap: nowrap; gap: var(--space-3); white-space: nowrap; }
+  .topbar nav .nav-extra { display: none; }
+  .hero-card.has-3d .showcase { height: 212px; }
+  .hero-card.has-3d .stage-canvas { height: 72px; }
+}
+/* the locked gate: a quiet look at the real controls, centred against the sign-in */
+.gate { align-items: center; }
+.gate-peek { opacity: .85; gap: var(--space-3); }
+.gate-peek .peek-row { font-size: var(--text-sm); }
+.gate-peek .peek-btn { font-size: var(--text-xs); padding: 4px var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-2); }
+.gate-peek .peek-link { font-size: var(--text-xs); color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 760px) {
+  .gate-peek { display: none; }
+  .gate .toolbar > .btn { width: 100%; justify-content: center; min-height: 48px; }
+}
+/* Ranks: rows centred on one line, voxel avatars, the leader marked */
+@media (min-width: 901px) { .hero-grid { grid-template-rows: auto 1fr; } }
+#leaderboard td { vertical-align: middle; }
+#leaderboard tbody tr:not(.empty):hover td { background: var(--raised); }
+#leaderboard tbody tr:first-child:not(.empty) td:first-child { box-shadow: inset 2px 0 0 var(--trim); }
+#leaderboard .lb-char { display: inline-flex; align-items: center; gap: var(--space-2); }
+#leaderboard .lb-char canvas.sprite, #leaderboard .lb-char canvas.vox { width: 40px; height: 40px; margin: 0; }
+#leaderboard tr.podium .lb-char canvas.sprite, #leaderboard tr.podium .lb-char canvas.vox { width: 48px; height: 48px; }
+/* /start steps: equal mock-ups so the headings share a baseline, larger numbered markers */
+.step-grid > li::before { width: 32px; height: 32px; top: -17px; font-size: var(--text-md); background: var(--trim); color: var(--on-accent); border-color: var(--trim); }
+.step-grid > li:last-child::before { background: var(--bg); color: var(--trim); }
+.step-mock .eg, .step-mock .badge { font-size: var(--text-xs); }
+@media (min-width: 901px) { .step-mock { height: 144px; } }
+@media (max-width: 480px) {
+  .step-grid { margin-left: var(--space-3); }
+  .step-grid > li::before { top: -4px; left: -17px; }
+}

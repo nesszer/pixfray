@@ -64,7 +64,7 @@ try {
     assert.equal(await page.locator('#characters .char-option:visible').count(), 1, 'search finds the zombie');
     await page.fill('#char-search', '');
     await page.locator('#char-groups [data-group=robots]').click();
-    const robots = await page.locator('#characters .char-option:visible label span:first-of-type').allTextContents();
+    const robots = await page.locator('#characters .char-option:visible label > span:not(.thumb):not(.tag)').allTextContents();
     assert.ok(robots.length >= 3 && robots.some((t) => /robot/i.test(t)) && !robots.some((t) => /zombie/i.test(t)), 'Robots & aliens filter: ' + robots.join(', '));
     assert.equal(await page.locator('#more-chars').isHidden(), true, 'no Show all while filtered');
     await page.locator('#char-groups [data-group=all]').click();
