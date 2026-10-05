@@ -47,7 +47,20 @@ export class VoxelFighter {
     this.size = size;
     this.height = sprite.rows * size;
     this.width = sprite.cols * size;
-    this.count = cells.length * layers;
+    // depth swells toward the middle of the sprite, so a fighter reads as a rounded figure, not a cut-out: edge cells are 2 deep, inner ones up to `layers`
+    const key = (q, r) => q * 4096 + r, dist = new Map(cells.map((c) => [key(c.q, c.r), 0]));
+    let ring = cells.filter((c) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => !dist.has(key(c.q + a, c.r + b))));
+    for (const c of ring) dist.set(key(c.q, c.r), 1);
+    for (let d = 2; ring.length && d < layers; d++) {
+      const next = [];
+      for (const c of ring) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const k = key(c.q + a, c.r + b);
+        if (dist.get(k) === 0) { dist.set(k, d); next.push({ q: c.q + a, r: c.r + b }); }
+      }
+      ring = next;
+    }
+    const depth = cells.map((c) => Math.min(layers, 2 * (dist.get(key(c.q, c.r)) || layers)));
+    this.count = depth.reduce((a, b) => a + b, 0);
     const geo = new THREE.BoxGeometry(size * 0.94, size * 0.94, size * 0.94);
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.04 });
     // a little self-light so the sprite colours read at night
@@ -66,20 +79,25 @@ export class VoxelFighter {
     this.spin = new Float32Array(this.count * 3);
     this.delay = new Float32Array(this.count);
     this.push = new Float32Array(this.count * 3);   // cursor displacement, eased
+    this.rnd = new Float32Array(this.count);
+    this.hurt = 0; this.hurtAt = { x: 0, y: 0 };    // damage 0..1 knocks cubes loose around a local impact point
+    this.hurtDone = 0;
     let rnd = seed * 9301 + 49297;
     const rand = () => ((rnd = (rnd * 9301 + 49297) % 233280) / 233280);
     let i = 0;
-    for (const c of cells) for (let l = 0; l < layers; l++, i++) {
-      const hx = c.x * size, hy = c.y * size + size / 2, hz = (l - (layers - 1) / 2) * size;
+    cells.forEach((c, ci) => { const n = depth[ci]; for (let l = 0; l < n; l++, i++) {
+      const hx = c.x * size, hy = c.y * size + size / 2, hz = (l - (n - 1) / 2) * size;
       this.home.set([hx, hy, hz], i * 3);
       if (scatter === 'rain') this.from.set([hx * 2.6 + (rand() - 0.5) * 3, hy + 5 + rand() * 6, hz + (rand() - 0.5) * 3], i * 3);
       else this.from.set([hx + (rand() - 0.5) * 5, hy + (rand() - 0.2) * 4, hz + (rand() - 0.5) * 5], i * 3);
       this.spin.set([(rand() - 0.5) * 9, (rand() - 0.5) * 9, (rand() - 0.5) * 9], i * 3);
       // feet first: lower cells land sooner, with some noise
       this.delay[i] = Math.min(1, (c.y / Math.max(1, sprite.rows)) * 0.7 + rand() * 0.3);
-      const col = l === layers - 1 ? c.color : c.color.clone().multiplyScalar(0.62 + 0.1 * l);   // the front layer (+z, toward the camera) keeps the sprite colour
+      this.rnd[i] = rand();
+      // the front layer (+z, toward the camera) keeps the sprite colour, with a little per-cube grain; the back and sides go darker
+      const col = l === n - 1 ? c.color.clone().multiplyScalar(0.94 + 0.12 * this.rnd[i]) : c.color.clone().multiplyScalar(0.55 + 0.3 * (l / Math.max(1, n - 1)));
       this.mesh.setColorAt(i, col);
-    }
+    } });
     this.mesh.instanceColor.needsUpdate = true;
     this.assemble = -1;
     this.pointer = null;     // local-space cursor point, or null
@@ -91,9 +109,10 @@ export class VoxelFighter {
   update(t, force = false) {
     t = Math.min(1, Math.max(0, t));
     const pointer = this.pointer;
-    if (!force && t === this.assemble && !pointer && !this.settling) return;
-    this.assemble = t;
+    if (!force && t === this.assemble && !pointer && !this.settling && this.hurt === this.hurtDone) return;
+    this.assemble = t; this.hurtDone = this.hurt;
     const R = this.height * 0.28, R2 = R * R;
+    const hk = this.hurt, HR = this.height * (0.22 + 0.3 * hk), hx0 = this.hurtAt.x, hy0 = this.hurtAt.y;
     let moving = false;
     for (let i = 0; i < this.count; i++) {
       const k = i * 3;
@@ -106,10 +125,19 @@ export class VoxelFighter {
           px = (dx / d) * f; py = (dy / d) * f; pz = f * 1.4 * (this.home[k + 2] >= 0 ? 1 : 0.6);
         }
       }
-      const ex = this.push[k] + (px - this.push[k]) * 0.16, ey = this.push[k + 1] + (py - this.push[k + 1]) * 0.16, ez = this.push[k + 2] + (pz - this.push[k + 2]) * 0.16;
+      let ex = this.push[k] + (px - this.push[k]) * 0.16, ey = this.push[k + 1] + (py - this.push[k + 1]) * 0.16, ez = this.push[k + 2] + (pz - this.push[k + 2]) * 0.16;
       this.push[k] = ex; this.push[k + 1] = ey; this.push[k + 2] = ez;
       if (Math.abs(ex) + Math.abs(ey) + Math.abs(ez) > 1e-4) moving = true;
       if (a <= 0) { m4.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, m4); continue; }
+      let knock = 0;
+      if (hk > 0 && a === 1) {   // cubes near the impact break off and hang in the air, away from the blow
+        const dx = this.home[k] - hx0, dy = this.home[k + 1] - hy0, d = Math.hypot(dx, dy);
+        if (d < HR && this.rnd[i] < hk * 0.75 * (1 - d / HR)) {
+          knock = (0.5 + this.rnd[i] * 2.2) * this.size * 12 * hk;
+          const n = d || 1e-4;
+          ex += knock * (0.35 + 0.4 * this.rnd[(i * 3) % this.count]); ey += (dy / n) * knock * 0.45 + knock * 0.1; ez += knock * (0.5 + this.rnd[(i * 7) % this.count]);
+        }
+      }
       v3.set(
         this.from[k] + (this.home[k] - this.from[k]) * a + ex,
         this.from[k + 1] + (this.home[k + 1] - this.from[k + 1]) * a + ey,

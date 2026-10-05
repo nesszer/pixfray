@@ -160,6 +160,7 @@ Object.assign(key.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near:
 key.shadow.bias = -0.0008; key.shadow.normalBias = 0.02;
 scene.add(key);
 const rim = new THREE.DirectionalLight(0x9db2ff, 0.9); rim.position.set(-1.5, 10, -8); scene.add(rim);
+const clash = new THREE.PointLight(0xffc070, 0, 4, 2); scene.add(clash);   // the flash between the fighters on a hit
 const warm = [[-3.2, 1.9, 2.6], [3.3, 1.9, 2.2], [0.2, 1.9, -3.6]].map(([x, y, z]) => { const l = new THREE.PointLight(0xff9a40, 16, 10, 2); l.position.set(x, y, z); scene.add(l); return l; });
 
 const island = buildIsland({ shadows: !small }); scene.add(island);
@@ -190,23 +191,23 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.62, 0.55, 0.78)
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const film = new ShaderPass({
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uAspect: { value: 1 }, uFray: { value: 0 }, uHit: { value: 0 }, uDir: { value: 1 }, uRes: { value: new THREE.Vector2(1, 1) }, uLift: { value: new THREE.Vector3() }, uGain: { value: new THREE.Vector3(1, 1, 1) } },
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uAspect: { value: 1 }, uFray: { value: 0 }, uHit: { value: 0 }, uDir: { value: 1 }, uRes: { value: new THREE.Vector2(1, 1) }, uLift: { value: new THREE.Vector3() }, uGain: { value: new THREE.Vector3(1, 1, 1) }, uBlur: { value: 1 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }',
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float uTime, uAspect, uFray, uHit, uDir; uniform vec2 uRes; uniform vec3 uLift, uGain; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float uTime, uAspect, uFray, uHit, uDir; uniform vec2 uRes; uniform vec3 uLift, uGain; uniform float uBlur; varying vec2 vUv;
     float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233))) * 43758.5453); }
     void main(){
       vec2 uv = vUv; float frayed = 0.0, tilePx = 1.0; vec2 tileF = vec2(0.5);
       // pixel fray: while the camera travels between chapters, blocks of the frame snap to coarse pixels and slip
       // in the travel direction; the band of frayed blocks sweeps down (or up) the screen as it goes
       if (uFray > 0.001) {
-        float bs = 9.0 * uRes.y / 900.0;
+        float bs = 6.0 * uRes.y / 900.0;
         vec2 blk = floor(vUv * uRes / (bs * 6.0));
         float tick = floor(uTime * 12.0), r = h(blk + tick);
         float band = fract(-uDir * uTime * 0.55), dy = abs(vUv.y - band);
         float sweep = smoothstep(0.2, 0.0, min(dy, 1.0 - dy));
         if (r < uFray * sweep * 1.3) {
-          tilePx = bs * (1.5 + floor(h(blk * 1.7 + tick) * 3.0));
+          tilePx = bs * (1.0 + floor(h(blk * 1.7 + tick) * 2.0));
           vec2 pc = vUv * uRes / tilePx; tileF = fract(pc);
           uv = (floor(pc) + 0.5) * tilePx / uRes;
           uv.y += uDir * h(blk.xx + tick) * 0.085 * uFray;
@@ -218,6 +219,13 @@ const film = new ShaderPass({
       float ca = 0.0016 + uFray * 0.006 + uHit * 0.014;
       vec2 split = frayed * vec2(0.0, uDir * 0.006 * uFray);   // frayed blocks split red and blue along the travel
       vec3 c = vec3(texture2D(tDiffuse, uv + d0 * ca + split).r, texture2D(tDiffuse, uv).g, texture2D(tDiffuse, uv - d0 * ca - split).b);
+      // depth of field, cheaply: the frame softens toward its edges, so the subject in the middle stays the sharpest thing
+      float soft = uBlur * (1.0 - frayed) * smoothstep(0.42, 0.95, length(d0 * vec2(uAspect, 1.0)));
+      if (soft > 0.01) {
+        vec2 px = soft * 3.2 * uRes.y / 900.0 / uRes; vec3 acc = c;
+        for (int k = 0; k < 8; k++) { float a = float(k) * 0.785398 + 0.4; acc += texture2D(tDiffuse, uv + vec2(cos(a), sin(a)) * px * (1.0 + mod(float(k), 2.0))).rgb; }
+        c = mix(c, acc / 9.0, min(1.0, soft * 1.4));
+      }
       float steps = mix(256.0, 10.0, frayed);   // frayed blocks drop to a few colour steps
       c = floor(c * steps + 0.5) / steps;
       if (frayed > 0.5) {   // each coarse pixel drawn as a little cube: a dark seam, a lit top and left edge
@@ -249,7 +257,7 @@ function placeTag(tag, pos, visible) {
   if (visible) {
     proj.copy(pos).project(camera);
     const lim = tag.corner ? 0.985 : 0.9;   // frame-corner labels are anchored by their own edge, so they may sit near the screen edge
-    if (proj.z > 1 || Math.abs(proj.x) > lim || Math.abs(proj.y) > 0.9) visible = false;
+    if (proj.z > 1 || Math.abs(proj.x) > lim || Math.abs(proj.y) > 0.9 || (1 - proj.y) / 2 * innerHeight < 84) visible = false;   // never under the header
     else {
       let x = (proj.x + 1) / 2 * innerWidth;
       if (!tag.call && !tag.corner) { const hw = (tag.w ||= tag.el.firstElementChild.offsetWidth) / 2 + 8; x = Math.min(innerWidth - hw, Math.max(hw, x)); }
@@ -261,6 +269,43 @@ function placeTag(tag, pos, visible) {
 // callouts: a dot on the 3D point, a leader line, then a title and one line of detail
 function makeCall(title, sub, cls = '') {
   return Object.assign(makeTag('tag-call ' + cls, `<i class="dot"></i><i class="lead"></i><span class="txt"><b>${title}</b><span>${sub}</span></span>`), { call: true });
+}
+// lock-on bracket: four corner marks that glide from subject to subject, with a two-line readout
+const lock = (() => {
+  const el = document.createElement('div'); el.className = 'lock';
+  el.innerHTML = '<i></i><i></i><i></i><i></i><div class="lock-txt"><b></b><span></span></div>';
+  tagLayer.appendChild(el);
+  return { el, txt: el.lastChild, b: el.querySelector('b'), s: el.querySelector('.lock-txt span'), r: null, key: null, on: false, pos: null };
+})();
+const lockP = new THREE.Vector3(), lockBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+function boxRect(boxes, out) {
+  out.x0 = out.y0 = Infinity; out.x1 = out.y1 = -Infinity;
+  for (const [x0, x1, y0, y1, z0, z1] of boxes) for (let k = 0; k < 8; k++) {
+    lockP.set(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0).project(camera);
+    if (lockP.z > 1) return false;
+    const sx = (lockP.x + 1) / 2 * innerWidth, sy = (1 - lockP.y) / 2 * innerHeight;
+    out.x0 = Math.min(out.x0, sx); out.x1 = Math.max(out.x1, sx); out.y0 = Math.min(out.y0, sy); out.y1 = Math.max(out.y1, sy);
+  }
+  return true;
+}
+const fbox = (f, pad = 0.25) => { const p = f.group.position; return [p.x - f.width / 2, p.x + f.width / 2, p.y, p.y + f.height, p.z - pad, p.z + pad]; };
+function placeLock(target, alpha, dt, portrait) {
+  const ok = Boolean(target) && alpha > 0.01 && boxRect(target.boxes, lockBox);
+  if (ok) {
+    const b = lockBox, pad = 12, m = 10;
+    b.x0 = Math.max(m, b.x0 - pad); b.x1 = Math.min(innerWidth - m, b.x1 + pad); b.y0 = Math.max(m + 64, b.y0 - pad); b.y1 = Math.min(innerHeight - m, b.y1 + pad);
+    if (!lock.r) lock.r = { ...b };
+    else { const k = reduced ? 1 : 1 - Math.exp(-dt * 7); for (const n of ['x0', 'y0', 'x1', 'y1']) lock.r[n] += (b[n] - lock.r[n]) * k; }
+    if (lock.key !== target.key) { lock.key = target.key; lock.b.textContent = target.title; lock.s.textContent = target.sub; }
+    const r = lock.r, st = lock.el.style;
+    st.transform = `translate3d(${r.x0.toFixed(1)}px, ${r.y0.toFixed(1)}px, 0)`;
+    st.width = `${(r.x1 - r.x0).toFixed(1)}px`; st.height = `${(r.y1 - r.y0).toFixed(1)}px`;
+    st.opacity = alpha.toFixed(3);
+    let pos = portrait ? 'none' : target.pos;   // on a phone the corners alone; the copy below carries the numbers
+    if (pos === 'below' && r.y1 + 64 > innerHeight) pos = 'above';
+    if (pos !== lock.pos) { lock.pos = pos; lock.txt.className = `lock-txt ${pos}`; }
+  }
+  if (ok !== lock.on) { lock.on = ok; lock.el.classList.toggle('on', ok); }
 }
 const scrimL = document.createElement('div'), scrimR = document.createElement('div');
 scrimL.className = 'scrim scrim-l'; scrimR.className = 'scrim scrim-r';
@@ -296,15 +341,15 @@ function fighter(id, height, opts, density = 15) {
   scene.add(f.group);
   return f;
 }
-const hero = fighter('knight', 2.3, { scatter: 'burst', seed: 3, shadows: !small, layers: 4 }, 23);
-const rival = fighter('toon-ranger', 2.15, { scatter: 'burst', seed: 7, shadows: !small, layers: 4 }, 23);
+const hero = fighter('knight', 2.3, { scatter: 'burst', seed: 3, shadows: !small, layers: 8 }, 23);
+const rival = fighter('toon-ranger', 2.15, { scatter: 'burst', seed: 7, shadows: !small, layers: 8 }, 23);
 if (rival) rival.group.scale.x = -1;
-const crowd = crowdPeople.map((p, i) => ({ person: p, f: fighter(p.avatar, 1.35, { scatter: 'rain', seed: 11 + i, shadows: !small, layers: 3 }) })).filter((c) => c.f);
+const crowd = crowdPeople.map((p, i) => ({ person: p, f: fighter(p.avatar, 1.35, { scatter: 'rain', seed: 11 + i, shadows: !small, layers: 6 }) })).filter((c) => c.f);
 
 // podium: rank 1 in the middle, then 2 left, 3 right, 4 and 5 outside
-const PODIUM_X = [0, -1.25, 1.25, -2.5, 2.5], PODIUM_Z = -2.05, DUEL_X = 1.15;
+const PODIUM_X = [0, -1.25, 1.25, -2.5, 2.5], PODIUM_Z = -2.05, DUEL_X = 1.0;
 const stacks = [16, 12, 10, 8, 7];   // levels by rank (1st tallest); the Elo itself is on the tag
-const DUEL_SPOT = [[-2.6, -1.3], [-1.6, -2.4], [0.1, -2.95], [1.2, -3.3], [-3.3, -2.6]];   // the crowd steps back to the ropes for the duel
+const DUEL_SPOT = [[-4.3, -1.9], [-3.3, -3.5], [-5.6, -5.4], [-5.3, -3.6], [-2.1, -4.9]];   // the crowd steps back to the ropes for the duel
 // a column of light over the rank 1 tower
 const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.62, 16, 20, 1, true), new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, uniforms: { uA: { value: 0 }, uTime: { value: 0 } },
@@ -319,35 +364,38 @@ const CROWD_SPOT = [[-2.8, -1.0], [-1.9, -2.3], [0.2, -3.1], [1.9, -2.3], [2.8, 
 
 // tags
 const T = {
-  look: makeTag('tag-line', '<b style="color:#c9a45c">you</b> !look'),
-  lookReply: makeTag('tag-line', '<b style="color:#e7c27c">PixFray</b> @you, change your look here: pixfray.xyz/?channel=nesszerra#fighter'),
+  lookReply: makeTag('tag-line tag-log', '<span><b style="color:#c9a45c">you</b> !look</span><span><b style="color:#e7c27c">PixFray</b> @you, change your look here: pixfray.xyz/?channel=nesszerra#fighter</span>'),
   challenge: makeTag('tag-line', '<b style="color:#c9a45c">challenger</b> !challenge @rival'),
   fight: makeTag('tag-line', '<b style="color:#7fa7d9">rival</b> !fight'),
   roll: makeTag('tag-roll', ''),
   hpA: makeTag('tag-hp', ''),
   hpB: makeTag('tag-hp', ''),
-  win: makeCall('+$5 a win', 'plus an upgrade point'),
   loss: makeCall('+$3 a loss', 'every finished duel pays'),
   jump: makeTag('tag-jump', '!jump'),
-  obsL: makeTag('tag-obs', '<b>OBS browser source</b> overlay link'),
-  obsR: makeTag('tag-obs end', '1920 × 1080'),
+  obsL: makeTag('tag-obs', '<b>OBS browser source</b> overlay link · 1920 × 1080'),
 };
-T.obsL.corner = T.obsR.corner = true;
-T.hp = makeCall('100 HP', 'one d6 roll per swing, 12 swings a duel');
-T.knight = makeCall('Knight', `one of ${catalog.length || 56} fighters, rebuilt from ${hero ? hero.count.toLocaleString('en-US') : 'a few thousand'} cubes`);
+T.obsL.corner = true;
+const FIGHTERS = catalog.length || 56, top1 = crowd[0]?.person;
+const LOCKS = [
+  { key: 'knight', title: 'Knight', sub: `${hero ? hero.count.toLocaleString('en-US') + ' cubes · ' : ''}1 of ${FIGHTERS} fighters`, pos: 'below' },
+  { key: 'you', title: '@you', sub: 'walks onto the stream when you chat', pos: 'below' },
+  { key: 'duel', title: '', sub: '', pos: 'none' },
+  { key: 'top', title: top1?.username ? `1. ${top1.displayName || top1.username}` : 'Top of the ladder', sub: top1?.username ? `${top1.elo} Elo · ${top1.wins}–${top1.losses}` : "live from nesszerra's channel", pos: 'above' },
+  { key: 'loot', title: '+$5 a win', sub: '+$3 a loss · plus an upgrade point', pos: 'left' },
+];
 const names = crowd.map((c) => makeTag('tag-line', `<b style="color:${esc(c.person.color || '#c9a45c')}">${esc(c.person.displayName || c.person.username || c.person.avatar)}</b>`));
 const ranks = crowd.map((c, i) => makeTag('tag-rank', c.person.username ? `<b>${c.person.elo}</b>${i + 1}. ${esc(c.person.displayName || c.person.username)}` : ''));
 
 // ---------- moods ----------
 // each chapter is its own world: ember arena, teal dusk for chat, crimson duel, cold moonlit ladder, gold loot, blue night stream
 const MOODS = [
-  { fog: 0x0d0906, fogD: 0.027, cloud: 0x4a3020, sky: [1, 1, 1], hemi: 0x8a6a4a, key: 0xffcf96, keyI: 1.8, cool: 0x5d7cff, coolI: 0.5, warm: 0xff9a40, warmI: 1, moon: 1, lift: [0, 0, 0], gain: [1, 1, 1] },
-  { fog: 0x061110, fogD: 0.025, cloud: 0x1f4846, sky: [0.5, 1.15, 1.25], hemi: 0x3f7a76, key: 0xffd7a8, keyI: 1.5, cool: 0x46d0c4, coolI: 1.3, warm: 0xff9a40, warmI: 0.95, moon: 1, lift: [0, 0.02, 0.026], gain: [0.86, 1.03, 1.08] },
-  { fog: 0x120506, fogD: 0.027, cloud: 0x4a1a16, sky: [1.45, 0.6, 0.55], hemi: 0x7a4038, key: 0xffa27a, keyI: 1.95, cool: 0x7c66ff, coolI: 0.6, warm: 0xff6a34, warmI: 1.05, moon: 0, lift: [0.014, 0, 0.004], gain: [1.03, 0.97, 0.95] },
-  { fog: 0x050a16, fogD: 0.024, cloud: 0x2c3c66, sky: [0.45, 0.75, 1.7], hemi: 0x45578a, key: 0x9fb8ff, keyI: 1.45, cool: 0x7090ff, coolI: 1.7, warm: 0xffa850, warmI: 0.55, moon: 1, lift: [0, 0.004, 0.022], gain: [0.9, 0.98, 1.12] },
-  { fog: 0x130c02, fogD: 0.026, cloud: 0x5a3c12, sky: [1.45, 1.15, 0.45], hemi: 0x9a7a3a, key: 0xffd27a, keyI: 2.5, cool: 0x5d7cff, coolI: 0.35, warm: 0xffb040, warmI: 1.6, moon: 0.4, lift: [0.03, 0.02, 0.006], gain: [1.2, 1.1, 0.9] },
-  { fog: 0x070913, fogD: 0.011, cloud: 0x2a3560, sky: [0.6, 0.7, 1.35], hemi: 0x6a7090, key: 0xffd9a8, keyI: 1.9, cool: 0x6a86ff, coolI: 1.1, warm: 0xffa040, warmI: 1.35, moon: 1, lift: [0, 0, 0.012], gain: [0.98, 1, 1.05] },
-].map((m) => ({ ...m, cloud: new THREE.Color(m.cloud), fog: new THREE.Color(m.fog), hemi: new THREE.Color(m.hemi), key: new THREE.Color(m.key), cool: new THREE.Color(m.cool), warm: new THREE.Color(m.warm) }));
+  { fog: 0x0d0906, fogD: 0.027, cloud: 0x4a3020, sky: [1, 1, 1], hemi: 0x8a6a4a, key: 0xffcf96, keyI: 1.8, cool: 0x5d7cff, coolI: 0.8, warm: 0xff9a40, warmI: 1, moon: 1, lift: [0, 0, 0], gain: [1, 1, 1] , rim: 1.5, floor: [1, 1, 1], ring: 0xff7a26 },
+  { fog: 0x061110, fogD: 0.025, cloud: 0x1f4846, sky: [0.5, 1.15, 1.25], hemi: 0x3f7a76, key: 0xffd7a8, keyI: 1.5, cool: 0x46d0c4, coolI: 1.3, warm: 0xff9a40, warmI: 0.95, moon: 1, lift: [0, 0.024, 0.032], gain: [0.8, 1.04, 1.14] , rim: 0.9, floor: [0.72, 0.92, 0.98], ring: 0x2fd0c0 },
+  { fog: 0x120506, fogD: 0.027, cloud: 0x4a1a16, sky: [1.45, 0.6, 0.55], hemi: 0x7a4038, key: 0xffa27a, keyI: 1.95, cool: 0x7c66ff, coolI: 0.6, warm: 0xff6a34, warmI: 1.05, moon: 0, lift: [0.014, 0, 0.004], gain: [1.03, 0.97, 0.95] , rim: 0.25, floor: [1.08, 0.78, 0.74], ring: 0xff3020 },
+  { fog: 0x050a16, fogD: 0.024, cloud: 0x2c3c66, sky: [0.45, 0.75, 1.7], hemi: 0x45578a, key: 0x9fb8ff, keyI: 1.45, cool: 0x7090ff, coolI: 1.7, warm: 0xffa850, warmI: 0.55, moon: 1, lift: [0, 0.004, 0.022], gain: [0.9, 0.98, 1.12] , rim: 1.4, floor: [0.7, 0.8, 1.08], ring: 0x6c9cff },
+  { fog: 0x0e0802, fogD: 0.03, cloud: 0x4a3010, sky: [1.3, 1.0, 0.4], hemi: 0x8a6a34, key: 0xfff0d0, keyI: 2.3, cool: 0x5d7cff, coolI: 0.35, warm: 0xffb040, warmI: 1.3, moon: 0.4, lift: [0.012, 0.008, 0.002], gain: [1.1, 1.05, 0.94], bloom: 0.42 , rim: 0.5, floor: [1.1, 0.98, 0.8], ring: 0xffb030 },
+  { fog: 0x070913, fogD: 0.011, cloud: 0x2a3560, sky: [0.6, 0.7, 1.35], hemi: 0x6a7090, key: 0xffd9a8, keyI: 1.9, cool: 0x6a86ff, coolI: 1.1, warm: 0xffa040, warmI: 1.35, moon: 1, lift: [0, 0.004, 0.018], gain: [0.9, 0.97, 1.12] , rim: 1.8, floor: [0.86, 0.88, 1.0], ring: 0xff8a36 },
+].map((m) => ({ ...m, cloud: new THREE.Color(m.cloud), fog: new THREE.Color(m.fog), hemi: new THREE.Color(m.hemi), key: new THREE.Color(m.key), cool: new THREE.Color(m.cool), warm: new THREE.Color(m.warm), ring: new THREE.Color(m.ring) }));
 const mixN = (a, b, f) => a + (b - a) * f;
 function applyMood(C) {
   const i = Math.min(4, Math.floor(C)), f = ease(clamp01(C - i)), a = MOODS[i], b = MOODS[i + 1];
@@ -359,11 +407,14 @@ function applyMood(C) {
   cool.color.copy(a.cool).lerp(b.cool, f); cool.intensity = mixN(a.coolI, b.coolI, f);
   warm.forEach((l) => l.color.copy(a.warm).lerp(b.warm, f));
   sky.material.uniforms.uMoon.value = mixN(a.moon, b.moon, f);
-  rim.intensity = 0.25 + 0.45 * sky.material.uniforms.uMoon.value;
+  rim.intensity = mixN(a.rim ?? 0.7, b.rim ?? 0.7, f);
+  island.userData.floor.value.setRGB(...a.floor.map((x, j) => mixN(x, b.floor[j], f)));
+  island.userData.rune.uColor.value.copy(a.ring).lerp(b.ring, f);
   lanterns.cone.uniforms.uColor.value.copy(a.warm).lerp(b.warm, f);
   sky.material.uniforms.uMul.value.set(...a.sky.map((x, j) => mixN(x, b.sky[j], f)));
   film.uniforms.uLift.value.set(...a.lift.map((x, j) => mixN(x, b.lift[j], f)));
   film.uniforms.uGain.value.set(...a.gain.map((x, j) => mixN(x, b.gain[j], f)));
+  bloom.strength = mixN(a.bloom ?? 0.62, b.bloom ?? 0.62, f);
   return mixN(a.warmI, b.warmI, f);
 }
 
@@ -372,7 +423,7 @@ function applyMood(C) {
 const KEYS = [
   { pos: [0.9, 1.15, 6.1], look: [0, 1.4, 0] },
   { pos: [0.8, 7.4, 6.9], look: [0, 0.5, -1.0] },
-  { pos: [0.3, 0.7, 7.6], look: [0, 1.75, 0] },
+  { pos: [0.05, 1.3, 7.8], look: [-0.25, 1.6, 0] },
   { pos: [0.4, 1.0, 7.6], look: [0, 3.7, -2.05] },
   { pos: [2.6, 2.2, 5.6], look: [-0.5, 1.75, 0.1] },
   { pos: [-3.2, 3.0, 28.6], look: [0, -0.5, 0] },
@@ -387,9 +438,10 @@ function cameraAt(C, portrait) {
   posCurve.getPoint(u, camPos);
   lookCurve.getPoint(u, camLook);
   if (portrait) {   // narrow screens: step back; the view offset lifts the scene above the text
-    tmp.copy(camPos).sub(camLook); camPos.copy(camLook).addScaledVector(tmp, 1.3 + 0.45 * clamp01(1 - Math.abs(C - 3)) - 0.1 * clamp01((C - 3.5) * 2) + 0.75 * clamp01((C - 4.3) / 0.7));
+    tmp.copy(camPos).sub(camLook); camPos.copy(camLook).addScaledVector(tmp, 1.12 + 0.2 * clamp01(1 - Math.abs(C - 2)) + 0.5 * clamp01(1 - Math.abs(C - 3)) - 0.05 * clamp01((C - 3.5) * 2) + 0.6 * clamp01((C - 4.3) / 0.7));
+    camPos.y = Math.max(camPos.y, 0.9);   // stepping back from an upward look must not sink the camera under the floor
     camLook.y += 0.9 * clamp01(1 - Math.abs(C - 3) * 1.5);
-    camLook.y += 0.8 * clamp01(1 - Math.abs(C - 4) * 1.5);   // the hero stands on the hoard   // look up the ladder towers   // ladder towers need room; loot and stream come closer
+    camLook.y += 0.8 * clamp01(1 - Math.abs(C - 4) * 1.5);   // the hero stands on the hoard
   }
 }
 
@@ -479,6 +531,7 @@ function frame() {
     const lastA = ROLLS.filter((r) => r.by === 'a' && d >= r.at).pop();
     if (lastA && t - rollAt < 0.35 && ROLLS[lastRoll] === lastA) lunge = Math.sin(((t - rollAt) / 0.35) * Math.PI) * 0.35;
     hero.group.position.set(heroHome.x + lunge, jumpY + lift, heroHome.z);
+    hero.group.rotation.z = back ? 0 : -(0.07 * duelIn + lunge * 0.25);   // leans into the swing
     if (!reduced) hero.group.scale.y = 1 + Math.sin(t * 2.1) * 0.008;
     // cursor push: intersect the pointer ray with the hero's plane, in hero-local units
     overHero = false;
@@ -495,8 +548,6 @@ function frame() {
     document.body.style.cursor = overHero ? 'pointer' : '';
     hero.update(reduced ? (heroGone > 0.5 ? 0 : 1) : Math.min(range(t - bornAt, 0.15, 2.3), 1 - heroGone));
     placeTag(T.jump, v.set(hero.group.position.x, hero.group.position.y + hero.height + 0.35, 0), t - jumpAt < 0.9);
-    placeTag(T.knight, v.set(hero.group.position.x + hero.width * 0.2, hero.height * 0.84, 0.2), C < 0.4 && t - bornAt > 2.4 && !portrait);
-    placeTag(T.hp, v.set(hero.group.position.x + hero.width * 0.26, hero.height * 0.3, 0.2), C < 0.4 && t - bornAt > 2.9 && !portrait);
   }
 
   // crowd rains in during chapter 1, climbs the podium in chapter 3
@@ -510,7 +561,7 @@ function frame() {
     c.f.group.position.set(sx + (px - sx) * climb, h * climb, sz + (PODIUM_Z - sz) * climb);
     c.f.update(reduced ? (C >= 0.5 ? 1 : 0) : a);
     placeTag(names[i], v.set(c.f.group.position.x, c.f.group.position.y + c.f.height + 0.12, c.f.group.position.z), a > 0.92 && C < 1.45 && (!portrait || i % 2 === 0));
-    placeTag(ranks[i], v.set(px, h + c.f.height + 0.12, PODIUM_Z), C > 2.95 && C < 3.4 && !portrait && Boolean(c.person.username));
+    placeTag(ranks[i], v.set(px, h + c.f.height + 0.12, PODIUM_Z), C > 2.95 && C < 3.4 && !portrait && Boolean(c.person.username) && i > 0);
     if (i === 0) { beam.visible = climb > 0.01; beam.position.set(px, h + 8, PODIUM_Z); beam.material.uniforms.uA.value = climb; beam.material.uniforms.uTime.value = t; }
     // podium column: 2x2 cubes per level, brass at the top
     const levels = Math.round(stacks[i] * grow);
@@ -531,6 +582,12 @@ function frame() {
     const lastB = ROLLS[lastRoll];
     if (lastB && lastB.by === 'a' && t - rollAt < 0.5) shake = Math.sin(t * 70) * 0.05 * (1 - (t - rollAt) / 0.5);
     rival.group.position.set(DUEL_X + shake, 0, 0.15);
+    rival.group.rotation.z = 0.05 * ra - shake * 0.8;   // braced, rocked back by a hit
+    clash.position.set(0, 1.25, 0.6); clash.intensity = reduced ? 0 : hitK * 45;
+    // damage shows: cubes break off the side facing the challenger, more with each hit
+    const lost = lastRoll >= 0 ? (lastRoll >= 2 ? 84 : 34) : 0, hk = reduced ? lost / 100 : rival.hurt + (lost / 100 - rival.hurt) * (1 - Math.exp(-dt * 6));
+    rival.hurt = Math.abs(hk - lost / 100) < 0.004 ? lost / 100 : hk;
+    rival.hurtAt.x = rival.width * 0.3; rival.hurtAt.y = rival.height * 0.55;
     rival.update(reduced ? (ra > 0.5 ? 1 : 0) : ra);
   }
   // which roll has landed (scroll can run backwards)
@@ -564,8 +621,7 @@ function frame() {
   placeTag(T.hpB, v.set(DUEL_X, -0.05, 0.6), duelTags && Boolean(rival));
   placeTag(T.challenge, v.set(heroHome.x, (hero?.height || 2) + 0.25, 0.15), C > 1.5 && C < 2.05 && !portrait);
   placeTag(T.fight, v.set(DUEL_X, (rival?.height || 2) + 0.25, 0.15), C > 1.62 && C < 2.05 && !portrait);
-  placeTag(T.look, v.set(0, (hero?.height || 2) + 0.3, 0), C > 0.62 && C < 1.3);
-  placeTag(T.lookReply, v.set(0.9, 0.05, 1.7), C > 0.78 && C < 1.3 && !portrait);
+  placeTag(T.lookReply, v.set(0.9, 0.05, 1.7), C > 0.7 && C < 1.3 && !portrait);
 
   // the hoard and the chest
   if (gold !== lastGold) {
@@ -603,7 +659,16 @@ function frame() {
     }
   }
   coins.mesh.count = ci; coins.mesh.instanceMatrix.needsUpdate = true;
-  placeTag(T.win, v.set(heroHome.x - 2.0, lift + 1.5, 0.5), C > 3.6 && C < 4.45 && !portrait);
+
+  // the lock-on bracket frames this chapter's subject; it fades out between chapters and glides to the next one
+  const ch = Math.round(C);
+  let lockOn = null, lockA = 1 - ease(range(Math.abs(C - ch), 0.18, 0.4));
+  if (ch === 0 && hero) { lockOn = { ...LOCKS[0], boxes: [fbox(hero)] }; lockA *= range(t - bornAt, 2.3, 2.9); }
+  else if (ch === 1 && hero) lockOn = { ...LOCKS[1], boxes: [fbox(hero)] };
+  else if (ch === 2 && hero && rival) lockOn = { ...LOCKS[2], boxes: [fbox(hero), fbox(rival)] };
+  else if (ch === 3 && crowd[0]) lockOn = { ...LOCKS[3], boxes: [fbox(crowd[0].f, 0.1)] };
+  else if (ch === 4 && hero && gold > 0.5) lockOn = { ...LOCKS[4], boxes: [fbox(hero)] };
+  placeLock(lockOn, lockA, dt, portrait);
   placeTag(T.loss, v.set(chest.group.position.x + 0.25, 0.7, chest.group.position.z + 0.5), C > 3.7 && C < 4.45 && !portrait);
 
   // the stream frame builds itself around the whole island at the end
@@ -622,7 +687,6 @@ function frame() {
   }
   const fy = frame3d.group.position.y + frame3d.h / 2 + frame3d.unit;
   placeTag(T.obsL, v.set(-frame3d.w / 2 - frame3d.unit, fy, 0.4), fr > 0.97);
-  placeTag(T.obsR, v.set(frame3d.w / 2 + frame3d.unit, fy, 0.4), fr > 0.97 && !portrait);   // too narrow for both on a phone
 
   // ambience
   const tm = reduced ? 0.25 : 1;
@@ -634,7 +698,7 @@ function frame() {
   warm.forEach((l, i) => { l.intensity = warmI * 16 + (reduced ? 0 : Math.sin(t * 7 + i * 2) * 1.5 + Math.sin(t * 17 + i) * 0.8); });
   islets.list.forEach((it, i) => { it.g.position.y = it.y + (reduced ? 0 : Math.sin(t * 0.4 + it.seed) * 0.25); it.g.rotation.y = reduced ? 0 : t * 0.03 * (i % 2 ? 1 : -1); });
   film.uniforms.uTime.value = t;
-  film.uniforms.uFray.value = reduced ? 0 : ease(range(Math.abs(targetC - C), 0.05, 0.6)) * 0.72;
+  film.uniforms.uFray.value = reduced ? 0 : ease(range(Math.abs(targetC - C), 0.05, 0.6)) * 0.5;
   if (Math.abs(targetC - C) > 0.02) film.uniforms.uDir.value = Math.sign(targetC - C);
   film.uniforms.uHit.value = reduced ? 0 : hitK;
   island.userData.rune.uI.value = 1.1 + hitK * 2.6 + (reduced ? 0 : Math.sin(t * 1.3) * 0.12);

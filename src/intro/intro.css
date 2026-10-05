@@ -43,7 +43,9 @@ kbd {
   position: fixed; inset: 0; z-index: 40; display: grid; place-content: center; justify-items: center; gap: var(--space-5);
   background: var(--night); transition: opacity .7s ease, visibility .7s;
 }
-.loader.is-done { opacity: 0; visibility: hidden; }
+.loader.is-done { opacity: 0; visibility: hidden; transition-duration: .45s; }
+.loader > * { transition: opacity .15s; }
+.loader.is-done > * { opacity: 0; }   /* the grid goes first, so it never sits over the headline */
 .loader-grid { display: grid; grid-template-columns: repeat(10, 10px); gap: 3px; }
 .loader-grid i { width: 10px; height: 10px; background: #2a2014; border-radius: 1px; transition: background .25s, transform .25s; }
 .loader-grid i.on { background: var(--accent); }
@@ -177,15 +179,33 @@ h2 { font-size: clamp(32px, 3.7vw, 54px); line-height: 1.04; }
 }
 .tag-line::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 6px; height: 6px; background: var(--border-strong); transform: translateX(-50%); }
 .tag-line b { font-weight: 700; }
+.tag-log { flex-direction: column; align-items: flex-start; gap: 4px; }   /* a two-line chat log: the command, then the reply */
+.tag-log span { display: inline-flex; gap: 6px; align-items: baseline; }
 .tag-roll { transform: translate(-50%, -50%); text-align: center; }
 .tag-roll .n { display: block; font: 650 48px/1 var(--font-display); color: var(--accent); }
 .tag-roll .t { display: block; margin-top: 4px; font-size: 13px; color: var(--text); background: rgb(17 12 8 / .85); padding: 3px 8px; border-radius: var(--radius-sm); }
 .tag-rank { transform: translate(-50%, calc(-100% - 8px)); text-align: center; font-size: 13px; color: var(--text); }
 .tag-rank b { display: block; font: 650 20px/1.1 var(--font-display); color: var(--accent); }
-.tag-hp { transform: translate(-50%, 0); font-size: 12px; color: var(--text-2); }
-.tag-hp .bar { display: block; width: 84px; height: 6px; background: #2a2014; margin-top: 4px; border-radius: 1px; overflow: hidden; }
+.tag-hp { transform: translate(-50%, 0); padding: 5px 8px 7px; background: rgb(13 9 6 / .72); border-radius: var(--radius-sm); font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.tag-hp .bar { display: block; width: 120px; height: 8px; background: #2a2014; margin-top: 4px; border-radius: 1px; overflow: hidden; }
 .tag-hp .bar i { display: block; height: 100%; background: var(--accent); transition: width .4s steps(6); }
 .tag-jump { transform: translate(-50%, -100%); font: 600 13px/1 var(--font-mono); color: var(--accent); }
+
+.lock { position: absolute; left: 0; top: 0; opacity: 0; visibility: hidden; pointer-events: none; will-change: transform, width, height; }
+.lock.on { visibility: visible; }
+.lock i { position: absolute; width: min(18px, 24%); height: min(18px, 24%); border: 0 solid var(--accent); }
+.lock i:nth-child(1) { left: 0; top: 0; border-width: 2px 0 0 2px; }
+.lock i:nth-child(2) { right: 0; top: 0; border-width: 2px 2px 0 0; }
+.lock i:nth-child(3) { left: 0; bottom: 0; border-width: 0 0 2px 2px; }
+.lock i:nth-child(4) { right: 0; bottom: 0; border-width: 0 2px 2px 0; }
+.lock::before { content: ''; position: absolute; inset: -5px; opacity: .7;   /* mid-edge ticks, like a camera's focus frame */
+  background: linear-gradient(var(--accent), var(--accent)) top / 1px 9px no-repeat, linear-gradient(var(--accent), var(--accent)) bottom / 1px 9px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) left / 9px 1px no-repeat, linear-gradient(var(--accent), var(--accent)) right / 9px 1px no-repeat; }
+.lock-txt { position: absolute; left: 0; top: calc(100% + 10px); display: grid; gap: 2px; padding: 5px 10px 6px; border-left: 1px solid var(--accent); background: rgb(13 9 6 / .55); font-size: 12px; line-height: 1.35; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px rgb(0 0 0 / .85), 0 0 12px rgb(0 0 0 / .6); }
+.lock-txt.above { top: auto; bottom: calc(100% + 10px); }
+.lock-txt.left { top: auto; bottom: 8px; left: auto; right: calc(100% + 12px); border-left: 0; border-right: 1px solid var(--accent); text-align: right; }
+.lock-txt.none { display: none; }
+.lock-txt b { font: 650 18px/1.15 var(--font-display); color: var(--text); }
 
 .nojs { position: relative; z-index: 5; padding: var(--edge); color: var(--text-2); }
 .no-webgl .stage { background: radial-gradient(80% 60% at 50% 70%, #2a1c10, var(--night)); }
@@ -233,7 +253,6 @@ h2 { font-size: clamp(32px, 3.7vw, 54px); line-height: 1.04; }
 /* the labels on the corners of the 3D stream frame */
 .tag-obs { transform: translate(0, -100%); font-size: 13px; color: var(--text-2); padding-bottom: 6px; }
 .tag-obs b { color: var(--accent); font-weight: 600; margin-right: 6px; }
-.tag-obs.end { transform: translate(-100%, -100%); color: var(--accent); }
 
 /* side shade behind the copy column, faded in by the frame loop */
 .scrim { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; }

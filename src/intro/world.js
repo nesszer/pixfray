@@ -126,18 +126,20 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
   const capH = cell * 0.5;
   const boxGeo = new THREE.BoxGeometry(cell * 0.985, 1, cell * 0.985);
   const topMat = new THREE.MeshStandardMaterial({ roughness: 0.66, metalness: 0.0 });
+  const floorTint = { value: new THREE.Color(1, 1, 1) };   // each chapter re-tints the stone
   topMat.onBeforeCompile = (sh) => {
+    sh.uniforms.uFloor = floorTint;
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWp; varying float vUp;')
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n vWp = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz; vUp = normal.y;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-      varying vec3 vWp; varying float vUp;
+      varying vec3 vWp; varying float vUp; uniform vec3 uFloor;
       float gh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
       float gn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
         return mix(mix(gh(i), gh(i + vec2(1., 0.)), f.x), mix(gh(i + vec2(0., 1.)), gh(i + vec2(1., 1.)), f.x), f.y); }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         float rr = length(vWp.xz), onFloor = step(rr, ${RING_R0.toFixed(2)}) * step(0.5, vUp);
         float grain = gn(vec2(vWp.x * 26.0, vWp.z * 2.2)) * 0.7 + gn(vec2(vWp.x * 70.0, vWp.z * 5.0)) * 0.3;
-        diffuseColor.rgb *= mix(1.0, 0.8 + 0.34 * grain, onFloor);`)
+        diffuseColor.rgb *= mix(1.0, 0.8 + 0.34 * grain, onFloor) * mix(vec3(1.0), uFloor, step(0.5, vUp));`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         float wet = smoothstep(0.6, 0.76, gn(vWp.xz * 0.9 + 4.0) * 0.7 + gn(vWp.xz * 3.1) * 0.3) * step(0.5, vUp);
         roughnessFactor = mix(roughnessFactor, 0.2, wet);`);
@@ -196,7 +198,7 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
   }));
   disc.position.y = 0.006; disc.renderOrder = 1;
   group.add(disc);
-  group.userData.rune = rune;
+  group.userData.rune = rune; group.userData.floor = floorTint;
   const body = make(bodies, bodyMat, (b, i, mesh) => {
     const h = b.top - b.bottom; m4.makeScale(1, h, 1).setPosition(b.x, b.bottom + h / 2, b.z); mesh.setMatrixAt(i, m4);
     const s = 0.085 + hash(i, 5) * 0.035; mesh.setColorAt(i, col.setRGB(s * 1.08, s * 0.9, s * 0.76, THREE.SRGBColorSpace));
@@ -262,9 +264,10 @@ export function buildEmbers(count = 900) {
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
         float life = smoothstep(-1.5, 0.5, p.y) * (1.0 - smoothstep(5.5, 8.5, p.y));
-        vA = life * (0.35 + 0.65 * fract(seed * 7.13)) * (1.0 + uBurst);
+        float near = smoothstep(1.5, 3.5, -mv.z);   // an ember drifting past the lens would fill a big square
+        vA = life * near * (0.35 + 0.65 * fract(seed * 7.13)) * (1.0 + uBurst);
         vS = seed;
-        gl_PointSize = (1.6 + seed * 2.6) * uPx * (8.0 / -mv.z);
+        gl_PointSize = min((1.6 + seed * 2.6) * uPx * (8.0 / -mv.z), 9.0 * uPx);
       }`,
     fragmentShader: `
       varying float vA; varying float vS;
@@ -358,9 +361,34 @@ export const FACE_UP = { 6: [0, 0, 0], 1: [Math.PI, 0, 0], 3: [0, 0, Math.PI / 2
 export function buildPodium(count = 5, cell = 0.3) {
   const geo = new THREE.BoxGeometry(cell * 0.96, cell * 0.96, cell * 0.96);
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.12 });
-  mat.onBeforeCompile = (sh) => {   // bright instance colours (brass, runes) glow; the stone stays matte
-    sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>',
-      '#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * (smoothstep(0.3, 0.6, diffuseColor.r) * 0.6 + 0.3);');
+  // bright instance colours (brass, runes) glow; stone faces carry carved glyphs that smoulder, and their seams catch the moon
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vPid;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vPid = vec3(0.0);
+        #ifdef USE_INSTANCING
+          vPid = instanceMatrix[3].xyz;
+        #endif`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vPid;')
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        totalEmissiveRadiance += diffuseColor.rgb * (smoothstep(0.3, 0.6, diffuseColor.r) * 0.6 + 0.3);
+        {
+          float stone = 1.0 - smoothstep(0.26, 0.4, diffuseColor.r);
+          vec3 an = abs(vNo);
+          vec2 fuv = (an.x > 0.5 ? vLp.zy : an.y > 0.5 ? vLp.xz : vLp.xy) / (2.0 * uHalf.x) + 0.5;
+          vec3 cid = floor(vPid * ${(2 / cell).toFixed(4)} + 0.5) + vNo * 7.0;
+          float pick = fract(sin(dot(cid, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+          vec2 g = floor(fuv * 5.0), fc = fract(fuv * 5.0);
+          float bit = fract(sin(dot(g + cid.xy * 3.1 + cid.z, vec2(27.17, 91.31))) * 15731.743);
+          float inner = step(1.0, g.x) * step(g.x, 3.0) * step(1.0, g.y) * step(g.y, 3.0);
+          float pix = step(0.16, fc.x) * step(fc.x, 0.84) * step(0.16, fc.y) * step(fc.y, 0.84);
+          float glyph = stone * step(0.6, pick) * inner * step(0.42, bit) * pix * (1.0 - an.y);
+          totalEmissiveRadiance += vec3(1.0, 0.42, 0.1) * glyph * (1.2 + 1.2 * fract(pick * 7.3));
+          float edge = 1.0 - smoothstep(0.0, 0.06, 0.5 - max(abs(fuv.x - 0.5), abs(fuv.y - 0.5)));
+          totalEmissiveRadiance += vec3(0.34, 0.42, 0.62) * edge * stone * 0.35;
+        }`);
   };
   bevel(mat, [cell * 0.48, cell * 0.48, cell * 0.48]);
   const maxStack = 18;
