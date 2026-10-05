@@ -1302,3 +1302,42 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
   .gate-inside .gate-peek { display: grid; }
   .gate-list { display: none; }
 }
+
+/* ---------- round 26 ---------- */
+/* Ranks: the top three stand on plinths in front of the intro's pillars chapter, not in three boxes */
+.top3 { gap: var(--space-4); padding: var(--space-8) var(--space-6) 0; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden;
+  background: linear-gradient(to bottom, rgb(12 9 7 / .15), rgb(12 9 7 / .55)), url("/assets/scene/ranks-stage.webp") center 30% / cover no-repeat var(--bg); }
+.top3 > li, .top3 > li.first, .top3 > li.open:not(.first) { border: 0; border-radius: 0; background: none; padding: 0; gap: var(--space-2); }
+.top3 .plinth { position: relative; display: grid; align-content: start; justify-items: center; gap: 2px; width: 100%; padding: var(--space-4) var(--space-2) var(--space-3);
+  background: var(--panel); border-top: 3px solid var(--border-strong); box-shadow: inset 1px 0 0 var(--border), inset -1px 0 0 var(--border); }
+.top3 > li:nth-child(1) .plinth { min-height: 148px; border-top-color: var(--trim); }
+.top3 > li:nth-child(2) .plinth { min-height: 112px; }
+.top3 > li:nth-child(3) .plinth { min-height: 88px; }
+.top3 .place { position: static; font: 650 var(--text-2xl)/1 var(--font-display); color: var(--trim); margin-bottom: var(--space-1); }
+.top3 > li:not(.first) .place { color: var(--text-2); }
+.top3 .thumb canvas.vox { width: 104px; height: 104px; }
+.top3 > li.first .thumb canvas.vox { width: 128px; height: 128px; }
+.top3 > li.open .slot { width: 56px; height: 72px; border-color: var(--trim); opacity: .6; background: rgb(12 9 7 / .5); }
+.top3 > li.open.first .slot { height: 96px; }
+@media (max-width: 600px) {
+  .top3 { gap: var(--space-2); padding: var(--space-6) var(--space-3) 0; background-image: linear-gradient(to bottom, rgb(12 9 7 / .15), rgb(12 9 7 / .55)), url("/assets/scene/ranks-stage-800.webp"); }
+  .top3 .thumb canvas.vox { width: 72px; height: 72px; } .top3 > li.first .thumb canvas.vox { width: 88px; height: 88px; }
+  .top3 > li:nth-child(1) .plinth { min-height: 120px; } .top3 > li:nth-child(2) .plinth { min-height: 96px; } .top3 > li:nth-child(3) .plinth { min-height: 76px; }
+  .top3 .place { font-size: var(--text-xl); }
+  .top3 > li .muted { font-size: var(--text-xs); }
+}
+/* the mod gate looks down on the arena the controls run (the intro's overhead chapter) instead of reusing the island */
+@media (min-width: 761px) {
+  .gate-inside { background: linear-gradient(to bottom, rgb(12 9 7 / .1), rgb(12 9 7 / 0) 40%, rgb(12 9 7 / .5)), url("/assets/scene/arena-top.webp") 60% 40% / cover no-repeat var(--bg); }
+}
+/* phones: filter chips and shop section links wrap onto a second line instead of scrolling out of sight */
+@media (max-width: 480px) {
+  .filter-buttons, .jump { flex-wrap: wrap; overflow: visible; mask-image: none; -webkit-mask-image: none; padding-right: 0; }
+}
+/* picker rows answer the pointer: a short lift and a gold edge */
+.landing .channel-list li { transition: background-color 120ms ease, box-shadow 120ms ease; }
+.landing .channel-list li:has(.channel:hover), .landing .channel-list li:has(.channel:focus-visible) { background: rgb(201 164 92 / .07); box-shadow: inset 3px 0 0 var(--trim); }
+@media (prefers-reduced-motion: reduce) { .landing .channel-list li { transition: none; } }
+@media (min-width: 761px) {
+  .gate-inside { justify-content: flex-end; background-position: 50% 30%; min-height: 440px; }
+}

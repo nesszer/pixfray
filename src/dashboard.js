@@ -565,18 +565,18 @@ function renderLeaderboard() {
   tbody.replaceChildren(...top);
 }
 
-// The top three stand on a podium above the table, as voxels like the 3D preview; an empty step says how to take it.
+// The top three stand on plinths in front of the intro's pillars still, as voxels like the 3D preview; an empty step says how to take it.
 function renderPodium(rows) {
   const box = $("#podium");
   box.hidden = false;
   box.replaceChildren(...[0, 1, 2].map((i) => {
     const p = rows[i], entry = p && entryOf(p.avatar);
-    if (!p) return h("li", { class: i === 0 ? "open first" : "open" }, h("span", { class: "place" }, i + 1), h("span", { class: "slot", "aria-hidden": "true" }),
-      h("strong", {}, "Open"), h("span", { class: "muted" }, "Win a ranked duel to take it"));
+    if (!p) return h("li", { class: i === 0 ? "open first" : "open" }, h("span", { class: "slot", "aria-hidden": "true" }),
+      h("span", { class: "plinth" }, h("span", { class: "place" }, i + 1), h("strong", {}, "Open"), h("span", { class: "muted" }, "Win a ranked duel to take it")));
     const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" }), v = voxCanvas();
     if (entry) { addSprite(canvas, entry, { active: () => false }); vox(v, () => composeLook(entry)); }
-    return h("li", { class: i === 0 ? "first" : null }, h("span", { class: "place" }, i + 1), h("span", { class: "thumb" }, v, canvas),
-      h("strong", {}, p.displayName || p.username), h("span", { class: "muted" }, p.elo + " Elo · " + p.wins + "–" + p.losses));
+    return h("li", { class: i === 0 ? "first" : null }, h("span", { class: "thumb" }, v, canvas),
+      h("span", { class: "plinth" }, h("span", { class: "place" }, i + 1), h("strong", {}, p.displayName || p.username), h("span", { class: "muted" }, p.elo + " Elo · " + p.wins + "–" + p.losses)));
   }));
 }
 
