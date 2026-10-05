@@ -37,11 +37,11 @@ function render(look, i) {
   // centre the cubes and fit the camera to them, so tall and wide characters both fill the tile
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (let i = 0; i < f.count; i++) { const x = f.home[i * 3], y = f.home[i * 3 + 1]; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-  const turn = new THREE.Group(); turn.rotation.y = -0.5; turn.add(f.group); scene.add(turn);
+  const turn = new THREE.Group(); turn.rotation.y = -0.62; turn.add(f.group); scene.add(turn);
   f.group.position.set(-(x0 + x1) / 2, -(y0 + y1) / 2, 0);
   const span = Math.max(y1 - y0, (x1 - x0) * 1.05) + f.size * 2;
   const dist = (span / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.08;
-  camera.position.set(0, dist * 0.18, dist); camera.lookAt(0, 0, 0); camera.updateProjectionMatrix();
+  camera.position.set(0, dist * 0.32, dist); camera.lookAt(0, 0, 0); camera.updateProjectionMatrix();
   const x = (i % GRID) * SIZE, y = (GRID - 1 - Math.floor(i / GRID)) * SIZE;   // WebGL counts y from the bottom
   renderer.setViewport(x, y, SIZE, SIZE); renderer.setScissor(x, y, SIZE, SIZE);
   renderer.render(scene, camera);

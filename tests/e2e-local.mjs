@@ -65,7 +65,7 @@ async function command(user, text) {
 const presence = (user, text = 'hi') => say(user, text);
 
 const errors = [];
-const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
 try {
   // 0. Seeded sessions: owner and three viewers.
   const sess = await api('/api/session', { cookie: cookies.owner });

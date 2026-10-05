@@ -1190,3 +1190,29 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 /* the picker has one primary action: the first stream's button is filled, the rest stay outlined */
 .landing .channel-list li:first-child .channel-go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .landing .channel-list li:first-child .channel:hover .channel-go { background: var(--accent-hover); border-color: var(--accent-hover); }
+/* phones: when the Mods link shows, it takes the streamers link's place so the bar never crowds the logo */
+@media (max-width: 480px) { .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/start/"] { display: none; } }
+
+/* ---------- round 20 ---------- */
+/* picker: every stream row has the same sprite slot at full strength; an open top spot is a plain stand-in, not a disabled row */
+.channel-crew canvas.is-open { opacity: 1; }
+@media (min-width: 761px) { .channel-crew, .channel-crew:empty { width: 84px; height: 56px; } .channel-crew canvas { width: 56px; height: 56px; margin-right: -28px; } }
+/* /start: the mock example lines read at 14px like the rest of the mock */
+.step-mock .eg { font-size: var(--text-sm); }
+@media (max-width: 900px) {
+  /* the chip row fades over a full chip width, so it plainly scrolls */
+  .filter-buttons { mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent); padding-right: var(--space-8); }
+  /* the page ends clear of the fixed Save bar */
+  body:has(.hero-card.has-3d) .site-foot { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 900px) {
+  .jump { mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent); padding-right: var(--space-8); }
+}
+/* on the page it points to, the nav button is just the current page, so the page's own primary action stays the only gold one */
+.topbar nav a.nav-cta[aria-current] { border-color: transparent; background: none; color: var(--text); padding-inline: 0; border-radius: 0; box-shadow: inset 0 -1px 0 var(--trim); min-height: 0; }
+/* builder: one line of how-to under the heading, so the tabs and the character grid start inside the first screen */
+.hero-copy .lead { display: none; }
+@media (min-width: 901px) { .hero-copy .how { font-size: var(--text-md); color: var(--text-2); } }
+/* character tiles: the voxel render is larger and stands on its own shadow, so it reads as the same model as the stage */
+.item-grid .char-option canvas.vox { filter: drop-shadow(0 6px 4px rgb(0 0 0 / .6)); }
+@media (min-width: 901px) { .item-grid .char-option canvas.vox { width: 96px; height: 96px; } }

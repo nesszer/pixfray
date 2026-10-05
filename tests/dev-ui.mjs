@@ -10,7 +10,7 @@ import path from 'node:path';
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
 const shots = path.join(os.tmpdir(), 'mini-chat-dev-shots');
 fs.mkdirSync(shots, { recursive: true });
-const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
 const sizes = [{ name: '1280', width: 1280, height: 900 }, { name: '390', width: 390, height: 844 }];
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const owner = { id: '900001', login: 'nesszerra', displayName: 'nesszerra' };
