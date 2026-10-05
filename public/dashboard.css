@@ -1277,3 +1277,11 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
   .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/start/"] { display: inline-flex; }
   .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/intro/"] { display: none; }
 }
+/* Round 24. Desktop: the whole card (stage, Save, On stream) fits an 800px window, so the sticky card never loses its bottom */
+@media (min-width: 1101px) { .hero-card.has-3d .showcase { height: clamp(400px, calc(100vh - 344px), 640px); } }
+/* phones: a shorter heading buys the stage room, so the fighter reads at a glance */
+@media (max-width: 480px) {
+  .hero-copy:has(.how) h1 { font-size: 28px; }
+  .hero-copy .how { font-size: var(--text-sm); }
+  .hero-card.has-3d .showcase { height: 216px; }
+}
