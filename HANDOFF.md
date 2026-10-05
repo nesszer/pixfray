@@ -28,7 +28,8 @@ The Worker names keep "mini-chat": the Durable Object data is tied to them.
 ## Current state
 
 2026-10-01: v2 deployed to prod (chat.miolaf.xyz) with nesszerra and miolafff enabled; it
-replaced v1. Since 2026-10-02 other channels join by invite. Updated 2026-10-03.
+replaced v1. Since 2026-10-02 other channels join by invite. 2026-10-05: prod moved to pixfray.xyz (chat.miolaf.xyz
+stays miolafff's) at commit 9a70201, version 7abbfb8b; the previous prod version was 5371f82d. Updated 2026-10-05.
 
 Git: `origin` is https://github.com/Finesssee/mini-chat.git and the latest commit is 389bdd4.
 The working tree holds changes beyond it (`git status`, `git diff`); this file describes the
