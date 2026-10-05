@@ -39,14 +39,20 @@ if (!navigator.connection?.saveData) {
     render3d();
   }).catch(() => {});
 }
-function render3d() {
-  if (!fighter3d || !state.d) return;
-  const d = state.d, entry = entryOf(d.avatar), pet = petById(d.pet);
+function render3d(d = state.d) {
+  if (!fighter3d || !d) return;
+  const entry = entryOf(d.avatar), pet = petById(d.pet);
   const look = composeLook(entry, { hat: d.hat, pet, looks: looks(d) });
-  if (look) fighter3d.set(look); else if (entry) whenImage(entry.url, render3d);
-  if (pet?.url) whenImage(pet.url, render3d);
+  if (look) fighter3d.set(look); else if (entry) whenImage(entry.url, () => render3d());
+  if (pet?.url) whenImage(pet.url, () => render3d());
 }
-onLooksReady($("#preview3d"), render3d);
+onLooksReady($("#preview3d"), () => render3d());
+// Hovering a tile tries it on the 3D fighter for a moment; leaving puts the picked look back.
+let peekTimer = 0;
+function peekOn(el, field, value) {
+  el.addEventListener("pointerenter", (e) => { if (e.pointerType !== "mouse") return; clearTimeout(peekTimer); peekTimer = setTimeout(() => render3d({ ...state.d, [field]: value }), 140); });
+  el.addEventListener("pointerleave", (e) => { if (e.pointerType !== "mouse") return; clearTimeout(peekTimer); peekTimer = setTimeout(() => render3d(), 80); });
+}
 const pct = (n) => Math.round(n * STAT_STEP * 100) + "%";
 const STAT_TEXT = {
   power: { label: "Power", effect: (n) => "+" + pct(n) + " damage dealt" },
@@ -193,9 +199,12 @@ function tile({ kind, id, label, visual, tag, price, buyLabel, out, onPick }) {
   const inputId = kind + "-" + (id || "none"), have = owns(kind, id);
   const input = h("input", { type: "radio", name: kind, id: inputId, value: id });
   input.addEventListener("change", () => { onPick(id); tryOnNote(kind, id, out); renderPreview(); renderSave(); });
-  return h("div", { class: "char-option" + (have ? "" : " locked") }, input,
+  const option = h("div", { class: "char-option" + (have ? "" : " locked") }, input,
     h("label", { for: inputId }, visual, h("span", {}, label), tag ? h("span", { class: "tag" }, tag) : null),
     !have && price > 0 ? buyButton(kind, id, buyLabel || label, price, out) : null);
+  const field = kind === "hat" || kind === "pet" ? kind : KINDS[kind]?.look === "char" || KINDS[kind]?.look === "pet" ? KINDS[kind].field : null;
+  if (field) peekOn(option, field, id);
+  return option;
 }
 function tryOnNote(kind, id, out) {
   if (owns(kind, id)) { setStatus(out, ""); return; }
@@ -327,6 +336,7 @@ function renderCharacters() {
     let hover = false;
     option.addEventListener("pointerenter", () => { hover = true; });
     option.addEventListener("pointerleave", () => { hover = false; });
+    peekOn(option, "avatar", entry.id);
     addSprite(canvas, entry, { anim: "walk", active: () => hover || input.checked || document.activeElement === input });
     return option;
   }));

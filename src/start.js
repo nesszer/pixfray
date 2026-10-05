@@ -40,7 +40,7 @@ const signIn = (login, mods = true) => h("a", { class: mods ? "btn btn-primary" 
 async function init() {
   if (!token) {
     show("PixFray is invite-only right now", "Ask nesszerra for an invite link. It names your Twitch account and works for 7 days.",
-      [h("a", { class: "btn btn-primary", href: "https://www.twitch.tv/nesszerra", rel: "noopener" }, "Ask for an invite on Twitch"), h("a", { class: "btn", href: "/intro/" }, "See how a duel plays out")]);
+      [h("a", { class: "btn btn-primary", href: "https://www.twitch.tv/nesszerra", rel: "noopener" }, "Ask for an invite on Twitch"), h("a", { class: "text-link", href: "/intro/" }, "See how a duel plays out")]);
     return;
   }
   const r = await api("/api/invite/" + encodeURIComponent(token));

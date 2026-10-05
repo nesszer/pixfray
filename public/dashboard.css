@@ -693,3 +693,74 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
 /* setup steps: a small step badge instead of a big numeral */
 .step-grid > li::before { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--trim); border-radius: var(--radius-sm);
   font: 650 var(--text-xs)/1 var(--font-sans); }
+/* channel picker: the rows sit on one dark panel so the island never shows through the text */
+.landing .channel-list { background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+.landing .channel-list li:last-child { border-bottom: 0; }
+.landing .channel { padding-inline: var(--space-4); }
+/* phones: a big 3D fighter with the on-stream view as a small inset in its corner; Save is a bar fixed to the bottom */
+@media (max-width: 900px) {
+  .hero-card.has-3d { grid-template-columns: minmax(0, 1fr); grid-template-areas: "show" "points" "status" "next"; }
+  .hero-card.has-3d .showcase { height: 252px; }
+  .hero-card.has-3d .preview { position: absolute; z-index: 1; top: calc(var(--space-2) + 10px); right: calc(var(--space-4) + 10px); width: 128px; background: var(--panel); }
+  .hero-card.has-3d .stage-canvas { height: 56px; }
+  .hero-card.has-3d .points-link:not([hidden]) + .toolbar { margin: 0; }
+  .hero-card.has-3d .toolbar { position: fixed; z-index: 3; left: 0; right: 0; bottom: 0; justify-self: stretch; align-self: end; max-width: none; margin: 0;
+    padding: var(--space-2) var(--space-4) calc(var(--space-2) + env(safe-area-inset-bottom)); background: var(--topbar); border-top: 1px solid var(--border-strong); }
+  .hero-card.has-3d .toolbar > .btn { width: 100%; height: auto; min-height: 48px; white-space: nowrap; }
+  body:has(.hero-card.has-3d) { padding-bottom: 72px; }
+}
+@media (max-width: 900px) {
+  .hero-card.has-3d .preview-label { display: block; }
+  .hero-card.has-3d .stage-canvas { height: 72px; }
+}
+@media (max-width: 900px) {
+  .hero-card.has-3d .preview { padding-top: 20px; }
+  .hero-card.has-3d .preview-label { top: 4px; left: var(--space-2); }
+}
+
+/* round 6: /start reads as a track, permissions as yes/no, the locked admin page previews what's inside, phone tap targets */
+.text-link { align-self: center; color: var(--accent); font-size: var(--text-sm); text-underline-offset: 3px; }
+.text-link:hover { color: var(--accent-hover); }
+.step-grid { gap: 0; }
+.step-grid > li { position: relative; border-top: 2px solid var(--border-strong); padding: var(--space-5) var(--space-5) 0 0; font-size: var(--text-md); line-height: 1.55; }
+.step-grid > li::before { position: absolute; top: -13px; left: 0; background: var(--bg); width: 24px; height: 24px; }
+.step-grid strong { font-size: var(--text-lg); line-height: 1.3; margin-bottom: var(--space-2); }
+.step-mock { margin-top: var(--space-2); }
+.step-mock .field { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+@media (max-width: 480px) {
+  .step-grid > li { border-top: 0; border-left: 2px solid var(--border-strong); padding: 0 0 var(--space-6) var(--space-6); }
+  .step-grid > li:last-child { padding-bottom: 0; }
+  .step-grid > li::before { top: 0; left: -13px; }
+}
+.perm-lists ul.marks { list-style: none; padding: 0; }
+.perm-lists ul.marks li { position: relative; padding-left: var(--space-6); }
+.perm-lists ul.marks li::before { position: absolute; left: 0; top: 0; width: 18px; text-align: center; font-weight: 650; }
+.perm-lists ul.yes li::before { content: "✓"; color: var(--positive); }
+.perm-lists ul.no li::before { content: "✕"; color: var(--negative); }
+.gate-peek { margin: 0 0 var(--space-5); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); display: grid; gap: var(--space-2); opacity: .7; }
+.gate-peek .peek-tabs { display: flex; gap: var(--space-3); font-size: var(--text-xs); color: var(--text-3); border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+.gate-peek .peek-tabs .on { color: var(--text); box-shadow: inset 0 -2px 0 var(--trim); }
+.gate-peek .peek-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: var(--text-xs); color: var(--text-2); }
+.gate-peek .switch { width: 30px; height: 16px; border-radius: 4px; border: 1px solid var(--border-strong); position: relative; }
+.gate-peek .switch::after { content: ""; position: absolute; right: 2px; top: 2px; width: 10px; height: 10px; border-radius: 2px; background: var(--trim); }
+.gate-peek .bar { flex: 0 0 55%; height: 8px; border-radius: 2px; background: var(--border-strong); }
+.gate-peek .bar.short { flex-basis: 35%; }
+@media (max-width: 900px) {
+  .topbar nav a { min-height: 44px; display: inline-flex; align-items: center; }
+  .tabs [role="tab"], .filter-buttons button { min-height: 44px; }
+  .upgrade > .btn-small { min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 620px) {
+  .landing .channel { display: grid; grid-template-columns: 64px minmax(0, 1fr); grid-template-areas: "crew text" "crew go"; align-items: center; gap: var(--space-2) var(--space-3); }
+  .landing .channel-crew { grid-area: crew; align-self: center; }
+  .landing .channel-text { grid-area: text; }
+  .landing .channel-go { grid-area: go; justify-self: start; min-height: 44px; display: inline-flex; align-items: center; }
+  .landing-inner { padding-top: 196px; }
+}
+.landing .channel-go { gap: var(--space-1); }
+@media (max-width: 900px) {
+  .hero-card.has-3d { row-gap: 0; }
+  .hero-card.has-3d > :not(.showcase):not(.toolbar):not(:empty) { margin-top: var(--space-2); }
+}
+/* keyboard focus and scrolled-to items stay clear of the fixed Save bar */
+@media (max-width: 900px) { html:has(.hero-card.has-3d) { scroll-padding-bottom: 88px; } }

@@ -228,8 +228,9 @@ try {
     await noOverflow(page, 'viewer signed-in ' + s.name);
     if (s.name !== '1280') {
       // phones: explanation tables wrap instead of scrolling sideways, and the fighter bar stays at the bottom while picking
-      await page.locator('#tab-ranks').click();
+      await page.locator('#tab-rules').click();
       for (const w of await page.locator('.table-wrap:has(.prose-table)').all()) assert.ok(await w.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), 'duel table fits at ' + s.name);
+      await page.locator('#tab-ranks').click();
       const lb = page.locator('#leaderboard');
       assert.equal(await lb.locator('th.col-char').isVisible(), false, 'no Character column on phones');
       assert.ok(await lb.evaluate((t) => t.parentElement.scrollWidth <= t.parentElement.clientWidth + 1), 'leaderboard fits without sideways scrolling at ' + s.name);
