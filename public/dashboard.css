@@ -1421,9 +1421,10 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
 #panel-rules .table-wrap { max-width: 840px; }
 /* the picker: each stream's fighters stand at a readable size */
 @media (min-width: 621px) {
-  .landing .channel-crew, .landing .channel-crew:empty { min-width: 88px; height: 88px; }
+  .landing .channel-crew, .landing .channel-crew:empty { flex: 0 0 128px; width: 128px; min-width: 128px; height: 88px; overflow: hidden; }
   .landing .channel-crew .thumb canvas { width: 88px; height: 88px; }
-  .landing .channel-crew .thumb + .thumb { margin-left: -36px; }
+  .landing .channel-crew .thumb + .thumb { margin-left: -48px; }
+  .landing .channel-crew .thumb:nth-child(n+3) { display: none; }
 }
 /* phones: the locked controls sit on the arena they run, like the desktop gate */
 @media (max-width: 760px) {
