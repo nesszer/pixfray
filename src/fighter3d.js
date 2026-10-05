@@ -64,7 +64,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
 
   // the fighter and its pet turn together on a turntable
   const table = new THREE.Group(); scene.add(table);
-  let fighter = null, pet = null, lookKey = '', builtAt = 0;
+  let fighter = null, pet = null, lookKey = '', builtAt = 0, buildMs = 1100;
   let drawn = 0, yaw = -0.32, yawTarget = -0.32, drag = null, hover = null, visible = true, slow = false, dirty = true, raf = 0, last = 0;
   const frames = [];
 
@@ -76,8 +76,8 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     return new VoxelFighter(s, { size: step * height / refH, scatter: 'burst', layers: opts.layers, seed: opts.seed, shadows: true });
   }
   function drop(f) { if (!f) return; table.remove(f.group); f.mesh.geometry.dispose(); f.mesh.material.dispose(); f.mesh.dispose(); }
-  // a swapped-out look bursts apart while the new one gathers in after it
-  const OUT = 320, leaving = [];
+  // a swapped-out look bursts apart while the new one gathers in through it, so the stage is never empty
+  const OUT = 460, leaving = [];
 
   // look: ui.js composeLook() — { key, body, frameH, pet, petH }
   function set(look) {
@@ -92,7 +92,8 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     if (fighter) table.add(fighter.group);
     pet = look.pet ? voxels(look.pet, look.petH, HEIGHT * 0.42, { rows: small ? 16 : 22, layers: 6, seed: 9 }) : null;
     if (pet) { pet.group.position.set(-1.0, 0, -0.4); table.add(pet.group); }
-    builtAt = reduced ? -1e9 : performance.now() + (leaving.length ? OUT * 0.6 : 0);
+    builtAt = reduced ? -1e9 : performance.now();
+    buildMs = leaving.length ? 750 : 1100;
     dirty = true; kick();
   }
 
@@ -158,7 +159,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016); last = now;
     const t = now / 1000, live = !reduced && !slow;
     const assembling = now - builtAt < 1400 || leaving.length > 0;
-    const a = reduced ? 1 : Math.max(0, Math.min(1, (now - builtAt) / 1100));
+    const a = reduced ? 1 : Math.max(0, Math.min(1, (now - builtAt) / buildMs));
     // idle sway when nobody is dragging, so the voxels read as solid
     const sway = live && !drag ? Math.sin(t * 0.45) * 0.22 : 0;
     yaw += (yawTarget + sway - yaw) * (1 - Math.exp(-dt * 6));

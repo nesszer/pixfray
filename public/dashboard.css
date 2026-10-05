@@ -637,7 +637,7 @@ body:has(.landing:not([hidden]))::before { display: none; }
   .hero-card.has-3d .preview-bar .btn, .hero-card.has-3d .win-link { flex: 1 0 100%; text-align: center; font-size: var(--text-xs); min-height: 28px; }
   .hero-card.has-3d .toolbar { max-width: none; align-self: stretch; }
   .hero-card.has-3d .toolbar > .btn { height: 100%; }
-  .hero-copy .lead { display: none; }
+  .hero-copy:has(.how) .lead { display: none; }
   /* tabs keep the HUD underline on phones too, at a 44px touch height */
   .tabs { gap: var(--space-4); border-bottom: 1px solid var(--border); overflow-x: auto; }
   .tabs [role="tab"] { min-height: 44px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; font: 650 var(--text-md)/1 var(--font-display); }
@@ -1211,8 +1211,37 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 /* on the page it points to, the nav button is just the current page, so the page's own primary action stays the only gold one */
 .topbar nav a.nav-cta[aria-current] { border-color: transparent; background: none; color: var(--text); padding-inline: 0; border-radius: 0; box-shadow: inset 0 -1px 0 var(--trim); min-height: 0; }
 /* builder: one line of how-to under the heading, so the tabs and the character grid start inside the first screen */
-.hero-copy .lead { display: none; }
+.hero-copy:has(.how) .lead { display: none; }
 @media (min-width: 901px) { .hero-copy .how { font-size: var(--text-md); color: var(--text-2); } }
 /* character tiles: the voxel render is larger and stands on its own shadow, so it reads as the same model as the stage */
 .item-grid .char-option canvas.vox { filter: drop-shadow(0 6px 4px rgb(0 0 0 / .6)); }
 @media (min-width: 901px) { .item-grid .char-option canvas.vox { width: 96px; height: 96px; } }
+/* recolor is a compact swatch row: small tiles, the shared price is in the heading, so a signed-out tile shows just its name */
+#items-recolor { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-2); }
+#items-recolor .char-option label { padding: var(--space-2) var(--space-1); gap: var(--space-1); min-height: 0; }
+#items-recolor canvas.vox { width: 56px; height: 56px; }
+#items-recolor .char-option label > span:not(.thumb):not(.tag) { font-size: var(--text-xs); line-height: 1.3; }
+#items-recolor .tag:has(> .price:only-child) { display: none; }
+@media (max-width: 900px) { #items-recolor { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* upgrades: a segmented meter under each stat, one cell per point */
+.upgrade .meter { display: flex; gap: 3px; margin-top: var(--space-2); max-width: 240px; }
+.upgrade .meter i { flex: 1; height: 6px; border-radius: 1px; background: var(--border-strong); }
+.upgrade .meter i.on { background: var(--accent); }
+.upgrade .meter i.pet { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+@media (max-width: 900px) {
+  /* phones: the stage already shows the fighter and its nameplate, so the flat "On stream" strip steps out and the picker starts higher */
+  .hero-card.has-3d .preview { display: none; }
+  /* a slimmer Save bar, and taps near the bottom scroll clear of it */
+  .hero-card.has-3d .toolbar { padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  html { scroll-padding-bottom: 72px; }
+}
+/* /start step 3: what chat sees once the command is pasted */
+.step-mock .line { color: var(--text-2); font-size: var(--text-sm); line-height: 1.4; }
+.step-mock .line b { color: var(--text); font-weight: 650; margin-right: 4px; }
+/* phones: the stage's lock-on readout is just the name, small, so it stays clear of the fighter's head */
+@media (max-width: 900px) {
+  .showcase .readout { top: 8px; right: 8px; padding: 2px 8px; }
+  .showcase .readout span { display: none; }
+}
+/* admin gate: the "Inside" list heading reads at body contrast */
+.gate-list h3 { color: var(--text); font-size: var(--text-md); }
