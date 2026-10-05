@@ -233,14 +233,14 @@ const buyButton = (kind, item, label, price, out, text = "Buy for $" + price) =>
 };
 // One picker tile: a radio (name = kind) with its picture and words, plus a Buy button while it isn't owned.
 // Anything can be picked to try it on in the preview; Save asks for the unowned ones to be bought first.
-function tile({ kind, id, label, visual, tag, price, buyLabel, out, onPick }) {
+function tile({ kind, id, label, visual, tag, tier, price, buyLabel, out, onPick }) {
   const inputId = kind + "-" + (id || "none"), have = owns(kind, id);
   const input = h("input", { type: "radio", name: kind, id: inputId, value: id });
   input.addEventListener("change", () => { onPick(id); tryOnNote(kind, id, out); renderPreview(); renderSave(); });
   // Signed out, nothing can be bought yet, so the price is a quiet line instead of a row of disabled Buy buttons.
   const quiet = !have && price > 0 && !signedIn(), note = tag || quiet ? [tag, tag && quiet ? " · " : "", quiet ? h("b", { class: "price" }, money(price)) : ""].filter(Boolean) : null;
-  const option = h("div", { class: "char-option" + (have ? "" : " locked") }, input,
-    h("label", { for: inputId }, visual, h("span", {}, label), note ? h("span", { class: "tag" }, ...note) : null),
+  const option = h("div", { class: "char-option" + (have ? "" : " locked") + (tier ? " tier-" + tier : "") }, input,
+    h("label", { for: inputId }, visual, h("span", {}, label), note ? h("span", { class: "tag" }, ...note) : id && have ? h("span", { class: "tag" }, signedIn() && price > 0 ? "Owned" : "Free") : null),
     !have && price > 0 && !quiet ? buyButton(kind, id, buyLabel || label, price, out) : null);
   const field = kind === "hat" || kind === "pet" ? kind : KINDS[kind]?.look === "char" || KINDS[kind]?.look === "pet" ? KINDS[kind].field : null;
   if (field) peekOn(option, field, id);
@@ -311,7 +311,7 @@ function renderPets() {
     const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" });
     if (pet) addPet(canvas, pet, { color: state.d.petColor });
     return tile({ kind: "pet", id: pet?.id || "", label: pet ? pet.label : "No pet", visual: pet ? petThumb(canvas, pet, state.d.petColor) : h("span", { class: "thumb empty-slot", "aria-hidden": "true" }), price: pet?.price, out,
-      tag: pet ? TIER_NAMES[pet.tier] + ", " + boostText(pet.boost) : null, onPick: (id) => { state.d.pet = id; renderUpgrades(); renderItems("petcolor"); } });
+      tag: pet ? TIER_NAMES[pet.tier] + ", " + boostText(pet.boost) : null, tier: pet?.tier, onPick: (id) => { state.d.pet = id; renderUpgrades(); renderItems("petcolor"); } });
   };
   box.replaceChildren(option(null), ...state.shop.pets.map(option));
   checkPicked(box, "pet", state.d.pet);
@@ -653,7 +653,7 @@ async function pickChannel() {
   $("#channel-list").replaceChildren(...channels.map((c) => {
     const crew = h("span", { class: "channel-crew", "aria-hidden": "true" }), meta = h("span", { class: "channel-meta" });
     const link = h("a", { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
-      crew, h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta), h("span", { class: "channel-go" }, "Pick your fighter"));
+      crew, h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta), h("span", { class: "channel-go" }, h("span", { class: "go-long" }, "Pick your fighter"), h("span", { class: "go-short" }, "Open")));
     channelRanks(c, link, crew, meta);
     return h("li", {}, link);
   }));
@@ -695,7 +695,7 @@ async function channelRanks(channel, link, crew, meta) {
     if (first) for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => landing.show?.(first));
     return;
   }
-  meta.textContent = "Top fighter: " + (rows[0].displayName || rows[0].username) + " · " + rows[0].elo + " Elo";
+  meta.replaceChildren("Top fighter: " + (rows[0].displayName || rows[0].username) + " · ", h("span", { class: "nowrap" }, rows[0].elo + " Elo"));
   const top = byId.get(rows[0].avatar);
   if (top) {
     if (!landing.first) { landing.first = top; landing.show?.(top); }
