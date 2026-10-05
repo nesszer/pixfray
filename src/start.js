@@ -47,7 +47,7 @@ const signIn = (login, mods = true) => h("a", { class: mods ? "btn btn-primary" 
 
 async function init() {
   if (!token) {
-    show("PixFray is invite-only right now", "Ask nesszerra, who runs PixFray, for an invite link. It names your Twitch account and works for 7 days. Already have one? Open it, and this card shows your sign-in.",
+    show("PixFray is invite-only right now", "Ask nesszerra, who runs PixFray, for an invite link. It names your Twitch account and works for 7 days; open it here to sign in.",
       [h("a", { class: "btn btn-primary", href: "https://www.twitch.tv/nesszerra", rel: "noopener" }, "Ask for an invite on Twitch"), h("a", { class: "text-link", href: "/intro/" }, "See how a duel plays out")]);
     return;
   }
@@ -70,25 +70,31 @@ async function init() {
 }
 init();
 
-// The setup steps scroll past a scene that follows them: the camera starts over the arena (overlay), watches a rival
-// assemble (one bot), the duel (commands), then the ranking pillars (mods). The middle of the window picks the step.
+// The setup steps scroll past a scene that shows each one: the overlay framed as an OBS source, a bot reply in chat,
+// !challenge and !fight starting a duel, then the ranking pillars. The middle of the window picks the step.
 const steps = [...document.querySelectorAll(".story .step-grid > li")], cap = $("#story-cap");
-const CAPS = ["Your overlay draws the arena over your game.", "With the Duel module off, one bot calls each fight.",
+const CAPS = ["The overlay is one browser source, drawn over your game.", "With the Duel module off, PixFray's bot is the only one that answers.",
   "!challenge and !fight start the duel on stream.", "Every win climbs the ranks your mods look after."];
-const KEYS = [0, 0.25, 0.5, 1];   // frames: c = 1, 1.5, 2 and 3 of the intro's camera path
+const KEYS = [2, 7, 12, 17].map((f) => f / 19);   // 20 frames, 5 per step; each step settles on its middle frame
 let active = -1;
+const narrow = matchMedia("(max-width: 960px)");
 function storyAt() {
-  const mid = innerHeight * 0.5, c = steps.map((li) => { const r = li.getBoundingClientRect(); return r.top + r.height / 2; });
-  let s = 0;
-  if (mid >= c[c.length - 1]) s = c.length - 1;
-  else for (let i = 0; i < c.length - 1; i++) if (mid >= c[i] && mid < c[i + 1]) { s = i + (mid - c[i]) / (c[i + 1] - c[i]); break; }
-  const k = Math.round(s);
+  // phones pin the scene as a strip along the top, so the step that counts is the one mid-way down the rest of the screen
+  const top = narrow.matches ? Math.max(0, $(".story-stage").getBoundingClientRect().bottom) : 0;
+  const mid = (top + innerHeight) * 0.5, c = steps.map((li) => { const r = li.getBoundingClientRect(); return r.top + r.height / 2; });
+  const n = c.length - 1, gap = (c[n] - c[0]) / n;
+  let s = mid < c[0] ? (mid - c[0]) / gap : mid >= c[n] ? n + (mid - c[n]) / gap : 0;
+  for (let i = 0; i < n; i++) if (mid >= c[i] && mid < c[i + 1]) { s = i + (mid - c[i]) / (c[i + 1] - c[i]); break; }
+  s = Math.max(-1, Math.min(n + 1, s));
+  const k = Math.max(0, Math.min(n, Math.round(s)));
   if (k !== active) { active = k; steps.forEach((li, i) => li.classList.toggle("is-active", i === k)); cap.textContent = CAPS[k]; }
-  const i = Math.min(KEYS.length - 2, Math.floor(s));
-  return KEYS[i] + (KEYS[i + 1] - KEYS[i]) * (s - i);
+  // each step's scene drifts through its own 5 frames; the cut to the next scene is a short dissolve half-way between steps
+  const i = Math.floor(s), t = s - i, f = 5 * i + 2;
+  const frame = s < 0 ? 2 + 2 * s : s >= n ? 5 * n + 2 + 2 * (s - n) : t < 0.4 ? f + 5 * t : t < 0.6 ? f + 2 + (t - 0.4) / 0.2 : f + 3 + 5 * (t - 0.6);
+  return Math.max(0, Math.min(19, frame)) / 19;
 }
 skyBackdrop();
 if (steps.length === 4) {
   document.documentElement.classList.add("has-story");
-  scrub($("#story-scene"), { frames: Array.from({ length: 21 }, (_, i) => "/assets/scene/seq/start-" + String(i).padStart(2, "0") + ".webp"), progress: storyAt, keys: KEYS });
+  scrub($("#story-scene"), { frames: Array.from({ length: 20 }, (_, i) => "/assets/scene/seq/start-" + String(i).padStart(2, "0") + ".webp"), progress: storyAt, keys: KEYS });
 }

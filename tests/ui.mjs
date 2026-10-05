@@ -663,9 +663,9 @@ try {
     assert.equal(await page.locator('#invite-actions a').count(), 1);
     assert.equal(await page.locator('#invite-problem').isHidden(), true);
     const stage = await page.locator('.stage').boundingBox(), frame = await page.locator('.stage iframe').boundingBox();
-    const want = s.name === '390' ? 1 : 16 / 9;   // phones get a square crop: the fighters stay readable and every nameplate fits
-    assert.ok(Math.abs(stage.width / stage.height - want) < 0.03, 'demo stage is ' + (s.name === '390' ? '1:1' : '16:9') + ', got ' + stage.width + 'x' + stage.height);
-    if (s.name === '1280') assert.ok(stage.width > 900, 'demo stage spans the page at 1280, got ' + stage.width);
+    const want = s.name === '390' ? 1 : 4 / 3;   // phones get a square crop: the fighters stay readable and every nameplate fits
+    assert.ok(Math.abs(stage.width / stage.height - want) < 0.03, 'demo stage is ' + (s.name === '390' ? '1:1' : '4:3') + ', got ' + stage.width + 'x' + stage.height);
+    if (s.name === '1280') assert.ok(stage.width > 560 && stage.y + stage.height < 800, 'demo stage sits beside the headline in the first screen at 1280, got ' + JSON.stringify(stage));
     assert.ok(Math.abs(frame.width - stage.width) < 4 && Math.abs(frame.height - stage.height) < 4, 'overlay frame fills the stage');
     assert.ok(await page.locator('.stage iframe').evaluate((f) => f.offsetWidth >= 640), 'overlay lays out at 640px or wider');
     await page.waitForTimeout(5000);   // let the demo fighters walk in before the screenshot
@@ -790,7 +790,7 @@ try {
     }
     await context.close();
   }
-  // /start without an invite: the invite card sits beside the copy on wide screens and below it on phones, never over it.
+  // /start without an invite: the invite line sits below the copy (beside the demo on wide screens), never over it.
   for (const size of sizes) {
     const { context, page } = await newPage({ width: size.width, height: size.height });
     await page.goto(base + '/start/');
@@ -798,7 +798,7 @@ try {
     const copy = await page.locator('.hero-copy').boundingBox(), card = await page.locator('#invite').boundingBox();
     const apart = card.x >= copy.x + copy.width || card.y >= copy.y + copy.height;
     assert.ok(apart, `start ${size.name}: invite card overlaps the copy`);
-    assert.ok(copy.width >= size.width * 0.5, `start ${size.name}: copy squeezed to ${copy.width}px`);
+    assert.ok(copy.width >= Math.min(size.width * 0.5, 400), `start ${size.name}: copy squeezed to ${copy.width}px`);
     await noOverflow(page, 'start ' + size.name);
     await context.close();
   }

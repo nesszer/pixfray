@@ -435,12 +435,24 @@ function cameraAt(C, portrait) {
   posCurve.getPoint(u, camPos);
   lookCurve.getPoint(u, camLook);
   if (portrait) {   // narrow screens: step back; the view offset lifts the scene above the text
-    tmp.copy(camPos).sub(camLook); camPos.copy(camLook).addScaledVector(tmp, 1.12 + 0.2 * clamp01(1 - Math.abs(C - 2)) + 0.5 * clamp01(1 - Math.abs(C - 3)) - 0.05 * clamp01((C - 3.5) * 2) + 0.6 * clamp01((C - 4.3) / 0.7));
+    tmp.copy(camPos).sub(camLook); camPos.copy(camLook).addScaledVector(tmp, 1.12 + 0.2 * clamp01(1 - Math.abs(C - 2)) + 0.75 * clamp01(1 - Math.abs(C - 3)) - 0.05 * clamp01((C - 3.5) * 2) + 0.6 * clamp01((C - 4.3) / 0.7));
     camPos.y = Math.max(camPos.y, 0.9);   // stepping back from an upward look must not sink the camera under the floor
     camLook.y += 0.9 * clamp01(1 - Math.abs(C - 3) * 1.5);
     camLook.y += 0.8 * clamp01(1 - Math.abs(C - 4) * 1.5);   // the hero stands on the hoard
   }
 }
+
+// ---------- footer ----------
+// the copy and the bottom bar are fixed to the screen; the site footer pushes them up as it scrolls in, instead of covering them
+const foot = document.querySelector('.site-foot');
+let footPx = -1;
+function footLift() {
+  const px = foot ? Math.max(0, Math.round(innerHeight - foot.getBoundingClientRect().top)) : 0;
+  if (px !== footPx) { footPx = px; document.body.style.setProperty('--foot-lift', px + 'px'); }
+}
+addEventListener('scroll', footLift, { passive: true });
+addEventListener('resize', footLift);
+footLift();
 
 // ---------- pointer ----------
 const pointer = new THREE.Vector2(0, 0), pointerSmooth = new THREE.Vector2(0, 0);
@@ -517,7 +529,7 @@ function frame() {
   const born = clamp01((t - bornAt) / 2.8);
   if (!reduced && born < 1) camPos.sub(camLook).multiplyScalar(1 + 0.45 * (1 - ease(born))).add(camLook);
   const W = innerWidth, H = innerHeight, side = sideAt(C);
-  if (portrait) camera.setViewOffset(W, H, 0, H * 0.26, W, H);
+  if (portrait) camera.setViewOffset(W, H, 0, H * (0.26 + 0.07 * clamp01(1 - Math.abs(C - 3) * 1.5)), W, H);   // the ladder's pillar bases clear its headline
   else camera.setViewOffset(W, H, -side * W * (0.17 + 0.018 * clamp01(1 - C * 2)), 0, W, H);
   scrimL.style.opacity = portrait ? '0' : clamp01(side).toFixed(3);
   scrimR.style.opacity = portrait ? '0' : clamp01(-side).toFixed(3);

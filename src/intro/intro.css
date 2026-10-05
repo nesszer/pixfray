@@ -282,3 +282,15 @@ body:not(.scrolled) .edge-fade.bottom { opacity: 0; }
 /* the ladder list keeps clear of the towers, and its figures stay legible where a tower runs behind them */
 .board { max-width: 400px; }
 .board li { text-shadow: 0 1px 3px rgb(0 0 0 / .8); }
+/* the same page links as every other page: the current one underlined, and the site footer after the story */
+.hud-nav a[aria-current]:not(.btn) { color: var(--text); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 8px; }
+.site-foot { position: relative; z-index: 5; background: var(--night); border-top: 1px solid var(--border); }
+.site-foot-inner { padding: var(--space-6) var(--edge); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-6); }
+.foot-brand { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text); font: 650 18px/1 var(--font-display); text-decoration: none; }
+.foot-brand .mark { width: 18px; height: 18px; fill: var(--accent); }
+.site-foot nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); }
+.site-foot nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text-2); font-size: 14px; text-decoration: none; }
+.site-foot nav a:hover, .site-foot nav a[aria-current] { color: var(--text); }
+.site-foot p { flex: 1 0 100%; margin: 0; color: var(--text-2); font-size: 14px; max-width: 68ch; }
+.chapter.finale .copy, .hud-bottom { translate: 0 calc(-1 * var(--foot-lift, 0px)); }
+@media (max-width: 620px) { .site-foot .foot-brand, .site-foot p { display: none; } .site-foot-inner { padding: var(--space-3) var(--edge); } }   /* phones: the header carries the brand; the footer is just its links, so it lifts the copy less */

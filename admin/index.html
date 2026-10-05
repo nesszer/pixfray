@@ -15,14 +15,13 @@
 <main class="page">
   <header class="page-header">
     <h1 data-channel>Duel controls for nesszerra</h1>
-    <p class="subtitle">For the broadcaster and channel moderators. Changes apply to every OBS overlay right away.</p>
+    <p class="subtitle">Only the broadcaster and channel moderators can open these. Changes apply to every OBS overlay right away.</p>
     <p class="meta" id="meta"></p>
   </header>
 
   <!-- Shown until access is confirmed: signed out, not a moderator, or the server is unreachable. -->
-  <section class="gate" id="gate" aria-labelledby="gate-title">
+  <section class="gate" id="gate" aria-label="Sign in to mod controls">
     <div class="gate-main">
-      <h2 id="gate-title">Streamer and mods only</h2>
       <p id="gate-text">Checking your access…</p>
       <div class="toolbar" id="gate-actions"></div>
       <p class="gate-proof" id="gate-proof" role="status" hidden></p>
@@ -38,7 +37,7 @@
     </div>
     <div class="gate-inside">
       <div class="gate-peek" aria-hidden="true" inert>
-        <div class="peek-tabs"><span class="on">Live</span><span>Players</span><span>Rules</span><span>Stream setup</span><span class="peek-tag">Locked preview</span></div>
+        <div class="peek-tabs"><span class="on" aria-disabled="true">Live</span><span aria-disabled="true">Players</span><span aria-disabled="true">Rules</span><span aria-disabled="true">Stream setup</span><span class="peek-tag">Locked preview</span></div>
         <div class="peek-row"><span>Duels are running</span><span class="switch on"></span></div>
         <div class="peek-row"><span>Current fight</span><span class="peek-btn">Cancel fight</span></div>
         <div class="peek-row"><span>Everyone's health</span><span class="peek-btn">Reset health</span></div>
