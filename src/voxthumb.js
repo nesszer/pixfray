@@ -68,7 +68,8 @@ function pump() {
   renderer.setScissorTest(true);
   while (queue.length && drawn.length < GRID * GRID && performance.now() - t0 < 24) {
     const job = queue.shift();
-    if (!job.target.isConnected || waiting.get(job.target) !== job) continue;
+    if (!job.target.isConnected) { if (waiting.get(job.target) === job) waiting.delete(job.target); continue; }
+    if (waiting.get(job.target) !== job) continue;
     const look = job.make();
     // the sprite sheet isn't loaded yet: try again shortly
     if (!look) { if (++job.tries < 40) setTimeout(() => { if (waiting.get(job.target) === job) queue.push(job), wake(); }, 250); continue; }
@@ -109,6 +110,7 @@ function fillRest() {
 }
 // queues every shown tile, in page order; a tab that just opened calls it so its lower tiles don't stay flat
 export function voxAll() {
+  for (const [t, job] of waiting) if (!t.isConnected) waiting.delete(t);
   for (const job of waiting.values()) if (job.target.isConnected && job.target.offsetParent && !queue.includes(job)) queue.push(job);
   if (queue.length) wake();
 }

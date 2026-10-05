@@ -11,6 +11,7 @@ import { sampleSprite, VoxelFighter } from './intro/voxels.js';
 import { buildSky, buildIsland, buildLanterns, buildEmbers, buildIslets } from './intro/world.js';
 
 const HEIGHT = 2.1;   // the fighter's height in world units (a floor cell is 0.34)
+const AWAKE_MS = 8000;   // the arena animates this long after the last input, then holds still and stops drawing
 
 export function createFighter3D(canvas, { zoom = 1 } = {}) {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -65,7 +66,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
   // the fighter and its pet turn together on a turntable
   const table = new THREE.Group(); scene.add(table);
   let fighter = null, pet = null, lookKey = '', builtAt = 0, buildMs = 1100;
-  let drawn = 0, yaw = -0.32, yawTarget = -0.32, drag = null, hover = null, visible = true, slow = false, dirty = true, raf = 0, last = 0;
+  let wokeAt = performance.now(), drawn = 0, yaw = -0.32, yawTarget = -0.32, drag = null, hover = null, visible = true, slow = false, dirty = true, raf = 0, last = 0;
   const frames = [];
 
   // src: a canvas; refH: the height in its pixels that stands for `height` world units; rows: cubes across refH
@@ -94,7 +95,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     if (pet) { pet.group.position.set(-1.0, 0, -0.4); table.add(pet.group); }
     builtAt = reduced ? -1e9 : performance.now();
     buildMs = leaving.length ? 750 : 1100;
-    dirty = true; kick();
+    dirty = true; wake();
   }
 
   function resize() {
@@ -129,11 +130,11 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     if (!ray.ray.intersectPlane(plane, hit)) return null;
     return f.group.worldToLocal(hit);
   }
-  canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, yaw: yawTarget }; canvas.setPointerCapture(e.pointerId); canvas.classList.add('is-dragging'); });
+  canvas.addEventListener('pointerdown', (e) => { wake(); drag = { x: e.clientX, yaw: yawTarget }; canvas.setPointerCapture(e.pointerId); canvas.classList.add('is-dragging'); });
   canvas.addEventListener('pointermove', (e) => {
     if (drag) { yawTarget = soft(drag.yaw + (e.clientX - drag.x) / canvas.clientWidth * Math.PI * 1.6); hover = null; }
     else if (e.pointerType === 'mouse') hover = e;
-    kick();
+    wake();
   });
   const release = () => { if (drag) canvas.closest('.showcase')?.classList.add('turned'); drag = null; yawTarget = Math.max(-TURN, Math.min(TURN, yawTarget)); canvas.classList.remove('is-dragging'); kick(); };
   canvas.addEventListener('pointerup', release);
@@ -142,13 +143,14 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
   // keyboard: arrows turn the fighter when the canvas has focus
   canvas.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    yawTarget = Math.max(-TURN, Math.min(TURN, yawTarget + (e.key === 'ArrowLeft' ? -0.35 : 0.35))); e.preventDefault(); kick();
+    yawTarget = Math.max(-TURN, Math.min(TURN, yawTarget + (e.key === 'ArrowLeft' ? -0.35 : 0.35))); e.preventDefault(); wake();
   });
 
-  new IntersectionObserver(([en]) => { visible = en.isIntersecting; if (visible) kick(); }).observe(canvas);
+  new IntersectionObserver(([en]) => { visible = en.isIntersecting; if (visible) wake(); }).observe(canvas);
   new ResizeObserver(() => { dirty = true; kick(); }).observe(canvas);
-  document.addEventListener('visibilitychange', kick);
+  document.addEventListener('visibilitychange', wake);
 
+  function wake() { wokeAt = performance.now(); kick(); }
   function kick() { if (!raf && visible && !document.hidden) raf = requestAnimationFrame(frame); }
   function frame(now) {
     raf = 0;
@@ -158,10 +160,12 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     drawn = now;
     const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016); last = now;
     const t = now / 1000, live = !reduced && !slow;
+    // the sway and breath ease out before the arena stops, so it comes to rest instead of freezing mid-turn
+    const calm = Math.max(0, Math.min(1, (AWAKE_MS - (now - wokeAt)) / 2000)), awake = now - wokeAt < AWAKE_MS;
     const assembling = now - builtAt < 1400 || leaving.length > 0;
     const a = reduced ? 1 : Math.max(0, Math.min(1, (now - builtAt) / buildMs));
     // idle sway when nobody is dragging, so the voxels read as solid
-    const sway = live && !drag ? Math.sin(t * 0.45) * 0.22 : 0;
+    const sway = live && !drag ? Math.sin(t * 0.45) * 0.22 * calm : 0;
     yaw += (yawTarget + sway - yaw) * (1 - Math.exp(-dt * 6));
     table.rotation.y = yaw;
     for (let i = leaving.length - 1; i >= 0; i--) {
@@ -175,7 +179,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
       embers.material.uniforms.uTime.value = t;
       island.userData.rune.uTime.value = t;
       lanterns.flames.forEach((f) => { f.mesh.material.emissiveIntensity = 2.8 + Math.sin(t * 9 + f.seed) * 0.35 + Math.sin(t * 23 + f.seed * 3) * 0.2; });
-      if (fighter) fighter.group.position.y = Math.max(0, Math.sin(t * 2.2)) * 0.015;   // a breath
+      if (fighter) fighter.group.position.y = Math.max(0, Math.sin(t * 2.2)) * 0.015 * calm;   // a breath
     } else lanterns.flames.forEach((f) => { f.mesh.material.emissiveIntensity = 2.8; });
     composer.render(dt);
     dirty = false;
@@ -184,13 +188,14 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
       frames.push(dt);
       if (frames.length === 50) {
         const avg = frames.reduce((x, y) => x + y, 0) / frames.length;
-        if (avg > 0.045) { slow = true; dpr = 1; renderer.setPixelRatio(1); bloom.enabled = false; dirty = true; canvas.width = 0; }
+        if (avg > 0.045) { slow = true; dpr = 1; renderer.setPixelRatio(1); composer.setPixelRatio(1); bloom.enabled = false; dirty = true; canvas.width = 0; }
         frames.length = 0;
       }
     }
-    const moving = Math.abs(yawTarget + sway - yaw) > 0.002 || drag || hover || fighter?.settling || assembling;
-    if (live || moving || dirty) kick();
+    const moving = Math.abs(yawTarget + sway - yaw) > 0.002 || drag || fighter?.settling || assembling;
+    if ((live && awake) || moving || dirty) kick();
+    else { last = 0; frames.length = 0; }   // at rest: the next wake starts a fresh clock and a fresh speed sample
   }
   kick();
-  return { set, get slow() { return slow; }, get count() { return (fighter?.count || 0) + (pet?.count || 0); } };
+  return { set, wake, get slow() { return slow; }, get count() { return (fighter?.count || 0) + (pet?.count || 0); } };
 }

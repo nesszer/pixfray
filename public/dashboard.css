@@ -1229,8 +1229,20 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 .upgrade .meter i.on { background: var(--accent); }
 .upgrade .meter i.pet { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 @media (max-width: 900px) {
-  /* phones: the stage already shows the fighter and its nameplate, so the flat "On stream" strip steps out and the picker starts higher */
-  .hero-card.has-3d .preview { display: none; }
+  /* phones: the flat on-stream view rides over the 3D stage instead of taking a row. Only its "Preview a win" chip shows;
+     the on-stream strip slides up along the stage's bottom while the win plays (dashboard.js sets .is-playing) */
+  .hero-card.has-3d .preview { grid-area: show; align-self: stretch; justify-self: stretch; position: relative; inset: auto; z-index: 2; display: block; width: auto; height: auto; margin: 0; padding: 0;
+    border: 0; border-radius: 0; background: none; pointer-events: none; }
+  .hero-card.has-3d .preview-bar { position: absolute; top: 2px; left: 10px; right: auto; display: block; padding: 0; border: 0; background: none; pointer-events: auto; }
+  .hero-card.has-3d .preview-bar .btn, .hero-card.has-3d .preview-bar .win-link { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 10px;
+    font-size: var(--text-xs); color: var(--text); background: rgb(13 9 6 / .8); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); text-decoration: none; }
+  .hero-card.has-3d .preview .stage-canvas, .hero-card.has-3d .preview .preview-label { display: none; }
+  .hero-card.has-3d .preview.is-playing .stage-canvas { display: block; position: absolute; left: 0; right: 0; bottom: 0; height: 104px;
+    background: var(--topbar); border-top: 1px solid var(--border-strong); }
+  .hero-card.has-3d .preview.is-playing .preview-label { display: block; position: absolute; top: auto; bottom: 108px; left: 10px; color: var(--text-2); }
+  html.compact .hero-card.has-3d .preview:not(.is-playing) { display: none; }
+  html.compact .hero-card.has-3d .preview.is-playing { display: block; }
+  html.compact .hero-card.has-3d .preview.is-playing .preview-bar { display: none; }
   /* a slimmer Save bar, and taps near the bottom scroll clear of it */
   .hero-card.has-3d .toolbar { padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
   html { scroll-padding-bottom: 72px; }
@@ -1392,7 +1404,7 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
   .story { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: var(--space-8); align-items: start; }
   .story .step-grid { display: block; margin: 0 0 0 var(--space-4); }
   .story .step-grid > li { padding-block: 9vh; border-top: 0; border-left: 2px solid var(--border-strong);
-    padding-inline: var(--space-6) 0; opacity: .45; transition: opacity .25s ease, border-color .25s ease; }
+    padding-inline: var(--space-6) 0; opacity: .7; transition: opacity .25s ease, border-color .25s ease; }
   .story .step-grid > li.is-active { opacity: 1; border-left-color: var(--trim); }
   .story .step-grid > li::before { top: calc(50% - 16px); left: -17px; }
   .story .step-mock { height: auto; min-height: 120px; font-size: var(--text-md); padding: var(--space-4); }
@@ -1403,7 +1415,7 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
 }
 /* phones and tablets: the scene fills the screen behind the steps, which pass over it as cards */
 @media (max-width: 960px) {
-  .story { position: relative; display: flex; flex-direction: column; }
+  .story { position: relative; display: flex; flex-direction: column; overflow-x: visible; overflow-y: clip; }  /* the pinned scene ends with the last step instead of hanging over the sections below */
   .story-stage { order: -1; flex: none; position: sticky; top: 0; z-index: 0; height: 100svh; margin: 0 calc(50% - 50vw) -100svh; }
   .story-stage figcaption { display: none; }
   .story .step-grid { position: relative; z-index: 1; display: block; margin: 0; padding: 48svh 0 24svh; }

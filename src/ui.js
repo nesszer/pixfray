@@ -188,31 +188,42 @@ export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0, loo
 }
 // sprite = {canvas, entry, anim, active()} ; returns a handle with .set(entry) and .destroy()
 export function addSprite(canvas, entry, { anim = "walk", active = () => true, hat = "", pet = null, looks = {} } = {}) {
-  const s = { canvas, entry, anim, active, hat, pet, looks, drawn: "" };
+  const s = { canvas, entry, anim, active, hat, pet, looks, looksKey: JSON.stringify(looks), drawn: "" };
   sprites.add(s);
   const img = entry && image(entry.url);
   img?.addEventListener("load", () => { s.drawn = ""; start(); }, { once: true });
   start();
   return { hat(id) { s.hat = id || ""; s.drawn = ""; start(); },
-    looks(next) { s.looks = next || {}; s.drawn = ""; start(); },
+    looks(next) { s.looks = next || {}; s.looksKey = JSON.stringify(s.looks); s.drawn = ""; start(); },
     pet(next) { s.pet = next?.id ? next : null; s.drawn = ""; if (next?.url) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); },
     set(next) { s.entry = next; s.drawn = ""; if (next) image(next.url).addEventListener("load", () => { s.drawn = ""; start(); }, { once: true }); start(); }, destroy() { sprites.delete(s); } };
 }
 let running = false;
 function start() { if (!running) { running = true; requestAnimationFrame(tick); } }
+// Walking sprites and the on-stream stage come to rest REST_MS after the last input, and stop drawing; any input wakes them.
+const REST_MS = 10000, stages = new Set();
+let lastInput = performance.now();
+const awake = () => performance.now() - lastInput < REST_MS;
+for (const ev of ["pointermove", "pointerover", "pointerdown", "keydown", "focusin", "change", "scroll", "visibilitychange"]) addEventListener(ev, () => {
+  lastInput = performance.now();
+  if (sprites.size) start();
+  stages.forEach((kick) => kick());
+}, { passive: true, capture: true });
 function tick(now) {
+  let busy = false;
   for (const s of sprites) {
     if (!s.canvas.isConnected) { sprites.delete(s); continue; }
-    const moving = !reducedMotion.matches && s.active();
+    const moving = !reducedMotion.matches && s.active() && awake();
     const frames = framesFor(s.entry, moving ? s.anim : "idle");
     const index = moving && frames.length ? Math.floor(now / (1000 / (s.entry?.fps || 8))) % frames.length : 0;
     // A pet animates on its own clock (hop, hover, wings), so a moving sprite with a pet redraws every frame.
     const petT = s.pet && moving ? Math.round(now) : 0;
-    const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index + ":" + s.hat + ":" + (s.pet?.id || "") + ":" + petT + ":" + JSON.stringify(s.looks);
+    const key = (s.entry?.id || "") + ":" + (moving ? s.anim : "idle") + ":" + index + ":" + s.hat + ":" + (s.pet?.id || "") + ":" + petT + ":" + s.looksKey;
     if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index], s.hat, s.pet, petT, s.looks)) s.drawn = key;
+    if (moving || key !== s.drawn) busy = true;
   }
   // With reduced motion every sprite is a still frame, so the loop sleeps until something needs redrawing.
-  if (sprites.size && !reducedMotion.matches) requestAnimationFrame(tick); else running = false;
+  if (busy && !reducedMotion.matches && !document.hidden) requestAnimationFrame(tick); else running = false;
 }
 
 // ---------- the 3D preview's source pictures ----------
@@ -265,14 +276,17 @@ function fitOf(entry, img, frame) {   // the overlay's bulkFit: big, square spri
 }
 export function addStage(canvas) {
   const st = { entry: null, hat: "", pet: null, color: DEFAULT_COLOR, name: "you", elo: null, looks: {}, win: null };
-  let trail = null, trailId = "", raf = 0;
-  const kick = () => { if (!raf) raf = requestAnimationFrame(loop); };
+  let trail = null, trailId = "", raf = 0, shown = true;
+  const kick = () => { if (!raf && shown) raf = requestAnimationFrame(loop); };
+  // off screen or hidden by the layout (phones), the stage stops drawing until it shows again
+  new IntersectionObserver(([en]) => { shown = en.isIntersecting; kick(); }).observe(canvas);
+  stages.add(kick);
   function loop(now) {
     raf = 0;
-    if (!canvas.isConnected) return;
+    if (!canvas.isConnected || document.hidden) return;
     draw(now);
     const playing = st.win && now - st.win.start < 4500;
-    if (!reducedMotion.matches || playing) raf = requestAnimationFrame(loop);
+    if ((!reducedMotion.matches && awake()) || playing) kick();
   }
   function draw(now) {
     const dpr = Math.min(2, devicePixelRatio || 1), cw = canvas.clientWidth, ch = canvas.clientHeight;
@@ -281,7 +295,7 @@ export function addStage(canvas) {
     const W = canvas.width, H = canvas.height, ctx = canvas.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    const still = reducedMotion.matches, k = Math.max(H / 170, 0.8 * dpr), s = 60 * k, ground = Math.round(H - 46 * k), x = Math.round(W * 0.56);
+    const still = reducedMotion.matches || !awake(), k = Math.max(H / 170, 0.8 * dpr), s = 60 * k, ground = Math.round(H - 46 * k), x = Math.round(W * 0.56);
     const win = st.win && now - st.win.start < 4500 ? st.win : null, effectOn = win && now - win.start < (cosmetics?.WIN_EFFECT_MS || 3000);
     const moving = !still && !effectOn, L = st.looks || {};
     // The floor, with marks that slide back while the fighter walks in place.

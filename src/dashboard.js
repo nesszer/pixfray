@@ -299,7 +299,7 @@ function renderItems(kind) {
   box.replaceChildren(
     tile({ kind, id: "", label: k.none, visual: visual(""), out, onPick: (id) => { state.d[k.field] = id; } }),
     ...list.map((item) => tile({ kind, id: item.id, label: text(item), visual: visual(item.id), price: item.price, buyLabel: item.label + (kind === "accessory" || kind === "trail" || kind === "effect" ? "" : " " + k.noun), out,
-      onPick: (id) => { state.d[k.field] = id; if (kind === "petcolor") renderPets(); if ((kind === "effect" || kind === "taunt") && id) stage.play(); } })));
+      onPick: (id) => { state.d[k.field] = id; if (kind === "petcolor") renderPets(); if ((kind === "effect" || kind === "taunt") && id) playWin(); } })));
   if (kind === "title") box.querySelectorAll(".char-option label > span:first-of-type").forEach((s) => s.classList.add("title-text"));
   checkPicked(box, kind, state.d[k.field]);
   const have = state.owned[kind]?.length || 0;
@@ -451,11 +451,19 @@ function renderPreview() {
   $("#win-link").hidden = !$("#play-win").disabled;
   renderLoadout();
 }
-$("#play-win").addEventListener("click", () => stage.play());
+// on phones the on-stream strip is tucked over the 3D stage and only shows while a win plays
+let playing = 0;
+function playWin() {
+  stage.play();
+  const fig = $(".hero-card .preview");
+  fig.classList.add("is-playing"); clearTimeout(playing);
+  playing = setTimeout(() => fig.classList.remove("is-playing"), 4500);
+}
+$("#play-win").addEventListener("click", playWin);
 // Desktop: what the fighter is wearing, under the preview. Items only tried on show their price; the total is what buying the look costs.
 const priceOf = (kind, id) => kind === "hat" ? (state.shop?.hatPricePerWin || 0) * (rules().hats.find((x) => x.id === id)?.wins || 0)
   : kind === "pet" ? petById(id)?.price || 0 : state.shop?.items?.[kind]?.find((x) => x.id === id)?.price || 0;
-const EMPTY_AT = { hat: "hats", pet: "pets" };
+const EMPTY_AT = { hat: "hats", pet: "pets", accessory: "shop-accessory", trail: "shop-trail", effect: "win-effects", title: "shop-title" };
 const EMPTY_LABEL = { hat: "Add a hat", accessory: "Add an accessory", pet: "Add a pet", trail: "Add a trail", effect: "Add a win effect", title: "Add a title" };
 function renderLoadout() {
   const box = $("#loadout");
