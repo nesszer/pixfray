@@ -31,8 +31,8 @@ function show(title, text, actions = [], problem = "") {
   $("#invite-title").replaceChildren(...title.split(/(\S+-\S+)/).map((part, i) => i % 2 ? h("span", { class: "nowrap" }, part) : part));
   $("#invite-text").textContent = text;
   $("#invite-actions").replaceChildren(...actions);
-  // the closing band repeats the card's main link, so the page ends on the next step
-  $("#ready-actions").replaceChildren(...actions.filter((n) => n.matches("a.btn-primary")).map((n) => n.cloneNode(true)));
+  // the closing band repeats the card's main link as a plain button, so the page ends on the next step with one primary action
+  $("#ready-actions").replaceChildren(...actions.filter((n) => n.matches("a.btn-primary")).map((n) => { const c = n.cloneNode(true); c.classList.remove("btn-primary"); return c; }));
   $("#ready").hidden = !$("#ready-actions").children.length;
   const box = $("#invite-problem");
   box.textContent = problem;

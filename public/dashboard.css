@@ -660,7 +660,7 @@ body:has(.landing:not([hidden]))::before { display: none; }
 .perm-lists li + li { margin-top: var(--space-1); }
 @media (max-width: 760px) {
   .perm-lists { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
-  .stage-figure .stage { aspect-ratio: 4 / 5; }
+  .stage-figure .stage { aspect-ratio: 1 / 1; }
 }
 /* admin signed out: the gate spans the page grid, with no rule floating above it */
 body:has(#gate:not([hidden])) .page-header { border-bottom: 0; margin-bottom: 0; }
@@ -1148,9 +1148,17 @@ body:has(.gate:not([hidden]))::before { background-position: center -140px; }
 #gate h2 { font-size: var(--text-xl); }
 body:has(#gate:not([hidden])) > main.page { min-height: 0; padding-block: var(--space-7) var(--space-6); }
 body:has(#gate:not([hidden])) .gate { margin-bottom: 0; }
-/* phones: with Mods in the bar, "How it works" moves to the footer ("See a duel") so each link keeps a 44px target */
+/* the header nav matches the intro's: plain links, then "Pick your fighter" as a gold-edged button */
+.topbar nav { align-items: center; }
+.topbar nav a.nav-cta { display: inline-flex; align-items: center; min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--trim); border-radius: var(--radius-sm);
+  color: var(--accent-hover); font-weight: 650; }
+.topbar nav a.nav-cta:hover { background: var(--accent-soft); color: var(--text); border-bottom-color: var(--trim); }
+.topbar nav a.nav-cta[aria-current] { background: var(--accent-soft); color: var(--text); }
+/* phones: "See a duel" lives in the footer, so the bar keeps 44px targets without scrolling sideways */
 @media (max-width: 480px) {
-  .topbar nav:has(#admin-link:not([hidden])) a[href="/intro/"], .topbar nav:has(a[href^="/admin/"][aria-current]) a[href="/intro/"] { display: none; }
+  .topbar nav { overflow: visible; mask-image: none; -webkit-mask-image: none; padding-right: 0; justify-content: flex-end; gap: var(--space-3); }
+  .topbar nav a[href="/intro/"] { display: none; }
+  .topbar nav a.nav-cta { min-height: 40px; padding: 0 var(--space-2); }
 }
 /* /start: the page ends at its last call to action */
 main.page:has(> .ready:last-child) { padding-bottom: 0; }
@@ -1158,3 +1166,27 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 .top3 > li.open .slot { height: 56px; }
 .top3 > li.open.first .slot { height: 80px; }
 .top3 > li.open:not(.first) { padding-top: var(--space-5); }
+/* a set of 3, 6, 9 … tiles lays out in threes so no row ends with one tile alone */
+.item-grid:not(.text-grid):has(> .char-option:last-child:nth-child(3n)):not(:has(> .char-option:last-child:nth-child(4n))) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* mod gate: one frame, not three. The copy sits on the page; only the preview picture keeps the corner brackets */
+#gate { background: none; border: 0; padding: 0; }
+#gate::after { content: none; }
+.gate-inside { position: relative; }
+@media (min-width: 761px) { .gate-inside::after { content: ""; position: absolute; inset: 6px; border: 10px solid transparent; border-image: var(--lock) 10; pointer-events: none; } }
+.gate-peek .peek-tag { border: 0; padding: 0; color: var(--text-2); display: inline-flex; align-items: center; gap: 6px; }
+.gate-peek .peek-tag::before { content: ""; width: 10px; height: 12px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M2 5V3.5a3 3 0 0 1 6 0V5h1v7H1V5zm1.5 0h3V3.5a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M2 5V3.5a3 3 0 0 1 6 0V5h1v7H1V5zm1.5 0h3V3.5a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E") center / contain no-repeat; }
+
+/* ---------- round 19 ---------- */
+/* phones: the pinned preview is a full-width band ruled top and bottom, not a box holding boxes */
+@media (max-width: 900px) {
+  .hero-card.has-3d { border-width: 1px 0; border-color: var(--border-strong); border-radius: 0; }
+  .hero-card.has-3d .preview { border: 0; background: none; padding-inline: 0; }
+  /* the Save bar is there from the first screen; it only steps aside while scrolling down */
+  html.at-top .hero-card.has-3d .toolbar { transform: none; }
+  html.at-top:not(.bar-away) .hero-card.has-3d .toolbar { visibility: visible; transition: transform .2s ease-out; }
+}
+/* the picker has one primary action: the first stream's button is filled, the rest stay outlined */
+.landing .channel-list li:first-child .channel-go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.landing .channel-list li:first-child .channel:hover .channel-go { background: var(--accent-hover); border-color: var(--accent-hover); }

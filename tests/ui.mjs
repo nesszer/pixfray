@@ -521,7 +521,7 @@ try {
   }
   // 6. StreamElements is the chat source but no command has reached this site: the Stream setup tab warns.
   for (const se of [{ lastCommandAt: 0, rejectedAt: 0, expect: /No StreamElements command has reached \S+ with this key yet.*test site.*!no/, warn: true, live: 'Waiting for the first chat command', stat: 'No commands yet' },
-    { lastCommandAt: now - 120000, rejectedAt: 0, expect: /Last StreamElements command reached \S+ 2 min ago/, warn: false, live: 'Duels are live', stat: 'Working' },
+    { lastCommandAt: Date.now() - 125000, rejectedAt: 0, expect: /Last StreamElements command reached \S+ 2 min ago/, warn: false, live: 'Duels are live', stat: 'Working' },
     { lastCommandAt: now - 120000, rejectedAt: now - 30000, expect: /old key and was refused/, warn: true, live: 'StreamElements is sending an old key', stat: 'Old key' }]) {
     const { context, page } = await newPage(sizes[0]);
     const chatStatus = { connected: true, source: 'streamelements', status: 'enabled', subscriptionId: 'se-streamelements', createdAt: now - 86400000, lastNotificationAt: se.lastCommandAt, lastRevocationReason: '', checkedAt: 0 };
@@ -551,7 +551,7 @@ try {
   for (const s of sizes) {
     const { context, page } = await newPage(s);
     const actions = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help'];
-    let overlays = 0, duelModuleOff = false, seen = { challenge: now - 120000, decline: now - 120000 };
+    let overlays = 0, duelModuleOff = false, seen = { challenge: Date.now() - 125000, decline: Date.now() - 125000 };
     const posts = [];
     const chatStatus = { connected: true, source: 'streamelements', status: 'enabled', subscriptionId: 'se-streamelements', createdAt: now - 86400000, lastNotificationAt: now - 120000, lastRevocationReason: '', checkedAt: 0 };
     const streamelements = () => ({ key: 'k'.repeat(48), names: {}, origin: base, lastCommandAt: now - 120000, rejectedAt: 0, seen, duelModuleOff, timerText: 'x',
@@ -663,8 +663,8 @@ try {
     assert.equal(await page.locator('#invite-actions a').count(), 1);
     assert.equal(await page.locator('#invite-problem').isHidden(), true);
     const stage = await page.locator('.stage').boundingBox(), frame = await page.locator('.stage iframe').boundingBox();
-    const want = s.name === '390' ? 4 / 5 : 16 / 9;   // phones get a taller crop so the fighters stay readable
-    assert.ok(Math.abs(stage.width / stage.height - want) < 0.03, 'demo stage is ' + (s.name === '390' ? '4:5' : '16:9') + ', got ' + stage.width + 'x' + stage.height);
+    const want = s.name === '390' ? 1 : 16 / 9;   // phones get a square crop: the fighters stay readable and every nameplate fits
+    assert.ok(Math.abs(stage.width / stage.height - want) < 0.03, 'demo stage is ' + (s.name === '390' ? '1:1' : '16:9') + ', got ' + stage.width + 'x' + stage.height);
     if (s.name === '1280') assert.ok(stage.width > 900, 'demo stage spans the page at 1280, got ' + stage.width);
     assert.ok(Math.abs(frame.width - stage.width) < 4 && Math.abs(frame.height - stage.height) < 4, 'overlay frame fills the stage');
     assert.ok(await page.locator('.stage iframe').evaluate((f) => f.offsetWidth >= 640), 'overlay lays out at 640px or wider');
