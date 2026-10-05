@@ -694,10 +694,11 @@ test('!rematch challenges the last finished duel\'s opponent, with the rematch l
     profile: { userId: 'id-alice', username: 'alice', registered: true, lastOpponentId: 'id-dan' },
     targetProfile: { userId: 'id-dan', username: 'dan', displayName: 'dan', registered: true } });
   assert.equal(r.ok, true, r.reason);
-  const { seReplyText, seHelpText } = await import('../server/streamelements.js');
+  const { seReplyText, seHelpText, seLookText } = await import('../server/streamelements.js');
   assert.equal(seReplyText({ result: r, state: v.state, actorId: 'id-alice', action: 'rematch', target: '' }), 'alice wants a rematch with @dan! @dan, type !rematch or !fight to fight, or !decline to back out within 30 s.');
   assert.equal(seReplyText({ result: { ok: false, reason: 'no_previous_opponent' }, state: v.state, actorId: 'id-alice', action: 'rematch', target: '' }), 'alice, you have nobody to rematch yet. Start one: !challenge @name');
   assert.match(seHelpText({ names: { rematch: '!again' } }), / Again\? !again$/);
+  assert.equal(seLookText({ who: 'Alice', hasFighter: true }), '@Alice, change your look on the PixFray site');
 });
 
 test('!rematch works in the HP fight too', () => {

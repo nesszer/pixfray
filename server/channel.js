@@ -16,7 +16,7 @@ import { checkChatSubscription, liveStream } from "./eventsub.js";
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget } from "./streamelements.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -32,6 +32,7 @@ const BOT_REPLIES_PER_30S = 18;          // the bot's chat replies per channel; 
 // starts or answers a duel the next steps need, so the run stops when it fails.
 const E2E_STEPS = [
   ["B", "help", "", ["help"]],
+  ["B", "look", "", ["look"]],
   ["B", "top", "", ["top"]],
   ["B", "elo", "", ["elo"]],
   ["B", "elo", "O", ["elo"]],
@@ -974,6 +975,7 @@ export class ChannelRoom extends DurableObject {
     }
     if (SE_READ_ACTIONS.includes(action)) {
       if (action === "help") return done(seHelpText({ names, origin, channel }), "help");
+      if (action === "look") return done(seLookText({ who: input.displayName || username, hasFighter: Boolean(this.getProfile(userId, state0.config)), origin, channel }), "look");
       if (action === "top") return done(seTopText(this.leaderboard(channel).slice(0, 5), { origin, channel }), "top");
       const found = this.eloLookup(channel, target ? { username: target } : { userId });
       return done(seEloText(found, { self: !target, askerName: input.displayName || username, target, origin, channel }), found ? "elo" : "elo_not_found");

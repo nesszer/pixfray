@@ -274,7 +274,7 @@ left alone.
   - Sparring partner: a challenge or rematch aimed at the bot is accepted at once, and
     `!pay @bot N` is paid back.
   - `!fray spar`: the bot challenges whoever asked, who answers `!fight` or `!decline`.
-  - `!fray e2e [@name]` (broadcaster, mods or the bot account): the bot plays the 16 steps in
+  - `!fray e2e [@name]` (broadcaster, mods or the bot account): the bot plays the 17 steps in
     `E2E_STEPS` (`server/channel.js`) against `@name` (default: whoever asked) through
     `runCommand`, then posts "n of 16 steps passed" plus one `ok`/`FAIL` entry per step. Each step
     is logged with `via: e2e`. Within about 30 s of the last duel it stops at the first challenge

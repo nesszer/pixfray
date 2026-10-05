@@ -508,16 +508,18 @@ test('StreamElements !rematch challenges the last opponent, saved with the profi
 });
 
 
-test('StreamElements !ranks, !elo and !fray work even while duels are paused', async () => {
+test('StreamElements !ranks, !elo, !fray and !look work even while duels are paused', async () => {
   const r = room();
   const se = (await r.call('/admin')).body.streamelements;
-  assert.deepEqual([se.names.top, se.names.elo, se.names.help], ['!ranks', '!elo', '!fray']);
+  assert.deepEqual([se.names.top, se.names.elo, se.names.help, se.names.look], ['!ranks', '!elo', '!fray', '!look']);
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 't' + (++m) } });
   assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'PixFray duels: gear up at https://test.example/?channel=nesszerra, then name your rival with !challenge @name. They answer !fight. Again? !rematch');
   assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'The arena has no champions yet! Gear up at https://test.example/?channel=nesszerra and win a duel.');
   assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra');
+  assert.equal((await cmd('u1', 'alice', 'look')).body.reply, '@alice, pick your fighter here: https://test.example/?channel=nesszerra#fighter');
   await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
+  assert.equal((await cmd('u1', 'alice', 'look')).body.reply, '@alice, change your look here: https://test.example/?channel=nesszerra#fighter');
   r.ctx.storage.sql.exec("UPDATE profiles SET elo = 1040, wins = 3, losses = 1 WHERE user_id = 'u2'");
   r.ctx.storage.sql.exec("UPDATE profiles SET elo = 990, wins = 0, losses = 1 WHERE user_id = 'u3'");
   assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'Top 3: 1. bob 1040 · 2. alice 1000 · 3. cara 990. Full list: https://test.example/?channel=nesszerra#ranks');
@@ -1036,7 +1038,7 @@ test('debug bot: !fray e2e plays every command once against the asker and posts 
   await r.call('/dev-live', { method: 'POST', body: { live: false } });
   assert.match((await r.say('u1', 'alice', '!fray e2e')).reply, /only the broadcaster or a mod/);
   const run = await r.say('u1', 'alice', '!fray e2e', { mod: true });
-  assert.match(run.replies[0], /^PixFray e2e, pixbot vs alice: 16 of 16 steps passed\.$/);
+  assert.match(run.replies[0], /^PixFray e2e, pixbot vs alice: 17 of 17 steps passed\.$/);
   const detail = run.replies.slice(1).join(' · ');
   assert.doesNotMatch(detail, /FAIL/);
   assert.match(detail, /checkin ok \(not_live\)/);

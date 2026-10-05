@@ -6,10 +6,10 @@ import { boostText } from './pets.js';
 
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = 'se-streamelements';   // marks StreamElements as the chat source in state.chat
-export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help', 'checkin', 'wallet', 'give', 'pet'];   // quick duels need no attack commands
-export const SE_READ_ACTIONS = ['top', 'elo', 'help'];   // no game state, so they work while duels are paused
+export const SE_ACTIONS = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help', 'look', 'checkin', 'wallet', 'give', 'pet'];   // quick duels need no attack commands
+export const SE_READ_ACTIONS = ['top', 'elo', 'help', 'look'];   // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
-export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!fray', checkin: '!checkin', wallet: '!wallet', give: '!pay', pet: '!pet' };   // not !give: StreamElements' built-in !givepoints answers to that
+export const DEFAULT_SE_NAMES = { challenge: '!challenge', accept: '!fight', decline: '!decline', rematch: '!rematch', top: '!ranks', elo: '!elo', help: '!fray', look: '!look', checkin: '!checkin', wallet: '!wallet', give: '!pay', pet: '!pet' };   // not !give: StreamElements' built-in !givepoints answers to that
 export const LOST_TEXT = 'Lost in the arena? Type !fray';
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
 export const OFF_TEXT = 'PixFray is off on this channel right now.';
@@ -112,6 +112,12 @@ export function seHelpText({ names = {}, origin = '', channel = '' } = {}) {
   const n = a => names[a] || DEFAULT_SE_NAMES[a];
   const link = siteLink(origin, channel);
   return `PixFray duels: gear up${link ? ' at ' + link : ' on the PixFray site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}. Again? ${n('rematch')}`;
+}
+
+// !look: a link straight to the Fighter tab, where the sender picks or changes their fighter.
+export function seLookText({ who = '', hasFighter = false, origin = '', channel = '' } = {}) {
+  const link = siteLink(origin, channel, '#fighter');
+  return `@${short(who)}, ${hasFighter ? 'change your look' : 'pick your fighter'}${link ? ' here: ' + link : ' on the PixFray site'}`;
 }
 
 // !top: the first five of the leaderboard (rows in leaderboard order) on one line.
