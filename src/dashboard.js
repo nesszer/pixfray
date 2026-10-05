@@ -460,7 +460,8 @@ function renderSignedIn() {
   saveBtn.hidden = !signedIn();
   saveSignin.hidden = signedIn() || s?.configured === false;
   if (!saveSignin.hidden) $("#who").replaceChildren();   // one sign-in button: the preview card's, next to what it saves
-  note.hidden = signedIn();
+  note.hidden = signedIn() || Boolean(s?.configured);   // the usual signed-out case: the card's hint says what sign-in shares
+  $("#signin-hint").hidden = saveSignin.hidden;
   if (!s) note.textContent = "Sign-in is unavailable right now, so profiles can't be saved. You can still browse characters and the leaderboard.";
   else if (s.configured === false) note.textContent = "Twitch sign-in isn't set up on this server yet, so profiles can't be saved. You can still browse characters and the leaderboard.";
   else note.textContent = "Sign in with Twitch to save your fighter. It shares only your public Twitch name, and ranked duels need a saved profile.";
@@ -563,13 +564,36 @@ async function init() {
 // The bare site (no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
 async function pickChannel() {
   document.title = "PixFray: pick your stream";
-  for (const el of [$("#fighter"), $("main.page:not(#pick)"), $(".topbar nav")]) if (el) el.hidden = true;
+  for (const el of [$("#fighter"), $("main.page:not(#pick)")]) if (el) el.hidden = true;
   $("#pick").hidden = false;
   const [session, list] = await Promise.all([api("/api/session"), api("/api/channels")]);
   // Signing in happens on a channel's page, so the picker shows only who is already signed in.
   if (session.ok && session.data?.user) renderWho($("#who"), session.data, signOut); else $("#who").replaceChildren();
   const channels = list.ok && Array.isArray(list.data?.channels) ? list.data.channels : ["nesszerra", "miolafff"];
-  $("#channel-list").replaceChildren(...channels.map((c) => h("li", {}, h("a", { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
-    h("span", { class: "channel-name" }, c), h("span", { class: "channel-go" }, "Pick your fighter")))));
+  $("#channel-list").replaceChildren(...channels.map((c) => {
+    const crew = h("span", { class: "channel-crew", "aria-hidden": "true" }), meta = h("span", { class: "channel-meta" });
+    const link = h("a", { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
+      crew, h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta), h("span", { class: "channel-go" }, "Pick your fighter"));
+    channelRanks(c, link, crew, meta);
+    return h("li", {}, link);
+  }));
+}
+// each channel row shows its top three fighters, walking while the row is hovered or focused
+async function channelRanks(channel, link, crew, meta) {
+  const [board, catalog] = await Promise.all([api("/api/leaderboard/" + channel), api("/api/catalog/" + channel)]);
+  const rows = board.ok && Array.isArray(board.data) ? board.data.filter((p) => p.wins + p.losses > 0) : [];
+  const byId = new Map((catalog.ok && Array.isArray(catalog.data) ? catalog.data : []).map((e) => [e.id, e]));
+  if (!rows.length) { meta.textContent = "No ranked duels yet. The top spot is open."; return; }
+  meta.textContent = "Top fighter: " + (rows[0].displayName || rows[0].username) + " · " + rows[0].elo + " Elo";
+  let lit = false;
+  for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => { lit = true; });
+  for (const ev of ["pointerleave", "blur"]) link.addEventListener(ev, () => { lit = false; });
+  for (const p of rows.slice(0, 3)) {
+    const entry = byId.get(p.avatar);
+    if (!entry) continue;
+    const canvas = h("canvas", { class: "sprite", width: 48, height: 48 });
+    crew.append(canvas);
+    addSprite(canvas, entry, { anim: "walk", active: () => lit });
+  }
 }
 if (CHANNEL_PICKED) init(); else pickChannel();

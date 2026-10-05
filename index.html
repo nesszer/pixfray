@@ -34,8 +34,8 @@
   <div class="hero-grid">
     <header class="hero-copy">
       <h1 id="hero-title" data-channel>Your fighter in nesszerra's chat</h1>
-      <p class="lead" data-channel>Pick a character, colors and gear. Your fighter is saved to your Twitch account, so it shows up in every nesszerra stream.</p>
-      <p class="how">To duel: save a fighter, then type <code>!challenge @name</code> in chat while the stream is live. They accept with <code>!fight</code>, and your fighters walk in to settle it. <a href="#duels">Full rules</a></p>
+      <p class="lead" data-channel>Pick a character, colors and gear. It's saved to your Twitch account and walks onto every nesszerra stream.</p>
+      <p class="how">To duel, type <code>!challenge @name</code> in chat while the stream is live. Your rival answers <code>!fight</code>. <a href="#duels">Full rules</a></p>
       <p class="note" id="signin-note" hidden></p>
       <p class="callout warning" id="off-note" role="status" hidden></p>
     </header>
@@ -55,6 +55,7 @@
         <button class="btn btn-primary" id="save" type="submit" form="profile-form" hidden>Save profile</button>
         <a class="btn btn-primary" id="save-signin" href="/auth/login" data-login="/">Sign in with Twitch to save</a>
       </div>
+      <p class="hint signin-hint" id="signin-hint" hidden>Shares only your public Twitch name. Ranked duels need a saved fighter.</p>
       <p class="status" id="save-status" role="status"></p>
       <p class="callout small next-step" id="next-step" hidden></p>
     </aside>

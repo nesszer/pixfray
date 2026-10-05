@@ -65,7 +65,7 @@ export function createFighter3D(canvas) {
   // the fighter and its pet turn together on a turntable
   const table = new THREE.Group(); scene.add(table);
   let fighter = null, pet = null, lookKey = '', builtAt = 0;
-  let yaw = -0.32, yawTarget = -0.32, drag = null, hover = null, visible = true, slow = false, dirty = true, raf = 0, last = 0;
+  let drawn = 0, yaw = -0.32, yawTarget = -0.32, drag = null, hover = null, visible = true, slow = false, dirty = true, raf = 0, last = 0;
   const frames = [];
 
   // src: a canvas; refH: the height in its pixels that stands for `height` world units; rows: cubes across refH
@@ -83,7 +83,7 @@ export function createFighter3D(canvas) {
     lookKey = look.key;
     drop(fighter); drop(pet);
     const small = innerWidth < 700;
-    fighter = voxels(look.body, look.frameH, HEIGHT, { rows: small ? 40 : 52, layers: 8, seed: 3 });
+    fighter = voxels(look.body, look.frameH, HEIGHT, { rows: small ? 40 : 52, layers: 14, seed: 3 });
     if (fighter) table.add(fighter.group);
     pet = look.pet ? voxels(look.pet, look.petH, HEIGHT * 0.42, { rows: small ? 16 : 22, layers: 6, seed: 9 }) : null;
     if (pet) { pet.group.position.set(-1.0, 0, -0.4); table.add(pet.group); }
@@ -106,6 +106,10 @@ export function createFighter3D(canvas) {
     return true;
   }
 
+  // sprites have depth but no back: turning stops short of side-on, with a little give past the limit that springs back on release
+  const TURN = 0.7;
+  const soft = (y) => Math.abs(y) <= TURN ? y : Math.sign(y) * (TURN + Math.tanh((Math.abs(y) - TURN) * 2) * 0.2);
+
   // the cursor's point on the fighter's own plane, in its local space
   const ray = new THREE.Raycaster(), plane = new THREE.Plane(), hit = new THREE.Vector3(), nrm = new THREE.Vector3();
   function pointerOn(f, e) {
@@ -120,18 +124,18 @@ export function createFighter3D(canvas) {
   }
   canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, yaw: yawTarget }; canvas.setPointerCapture(e.pointerId); canvas.classList.add('is-dragging'); });
   canvas.addEventListener('pointermove', (e) => {
-    if (drag) { yawTarget = drag.yaw + (e.clientX - drag.x) / canvas.clientWidth * Math.PI * 1.6; hover = null; }
+    if (drag) { yawTarget = soft(drag.yaw + (e.clientX - drag.x) / canvas.clientWidth * Math.PI * 1.6); hover = null; }
     else if (e.pointerType === 'mouse') hover = e;
     kick();
   });
-  const release = () => { drag = null; canvas.classList.remove('is-dragging'); kick(); };
+  const release = () => { drag = null; yawTarget = Math.max(-TURN, Math.min(TURN, yawTarget)); canvas.classList.remove('is-dragging'); kick(); };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('pointerleave', () => { hover = null; kick(); });
   // keyboard: arrows turn the fighter when the canvas has focus
   canvas.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    yawTarget += e.key === 'ArrowLeft' ? -0.35 : 0.35; e.preventDefault(); kick();
+    yawTarget = Math.max(-TURN, Math.min(TURN, yawTarget + (e.key === 'ArrowLeft' ? -0.35 : 0.35))); e.preventDefault(); kick();
   });
 
   new IntersectionObserver(([en]) => { visible = en.isIntersecting; if (visible) kick(); }).observe(canvas);
@@ -142,6 +146,9 @@ export function createFighter3D(canvas) {
   function frame(now) {
     raf = 0;
     if (!canvas.isConnected || !resize()) return;
+    // phones keep the card in view the whole time (sticky bar): idle at 30 fps there to save battery
+    if (innerWidth < 900 && !drag && !dirty && now - drawn < 30) { kick(); return; }
+    drawn = now;
     const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016); last = now;
     const t = now / 1000, live = !reduced && !slow;
     const assembling = now - builtAt < 1400;

@@ -110,6 +110,7 @@ async function init() {
   if (!S.session) return gate("The server can't check sign-in right now: " + errorText(session) + ". Try again in a minute.", [h("button", { class: "btn", type: "button", onclick: () => location.reload() }, "Reload")]);
   if (!S.session.user) {
     if (S.session.configured === false) return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
+    $("#who").replaceChildren();   // one sign-in button: the gate's
     return gate(CHANNEL === "nesszerra" ? "Sign in with the nesszerra account or a nesszerra moderator account to open mod controls." : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]);
   }
   const access = await api("/api/access/" + CHANNEL);

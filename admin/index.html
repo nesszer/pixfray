@@ -20,9 +20,21 @@
   </header>
 
   <!-- Shown until access is confirmed: signed out, not a moderator, or the server is unreachable. -->
-  <section class="gate" id="gate">
-    <p class="muted" id="gate-text">Checking your access…</p>
-    <div class="toolbar" id="gate-actions"></div>
+  <section class="gate" id="gate" aria-labelledby="gate-title">
+    <div class="gate-main">
+      <h2 id="gate-title">Mod controls are locked</h2>
+      <p id="gate-text">Checking your access…</p>
+      <div class="toolbar" id="gate-actions"></div>
+    </div>
+    <div class="gate-inside">
+      <h3>Inside</h3>
+      <ul>
+        <li>Pause duels, cancel fights, reset health</li>
+        <li>Ranks, saved profiles and dollar gifts</li>
+        <li>Duel rules, with every version revertible</li>
+        <li>The OBS and StreamElements setup checklist</li>
+      </ul>
+    </div>
   </section>
 
   <div id="app" hidden>

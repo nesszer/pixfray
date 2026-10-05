@@ -518,13 +518,20 @@ body:has(.landing:not([hidden]))::before { display: none; }
 @media (max-width: 900px) {
   .hero-copy h1 { font-size: 36px; }
   /* phones: the sticky bar shows the 3D fighter beside the on-stream view */
-  .hero-card.has-3d { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); grid-template-areas: "show preview" "points save" "status save" "next next"; background: var(--bg); }
+  .hero-card.has-3d { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "show preview" "points save" "status save" "next next"; background: var(--bg); }
   .hero-card.has-3d .showcase { grid-area: show; aspect-ratio: auto; height: 100%; min-height: 0; }
   .hero-card.has-3d .showcase::after { inset: 4px; }
   .hero-card.has-3d .showcase-tag { left: 8px; right: 8px; bottom: 8px; }
   .hero-card.has-3d .showcase-tag .hint-turn { display: none; }
-  .hero-card.has-3d .stage-canvas { height: 118px; }
+  .hero-card.has-3d .stage-canvas { height: 132px; }
+  .hero-card.has-3d .preview-label { display: none; }
+  /* the caption gets its own line so "Adventurer" never truncates; the button sits under it */
+  .hero-card.has-3d .preview-bar { flex-wrap: wrap; gap: var(--space-1); }
+  .hero-card.has-3d .preview-bar .caption { flex: 1 0 100%; font-size: var(--text-xs); }
+  .hero-card.has-3d .preview-bar .btn { flex: 1 0 100%; justify-content: center; padding: 2px var(--space-2); min-height: 32px; }
   .hero-card.has-3d .toolbar { justify-self: end; }
+  .hero-card .signin-hint { display: none; }
+  .upgrade .btn { min-width: 40px; min-height: 40px; }
 }
 @media (max-width: 760px) {
   .landing { align-items: end; min-height: 0; background: var(--bg) url("/assets/scene/landing-m.webp") center top / 100% auto no-repeat; }
@@ -538,6 +545,35 @@ body:has(.landing:not([hidden]))::before { display: none; }
 .step-grid > li { counter-increment: step; border-top: 1px solid var(--border-strong); padding-top: var(--space-4); color: var(--text-2); font-size: var(--text-sm); }
 .step-grid > li::before { content: counter(step); display: block; font: 650 var(--text-2xl)/1 var(--font-display); color: var(--trim); font-variant-numeric: tabular-nums; margin-bottom: var(--space-3); }
 .step-grid strong { display: block; color: var(--text); font-size: var(--text-md); margin-bottom: var(--space-1); }
-.gate:has(#gate-actions:not(:empty)) { padding: var(--space-5); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+/* /admin signed out: what's locked on the left, what's inside on the right, as one panel */
+.gate { max-width: 880px; margin: var(--space-7) auto; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: var(--space-6);
+  padding: var(--space-6); background: var(--panel); border: 1px solid rgb(201 164 92 / 0.45); border-radius: var(--radius); position: relative; }
+.gate::after { content: ""; position: absolute; inset: 6px; border: 10px solid transparent; border-image: var(--lock) 10; pointer-events: none; }
+.gate h2 { font: 650 var(--text-2xl)/1.15 var(--font-display); margin: 0 0 var(--space-3); }
+.gate-main p { color: var(--text-2); margin: 0 0 var(--space-5); }
+.gate-inside { border-left: 1px solid var(--border-strong); padding-left: var(--space-6); }
+.gate-inside h3 { font-size: var(--text-sm); color: var(--text-3); font-weight: 650; margin: 0 0 var(--space-3); }
+.gate-inside ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); font-size: var(--text-sm); color: var(--text-2); }
+.gate-inside li { padding-left: var(--space-5); position: relative; }
+.gate-inside li::before { content: ""; position: absolute; left: 0; top: 0.5em; width: 8px; height: 8px; border: 1px solid var(--trim); border-radius: 1px; }
+@media (max-width: 760px) {
+  .gate { grid-template-columns: minmax(0, 1fr); margin: var(--space-5) var(--space-4); padding: var(--space-5); gap: var(--space-5); }
+  .gate-inside { border-left: 0; border-top: 1px solid var(--border-strong); padding: var(--space-5) 0 0; }
+}
+
+/* buttons that can't be used yet stay readable */
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 1; color: var(--text-3); background: var(--surface); border-color: var(--border); }
+.btn-primary:disabled, .btn-primary[aria-disabled="true"] { color: var(--text-2); background: var(--raised); border-color: var(--border-strong); }
+.signin-hint { font-size: var(--text-xs); color: var(--text-3); margin: 0; }
+
+/* bare /: the channel rows sit straight on the scene; each shows the channel's top fighters and who leads */
+.channel { align-items: center; background: none; padding: var(--space-4) var(--space-2); }
+.channel:hover, .channel:focus-visible { background: rgb(42 32 19 / 0.7); }
+.channel-crew { display: flex; flex: none; width: 96px; height: 48px; }
+.channel-crew canvas { width: 48px; height: 48px; image-rendering: pixelated; margin-right: -24px; }
+.channel-crew:empty { width: 0; }
+.channel-text { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.channel-meta { font-size: var(--text-sm); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.channel-meta:empty { display: none; }
 @media (max-width: 900px) { .step-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .step-grid { grid-template-columns: minmax(0, 1fr); } }
