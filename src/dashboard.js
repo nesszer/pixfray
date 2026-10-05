@@ -455,6 +455,8 @@ $("#play-win").addEventListener("click", () => stage.play());
 // Desktop: what the fighter is wearing, under the preview. Items only tried on show their price; the total is what buying the look costs.
 const priceOf = (kind, id) => kind === "hat" ? (state.shop?.hatPricePerWin || 0) * (rules().hats.find((x) => x.id === id)?.wins || 0)
   : kind === "pet" ? petById(id)?.price || 0 : state.shop?.items?.[kind]?.find((x) => x.id === id)?.price || 0;
+const EMPTY_AT = { hat: "hats", pet: "pets" };
+const EMPTY_LABEL = { hat: "Add a hat", accessory: "Add an accessory", pet: "Add a pet", trail: "Add a trail", effect: "Add a win effect", title: "Add a title" };
 function renderLoadout() {
   const box = $("#loadout");
   if (!box) return;
@@ -466,6 +468,8 @@ function renderLoadout() {
     const value = !kind ? entry?.label || entry?.id || "None" : id ? name(kind, id) : kind === "recolor" ? "Original" : "None";
     const price = kind && id && !owns(kind, id) ? priceOf(kind, id) : 0;
     total += price;
+    // an empty slot links to where it's filled, instead of reading "None"
+    if (kind && kind !== "recolor" && !id) return [h("dt", {}, label), h("dd", {}, h("a", { class: "slot-empty", href: "#" + (EMPTY_AT[kind] || "shop") }, EMPTY_LABEL[kind]))];
     return [h("dt", {}, label), h("dd", { class: id ? null : "muted" }, value, price ? h("span", { class: "badge" }, "Try-on " + money(price)) : "")];
   }));
   const t = $("#loadout-total");

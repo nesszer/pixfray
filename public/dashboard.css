@@ -1262,8 +1262,6 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 .peek-row > span:first-child { color: var(--text-2); }
 /* Ranks and Rules are reading tabs: on desktop the stage steps aside and the table gets the full width */
 @media (min-width: 901px) {
-  html[data-tab="ranks"] .hero-grid:has(.has-3d), html[data-tab="rules"] .hero-grid:has(.has-3d) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "pick"; }
-  html[data-tab="ranks"] .hero-card.has-3d, html[data-tab="rules"] .hero-card.has-3d { display: none; }
   #leaderboard td:nth-child(2), #leaderboard .lb-char { white-space: nowrap; }
 }
 /* admin gate: the peek sits on a solid panel, so the scene behind never shows through it */
@@ -1391,21 +1389,31 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
 @media (min-width: 961px) {
   .story { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: var(--space-8); align-items: start; }
   .story .step-grid { display: block; margin: 0 0 0 var(--space-4); }
-  .story .step-grid > li { padding-block: 16vh; border-top: 0; border-left: 2px solid var(--border-strong);
+  .story .step-grid > li { padding-block: 9vh; border-top: 0; border-left: 2px solid var(--border-strong);
     padding-inline: var(--space-6) 0; opacity: .45; transition: opacity .25s ease, border-color .25s ease; }
   .story .step-grid > li.is-active { opacity: 1; border-left-color: var(--trim); }
   .story .step-grid > li::before { top: calc(50% - 16px); left: -17px; }
-  .story .step-mock { height: auto; min-height: 120px; max-width: 420px; }
+  .story .step-mock { height: auto; min-height: 120px; font-size: var(--text-md); padding: var(--space-4); }
+  .story .step-mock .line, .story .step-mock .eg, .story .step-mock .badge, .story .step-mock .btn-mock { font-size: var(--text-sm); }
+  .story .step-grid strong { font-size: var(--text-xl); }
+  .story .step-grid > li { border-left-color: rgb(201 164 92 / .35); }
   .story-stage { position: sticky; top: var(--space-6); height: calc(100vh - 2 * var(--space-6)); max-height: 820px; border: 1px solid var(--border-strong); border-radius: var(--radius); }
 }
 /* phones and tablets: the scene fills the screen behind the steps, which pass over it as cards */
 @media (max-width: 960px) {
   .story { position: relative; display: flex; flex-direction: column; }
   .story-stage { order: -1; flex: none; position: sticky; top: 0; z-index: 0; height: 100svh; margin: 0 calc(50% - 50vw) -100svh; }
-  .story-stage figcaption { top: var(--space-4); bottom: auto; }
+  .story-stage figcaption { display: none; }
   .story .step-grid { position: relative; z-index: 1; display: block; margin: 0; padding: 70svh 0 30svh; }
   .story .step-grid > li { margin: 0 0 60svh; padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius); background: rgb(13 9 6 / .92); }
   .story .step-grid > li:last-child { margin-bottom: 0; }
   .story .step-grid > li::before { position: static; margin-bottom: var(--space-3); }
 }
 @media (prefers-reduced-motion: reduce) { .story .step-grid > li, .story-stage canvas { transition: none; } }
+/* builder: an empty loadout slot is a link to where it gets filled */
+#loadout .slot-empty { display: inline-block; padding: 0 var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--text-2); text-decoration: none; }
+#loadout .slot-empty:hover { border-color: var(--trim); color: var(--text); }
+/* the header's "Pick your fighter" is the same gold-edged button on every page, the current one included */
+.topbar nav a.nav-cta[aria-current] { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--trim); border-radius: var(--radius-sm); background: var(--accent-soft); box-shadow: none; color: var(--text); }
+/* Rules: the table keeps a reading width beside the stage */
+#panel-rules .table-wrap { max-width: 840px; }
