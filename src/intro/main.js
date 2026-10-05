@@ -478,6 +478,24 @@ function resize() {
 }
 addEventListener('resize', resize);
 addEventListener('scroll', () => { targetC = scrollC(); document.body.classList.toggle('scrolled', scrollY > 40); }, { passive: true });
+// smooth wheel: a mouse wheel moves the page in hard notches, so ease the page toward where the wheel wants it instead.
+// Keys, the scrollbar, touch and links keep the browser's own scrolling; any of them takes over from the wheel.
+let wantY = null, curY = 0;
+addEventListener('wheel', (e) => {
+  if (reduced || e.ctrlKey || e.defaultPrevented) return;
+  const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? innerHeight : 1, max = document.documentElement.scrollHeight - innerHeight;
+  if (wantY === null) wantY = curY = scrollY;
+  wantY = Math.max(0, Math.min(max, wantY + e.deltaY * unit));
+  e.preventDefault();
+}, { passive: false });
+function glide(dt) {
+  if (wantY === null) return;
+  if (Math.abs(scrollY - curY) > 4) { wantY = null; return; }   // something else moved the page
+  curY += (wantY - curY) * (1 - Math.exp(-dt * 6));
+  if (Math.abs(wantY - curY) < 0.5) curY = wantY;
+  scrollTo(0, curY);
+  if (curY === wantY) wantY = null;
+}
 resize();
 
 const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e3 = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1);
@@ -486,10 +504,11 @@ let lastGold = -1, lastFrame = -1;
 
 function frame() {
   const dt = Math.min(0.05, timer.getDelta()), t = (now = timer.getElapsed());
+  glide(dt);
   if (reduced) C = Math.round(targetC);
   else C += (targetC - C) * (1 - Math.exp(-dt * 3.2));
   if (Math.abs(targetC - C) < 1e-4) C = targetC;
-  setChapter(targetC);
+  setChapter(C);   // the copy follows the camera, so it changes when the scene does, not the moment the scroll crosses a line
   const portrait = innerWidth / innerHeight < 0.9;
 
   // camera with a little cursor parallax; the picture slides away from the copy
