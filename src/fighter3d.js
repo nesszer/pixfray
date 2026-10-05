@@ -181,5 +181,5 @@ export function createFighter3D(canvas) {
     if (live || moving || dirty) kick();
   }
   kick();
-  return { set, get slow() { return slow; } };
+  return { set, get slow() { return slow; }, get count() { return (fighter?.count || 0) + (pet?.count || 0); } };
 }

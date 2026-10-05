@@ -8,6 +8,9 @@ export const CHANNEL = CHANNEL_PICKED ? asked : "nesszerra";
 export const withChannel = (path) => path + (path.includes("?") ? "&" : "?") + "channel=" + CHANNEL;
 // Twitch sign-in that comes back to this channel (next is "/" or "/admin/").
 export const loginHref = (next = "/") => "/auth/login?" + new URLSearchParams({ channel: CHANNEL, next });
+// Phones scroll the header links sideways; the current page's link starts in view.
+{ const nav = document.querySelector(".topbar nav"), cur = nav?.querySelector("[aria-current]");
+  if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, cur.getBoundingClientRect().right - nav.getBoundingClientRect().right + 28); }
 // Put the channel name into the page: elements marked data-channel get "nesszerra" replaced, and links in nav keep the channel.
 export function applyChannel() {
   for (const a of document.querySelectorAll("a[data-keep-channel]")) a.setAttribute("href", withChannel(a.getAttribute("href")));

@@ -32,7 +32,7 @@ const state = { session: null, catalog: [], profile: null, leaderboard: [], conf
 const stage = addStage($("#preview"));
 // The 3D fighter above the on-stream preview loads after the page works; without WebGL the card keeps the 2D stage.
 let fighter3d = null;
-if (!navigator.connection?.saveData) {
+if (CHANNEL_PICKED && !navigator.connection?.saveData) {
   import("./fighter3d.js").then(({ createFighter3D }) => {
     $("#showcase").hidden = false;
     try { fighter3d = createFighter3D($("#preview3d")); } catch { $("#showcase").hidden = true; return; }
@@ -44,10 +44,16 @@ function render3d(d = state.d) {
   if (!fighter3d || !d) return;
   const entry = entryOf(d.avatar), pet = petById(d.pet);
   const look = composeLook(entry, { hat: d.hat, pet, looks: looks(d) });
-  if (look) fighter3d.set(look); else if (entry) whenImage(entry.url, () => render3d());
+  if (look) { fighter3d.set(look); readout(entry); } else if (entry) whenImage(entry.url, () => render3d());
   if (pet?.url) whenImage(pet.url, () => render3d());
 }
 onLooksReady($("#preview3d"), () => render3d());
+// the intro's lock-on readout: name, then cubes and place in the roster
+function readout(entry) {
+  const i = state.catalog.indexOf(entry), n = fighter3d?.count || 0;
+  $("#readout-name").textContent = entry.label || entry.id;
+  $("#readout-sub").textContent = (n ? n.toLocaleString("en-US") + " cubes · " : "") + (i >= 0 ? (i + 1) + " of " + state.catalog.length : "");
+}
 // Picker tiles get voxel thumbnails too (src/voxthumb.js); until it loads, or without WebGL, they show flat sprites.
 const voxJobs = new Map();
 let voxThumb = null, voxAll = null;
@@ -640,6 +646,21 @@ async function pickChannel() {
     channelRanks(c, link, crew, meta);
     return h("li", {}, link);
   }));
+  liveLanding();
+}
+// On wide screens the picker's island is the intro's live arena, not a picture: each channel's top fighter
+// stands on it, and hovering or focusing a row brings that channel's fighter on. Phones keep the still image.
+const landing = { arena: null, show: null, first: null, fallback: null };
+function liveLanding() {
+  if (innerWidth <= 900 || navigator.connection?.saveData || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  import("./fighter3d.js").then(({ createFighter3D }) => {
+    const canvas = h("canvas", { class: "landing-3d", "aria-hidden": "true" });
+    $("#pick").prepend(canvas);
+    try { landing.arena = createFighter3D(canvas); } catch { canvas.remove(); return; }
+    $("#pick").classList.add("is-live");
+    landing.show = (entry) => { const look = composeLook(entry); if (look) landing.arena.set(look); else whenImage(entry.url, () => landing.show(entry)); };
+    if (landing.first || landing.fallback) landing.show(landing.first || landing.fallback);
+  }).catch(() => {});
 }
 // each channel row shows its top three fighters, walking while the row is hovered or focused
 async function channelRanks(channel, link, crew, meta) {
@@ -659,9 +680,16 @@ async function channelRanks(channel, link, crew, meta) {
     meta.textContent = "No ranked duels yet. The top spot is open.";
     const first = byId.values().next().value;   // the open spot: the channel's first character, dimmed
     if (first) add(first, "sprite is-open");
+    if (first && !landing.fallback) { landing.fallback = first; if (!landing.first) landing.show?.(first); }
+    if (first) for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => landing.show?.(first));
     return;
   }
   meta.textContent = "Top fighter: " + (rows[0].displayName || rows[0].username) + " · " + rows[0].elo + " Elo";
+  const top = byId.get(rows[0].avatar);
+  if (top) {
+    if (!landing.first) { landing.first = top; landing.show?.(top); }
+    for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => landing.show?.(top));
+  }
   for (const p of rows.slice(0, 3)) if (byId.get(p.avatar)) add(byId.get(p.avatar), "sprite");
 }
 // Phones: the fixed Save bar stays tucked away on the first screen, while scrolling down, and on Ranks and Rules,

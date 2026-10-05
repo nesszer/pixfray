@@ -967,7 +967,39 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
   .jump a { flex: none; min-height: 44px; }
 }
 @media (max-width: 620px) {
-  .landing .channel { grid-template-columns: 56px minmax(0, 1fr) 44px; grid-template-areas: "crew text go"; }
+  .landing .channel { grid-template-columns: 80px minmax(0, 1fr) 44px; grid-template-areas: "crew text go"; }
+  .landing .channel-crew, .landing .channel-crew:empty { width: 80px; min-width: 0; overflow: hidden; }
+  .landing .channel-crew .thumb + .thumb { margin-left: -32px; }
+  .landing .channel-crew .thumb:nth-child(n+3) { display: none; }
   .landing .channel-go { justify-self: end; width: 44px; height: 44px; padding: 0; justify-content: center; font-size: 0; }
   .landing .channel-go::after { content: "→"; font-size: var(--text-lg); }
 }
+
+/* Round 13: the picker's live arena, the preview's lock-on readout */
+.landing-3d { position: absolute; top: 0; right: 0; bottom: 0; width: 64%; height: 100%; display: block; touch-action: pan-y; cursor: grab;
+  mask-image: linear-gradient(to right, transparent, #000 28%); -webkit-mask-image: linear-gradient(to right, transparent, #000 28%); }
+.landing-3d.is-dragging { cursor: grabbing; }
+.landing.is-live { background: var(--bg); }
+.landing.is-live .landing-inner { position: relative; z-index: 1; pointer-events: none; }
+.landing.is-live .landing-inner > * { pointer-events: auto; }
+.showcase .readout { position: absolute; left: 24px; top: 24px; display: grid; gap: 2px; padding: 4px 10px 5px; border-left: 1px solid var(--accent);
+  background: rgb(13 9 6 / .55); font-size: var(--text-xs); line-height: 1.35; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none;
+  text-shadow: 0 1px 2px rgb(0 0 0 / .85); }
+.showcase .readout b { color: var(--text); font-size: var(--text-sm); font-weight: 650; }
+.showcase .readout:has(b:empty) { display: none; }
+@media (max-width: 900px) { html.compact .showcase .readout { display: none; } }
+@media (max-width: 480px) {
+  .topbar nav { flex: 1 1 0; min-width: 0; overflow-x: auto; scrollbar-width: none; padding-right: var(--space-5);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .topbar nav .nav-extra { display: inline-flex; }
+}
+/* past the Fighter tab the visitor knows the page: the two intro paragraphs step aside so the tab starts higher */
+html[data-tab]:not([data-tab="fighter"]) .hero-copy .lead,
+html[data-tab]:not([data-tab="fighter"]) .hero-copy .how { display: none; }
+/* the gate's preview reads as a picture of the controls: drawn controls, not live ones */
+.gate-peek .peek-btn { border-style: dashed; color: var(--text-2); }
+.gate-peek .peek-link { color: var(--text-2); }
+.gate-peek .switch::after { background: var(--text-3); }
+.gate-peek .peek-tag { font-size: var(--text-xs); color: var(--text-2); }
+/* the sky's moon sits above the locked card instead of half behind it */
+body:has(.gate:not([hidden]))::before { background-position: center -140px; }
