@@ -248,7 +248,7 @@ function renderHats() {
   box.replaceChildren(...r.hats.map((hat) => {
     const price = (state.shop?.hatPricePerWin || 0) * hat.wins, have = owns("hat", hat.id);
     return tile({ kind: "hat", id: hat.id, label: hat.label, visual: charThumb({ hat: hat.id }), price, buyLabel: hat.label + " hat", out,
-      tag: have ? null : "Unlocks at " + hat.wins + (hat.wins === 1 ? " win" : " wins"), onPick: (id) => { state.d.hat = id; } });
+      tag: have ? null : "Free at " + hat.wins + (hat.wins === 1 ? " win" : " wins"), onPick: (id) => { state.d.hat = id; } });
   }));
   checkPicked(box, "hat", state.d.hat);
   const locked = r.hats.filter((x) => !owns("hat", x.id)).length;
@@ -283,7 +283,7 @@ function renderPets() {
   const option = (pet) => {
     const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" });
     if (pet) addPet(canvas, pet, { color: state.d.petColor });
-    return tile({ kind: "pet", id: pet?.id || "", label: pet ? pet.label : "No pet", visual: pet ? petThumb(canvas, pet, state.d.petColor) : canvas, price: pet?.price, out,
+    return tile({ kind: "pet", id: pet?.id || "", label: pet ? pet.label : "No pet", visual: pet ? petThumb(canvas, pet, state.d.petColor) : h("span", { class: "thumb empty-slot", "aria-hidden": "true" }), price: pet?.price, out,
       tag: pet ? TIER_NAMES[pet.tier] + ", " + boostText(pet.boost) : null, onPick: (id) => { state.d.pet = id; renderUpgrades(); renderItems("petcolor"); } });
   };
   box.replaceChildren(option(null), ...state.shop.pets.map(option));
@@ -513,6 +513,7 @@ function renderSignedIn() {
 function renderLeaderboard() {
   const tbody = $("#leaderboard tbody"), me = state.session?.user?.id, rows = state.leaderboard;
   if (!rows.length) {
+    $("#podium").hidden = true;
     tbody.replaceChildren(h("tr", { class: "empty" }, h("td", { colspan: 6 },
       h("strong", {}, "No ranked duels yet, so the top spot is open."), " To get on the board: ",
       signedIn() ? "save your fighter in the Fighter tab" : "sign in and save your fighter in the Fighter tab",
@@ -527,10 +528,26 @@ function renderLeaderboard() {
   const row = (p, i) => h("tr", { class: [p.userId === me ? "me" : "", i < 3 ? "podium" : ""].filter(Boolean).join(" ") || null },
     h("td", { class: "num" }, i + 1), h("td", {}, h("span", { style: { color: p.color }, "aria-hidden": "true" }, "■ "), p.displayName || p.username, p.userId === me ? h("span", { class: "muted" }, " (you)") : null),
     h("td", { class: "col-char" }, ...character(p.avatar)), h("td", { class: "num" }, p.elo), h("td", { class: "num" }, p.wins), h("td", { class: "num" }, p.losses));
+  renderPodium(rows);
   const top = rows.slice(0, 10).map(row);
   const mine = rows.findIndex((p) => p.userId === me);
   if (mine >= 10) top.push(row(rows[mine], mine));
   tbody.replaceChildren(...top);
+}
+
+// The top three stand on a podium above the table, as voxels like the 3D preview; an empty step says how to take it.
+function renderPodium(rows) {
+  const box = $("#podium");
+  box.hidden = !rows.length;
+  box.replaceChildren(...[0, 1, 2].map((i) => {
+    const p = rows[i], entry = p && entryOf(p.avatar);
+    if (!p) return h("li", { class: "open" }, h("span", { class: "place" }, i + 1), h("span", { class: "slot", "aria-hidden": "true" }),
+      h("strong", {}, "Open"), h("span", { class: "muted" }, "Win a ranked duel to take it"));
+    const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" }), v = voxCanvas();
+    if (entry) { addSprite(canvas, entry, { active: () => false }); vox(v, () => composeLook(entry)); }
+    return h("li", { class: i === 0 ? "first" : null }, h("span", { class: "place" }, i + 1), h("span", { class: "thumb" }, v, canvas),
+      h("strong", {}, p.displayName || p.username), h("span", { class: "muted" }, p.elo + " Elo · " + p.wins + "–" + p.losses));
+  }));
 }
 
 async function loadLeaderboard() {
@@ -646,4 +663,17 @@ function tuckSaveBar() {
   form.addEventListener("change", update);
   update();
 }
-if (CHANNEL_PICKED) { tuckSaveBar(); init(); } else pickChannel();
+// Phones: once the tabs scroll under the stuck preview, it shrinks to a short strip so the choices get the screen.
+// Shrinking moves the page, so it switches back only after scrolling clearly above the tabs.
+function compactPreview() {
+  const card = $(".hero-card"), tabs = $(".tabs"), root = document.documentElement;
+  const update = () => {
+    if (innerWidth > 900 || !card.classList.contains("has-3d")) return root.classList.remove("compact");
+    const y = tabs.getBoundingClientRect().bottom, on = root.classList.contains("compact");
+    if (!on && y < 0) root.classList.add("compact");
+    else if (on && y > 120) root.classList.remove("compact");
+  };
+  addEventListener("scroll", update, { passive: true });
+  addEventListener("resize", update);
+}
+if (CHANNEL_PICKED) { tuckSaveBar(); compactPreview(); init(); } else pickChannel();

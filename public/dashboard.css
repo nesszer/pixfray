@@ -903,3 +903,36 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
   .hero-card.has-3d .toolbar { transition: transform .2s ease-out; }
   html.at-top .hero-card.has-3d .toolbar { transform: translateY(110%); }
 }
+
+/* ---------- round 10 ---------- */
+/* phones: once you scroll into the picker the stuck preview becomes a short strip (dashboard.js compactPreview) */
+@media (max-width: 900px) {
+  html.compact .hero-card.has-3d .showcase { height: 148px; }
+  html.compact .hero-card.has-3d .preview, html.compact .hero-card.has-3d .points-link { display: none; }
+}
+/* /start: every step starts at the same line; the optional tag sits in its heading */
+.step-mock { align-content: start; }
+.step-grid strong .badge { margin-left: var(--space-2); vertical-align: 3px; font-family: var(--font-sans); font-weight: 600; }
+.step-mock .eg { font-size: var(--text-sm); }
+/* "No pet" shows an empty slot where the pet would stand */
+.thumb.empty-slot { width: 64px; height: 64px; margin: 8px auto; border: 1px dashed var(--border-strong); border-radius: var(--radius); }
+/* Ranks: the top three on a podium */
+.top3 { list-style: none; margin: 0 0 var(--space-5); padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); align-items: end; }
+.top3 > li { position: relative; display: grid; justify-items: center; gap: var(--space-1); padding: var(--space-4) var(--space-3) var(--space-4); text-align: center;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); min-width: 0; }
+.top3 > li strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-display, inherit); font-size: var(--text-lg); color: var(--text); }
+.top3 > li .muted { font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.top3 .place { position: absolute; top: var(--space-2); left: var(--space-3); font-weight: 650; color: var(--trim); font-variant-numeric: tabular-nums; }
+.top3 .thumb canvas.vox { width: 88px; height: 88px; }
+.top3 .thumb canvas.sprite { width: 64px; height: 64px; }
+.top3 > li.first { padding-top: var(--space-6); border-color: var(--trim); }
+.top3 > li.first .thumb canvas.vox { width: 112px; height: 112px; }
+.top3 > li.open .slot { width: 64px; height: 88px; border: 1px dashed var(--border-strong); border-radius: var(--radius); }
+.top3 > li.open strong { color: var(--text-2); }
+.top3 > li:nth-child(1) { order: 2; } .top3 > li:nth-child(2) { order: 1; } .top3 > li:nth-child(3) { order: 3; }   /* 2, 1, 3 like a podium */
+@media (max-width: 600px) {
+  .top3 { gap: var(--space-2); }
+  .top3 > li { padding-inline: var(--space-2); }
+  .top3 > li strong { font-size: var(--text-md); }
+  .top3 .thumb canvas.vox { width: 64px; height: 64px; } .top3 > li.first .thumb canvas.vox { width: 80px; height: 80px; }
+}
