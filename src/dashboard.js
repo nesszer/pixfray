@@ -1,7 +1,7 @@
 // Viewer dashboard ("/"): an on-stream preview above four tabs. Fighter (builds, character, colors, upgrades),
 // Shop (hats and cosmetics), Pets (pets and pet colors) and Ranks (leaderboard and duel rules).
 // Talks only to the routes in CONTRACTS.md section 2.
-import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, addPet, addStage, addCosmeticSample, seconds, CHANNEL, CHANNEL_PICKED, DEFAULT_COLOR, applyChannel } from "./ui.js";
+import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, addPet, addStage, addCosmeticSample, composeLook, onLooksReady, whenImage, seconds, CHANNEL, CHANNEL_PICKED, DEFAULT_COLOR, applyChannel } from "./ui.js";
 import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.js";
 import { CHARACTER_GROUPS } from "./character-groups.js";
 applyChannel();
@@ -28,6 +28,24 @@ const state = { session: null, catalog: [], profile: null, leaderboard: [], conf
   drafts: [],       // unsaved edits per slot, kept while switching between builds
   filter: { q: "", group: "all" } };
 const stage = addStage($("#preview"));
+// The 3D fighter above the on-stream preview loads after the page works; without WebGL the card keeps the 2D stage.
+let fighter3d = null;
+if (!navigator.connection?.saveData) {
+  import("./fighter3d.js").then(({ createFighter3D }) => {
+    $("#showcase").hidden = false;
+    try { fighter3d = createFighter3D($("#preview3d")); } catch { $("#showcase").hidden = true; return; }
+    $(".fighter-card").classList.add("has-3d");
+    render3d();
+  }).catch(() => {});
+}
+function render3d() {
+  if (!fighter3d || !state.d) return;
+  const d = state.d, entry = entryOf(d.avatar), pet = petById(d.pet);
+  const look = composeLook(entry, { hat: d.hat, pet, looks: looks(d) });
+  if (look) fighter3d.set(look); else if (entry) whenImage(entry.url, render3d);
+  if (pet?.url) whenImage(pet.url, render3d);
+}
+onLooksReady($("#preview3d"), render3d);
 const pct = (n) => Math.round(n * STAT_STEP * 100) + "%";
 const STAT_TEXT = {
   power: { label: "Power", effect: (n) => "+" + pct(n) + " damage dealt" },
@@ -350,6 +368,10 @@ function renderPreview() {
   const d = state.d, entry = entryOf(d.avatar), user = state.session?.user;
   stage.set({ entry, hat: d.hat, pet: petById(d.pet), color: d.color, name: user?.displayName || user?.login || "you",
     elo: state.profile?.elo ?? state.config?.initialElo ?? 1000, looks: looks(d) });
+  render3d();
+  const plate = $("#showcase-plate");
+  plate.textContent = (user?.displayName || user?.login || "you") + " · " + (state.profile?.elo ?? state.config?.initialElo ?? 1000);
+  plate.style.setProperty("--plate", d.color);
   if (lookSprites.entry !== entry) { lookSprites.entry = entry; for (const s of lookSprites) s.set(entry); }
   for (const s of document.querySelectorAll(".swatch")) s.setAttribute("aria-pressed", String(s.dataset.color === d.color));
   colorInput.value = d.color;
@@ -547,6 +569,7 @@ async function pickChannel() {
   // Signing in happens on a channel's page, so the picker shows only who is already signed in.
   if (session.ok && session.data?.user) renderWho($("#who"), session.data, signOut); else $("#who").replaceChildren();
   const channels = list.ok && Array.isArray(list.data?.channels) ? list.data.channels : ["nesszerra", "miolafff"];
-  $("#channel-list").replaceChildren(...channels.map((c) => h("li", {}, h("a", { class: "btn", href: "/?channel=" + encodeURIComponent(c) }, c))));
+  $("#channel-list").replaceChildren(...channels.map((c) => h("li", {}, h("a", { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
+    h("span", { class: "channel-name" }, c), h("span", { class: "channel-go" }, "Pick your fighter")))));
 }
 if (CHANNEL_PICKED) init(); else pickChannel();

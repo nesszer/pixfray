@@ -205,6 +205,30 @@ function tick(now) {
   if (sprites.size && !reducedMotion.matches) requestAnimationFrame(tick); else running = false;
 }
 
+// ---------- the 3D preview's source pictures ----------
+// The look as flat pictures for src/fighter3d.js to rebuild as voxels: the idle frame with its hat, recolor and
+// accessory, and the pet on its own canvas. frameH is the sprite's drawn height in pixels, so every character keeps
+// its size relative to the frame, as on stream. Returns null until the character image has loaded.
+export function composeLook(entry, { hat = "", pet = null, looks = {} } = {}) {
+  const frame = framesFor(entry, "idle")[0], img = entry && image(entry.url);
+  if (!frame || !img.complete || !img.naturalWidth) return null;
+  const body = document.createElement("canvas");
+  body.width = frame.w; body.height = frame.h;
+  if (!drawFrame(body, entry, frame, hat, null, 0, looks)) return null;
+  const room = (hat && hats) || (looks.accessory && cosmetics) ? 0.8 : 1;
+  const out = { body, frameH: frame.h * room, pet: null, petH: 64,
+    key: [entry.id, hat, looks.recolor, looks.accessory, pet?.id, pet?.tier, looks.petColor, Boolean(hats), Boolean(cosmetics), Boolean(pets)].join(":") };
+  if (pet?.id && pets) {
+    const c = document.createElement("canvas"); c.width = 160; c.height = 128;
+    pets.drawPet(c.getContext("2d"), petArg(pet), 80, 126, out.petH, { tier: pet.tier, still: true, tint: tint(looks.petColor) });
+    out.pet = c;
+  }
+  return out;
+}
+// Calls fn whenever a drawing module (hats, pets, cosmetics) or a watched image arrives.
+export function onLooksReady(canvas, fn) { onRedraw(canvas, fn); }
+export function whenImage(url, fn) { const img = image(url); if (img.complete && img.naturalWidth) return; img.addEventListener("load", fn, { once: true }); }
+
 // ---------- the on-stream preview ----------
 // The viewer page's stage: the fighter walking in place as the overlay draws it (public/overlay.js), with its pet,
 // trail, recolor, hat, accessory, the nameplate "name · Elo" and title, and on play() its win effect and taunt.

@@ -740,4 +740,4 @@ timer.update(); frame();
 finishLoading();
 requestAnimationFrame(loop);
 window.__intro = { get C() { return C; }, setC(x) { targetC = C = x; } };
-if (import.meta.env.DEV) Object.assign(window.__intro, { scene, composer, gtao, bloom, film, island, hero, hoard, chest, frame3d });
+if (import.meta.env.DEV) Object.assign(window.__intro, { scene, composer, gtao, bloom, film, island, hero, hoard, chest, frame3d, islets, clouds, embers, sky });

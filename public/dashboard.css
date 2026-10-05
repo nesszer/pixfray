@@ -437,3 +437,107 @@ html:has(.config-bar.dirty) { scroll-padding-bottom: 140px; }   /* a focused fie
 /* Characters: the uploader's slot line repeats the usage figure above it; the limits line stays in the form */
 #upload-root .upload-usage { display: none; }
 .summary .toolbar + .small { margin-top: var(--space-3); }
+
+
+/* ---------- night arena (matches /intro): the scene behind the header, HUD lines, lock-on corners ---------- */
+:root {
+  --bg: #0d0906; --surface: #18110b; --raised: #22180f; --topbar: #0d0906; --panel: rgb(13 9 6 / 0.86);
+  --border: #33261a; --accent-soft: #2a2013;
+  /* four gold corner brackets; border-image stretches the empty edges, so the corners stay 10px at any size */
+  --lock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30' width='30' height='30'%3E%3Cpath d='M1 10V1h9M20 1h9v9M29 20v9h-9M10 29H1v-9' fill='none' stroke='%23c9a45c' stroke-width='2'/%3E%3C/svg%3E");
+}
+body { position: relative; isolation: isolate; }
+body::before { content: ""; position: absolute; z-index: -1; inset: 0 0 auto; height: 900px; pointer-events: none;
+  background: var(--bg) url("/assets/scene/page-sky.webp") center top / cover no-repeat; }
+@media (max-width: 760px) { body::before { height: 640px; background-image: url("/assets/scene/page-sky-800.webp"); } }
+.topbar { background: none; border-bottom: 1px solid rgb(201 164 92 / 0.28); }
+.topbar .brand { display: inline-flex; align-items: center; gap: var(--space-2); letter-spacing: 0.01em; }
+.topbar .brand .mark { width: 20px; height: 20px; fill: var(--trim); flex: none; }
+.hero { background: none; border-bottom: 1px solid var(--border); }
+.hero-copy h1 { font-size: 52px; line-height: 1.05; letter-spacing: -0.015em; }
+legend { font: 650 var(--text-md)/1.3 var(--font-display); color: var(--text); }
+.char-option input:checked + label::after, .build[aria-pressed="true"]::after {
+  content: ""; position: absolute; inset: -4px; border: 10px solid transparent; border-image: var(--lock) 10; pointer-events: none; }
+
+/* picks: selected tiles lock on with corners instead of a filled frame */
+.char-option label { position: relative; background: var(--panel); }
+.char-option input:checked + label { border-color: var(--border-strong); background: var(--accent-soft); box-shadow: none; }
+.build { position: relative; background: var(--panel); }
+.build[aria-pressed="true"] { border-color: var(--border-strong); box-shadow: none; }
+.upgrade { background: var(--panel); }
+
+/* tabs: a HUD underline on wide screens */
+@media (min-width: 761px) {
+  .tabs { gap: var(--space-5); border-bottom-color: var(--border); }
+  .tabs [role="tab"] { padding: 0 2px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font: 650 var(--text-md)/1 var(--font-display); }
+  .tabs [role="tab"]:hover { background: none; border-bottom-color: var(--border-strong); }
+  .tabs [role="tab"][aria-selected="true"] { background: none; border: 0; border-bottom: 2px solid var(--trim); color: var(--text); }
+}
+
+/* the fighter card: a dark panel over the scene; the 3D fighter on top, the on-stream view under it */
+.fighter-card { background: var(--panel); border: 1px solid rgb(201 164 92 / 0.45); outline: 0; padding: var(--space-4); gap: var(--space-3); }
+.showcase { position: relative; margin: 0; aspect-ratio: 1 / 1.08; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.showcase::after { content: ""; position: absolute; inset: 8px; border: 10px solid transparent; border-image: var(--lock) 10; pointer-events: none; }
+#preview3d { display: block; width: 100%; height: 100%; cursor: grab; touch-action: pan-y; outline-offset: -2px; }
+#preview3d.is-dragging { cursor: grabbing; }
+.showcase-tag { position: absolute; left: 18px; right: 18px; bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); pointer-events: none; }
+.showcase-tag .plate { display: inline-flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 650 var(--text-sm)/1.4 var(--font-sans); font-variant-numeric: tabular-nums; color: var(--text); background: rgb(13 9 6 / 0.8); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.showcase-tag .plate:empty { display: none; }
+.showcase-tag .plate::before { content: ""; flex: none; width: 10px; height: 10px; border-radius: 2px; background: var(--plate, var(--trim)); }
+.showcase-tag .hint-turn { font-size: var(--text-xs); color: var(--text-2); white-space: nowrap; }
+.preview { position: relative; background: var(--bg); }
+.preview-label { position: absolute; top: var(--space-2); left: var(--space-3); font-size: var(--text-xs); color: var(--text-3); pointer-events: none; }
+.preview-bar { background: var(--surface); }
+.has-3d .stage-canvas { height: 128px; }
+
+/* bare /: a full-height scene with the arena island on the right and the channel rows on the left */
+.landing { position: relative; display: grid; align-items: center; min-height: calc(100vh - 56px); min-height: calc(100svh - 56px);
+  background: var(--bg) url("/assets/scene/landing.webp") right center / cover no-repeat; border-bottom: 1px solid var(--border); }
+body:has(.landing:not([hidden]))::before { display: none; }
+.landing-inner { width: 100%; max-width: var(--container); margin: 0 auto; padding: var(--space-8) var(--space-5); }
+.landing-inner > * { max-width: 520px; }
+.landing h1 { font-size: 56px; line-height: 1.04; letter-spacing: -0.015em; margin-bottom: var(--space-4); }
+.landing .channel-list { display: grid; gap: 0; margin: var(--space-6) 0 var(--space-5); border-top: 1px solid var(--border-strong); }
+.landing .channel-list li { max-width: none; border-bottom: 1px solid var(--border-strong); }
+.channel { position: relative; display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-3);
+  color: var(--text); text-decoration: none; background: var(--panel); }
+.channel-name { font: 650 var(--text-xl)/1.2 var(--font-display); overflow-wrap: anywhere; }
+.channel-go { font-size: var(--text-sm); color: var(--accent); white-space: nowrap; }
+.channel-go::after { content: " →"; }
+.channel:hover { color: var(--text); background: var(--accent-soft); }
+.channel:hover::after, .channel:focus-visible::after { content: ""; position: absolute; inset: -4px; border: 10px solid transparent; border-image: var(--lock) 10; pointer-events: none; }
+.landing .caveat { border-top: 0; padding-top: 0; }
+.landing-links { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); font-size: var(--text-sm); margin-top: var(--space-5); }
+
+/* /start: the overlay demo plays over a still of the arena, like a stream behind the transparent overlay */
+.stage { position: relative; background: var(--bg) url("/assets/scene/island.webp") center / cover no-repeat; border-color: var(--border); }
+.stage::after { content: ""; position: absolute; inset: 6px; border: 10px solid transparent; border-image: var(--lock) 10; pointer-events: none; }
+.invite-card, .card { background: var(--panel); }
+
+@media (max-width: 900px) {
+  .hero-copy h1 { font-size: 36px; }
+  /* phones: the sticky bar shows the 3D fighter beside the on-stream view */
+  .hero-card.has-3d { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); grid-template-areas: "show preview" "points save" "status save" "next next"; background: var(--bg); }
+  .hero-card.has-3d .showcase { grid-area: show; aspect-ratio: auto; height: 100%; min-height: 0; }
+  .hero-card.has-3d .showcase::after { inset: 4px; }
+  .hero-card.has-3d .showcase-tag { left: 8px; right: 8px; bottom: 8px; }
+  .hero-card.has-3d .showcase-tag .hint-turn { display: none; }
+  .hero-card.has-3d .stage-canvas { height: 118px; }
+  .hero-card.has-3d .toolbar { justify-self: end; }
+}
+@media (max-width: 760px) {
+  .landing { align-items: end; min-height: 0; background: var(--bg) url("/assets/scene/landing-m.webp") center top / 100% auto no-repeat; }
+  .landing-inner { padding: 300px var(--space-4) var(--space-7); }
+  .landing h1 { font-size: 36px; }
+  .channel-name { font-size: var(--text-lg); }
+}
+
+/* /start: the four setup steps side by side, each under a rule with its number in gold */
+.step-grid { list-style: none; padding: 0; margin: var(--space-6) 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-5); counter-reset: step; }
+.step-grid > li { counter-increment: step; border-top: 1px solid var(--border-strong); padding-top: var(--space-4); color: var(--text-2); font-size: var(--text-sm); }
+.step-grid > li::before { content: counter(step); display: block; font: 650 var(--text-2xl)/1 var(--font-display); color: var(--trim); font-variant-numeric: tabular-nums; margin-bottom: var(--space-3); }
+.step-grid strong { display: block; color: var(--text); font-size: var(--text-md); margin-bottom: var(--space-1); }
+.gate:has(#gate-actions:not(:empty)) { padding: var(--space-5); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+@media (max-width: 900px) { .step-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .step-grid { grid-template-columns: minmax(0, 1fr); } }

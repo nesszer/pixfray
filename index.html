@@ -3,7 +3,7 @@
 <title>PixFray: pick your fighter on nesszerra</title>
 <meta data-channel name="description" content="Pick your PixFray character, colors, gear and pet for the nesszerra Twitch channel.">
 <link rel="canonical" href="https://pixfray.xyz/">
-<meta name="theme-color" content="#17110c">
+<meta name="theme-color" content="#0d0906">
 <meta property="og:type" content="website"><meta property="og:site_name" content="PixFray"><meta property="og:url" content="https://pixfray.xyz/">
 <meta property="og:title" content="PixFray: pick your fighter on nesszerra">
 <meta property="og:description" content="Pick a character and nameplate color, then duel other viewers in nesszerra's Twitch chat.">
@@ -15,16 +15,19 @@
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/" data-keep-channel>PixFray</a>
-  <nav aria-label="Pages"><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
+  <a class="brand" href="/" data-keep-channel><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
+  <nav aria-label="Pages"><a href="/intro/">How it works</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mod controls</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 
-<main class="page" id="pick" aria-labelledby="pick-title" hidden>
-  <h1 id="pick-title">Which stream are you watching?</h1>
-  <p class="lead">Your fighter belongs to one streamer's chat. Pick that channel, then choose your character.</p>
-  <ul class="channel-list" id="channel-list"><li class="muted">Loading channels…</li></ul>
-  <p class="caveat">Not listed? The streamer hasn't set up PixFray yet. Use the link from their chat's <code>!fray</code> command.</p>
+<main class="landing" id="pick" aria-labelledby="pick-title" hidden>
+  <div class="landing-inner">
+    <h1 id="pick-title">Which stream are you watching?</h1>
+    <p class="lead">Your fighter belongs to one streamer's chat. Pick that channel, then choose your character.</p>
+    <ul class="channel-list" id="channel-list"><li class="muted">Loading channels…</li></ul>
+    <p class="caveat">Not listed? The streamer hasn't set up PixFray yet. Use the link from their chat's <code>!fray</code> command.</p>
+    <p class="landing-links"><a href="/intro/">See how a duel plays out</a><a href="/start/">Set up PixFray on your channel</a></p>
+  </div>
 </main>
 
 <section class="hero" id="fighter" aria-labelledby="hero-title">
@@ -38,7 +41,12 @@
     </header>
 
     <aside class="hero-card fighter-card" aria-label="On-stream preview and save">
+      <figure class="showcase" id="showcase" hidden>
+        <canvas id="preview3d" tabindex="0" role="img" aria-label="Your fighter in 3D. Drag, or use the arrow keys, to turn it."></canvas>
+        <figcaption class="showcase-tag"><span class="plate" id="showcase-plate"></span><span class="hint-turn">Drag to turn</span></figcaption>
+      </figure>
       <figure class="preview">
+        <span class="preview-label" aria-hidden="true">On stream</span>
         <canvas class="stage-canvas" id="preview" role="img" aria-label="Your fighter as it looks on stream"></canvas>
         <figcaption class="preview-bar"><span class="caption" id="preview-caption"></span><button class="btn btn-small" id="play-win" type="button">Preview a win</button></figcaption>
       </figure>

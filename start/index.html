@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/">PixFray</a>
+  <a class="brand" href="/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
   <nav aria-label="Sections"><a href="#setup">What setup takes</a><a href="#permissions">Permissions</a></nav>
 </div></header>
 
@@ -38,11 +38,11 @@
   <section class="section" id="setup" aria-labelledby="setup-title">
     <h2 id="setup-title">Setup takes about 10 minutes, after one Twitch sign-in</h2>
     <p class="muted">You need OBS and the StreamElements bot in your chat. After you sign in, the Stream setup page checks off each step as it starts working.</p>
-    <ol class="rules">
-      <li><strong>Add the overlay to OBS</strong> as a Browser Source, 1920×1080. The setup page gives you the link.</li>
-      <li><strong>Turn off the StreamElements Duel module</strong>, so only one bot answers duel commands.</li>
+    <ol class="step-grid">
+      <li><strong>Add the overlay to OBS</strong> Make it a Browser Source at 1920×1080. The setup page gives you the link.</li>
+      <li><strong>Turn off the StreamElements Duel module</strong> Then only one bot answers duel commands.</li>
       <li><strong>Paste 7 commands into StreamElements.</strong> Each reply is ready to copy: <code>!challenge</code>, <code>!fight</code>, <code>!decline</code>, <code>!rematch</code>, <code>!elo</code>, <code>!ranks</code> and <code>!fray</code>. You can rename them.</li>
-      <li><strong>Optional: let your Twitch moderators help</strong> with fighters, ranks and settings.</li>
+      <li><strong>Optional: let your moderators help</strong> They can manage fighters, ranks and settings.</li>
     </ol>
   </section>
 
