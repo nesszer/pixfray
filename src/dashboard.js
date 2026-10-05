@@ -50,7 +50,7 @@ function render3d(d = state.d) {
 onLooksReady($("#preview3d"), () => render3d());
 // Picker tiles get voxel thumbnails too (src/voxthumb.js); until it loads, or without WebGL, they show flat sprites.
 const voxJobs = new Map();
-let voxThumb = null;
+let voxThumb = null, voxAll = null;
 function vox(canvas, make) {
   if (voxJobs.size > 400) for (const c of voxJobs.keys()) if (!c.isConnected) voxJobs.delete(c);
   voxJobs.set(canvas, make); voxThumb?.(canvas, make);
@@ -58,7 +58,7 @@ function vox(canvas, make) {
 // a hat, pet or accessory drawing module arriving changes how the tiles' looks draw
 onLooksReady($("#preview3d"), () => { for (const [c, make] of voxJobs) if (c.isConnected) voxThumb?.(c, make); });
 if (!navigator.connection?.saveData) {
-  import("./voxthumb.js").then((m) => { voxThumb = m.voxThumb; for (const [c, make] of voxJobs) if (c.isConnected) voxThumb(c, make); }).catch(() => {});
+  import("./voxthumb.js").then((m) => { voxThumb = m.voxThumb; voxAll = m.voxAll; for (const [c, make] of voxJobs) if (c.isConnected) voxThumb(c, make); }).catch(() => {});
 }
 const voxCanvas = () => h("canvas", { class: "vox", width: 128, height: 128, "aria-hidden": "true" });
 // Hovering a tile tries it on the 3D fighter for a moment; leaving puts the picked look back.
@@ -142,6 +142,7 @@ function showTab(name, { focus = false, hash = name, scroll = true } = {}) {
     $("#panel-" + t).hidden = !on;
   }
   if (focus) $("#tab-" + name).focus();
+  requestAnimationFrame(() => voxAll?.());
   if (location.hash.slice(1) !== hash) history.replaceState(null, "", location.pathname + location.search + "#" + hash);
   if (!scroll) return;
   // A section link scrolls to its section; a plain tab switch keeps the tabs in view (under the sticky stage on phones).
@@ -219,9 +220,11 @@ function tile({ kind, id, label, visual, tag, price, buyLabel, out, onPick }) {
   const inputId = kind + "-" + (id || "none"), have = owns(kind, id);
   const input = h("input", { type: "radio", name: kind, id: inputId, value: id });
   input.addEventListener("change", () => { onPick(id); tryOnNote(kind, id, out); renderPreview(); renderSave(); });
+  // Signed out, nothing can be bought yet, so the price is a quiet line instead of a row of disabled Buy buttons.
+  const quiet = !have && price > 0 && !signedIn(), note = [tag, quiet ? money(price) : null].filter(Boolean).join(" · ");
   const option = h("div", { class: "char-option" + (have ? "" : " locked") }, input,
-    h("label", { for: inputId }, visual, h("span", {}, label), tag ? h("span", { class: "tag" }, tag) : null),
-    !have && price > 0 ? buyButton(kind, id, buyLabel || label, price, out) : null);
+    h("label", { for: inputId }, visual, h("span", {}, label), note ? h("span", { class: "tag" }, note) : null),
+    !have && price > 0 && !quiet ? buyButton(kind, id, buyLabel || label, price, out) : null);
   const field = kind === "hat" || kind === "pet" ? kind : KINDS[kind]?.look === "char" || KINDS[kind]?.look === "pet" ? KINDS[kind].field : null;
   if (field) peekOn(option, field, id);
   return option;
@@ -514,7 +517,7 @@ function renderSignedIn() {
     $("#stat-dollars").textContent = money(state.profile.dollars);
     $("#stat-streak").textContent = state.profile.streak || 0;
   }
-  $("#shop-note").textContent = (canShop() ? "You have " + money(state.profile.dollars) + ". " : "") + "Spend the PixFray dollars you earn in duels. Everything here changes looks only, not stats, and you can wear it in any build.";
+  $("#shop-note").textContent = (canShop() ? "You have " + money(state.profile.dollars) + ". " : "") + "Spend the PixFray dollars you earn in duels. Everything here changes looks only, not stats, and you can wear it in any build." + (signedIn() ? "" : " Try anything on now; sign in to buy.");
 }
 
 function renderLeaderboard() {

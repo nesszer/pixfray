@@ -114,17 +114,18 @@
 
         <div class="form-stack" role="tabpanel" id="panel-shop" aria-labelledby="tab-shop" hidden>
           <p class="note" id="shop-note">Spend the PixFray dollars you earn in duels. Everything here changes looks only, not stats. You keep what you buy and can wear it in any build.</p>
+          <nav class="jump" aria-label="Shop sections"><a href="#hat-picker">Hats</a><a href="#shop-accessory">Accessories</a><a href="#shop-trail">Trails</a><a href="#win-effects">Win effects</a><a href="#shop-taunt">Taunts</a><a href="#shop-title">Titles</a></nav>
           <fieldset id="hat-picker">
             <legend>Hat <span class="muted small" id="hat-note"></span></legend>
             <div class="char-grid item-grid" id="hats" role="radiogroup" aria-label="Hat"></div>
             <p class="status" id="hat-status" role="status"></p>
           </fieldset>
-          <fieldset>
+          <fieldset id="shop-accessory">
             <legend>Accessory <span class="muted small" id="note-accessory"></span></legend>
             <div class="char-grid item-grid" id="items-accessory" role="radiogroup" aria-label="Accessory"></div>
             <p class="status" id="status-accessory" role="status"></p>
           </fieldset>
-          <fieldset>
+          <fieldset id="shop-trail">
             <legend>Walking trail <span class="muted small" id="note-trail"></span></legend>
             <div class="char-grid item-grid" id="items-trail" role="radiogroup" aria-label="Walking trail"></div>
             <p class="status" id="status-trail" role="status"></p>
@@ -135,13 +136,13 @@
             <div class="char-grid item-grid" id="items-effect" role="radiogroup" aria-label="Win effect"></div>
             <p class="status" id="status-effect" role="status"></p>
           </fieldset>
-          <fieldset>
+          <fieldset id="shop-taunt">
             <legend>Win taunt <span class="muted small" id="note-taunt"></span></legend>
             <p class="muted small">Your fighter says it after a win. The lines are fixed, so nothing typed reaches the stream.</p>
             <div class="char-grid item-grid text-grid" id="items-taunt" role="radiogroup" aria-label="Win taunt"></div>
             <p class="status" id="status-taunt" role="status"></p>
           </fieldset>
-          <fieldset>
+          <fieldset id="shop-title">
             <legend>Title <span class="muted small" id="note-title"></span></legend>
             <p class="muted small">Shown under your name on stream.</p>
             <div class="char-grid item-grid text-grid" id="items-title" role="radiogroup" aria-label="Title"></div>

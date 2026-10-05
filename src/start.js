@@ -27,7 +27,8 @@ const PROBLEMS = {
 };
 
 function show(title, text, actions = [], problem = "") {
-  $("#invite-title").textContent = title;
+  // hyphenated words ("invite-only") stay on one line
+  $("#invite-title").replaceChildren(...title.split(/(\S+-\S+)/).map((part, i) => i % 2 ? h("span", { class: "nowrap" }, part) : part));
   $("#invite-text").textContent = text;
   $("#invite-actions").replaceChildren(...actions);
   const box = $("#invite-problem");

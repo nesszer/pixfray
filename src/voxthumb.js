@@ -105,11 +105,12 @@ const seen = new IntersectionObserver((entries) => {
 let idleTimer = 0;
 function fillRest() {
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    if (queue.length) return fillRest();
-    for (const job of waiting.values()) if (job.target.isConnected && job.target.offsetParent && !queue.includes(job)) queue.push(job);
-    wake();
-  }, 1200);
+  idleTimer = setTimeout(() => { if (queue.length) return fillRest(); voxAll(); }, 1200);
+}
+// queues every shown tile, in page order; a tab that just opened calls it so its lower tiles don't stay flat
+export function voxAll() {
+  for (const job of waiting.values()) if (job.target.isConnected && job.target.offsetParent && !queue.includes(job)) queue.push(job);
+  if (queue.length) wake();
 }
 
 // target: the tile's .vox canvas; make(): returns ui.js composeLook(...), or null while its images load.

@@ -946,3 +946,28 @@ body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
   /* the filter chips fade at the right edge, so it reads as a row that scrolls */
   .filter-buttons { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: var(--space-6); }
 }
+
+/* Round 12: shop jump row, taunts as chat bubbles, titles as nameplates, a clearer active tab,
+   a readable admin preview, one-line home rows on phones, and /start mocks at 14px. */
+.nowrap { white-space: nowrap; }
+.jump { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); font-size: var(--text-sm); }
+.jump a { display: inline-flex; align-items: center; min-height: 32px; color: var(--text-2); text-decoration: none; border-bottom: 1px solid var(--border-strong); }
+.jump a:hover, .jump a:focus-visible { color: var(--text); border-bottom-color: var(--trim); }
+#items-taunt .char-option label > span:first-of-type { position: relative; justify-self: center; padding: var(--space-2) var(--space-3); background: rgba(0, 0, 0, .55); border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text); }
+#items-taunt .char-option label > span:first-of-type::after { content: ""; position: absolute; left: 16px; bottom: -6px; width: 10px; height: 10px; background: inherit; border: inherit; border-width: 0 1px 1px 0; transform: rotate(45deg); background-color: #0a0807; }
+#items-taunt .char-option:first-child label > span:first-of-type { background: none; border: 0; color: var(--text-2); }
+#items-taunt .char-option:first-child label > span:first-of-type::after { display: none; }
+.char-option .title-text { justify-self: center; padding: 2px var(--space-2); border-top: 2px solid var(--trim); letter-spacing: .02em; }
+.tabs [role="tab"][aria-selected="true"] { color: var(--accent-hover); border-bottom-width: 3px; }
+.gate-peek { opacity: 1; }
+.gate-peek .peek-btn, .gate-peek .peek-link { font-size: var(--text-sm); }
+.step-mock .field { font-size: var(--text-sm); overflow-wrap: break-word; }
+@media (max-width: 900px) {
+  .jump { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: var(--space-6); }
+  .jump a { flex: none; min-height: 44px; }
+}
+@media (max-width: 620px) {
+  .landing .channel { grid-template-columns: 56px minmax(0, 1fr) 44px; grid-template-areas: "crew text go"; }
+  .landing .channel-go { justify-self: end; width: 44px; height: 44px; padding: 0; justify-content: center; font-size: 0; }
+  .landing .channel-go::after { content: "→"; font-size: var(--text-lg); }
+}
