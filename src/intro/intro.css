@@ -217,6 +217,7 @@ h2 { font-size: clamp(32px, 3.7vw, 54px); line-height: 1.04; }
   .hud-nav .btn { min-height: 36px; padding: 0 12px; font-size: 13px; }
   .mark { font-size: 19px; }
   .scroll-hint { font-size: 13px; white-space: nowrap; }
+  body.scrolled .scroll-hint, body:not(.scrolled) .rail { display: none; }   /* the hint and the rail take turns in the bottom bar */
   .sound-label { display: none; }
   .rail { gap: 2px; }
   .rail a::before { width: 12px; }
