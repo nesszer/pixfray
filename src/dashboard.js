@@ -26,7 +26,8 @@ const state = { session: null, catalog: [], profile: null, leaderboard: [], conf
   slot: 0,          // the build slot being edited; the profile's own build is the one on stream
   builds: [],       // saved loadouts per slot (GET /api/profile builds), null for a slot never saved
   drafts: [],       // unsaved edits per slot, kept while switching between builds
-  filter: { q: "", group: "all" } };
+  filter: { q: "", group: "all" },
+  loading: true };   // until the first /api answers arrive
 const stage = addStage($("#preview"));
 // The 3D fighter above the on-stream preview loads after the page works; without WebGL the card keeps the 2D stage.
 let fighter3d = null;
@@ -109,8 +110,8 @@ function lockedWorn() {
 }
 
 // ---------- tabs ----------
-const TABS = ["fighter", "shop", "pets", "ranks"];
-const HASH_TAB = { fighter: "fighter", upgrades: "fighter", builds: "fighter", shop: "shop", hats: "shop", "hat-picker": "shop", pets: "pets", "pet-color": "pets", ranks: "ranks", duels: "ranks", leaderboard: "ranks" };
+const TABS = ["fighter", "shop", "pets", "ranks", "rules"];
+const HASH_TAB = { fighter: "fighter", upgrades: "fighter", builds: "fighter", shop: "shop", hats: "shop", "hat-picker": "shop", pets: "pets", "pet-color": "pets", ranks: "ranks", leaderboard: "ranks", rules: "rules", duels: "rules" };
 const tabOf = (hash) => HASH_TAB[hash] || (document.getElementById(hash)?.closest("[role=tabpanel]")?.id.replace("panel-", "")) || null;
 function showTab(name, { focus = false, hash = name, scroll = true } = {}) {
   for (const t of TABS) {
@@ -225,7 +226,7 @@ function renderHats() {
 
 function renderItems(kind) {
   const k = KINDS[kind], box = $("#items-" + kind), out = $("#status-" + kind), list = state.shop?.items?.[kind];
-  if (!list) { box.replaceChildren(h("p", { class: "muted small" }, "The shop couldn't load. Reload to try again.")); return; }
+  if (!list) { box.replaceChildren(h("p", { class: "muted small" }, state.loading ? "Loading the shop…" : "The shop couldn't load. Reload to try again.")); return; }
   const pet = petById(state.d.pet) || state.shop.pets[0];
   const visual = (id) => {
     if (k.look === "char") return charThumb({ looks: { [k.field]: id } });
@@ -247,7 +248,7 @@ function renderItems(kind) {
 // Pets: tier, boost and price; a bought pet adds to the stats on top of the upgrade limit.
 function renderPets() {
   const box = $("#pet-list"), out = $("#pet-status");
-  if (!state.shop) { box.replaceChildren(h("p", { class: "muted small" }, "Pets couldn't load. Reload to try again.")); return; }
+  if (!state.shop) { box.replaceChildren(h("p", { class: "muted small" }, state.loading ? "Loading pets…" : "Pets couldn't load. Reload to try again.")); return; }
   const option = (pet) => {
     const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" });
     if (pet) addPet(canvas, pet, { color: state.d.petColor });
@@ -538,16 +539,17 @@ function showOff(off) {
 
 async function init() {
   renderSwatches();
-  const [session, catalog, live, shop] = await Promise.all([api("/api/session"), api("/api/catalog/" + CHANNEL), api("/api/state/" + CHANNEL), api("/api/shop/" + CHANNEL)]);
+  const calls = Promise.all([api("/api/session"), api("/api/catalog/" + CHANNEL), api("/api/state/" + CHANNEL), api("/api/shop/" + CHANNEL)]);
+  // The static character list isn't rate-limited like /api, so the fighter and the grid draw before the channel data arrives.
+  const early = await api("/assets/characters.json");
+  if (early.ok && Array.isArray(early.data) && early.data.length) { state.catalog = early.data; applyProfile(null); renderCharacters(); renderAll(); }
+  const [session, catalog, live, shop] = await calls;
+  state.loading = false;
   let list = shop.ok && Array.isArray(shop.data?.pets) ? shop.data : null;
   if (!list) { const pets = await api("/api/pets/" + CHANNEL); list = pets.ok && Array.isArray(pets.data?.pets) ? pets.data : null; }   // pets still work without the shop list
   state.shop = list;
   state.session = session.ok ? session.data : null;
-  state.catalog = catalog.ok && Array.isArray(catalog.data) ? catalog.data : [];
-  if (!state.catalog.length) {
-    const fallback = await api("/assets/characters.json");   // the static list still works if the API is down
-    if (fallback.ok && Array.isArray(fallback.data)) state.catalog = fallback.data;
-  }
+  if (catalog.ok && Array.isArray(catalog.data) && catalog.data.length) state.catalog = catalog.data;   // else the static list stays
   state.config = live.ok ? live.data?.config : null;
   const hash = location.hash.slice(1);
   showTab(tabOf(hash) || "fighter", { hash: tabOf(hash) ? hash : "fighter", scroll: Boolean(tabOf(hash)) && hash !== "fighter" });

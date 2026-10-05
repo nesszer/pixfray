@@ -98,8 +98,8 @@ export function createFighter3D(canvas) {
       renderer.setSize(w, h, false); composer.setSize(w, h);
       camera.aspect = w / h;
       // frame the fighter: wider cards pull back a little so the arena shows around it
-      const dist = 5.6 + Math.max(0, camera.aspect - 0.8) * 1.6;
-      camera.position.set(0, 1.75, dist); camera.lookAt(0, 1.02, 0); camera.updateProjectionMatrix();
+      const dist = 6.8 + Math.max(0, camera.aspect - 0.8) * 0.4;
+      camera.position.set(0, 1.85, dist); camera.lookAt(0, 1.3, 0); camera.updateProjectionMatrix();
       embers.material.uniforms.uPx.value = dpr * h / 900;
       dirty = true;
     }

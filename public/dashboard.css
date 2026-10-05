@@ -535,7 +535,7 @@ body:has(.landing:not([hidden]))::before { display: none; }
 }
 @media (max-width: 760px) {
   .landing { align-items: end; min-height: 0; background: var(--bg) url("/assets/scene/landing-m.webp") center top / 100% auto no-repeat; }
-  .landing-inner { padding: 300px var(--space-4) var(--space-7); }
+  .landing-inner { padding: 228px var(--space-4) var(--space-7); }
   .landing h1 { font-size: 36px; }
   .channel-name { font-size: var(--text-lg); }
 }
@@ -617,7 +617,7 @@ body:has(.landing:not([hidden]))::before { display: none; }
 .channel-crew { width: 96px; justify-content: flex-start; }
 .channel-crew:empty { width: 96px; }
 .channel-crew canvas.is-open { opacity: 0.45; }
-.channel-go { padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); font-weight: 600; }
+.channel-go { padding: var(--space-2) var(--space-3); border: 1px solid var(--trim); border-radius: var(--radius-sm); color: var(--accent-hover); font-weight: 600; }
 .channel:hover .channel-go, .channel:focus-visible .channel-go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 @media (max-width: 760px) {
   .channel { flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
@@ -626,30 +626,34 @@ body:has(.landing:not([hidden]))::before { display: none; }
   .channel-go { flex: 1 0 100%; text-align: center; }
 }
 
-/* phones: the 3D fighter fills the sticky card; the on-stream view is a picture-in-picture inset on it */
+/* phones: the 3D fighter fills the sticky card's width; under it, the on-stream view beside the save button */
 @media (max-width: 900px) {
-  .hero-card.has-3d { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "show show" "points save" "status save" "next next"; }
-  .hero-card.has-3d .showcase { grid-area: show; height: 236px; }
-  .hero-card.has-3d .preview { grid-area: show; align-self: end; justify-self: end; width: 148px; margin: 8px; z-index: 1;
-    border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
-  .hero-card.has-3d .stage-canvas { height: 72px; }
-  .hero-card.has-3d .preview-bar { padding: 4px; }
+  .hero-card.has-3d { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "show show" "preview save" "points status" "next next"; }
+  .hero-card.has-3d .showcase { grid-area: show; height: 176px; }
+  .hero-card.has-3d .preview { grid-area: preview; }
+  .hero-card.has-3d .stage-canvas { height: 64px; }
+  .hero-card.has-3d .preview-bar { padding: 2px 4px; }
   .hero-card.has-3d .preview-bar .caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .hero-card.has-3d .preview-bar .btn, .hero-card.has-3d .win-link { flex: 1 0 100%; text-align: center; font-size: var(--text-xs); }
-  .hero-card.has-3d .showcase-tag { right: 164px; }
-  .hero-card.has-3d .toolbar { max-width: none; }
+  .hero-card.has-3d .preview-bar .btn, .hero-card.has-3d .win-link { flex: 1 0 100%; text-align: center; font-size: var(--text-xs); min-height: 28px; }
+  .hero-card.has-3d .toolbar { max-width: none; align-self: stretch; }
+  .hero-card.has-3d .toolbar > .btn { height: 100%; }
   .hero-copy .lead { display: none; }
+  /* tabs keep the HUD underline on phones too, at a 44px touch height */
+  .tabs { gap: var(--space-4); border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .tabs [role="tab"] { min-height: 44px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; font: 650 var(--text-md)/1 var(--font-display); }
+  .tabs [role="tab"][aria-selected="true"] { background: none; border: 0; border-bottom: 2px solid var(--trim); color: var(--text); }
 }
 
 /* /start: each step shows what it looks like; the permission is two short lists */
 .step-mock { margin: 0 0 var(--space-3); padding: var(--space-3); min-height: 88px; display: grid; gap: var(--space-2); align-content: center;
-  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--text-2); }
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--text-2); }
 .step-mock .field { padding: 4px var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step-mock .row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
 .step-mock .switch { width: 30px; height: 16px; border-radius: 4px; border: 1px solid var(--border-strong); position: relative; }
 .step-mock .switch::after { content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 2px; background: var(--text-3); }
 .step-mock .mod { color: var(--text); }
 .step-mock .badge { font-size: var(--text-xs); }
+.step-mock .eg { font-size: var(--text-xs); color: var(--text-3); }
 .perm-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); margin-top: var(--space-5); }
 .perm-lists h3 { font-size: var(--text-md); margin: 0 0 var(--space-2); }
 .perm-lists ul { margin: 0; padding-left: var(--space-5); color: var(--text-2); }
@@ -658,3 +662,34 @@ body:has(.landing:not([hidden]))::before { display: none; }
   .perm-lists { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
   .stage-figure .stage { aspect-ratio: 4 / 5; }
 }
+/* admin signed out: the gate spans the page grid, with no rule floating above it */
+body:has(#gate:not([hidden])) .page-header { border-bottom: 0; margin-bottom: 0; }
+.gate { max-width: none; }
+
+/* ---------- round 5 ---------- */
+/* phones: tabs and type filters are one scrolling row, like the desktop underline */
+@media (max-width: 900px) {
+  .tabs { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .tabs [role="tab"] { flex: 0 0 auto; }
+  .filter-buttons { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .filter-buttons .btn { flex: none; }
+}
+/* shop tiles: bigger previews, and the price is the tile's own footer instead of a second box */
+.item-grid { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
+.item-grid canvas.sprite:not(.sample) { width: 64px; height: 64px; }
+.item-grid canvas.sprite.sample { width: 96px; height: 72px; }
+.item-grid .char-option:has(> .buy) label { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.item-grid .char-option > .buy { margin-top: -1px; min-height: 32px; border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--panel); color: var(--trim); font-weight: 650; font-variant-numeric: tabular-nums; white-space: normal; }
+.item-grid .char-option > .buy:hover:not(:disabled) { border-color: var(--trim); background: var(--accent-soft); }
+.item-grid .char-option > .buy:disabled { color: var(--text-3); background: var(--panel); border-color: var(--border); }
+/* leaderboard: the top three read first */
+#leaderboard tr.podium td { padding-block: var(--space-3); font-size: var(--text-md); }
+#leaderboard tr.podium td:first-child { font: 650 var(--text-lg)/1 var(--font-display); }
+#leaderboard tr.podium canvas.sprite { width: 48px; height: 48px; }
+/* mod controls, signed out: the heading and the lock sit together in the middle of the screen */
+body:has(#gate:not([hidden])) > main.page { min-height: calc(100svh - 57px); display: flex; flex-direction: column; justify-content: center; padding-block: var(--space-7) var(--space-8); }
+body:has(#gate:not([hidden])) .gate { margin: var(--space-6) 0 0; }
+/* setup steps: a small step badge instead of a big numeral */
+.step-grid > li::before { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--trim); border-radius: var(--radius-sm);
+  font: 650 var(--text-xs)/1 var(--font-sans); }

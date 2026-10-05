@@ -68,10 +68,10 @@ try {
     assert.ok(robots.length >= 3 && robots.some((t) => /robot/i.test(t)) && !robots.some((t) => /zombie/i.test(t)), 'Robots & aliens filter: ' + robots.join(', '));
     assert.equal(await page.locator('#more-chars').isHidden(), true, 'no Show all while filtered');
     await page.locator('#char-groups [data-group=all]').click();
-    // Tabs: the rules link opens Ranks; the hash picks the tab on load.
+    // Tabs: the rules link opens Rules; the hash picks the tab on load.
     assert.equal(await page.locator('#panel-shop').isHidden(), true);
     await page.locator('.hero-copy a[href="#duels"]').click();
-    assert.equal(await page.locator('#tab-ranks').getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('#tab-rules').getAttribute('aria-selected'), 'true');
     assert.equal(await page.locator('#duels').isVisible(), true);
     assert.equal(new URL(page.url()).hash, '#duels');
     await page.locator('#tab-shop').click();
