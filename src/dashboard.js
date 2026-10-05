@@ -35,7 +35,7 @@ let fighter3d = null;
 if (CHANNEL_PICKED && !navigator.connection?.saveData) {
   import("./fighter3d.js").then(({ createFighter3D }) => {
     $("#showcase").hidden = false;
-    try { fighter3d = createFighter3D($("#preview3d")); } catch { $("#showcase").hidden = true; return; }
+    try { fighter3d = createFighter3D($("#preview3d"), { zoom: 1.2 }); } catch { $("#showcase").hidden = true; return; }
     $(".fighter-card").classList.add("has-3d");
     render3d();
   }).catch(() => {});
@@ -653,7 +653,7 @@ async function pickChannel() {
   $("#channel-list").replaceChildren(...channels.map((c) => {
     const crew = h("span", { class: "channel-crew", "aria-hidden": "true" }), meta = h("span", { class: "channel-meta" });
     const link = h("a", { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
-      crew, h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta), h("span", { class: "channel-go" }, h("span", { class: "go-long" }, "Pick your fighter"), h("span", { class: "go-short" }, "Open")));
+      crew, h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta), h("span", { class: "channel-go" }, "Pick your fighter"));
     channelRanks(c, link, crew, meta);
     return h("li", {}, link);
   }));
@@ -667,7 +667,7 @@ function liveLanding() {
   import("./fighter3d.js").then(({ createFighter3D }) => {
     const canvas = h("canvas", { class: "landing-3d", "aria-hidden": "true" });
     $("#pick").prepend(canvas);
-    try { landing.arena = createFighter3D(canvas); } catch { canvas.remove(); return; }
+    try { landing.arena = createFighter3D(canvas, { zoom: 0.9 }); } catch { canvas.remove(); return; }
     $("#pick").classList.add("is-live");
     landing.show = (entry) => { const look = composeLook(entry); if (look) landing.arena.set(look); else whenImage(entry.url, () => landing.show(entry)); };
     if (landing.first || landing.fallback) landing.show(landing.first || landing.fallback);
