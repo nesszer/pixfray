@@ -104,6 +104,19 @@ function gate(text, actions = []) {
   $("#gate").hidden = false; $("#app").hidden = true;
   $("#gate-text").textContent = text;
   $("#gate-actions").replaceChildren(...actions);
+  gateProof();
+}
+// the gate shows the arena these controls run, live: whether duels are on and who leads (public data only)
+let proofLoaded = false;
+async function gateProof() {
+  if (proofLoaded) return; proofLoaded = true;
+  const [st, lb] = await Promise.all([api("/api/state/" + CHANNEL), api("/api/leaderboard/" + CHANNEL)]);
+  if (!st.ok && !lb.ok) return;
+  const ranked = lb.ok && Array.isArray(lb.data) ? lb.data.filter((p) => p.wins + p.losses > 0).sort((a, b) => b.elo - a.elo) : [];
+  const parts = [];
+  if (st.ok) parts.push(st.data.paused || st.data.config?.enabled === false ? "duels are paused" : "duels are running");
+  if (lb.ok) parts.push(ranked.length ? ranked.length + " ranked fighter" + (ranked.length === 1 ? "" : "s") + ", " + (ranked[0].displayName || ranked[0].username) + " leads at " + ranked[0].elo + " Elo" : "no ranked duels yet");
+  const p = $("#gate-proof"); p.textContent = "Right now in " + CHANNEL + "'s arena: " + parts.join("; ") + "."; p.hidden = false;
 }
 async function init() {
   // a slow or rate-limited check shouldn't leave the gate blank: offer sign-in while it finishes

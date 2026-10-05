@@ -98,7 +98,7 @@ document.addEventListener('focusin', (e) => {
 });
 // the rail follows the nearest chapter; the copy shows only near a chapter's centre, so text never sits on a scene change
 function setChapter(c) {
-  const i = Math.round(c), copy = reduced || Math.abs(c - i) < (innerWidth < innerHeight ? 0.4 : 0.36) ? i : -1;   // phones: the copy sits under the scene, so it can stay on longer
+  const i = Math.round(c), copy = reduced || Math.abs(c - i) < (innerWidth < innerHeight ? 0.4 : 0.45) ? i : -1;   // phones: the copy sits under the scene, so it can stay on longer
   if (copy !== activeCopy) { activeCopy = copy; sections.forEach((s, k) => s.classList.toggle('is-on', k === copy)); }
   if (i === activeChapter) return;
   activeChapter = i;

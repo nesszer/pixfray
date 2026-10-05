@@ -1272,11 +1272,14 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
 .peek-row .peek-btn { border-style: dashed; color: var(--text-3); background: none; }
 .peek-row .peek-link { text-decoration: none; color: var(--text-3); }
 .peek-row > span:first-child { color: var(--text-2); }
-/* Ranks and Rules are reading tabs: on desktop the stage steps aside and the table gets the full width */
+/* Ranks and Rules are reading tabs: on desktop the stage stays, so switching tabs never moves the page;
+   on phones the stuck stage steps aside so the table gets the screen */
 @media (min-width: 901px) {
-  html[data-tab="ranks"] .hero-grid:has(.has-3d), html[data-tab="rules"] .hero-grid:has(.has-3d) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "pick"; }
-  html[data-tab="ranks"] .hero-card.has-3d, html[data-tab="rules"] .hero-card.has-3d { display: none; }
   #leaderboard td:nth-child(2), #leaderboard .lb-char { white-space: nowrap; }
+  .hero-pick [role="tabpanel"] { min-height: 640px; }
+}
+@media (max-width: 900px) {
+  html[data-tab="ranks"] .hero-card.has-3d, html[data-tab="rules"] .hero-card.has-3d { display: none; }
 }
 /* admin gate: the peek sits on a solid panel, so the scene behind never shows through it */
 .gate-inside .gate-peek, .gate-peek { background: var(--surface); }
@@ -1456,7 +1459,6 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
 /* the picker and the builder are where "Pick your fighter" leads, so they drop it */
 .topbar nav a.nav-cta[aria-current] { display: none; }
 /* the picker: both channels get the same outlined button, filled on hover; rows read larger */
-.landing .channel-list li:first-child .channel-go { background: none; border-color: var(--trim); color: var(--accent-hover); }
 .landing .channel-list li .channel:hover .channel-go, .landing .channel-list li .channel:focus-visible .channel-go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 @media (min-width: 901px) {
   .landing .channel-list { max-width: 560px; }
@@ -1478,7 +1480,25 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
   .gate-inside .gate-peek { margin: 0; border: 0; border-top: 1px solid var(--border-strong); border-radius: 0; padding: var(--space-4) var(--space-5); background: rgb(13 9 6 / .94); }
 }
 /* builder on a phone: once you scroll into the tabs, the stuck preview shrinks to a strip */
-@media (max-width: 480px) { html.compact .hero-card.has-3d .showcase { height: 120px; } }
+
 /* with no rule under the header, the picker's arena fades in from the top instead of starting on a hard edge */
 @media (min-width: 901px) { .landing-3d { mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 12%, rgba(0,0,0,.3) 24%, rgba(0,0,0,.62) 36%, rgba(0,0,0,.88) 48%, #000 60%), linear-gradient(to bottom, transparent, #000 96px, #000 78%, transparent); -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 12%, rgba(0,0,0,.3) 24%, rgba(0,0,0,.62) 36%, rgba(0,0,0,.88) 48%, #000 60%), linear-gradient(to bottom, transparent, #000 96px, #000 78%, transparent); } }
 @media (max-width: 900px) { .landing-3d { mask-image: linear-gradient(to bottom, transparent, #000 48px, #000 62%, transparent); -webkit-mask-image: linear-gradient(to bottom, transparent, #000 48px, #000 62%, transparent); } }
+
+/* Round 27: the phone strip is tall enough to show the whole fighter */
+@media (max-width: 900px) { html.compact .hero-card.has-3d .showcase { height: 176px; } }
+/* admin gate: the arena picture and the locked controls are two stacked parts of one card, so the controls never cover the fighters */
+.gate-inside { display: flex; flex-direction: column; padding: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--bg); }
+.gate-inside::before { content: ""; flex: 1 1 auto; min-height: 220px;
+  background: linear-gradient(to bottom, rgb(12 9 7 / 0) 55%, rgb(12 9 7 / .55)), url("/assets/scene/arena-top.webp") 66% 42% / cover no-repeat; }
+.gate-inside .gate-peek { margin: 0; border: 0; border-top: 1px solid var(--border-strong); border-radius: 0; padding: var(--space-4) var(--space-5); background: var(--surface); }
+@media (max-width: 760px) {
+  .gate-inside { padding: 0; }
+  .gate-inside::before { min-height: 200px; background-image: linear-gradient(to bottom, rgb(12 9 7 / 0) 55%, rgb(12 9 7 / .55)), url("/assets/scene/arena-top-800.webp"); }
+  .gate-inside .gate-peek { padding: var(--space-4); }
+}
+.gate-proof { margin: var(--space-4) 0 0; padding-left: var(--space-3); border-left: 2px solid var(--trim); color: var(--text-2); font-size: var(--text-sm); }
+/* picker: the busiest channel's button leads (solid gold, from round 18); the fighter caption sits clear of the fold */
+.landing-who { bottom: calc(var(--space-6) + 24px); }
+/* credits: inline links get taller lines on phones so each is easy to tap */
+@media (max-width: 760px) { .caveat:has(a) { line-height: 2.2; } }

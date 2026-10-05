@@ -10,7 +10,6 @@ applyChannel();
 
 const SWATCHES = ["#a78bfa", "#60a5fa", "#34d399", "#fbbf24", "#f87171", "#f472b6", "#e5e7eb", "#22d3ee"];
 const form = $("#profile-form"), saveBtn = $("#save"), saveSignin = $("#save-signin"), status = $("#save-status");
-let lastY = 0, travel = 0, away = false;   // the phone Save bar (tuckSaveBar)
 const colorInput = $("#color");
 // Cosmetic kinds (server/cosmetics.js): the profile field that wears each, how its tiles look, and its words.
 const KINDS = {
@@ -747,13 +746,11 @@ async function channelRanks(channel, link, crew, meta) {
   }
   for (const p of rows.slice(0, 3)) if (byId.get(p.avatar)) add(byId.get(p.avatar), "sprite");
 }
-// Phones: the fixed Save bar stays tucked away on the first screen, while scrolling down, and on Ranks and Rules,
-// unless there is something to save or say. Scrolling back up brings it back.
+// Phones: the fixed Save bar stays put while you pick; it steps aside only on Ranks and Rules,
+// unless there is something to save or say.
 function tuckSaveBar() {
   const root = document.documentElement, quiet = !status.textContent && !dirty();
-  travel += scrollY - lastY; lastY = scrollY;
-  if (Math.abs(travel) > 24) { away = travel > 0; travel = 0; }
-  root.classList.toggle("bar-away", quiet && (away || root.dataset.tab === "ranks" || root.dataset.tab === "rules"));
+  root.classList.toggle("bar-away", quiet && (root.dataset.tab === "ranks" || root.dataset.tab === "rules"));
   root.classList.toggle("at-top", quiet && scrollY < 40);
 }
 function watchSaveBar() {
