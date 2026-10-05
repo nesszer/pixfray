@@ -148,11 +148,12 @@ function showTab(name, { focus = false, hash = name, scroll = true } = {}) {
     $("#panel-" + t).hidden = !on;
   }
   if (focus) $("#tab-" + name).focus();
+  const part = name === "shop" && showShopPart(hash);
   requestAnimationFrame(() => { voxAll?.(); document.dispatchEvent(new Event("pixfray:tab")); });
   if (location.hash.slice(1) !== hash) history.replaceState(null, "", location.pathname + location.search + "#" + hash);
   if (!scroll) return;
   // A section link scrolls to its section; a plain tab switch keeps the tabs in view (under the sticky stage on phones).
-  const target = hash !== name && document.getElementById(hash);
+  const target = hash !== name && !part && document.getElementById(hash);
   const el = target && target.closest("[role=tabpanel]") ? target : $(".hero-pick .tabs");
   if (el.getBoundingClientRect().top < stickyHeight() || target) el.scrollIntoView({ block: "start" });
 }
@@ -183,16 +184,16 @@ new ResizeObserver(() => {
   root.style.scrollPaddingTop = (card + tabs + 16) + "px";
 }).observe($(".hero-card"));
 
-// The shop's section links mark the section in view, so the row reads as tabs that follow the scroll.
-{ const links = [...document.querySelectorAll(".jump a")], parts = links.map((a) => document.getElementById(a.getAttribute("href").slice(1)));
-  let queued = 0;
-  const mark = () => { queued = 0;
-    if (!links[0]?.offsetParent) return;
-    const line = innerHeight * 0.4; let on = 0;
-    parts.forEach((el, i) => { if (el && el.getBoundingClientRect().top <= line) on = i; });
-    links.forEach((a, i) => a.toggleAttribute("aria-current", i === on)); };
-  addEventListener("scroll", () => { queued ||= requestAnimationFrame(mark); }, { passive: true });
-  document.addEventListener("pixfray:tab", mark); mark(); }
+// The shop shows one section at a time: its section links act as sub-tabs, so the panel stays one screen long.
+const shopLinks = [...document.querySelectorAll(".jump a")], shopParts = shopLinks.map((a) => document.getElementById(a.getAttribute("href").slice(1)));
+function showShopPart(id) {
+  const target = id && document.getElementById(id), i = shopParts.findIndex((el) => el && target && el.contains(target));
+  if (i < 0 && id) return false;   // a plain tab switch keeps the section picked earlier
+  shopParts.forEach((el, j) => { el.hidden = j !== Math.max(0, i); });
+  shopLinks.forEach((a, j) => a.toggleAttribute("aria-current", j === Math.max(0, i)));
+  return i >= 0;
+}
+showShopPart(null);
 
 // ---------- shop ----------
 // The first click on a Buy button asks to confirm, the second spends the dollars. A bought item is worn right away;
@@ -238,7 +239,7 @@ function tile({ kind, id, label, visual, tag, tier, price, buyLabel, out, onPick
   const input = h("input", { type: "radio", name: kind, id: inputId, value: id });
   input.addEventListener("change", () => { onPick(id); tryOnNote(kind, id, out); renderPreview(); renderSave(); });
   // Signed out, nothing can be bought yet, so the price is a quiet line instead of a row of disabled Buy buttons.
-  const quiet = !have && price > 0 && !signedIn(), note = tag || quiet ? [tag, tag && quiet ? " · " : "", quiet ? h("b", { class: "price" }, money(price)) : ""].filter(Boolean) : null;
+  const quiet = !have && price > 0 && !signedIn(), note = tag || quiet ? [tag, quiet ? h("b", { class: "price" }, (tag && kind === "hat" ? "or " : "") + money(price)) : ""].filter(Boolean) : null;
   const option = h("div", { class: "char-option" + (have ? "" : " locked") + (tier ? " tier-" + tier : "") }, input,
     h("label", { for: inputId }, visual, h("span", {}, label), note ? h("span", { class: "tag" }, ...note) : id && have ? h("span", { class: "tag" }, signedIn() && price > 0 ? "Owned" : "Free") : null),
     !have && price > 0 && !quiet ? buyButton(kind, id, buyLabel || label, price, out) : null);
@@ -540,7 +541,7 @@ function renderSignedIn() {
 function renderLeaderboard() {
   const tbody = $("#leaderboard tbody"), me = state.session?.user?.id, rows = state.leaderboard;
   if (!rows.length) {
-    $("#podium").hidden = true;
+    renderPodium(rows);   // three open steps show what there is to take
     tbody.replaceChildren(h("tr", { class: "empty" }, h("td", { colspan: 6 },
       h("strong", {}, "No ranked duels yet, so the top spot is open."), " To get on the board: ",
       signedIn() ? "save your fighter in the Fighter tab" : "sign in and save your fighter in the Fighter tab",
@@ -565,10 +566,10 @@ function renderLeaderboard() {
 // The top three stand on a podium above the table, as voxels like the 3D preview; an empty step says how to take it.
 function renderPodium(rows) {
   const box = $("#podium");
-  box.hidden = !rows.length;
+  box.hidden = false;
   box.replaceChildren(...[0, 1, 2].map((i) => {
     const p = rows[i], entry = p && entryOf(p.avatar);
-    if (!p) return h("li", { class: "open" }, h("span", { class: "place" }, i + 1), h("span", { class: "slot", "aria-hidden": "true" }),
+    if (!p) return h("li", { class: i === 0 ? "open first" : "open" }, h("span", { class: "place" }, i + 1), h("span", { class: "slot", "aria-hidden": "true" }),
       h("strong", {}, "Open"), h("span", { class: "muted" }, "Win a ranked duel to take it"));
     const canvas = h("canvas", { class: "sprite", width: 48, height: 48, "aria-hidden": "true" }), v = voxCanvas();
     if (entry) { addSprite(canvas, entry, { active: () => false }); vox(v, () => composeLook(entry)); }
@@ -660,10 +661,10 @@ async function pickChannel() {
   liveLanding();
 }
 // On wide screens the picker's island is the intro's live arena, not a picture: each channel's top fighter
-// stands on it, and hovering or focusing a row brings that channel's fighter on. Phones keep the still image.
+// stands on it, and hovering or focusing a row brings that channel's fighter on. Phones show it as a banner over the heading.
 const landing = { arena: null, show: null, first: null, fallback: null };
 function liveLanding() {
-  if (innerWidth <= 900 || navigator.connection?.saveData || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (navigator.connection?.saveData || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   import("./fighter3d.js").then(({ createFighter3D }) => {
     const canvas = h("canvas", { class: "landing-3d", "aria-hidden": "true" });
     $("#pick").prepend(canvas);

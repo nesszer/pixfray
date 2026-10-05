@@ -76,18 +76,23 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     return new VoxelFighter(s, { size: step * height / refH, scatter: 'burst', layers: opts.layers, seed: opts.seed, shadows: true });
   }
   function drop(f) { if (!f) return; table.remove(f.group); f.mesh.geometry.dispose(); f.mesh.material.dispose(); f.mesh.dispose(); }
+  // a swapped-out look bursts apart while the new one gathers in after it
+  const OUT = 320, leaving = [];
 
   // look: ui.js composeLook() — { key, body, frameH, pet, petH }
   function set(look) {
     if (!look || look.key === lookKey) return;
+    const first = !lookKey;
     lookKey = look.key;
-    drop(fighter); drop(pet);
+    leaving.splice(0).forEach((l) => drop(l.f));
+    if (reduced || first) { drop(fighter); drop(pet); }
+    else for (const f of [fighter, pet]) if (f) leaving.push({ f, at: performance.now() });
     const small = innerWidth < 700;
     fighter = voxels(look.body, look.frameH, HEIGHT, { rows: small ? 40 : 52, layers: 14, seed: 3 });
     if (fighter) table.add(fighter.group);
     pet = look.pet ? voxels(look.pet, look.petH, HEIGHT * 0.42, { rows: small ? 16 : 22, layers: 6, seed: 9 }) : null;
     if (pet) { pet.group.position.set(-1.0, 0, -0.4); table.add(pet.group); }
-    builtAt = reduced ? -1e9 : performance.now();
+    builtAt = reduced ? -1e9 : performance.now() + (leaving.length ? OUT * 0.6 : 0);
     dirty = true; kick();
   }
 
@@ -152,12 +157,16 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     drawn = now;
     const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016); last = now;
     const t = now / 1000, live = !reduced && !slow;
-    const assembling = now - builtAt < 1400;
-    const a = reduced ? 1 : Math.min(1, (now - builtAt) / 1100);
+    const assembling = now - builtAt < 1400 || leaving.length > 0;
+    const a = reduced ? 1 : Math.max(0, Math.min(1, (now - builtAt) / 1100));
     // idle sway when nobody is dragging, so the voxels read as solid
     const sway = live && !drag ? Math.sin(t * 0.45) * 0.22 : 0;
     yaw += (yawTarget + sway - yaw) * (1 - Math.exp(-dt * 6));
     table.rotation.y = yaw;
+    for (let i = leaving.length - 1; i >= 0; i--) {
+      const l = leaving[i], k = (now - l.at) / OUT;
+      if (k >= 1) { drop(l.f); leaving.splice(i, 1); } else { l.f.pointer = null; l.f.update(1 - k); }
+    }
     if (fighter) { fighter.pointer = hover && !drag ? pointerOn(fighter, hover) : null; fighter.update(a); }
     if (pet) { pet.pointer = null; pet.update(Math.max(0, a * 1.15 - 0.15)); }
     if (live) {

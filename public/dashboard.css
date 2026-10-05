@@ -1123,3 +1123,38 @@ body:has(.gate:not([hidden]))::before { background-position: center -140px; }
 @media (max-width: 760px) { .ready { padding: var(--space-6) 0; background: none; } }
 /* the mod gate's drawn controls read as a picture: solid, dim, no dashed "press me" edges */
 .gate-peek .peek-btn { border-style: solid; color: var(--text-2); }
+
+/* shop: the section links are sub-tabs (one section shows at a time), drawn like the character filters */
+.jump { gap: var(--space-2); }
+.jump a { min-height: 40px; padding: 0 var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: 650 var(--text-sm)/1 var(--font-display); color: var(--text-2); }
+.jump a[aria-current] { border-color: var(--trim); border-bottom-color: var(--trim); background: var(--accent-soft); color: var(--text); }
+.jump a:not([aria-current]):hover, .jump a:not([aria-current]):focus-visible { border-color: var(--text-2); color: var(--text); }
+@media (max-width: 900px) { .jump a { min-height: 44px; } }
+/* a tile's price gets its own line instead of trailing a "·" */
+.char-option .tag .price { display: block; }
+@media (min-width: 901px) {
+  /* the on-stream lane is tall enough for the sprite, its nameplate and the "On stream" label */
+  .hero-card.has-3d .stage-canvas { height: 104px; }
+  .hero-card.has-3d .showcase { height: clamp(400px, calc(100vh - 340px), 600px); }
+  .item-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+/* picker, phones: the live arena is a banner over the heading, with the top fighter standing in it */
+@media (max-width: 900px) {
+  .landing-3d { width: 100%; height: 320px; bottom: auto; mask-composite: add; -webkit-mask-composite: source-over;
+    mask-image: linear-gradient(to bottom, #000 62%, transparent); -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent); }
+  .landing.is-live .landing-inner { padding-top: 272px; }
+}
+/* mod gate: the card title sits under the page h1, so it is a size smaller; the page ends after the card */
+#gate h2 { font-size: var(--text-xl); }
+body:has(#gate:not([hidden])) > main.page { min-height: 0; padding-block: var(--space-7) var(--space-6); }
+body:has(#gate:not([hidden])) .gate { margin-bottom: 0; }
+/* phones: with Mods in the bar, "How it works" moves to the footer ("See a duel") so each link keeps a 44px target */
+@media (max-width: 480px) {
+  .topbar nav:has(#admin-link:not([hidden])) a[href="/intro/"], .topbar nav:has(a[href^="/admin/"][aria-current]) a[href="/intro/"] { display: none; }
+}
+/* /start: the page ends at its last call to action */
+main.page:has(> .ready:last-child) { padding-bottom: 0; }
+/* an empty podium stays a podium: the first step is the tall one, the open slots are short */
+.top3 > li.open .slot { height: 56px; }
+.top3 > li.open.first .slot { height: 80px; }
+.top3 > li.open:not(.first) { padding-top: var(--space-5); }

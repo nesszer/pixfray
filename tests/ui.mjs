@@ -82,10 +82,12 @@ try {
     assert.equal(new URL(page.url()).hash, '#pets');
     // Shop tiles and try-on while signed out: the preview wears it; buying needs a sign-in.
     await page.locator('#tab-shop').click();
-    await page.waitForSelector('#trail-flames');
+    await page.locator('.jump a[href="#shop-trail"]').click();
+    await page.waitForSelector('#trail-flames', { state: 'attached' });
     await page.locator('label[for=trail-flames]').click();
     assert.match(await page.locator('#status-trail').textContent(), /Trying on Flames in the preview\. Sign in to buy it\./);
     assert.equal(await page.locator('#play-win').isDisabled(), true, 'no win effect or taunt yet');
+    await page.locator('.jump a[href="#win-effects"]').click();
     await page.locator('label[for=effect-confetti]').click();
     assert.equal(await page.locator('#play-win').isDisabled(), false);
     assert.match(await page.locator('#preview').getAttribute('aria-label'), /Flames trail/);
@@ -181,7 +183,13 @@ try {
     // Shop: hats past the wins can be bought; a pet buy needs a second click to confirm, then the pet is picked.
     assert.equal(await page.getByRole('button', { name: /^Buy Crown hat for \$200$/ }).isDisabled(), true, '$42 is not enough for the crown');
     // Cosmetics: every price is the channel's config default; trying one on blocks Save until it's bought.
+    // The shop shows one section at a time; its section links switch between them.
+    assert.equal(await page.locator('#shop-accessory').isHidden(), true, 'only the Hats section shows first');
+    await page.locator('.jump a[href="#shop-accessory"]').click();
+    assert.equal(await page.locator('#hat-picker').isHidden(), true);
     assert.equal(await page.getByRole('button', { name: 'Buy Cape for $80' }).isDisabled(), true);
+    await page.locator('.jump a[href="#shop-title"]').click();
+    assert.equal(await page.locator('.jump a[aria-current]').textContent(), 'Titles');
     assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $50' }).isDisabled(), true);
     await page.locator('label[for=title-wall]').click();
     assert.match(await page.locator('#save-status').textContent(), /Trying on Iron Wall\. Buy it to save this look\./);
@@ -775,6 +783,7 @@ try {
       assert.match(await page.locator('#save-status').textContent(), /PixFray is off on this channel right now, so saving and buying are closed. Your fighter is kept./);
       assert.equal(await page.locator('#next-step').isHidden(), true);
       await page.locator('#tab-shop').click();
+      await page.locator('.jump a[href="#shop-title"]').click();
       assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $50' }).isDisabled(), true, 'buying is closed');
       await noOverflow(page, 'viewer paused signed-in');
       await page.screenshot({ path: shots + '/viewer-paused-signed-in-1280.png' });
