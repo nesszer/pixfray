@@ -647,21 +647,16 @@ try {
       await context.close();
     }
   }
-  // 8. /start: an invite link in each state (stubbed /api/invite), at 1280/390.
-  const tok = 'ab'.repeat(16);
+  // 8. /start: open sign-up, and each reason Twitch sign-in can send someone back, at 1280/390.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    let invite = { status: 'valid', login: 'newstreamer' };
-    await page.route('**/api/invite/*', (r) => json(r, invite));
     await page.goto(base + '/start/');
-    await page.waitForFunction(() => !document.querySelector('#invite-title').textContent.includes('Checking'));
-    assert.equal(await page.locator('#invite-title').textContent(), 'PixFray is invite-only right now');
-    await page.goto(base + '/start/?invite=' + tok);
-    await page.waitForFunction(() => !document.querySelector('#invite-title').textContent.includes('Checking'));
-    assert.equal(await page.locator('#invite-title').textContent(), 'Set up PixFray for newstreamer');
-    assert.equal(await page.locator('#invite-actions a.btn-primary').getAttribute('href'), '/auth/login?invite=' + tok);
-    assert.equal(await page.locator('#invite-actions a').count(), 1);
-    assert.equal(await page.locator('#invite-problem').isHidden(), true);
+    assert.equal(await page.locator('#signup-title').textContent(), 'Sign in with the Twitch account you stream on');
+    assert.equal(await page.locator('#signup-actions a.btn-primary').getAttribute('href'), '/auth/login?signup=1');
+    assert.equal(await page.locator('#signup-actions a').count(), 1);
+    assert.equal(await page.locator('#ready-actions a.btn-primary').getAttribute('href'), '/auth/login?signup=1', 'the closing band repeats the sign-in');
+    assert.equal(await page.locator('#signup-problem').isHidden(), true);
+    assert.match(await page.locator('#source a').getAttribute('href'), /^https:\/\/github\.com\//);
     const stage = await page.locator('.stage').boundingBox(), frame = await page.locator('.stage iframe').boundingBox();
     const want = s.name === '390' ? 1 : 4 / 3;   // phones get a square crop: the fighters stay readable and every nameplate fits
     assert.ok(Math.abs(stage.width / stage.height - want) < 0.03, 'demo stage is ' + (s.name === '390' ? '1:1' : '4:3') + ', got ' + stage.width + 'x' + stage.height);
@@ -672,28 +667,24 @@ try {
     await noOverflow(page, 'start valid ' + s.name);
     await page.screenshot({ path: shots + '/start-valid-' + s.name + '.png', fullPage: true });
     // back from Twitch after cancelling the permission: offer setup without mod access, and drop ?error from the URL
-    await page.goto(base + '/start/?invite=' + tok + '&error=denied');
-    await page.waitForSelector('#invite-problem:not([hidden])');
-    assert.match(await page.locator('#invite-problem').textContent(), /cancelled the Twitch permission/);
-    assert.deepEqual(await page.locator('#invite-actions a').evaluateAll((a) => a.map((x) => x.getAttribute('href'))), ['/auth/login?invite=' + tok, '/auth/login?invite=' + tok + '&mods=0']);
-    assert.equal(new URL(page.url()).search, '?invite=' + tok);
-    if (s.name === '390') await page.locator('#invite').screenshot({ path: shots + '/start-denied-390.png' });
-    await page.goto(base + '/start/?invite=' + tok + '&error=wrong_account');
-    await page.waitForSelector('#invite-problem:not([hidden])');
-    assert.match(await page.locator('#invite-problem').textContent(), /This invite is for newstreamer\. Log out of twitch\.tv, then sign in again as newstreamer\./);
-    invite = { status: 'used', login: 'newstreamer' };
-    await page.goto(base + '/start/?invite=' + tok);
-    await page.waitForSelector('#invite-problem:not([hidden])');
-    assert.equal(await page.locator('#invite-actions a').getAttribute('href'), '/auth/login?channel=newstreamer&next=%2Fadmin%2F');
-    invite = { status: 'expired', login: 'newstreamer' };
-    await page.goto(base + '/start/?invite=' + tok);
-    await page.waitForSelector('#invite-problem:not([hidden])');
-    assert.match(await page.locator('#invite-problem').textContent(), /has expired/);
-    assert.equal(await page.locator('#invite-actions a').count(), 0);
+    await page.goto(base + '/start/?error=denied');
+    await page.waitForSelector('#signup-problem:not([hidden])');
+    assert.match(await page.locator('#signup-problem').textContent(), /cancelled the Twitch permission/);
+    assert.deepEqual(await page.locator('#signup-actions a').evaluateAll((a) => a.map((x) => x.getAttribute('href'))), ['/auth/login?signup=1', '/auth/login?signup=1&mods=0']);
+    assert.equal(new URL(page.url()).search, '');
+    if (s.name === '390') await page.locator('#signup').screenshot({ path: shots + '/start-denied-390.png' });
+    await page.goto(base + '/start/?error=full');
+    await page.waitForSelector('#signup-problem:not([hidden])');
+    assert.match(await page.locator('#signup-problem').textContent(), /PixFray is full right now/);
+    await page.goto(base + '/start/?error=failed');
+    await page.waitForSelector('#signup-problem:not([hidden])');
+    assert.match(await page.locator('#signup-problem').textContent(), /sign-in didn't finish/);
+    await page.goto(base + '/start/?invite=' + 'ab'.repeat(16));
+    assert.equal(await page.locator('#signup-problem').isHidden(), true, 'an old invite link opens the plain sign-up');
     await context.close();
   }
 
-  // 9. An invited channel's own admin page: connect mod access later, turn PixFray off and back on.
+  // 9. A signed-up channel's own admin page: connect mod access later, turn PixFray off and back on.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
     const me = { id: '5505', login: 'newstreamer', displayName: 'NewStreamer' };
@@ -790,14 +781,14 @@ try {
     }
     await context.close();
   }
-  // /start without an invite: the invite line sits below the copy (beside the demo on wide screens), never over it.
+  // /start: the sign-in line sits below the copy (beside the demo on wide screens), never over it.
   for (const size of sizes) {
     const { context, page } = await newPage({ width: size.width, height: size.height });
     await page.goto(base + '/start/');
-    await page.waitForFunction(() => document.querySelector('#invite-text')?.textContent.trim());
-    const copy = await page.locator('.hero-copy').boundingBox(), card = await page.locator('#invite').boundingBox();
+    await page.waitForFunction(() => document.querySelector('#signup-text')?.textContent.trim());
+    const copy = await page.locator('.hero-copy').boundingBox(), card = await page.locator('#signup').boundingBox();
     const apart = card.x >= copy.x + copy.width || card.y >= copy.y + copy.height;
-    assert.ok(apart, `start ${size.name}: invite card overlaps the copy`);
+    assert.ok(apart, `start ${size.name}: sign-in card overlaps the copy`);
     assert.ok(copy.width >= Math.min(size.width * 0.5, 400), `start ${size.name}: copy squeezed to ${copy.width}px`);
     await noOverflow(page, 'start ' + size.name);
     await context.close();

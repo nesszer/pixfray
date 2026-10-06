@@ -2,7 +2,7 @@
 
 Who reads this: the owner (nesszerra) setting up and using the **Developer tools** section of the
 owner page (`/admin/dev/`) to fix the live game without a laptop build. The top of that page is
-for inviting streamers and following their setup; the tools below are folded until opened. What's needed: which secrets to add, how a fix reaches production, and how
+for the sign-up link and following each streamer's setup; the tools below are folded until opened. What's needed: which secrets to add, how a fix reaches production, and how
 to undo it.
 
 **Status on 2026-10-03:** the site is deployed (https://chat.miolaf.xyz), and the project's git
@@ -45,8 +45,7 @@ download the data:
 - **Export** on a channel row: that channel's fighters, ranks, config and config history, the
   metadata of its custom characters (not their images) and the names of its StreamElements
   commands (`mini-chat-<login>-<date>.json`).
-- **Export channel list**: the channels that are on and the invites (`mini-chat-channels-<date>.json`).
-  Invite tokens are left out.
+- **Export channel list**: the signed-up channels, on and off (`mini-chat-channels-<date>.json`).
 
 Neither file holds StreamElements keys or Twitch tokens. A paused channel can still be exported.
 

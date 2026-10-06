@@ -6,7 +6,7 @@ https://chat.miolaf.xyz later that day. No real Twitch, GitHub or Cloudflare API
 except that `tests/smoke.mjs` joins the public #nesszerra IRC anonymously, read-only.
 
 The tables below record that run. The code has changed since (quick duels are the default,
-the balance preset and `inactivityMs` 45 s, 56 characters, StreamElements chat for invited
+the balance preset and `inactivityMs` 45 s, 56 characters, StreamElements chat for signed-up
 channels, the owner export and progress routes), so test counts and the audit evidence are not
 re-measured here. `npm run test:all` is the current check; `tests/e2e-local.mjs` sets
 `quickDuel:false` for its HP-fight steps and puts the config back at the end.
@@ -123,7 +123,7 @@ Status values:
 | Spec item | Status | Evidence |
 |---|---|---|
 | One ChannelRoom per channel; profiles, Elo and settings separate | unverified | `worker.js` routes every channel to `ROOMS.idFromName(channel)`. Only one channel was enabled in that run, so separation was not exercised |
-| nesszerra enabled, miolafff disabled | superseded | This was true on the 2026-10-01 run. Both are now built in and enabled (`CHANNELS` in `server/auth.js`), and other channels join by invite (`tests/registry.test.mjs`) |
+| nesszerra enabled, miolafff disabled | superseded | This was true on the 2026-10-01 run. Both are now built in and enabled (`CHANNELS` in `server/auth.js`), and other channels join by signing in on /start (`tests/registry.test.mjs`) |
 | Twitch sign-in | unverified | OAuth state checks pass in `auth.test.mjs`. No Twitch app exists; local runs use seeded sessions |
 | Profiles saved server-side, follow the viewer across devices | verified | `e2e-local.mjs`: the profile saved by API shows in a fresh browser context (dashboard 1012 and Ranger). `channel.test.mjs` "profiles are saved server-side" |
 | Dashboard: character cards, live preview, color, default ability, compact leaderboard | verified | `tests/ui.mjs`; `e2e-dashboard-1280.png` and `-390.png` in `screenshots/` after a run |

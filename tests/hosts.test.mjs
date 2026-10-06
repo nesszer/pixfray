@@ -43,7 +43,7 @@ test("chat.miolaf.xyz opens miolafff's pages and sends every other page to pixfr
   assert.equal(await moved(MIOLAF + '/admin/?channel=miolafff#chat'), 'served 200');
   assert.equal(await moved(MIOLAF + '/?channel=nesszerra'), MAIN + '/?channel=nesszerra');
   assert.equal(await moved(MIOLAF + '/admin/?channel=nesszerra'), MAIN + '/admin/?channel=nesszerra');
-  assert.equal(await moved(MIOLAF + '/start/?invite=abc'), MAIN + '/start/?invite=abc');
+  assert.equal(await moved(MIOLAF + '/start/?error=full'), MAIN + '/start/?error=full');
   assert.equal(await moved(MIOLAF + '/admin/dev/'), MAIN + '/admin/dev/');
   // Older OBS overlay links and assets keep working for every channel.
   assert.equal(await moved(MIOLAF + '/overlay.html?channel=nesszerra&size=64'), 'served 200');

@@ -16,7 +16,7 @@
 <main class="page">
   <header class="page-header">
     <h1>Owner page</h1>
-    <p class="subtitle">Invite streamers, see how far each one got with setup, and check that the site is healthy.</p>
+    <p class="subtitle">See which streamers signed up and how far each one got with setup, turn a channel off, and check that the site is healthy.</p>
     <p class="meta" id="meta">Only the nesszerra Twitch account can open this page.</p>
   </header>
 
@@ -28,7 +28,7 @@
       <div class="gate-list">
         <h3>Inside</h3>
         <ul>
-          <li>Invite links for new streamers, one per Twitch login</li>
+          <li>Every channel that signed up, newest first</li>
           <li>Setup progress for every channel, with an on/off switch</li>
           <li>Worker requests, errors and open pages for today</li>
           <li>Logs per channel, plus test deploys and rollbacks</li>
@@ -38,7 +38,7 @@
     <div class="gate-inside">
       <div class="gate-peek" aria-hidden="true" inert>
         <div class="peek-tabs"><span class="on" aria-disabled="true">Channels</span><span aria-disabled="true">Site health</span><span aria-disabled="true">Logs</span><span class="peek-tag">Locked preview</span></div>
-        <div class="peek-row"><span>Invite a streamer</span><span class="peek-btn">Create invite link</span></div>
+        <div class="peek-row"><span>Sign-up page</span><span class="peek-btn">Copy sign-up link</span></div>
         <div class="peek-row"><span>Channels on</span><span class="switch on"></span></div>
         <div class="peek-row"><span>Setup progress</span><span class="peek-link">Open stream setup</span></div>
         <div class="peek-row"><span>A bad deploy</span><span class="peek-link">Roll back a version</span></div>
@@ -58,22 +58,13 @@
         <section class="summary" id="sec-channels" aria-labelledby="channels-title">
           <h2 id="channels-title">Channels</h2>
           <p id="channels-text">Loading channels…</p>
-          <h3>Add a streamer in three steps</h3>
+          <h3>Streamers add themselves in three steps</h3>
           <ol class="steps">
-            <li><strong>Create an invite.</strong> Type their Twitch login (the name in their channel link) and click Create invite link.
-              <form class="toolbar" id="invite-form">
-                <label class="inline" for="invite-login">Twitch login</label>
-                <input id="invite-login" class="narrow" autocomplete="off" spellcheck="false" maxlength="26" required>
-                <button class="btn btn-primary" type="submit">Create invite link</button>
-              </form>
-              <p class="status" id="invite-status" role="status"></p>
-              <div class="toolbar" id="invite-link-box" hidden>
-                <label class="inline" for="invite-link" id="invite-link-label">Invite link</label>
-                <input id="invite-link" readonly>
-                <button class="btn" id="copy-invite" type="button">Copy link</button>
-              </div></li>
-            <li><strong>Send them the link</strong> in a Discord or Twitch message. It works once, for 7 days, and only for the account it names.</li>
-            <li><strong>Watch their row below.</strong> They sign in on the link, then follow Stream setup on their mod controls page. Setup reaches 3 of 3 when the overlay is open in OBS, the StreamElements Duel module is off and the duel commands answer in chat.</li>
+            <li><strong>Send them the sign-up page</strong> in a Discord or Twitch message: <a id="signup-link" href="/start/">/start/</a>
+              <div class="toolbar"><button class="btn btn-primary" id="copy-signup" type="button">Copy sign-up link</button></div>
+              <p class="status" id="channel-status" role="status"></p></li>
+            <li><strong>They sign in with their own Twitch account.</strong> PixFray turns on for that channel only; nobody can turn it on for someone else's.</li>
+            <li><strong>Watch their row below.</strong> After signing in they follow Stream setup on their mod controls page. Setup reaches 3 of 3 when the overlay is open in OBS, the StreamElements Duel module is off and the duel commands answer in chat.</li>
           </ol>
         </section>
 
@@ -83,13 +74,8 @@
             <thead><tr><th>Channel</th><th>Status</th><th>Setup</th><th>Overlay in OBS</th><th>Chat</th><th>Last chat activity</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody id="channels"></tbody>
           </table></div>
-          <p class="caveat">Overlay in OBS counts overlays open right now, so it reads "not open" whenever the streamer is offline. Chat shows how many of the StreamElements commands have reached PixFray. A channel that's off keeps its fighters and ranks; its overlay, commands and viewer page stop until it's turned back on. Up to <span id="channels-max">200</span> channels can be on. Export downloads one channel's fighters, ranks, settings and StreamElements command names as a JSON file; keys and tokens are never included.</p>
+          <p class="caveat">Overlay in OBS counts overlays open right now, so it reads "not open" whenever the streamer is offline. Chat shows how many of the StreamElements commands have reached PixFray. A channel that's off keeps its fighters and ranks; its overlay, commands and viewer page stop until it's turned back on. A channel you turn off here stays off until you turn it back on; its streamer can't. Up to <span id="channels-max">200</span> channels can be on. Export downloads one channel's fighters, ranks, settings and StreamElements command names as a JSON file; keys and tokens are never included.</p>
           <p class="toolbar"><a class="btn" id="export-registry" href="/api/dev/export?registry=1" download>Export channel list</a></p>
-          <h3>Invites</h3>
-          <div class="table-wrap"><table class="data">
-            <thead><tr><th>For</th><th>Status</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead>
-            <tbody id="invites"></tbody>
-          </table></div>
         </section>
 
         <section class="section" id="sec-health" aria-live="polite">

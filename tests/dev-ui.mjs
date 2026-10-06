@@ -26,9 +26,7 @@ const diag = (configured) => ({
 });
 const progress = (p) => ({ overlays: 0, source: 'streamelements', commandsWorking: 0, commands: 7, duelCommands: false, duelModuleOff: false, lastCommandAt: 0, rejectedAt: 0, lastChatAt: 0, players: 0, ...p });
 async function stub(page, { configured, calls = { progress: [] } }) {
-  const tok = 'cd'.repeat(16);
-  const reg = { builtin: ['nesszerra', 'miolafff'], max: 200, channels: [{ login: 'oldstreamer', enabledAt: now - 86400000 }],
-    invites: [{ token: 'ef'.repeat(16), login: 'latecomer', createdAt: now - 9 * 86400000, status: 'expired' }] };
+  const reg = { builtin: ['nesszerra', 'miolafff'], max: 200, channels: [{ login: 'oldstreamer', enabledAt: now - 86400000 }] };
   const setup = { nesszerra: progress({ overlays: 1, source: 'twitch', lastChatAt: now - 60000 }),
     miolafff: progress({ commandsWorking: 4, duelCommands: true, duelModuleOff: true, lastCommandAt: now - 120000 }),
     oldstreamer: progress({ source: '', rejectedAt: now - 60000 }) };
@@ -41,9 +39,7 @@ async function stub(page, { configured, calls = { progress: [] } }) {
     if (op === 'logs') return json(r, [{ id: 2, at: now - 600000, source: 'room', message: 'room error', context: { path: '/eventsub', method: 'POST' } }, { id: 1, at: now - 900000, source: 'worker', message: 'Unexpected token in JSON at position 0', context: { path: '/api/profile/nesszerra' } }]);
     if (op === 'channels' && method === 'POST') {
       const b = JSON.parse(r.request().postData());
-      if (b.action === 'invite') { reg.invites.unshift({ token: tok, login: b.login.toLowerCase(), createdAt: Date.now(), status: 'valid' }); return json(r, { ok: true, token: tok, link: base + '/start/?invite=' + tok, ...reg }); }
-      if (b.action === 'pause' || b.action === 'resume') { const c = reg.channels.find((x) => x.login === b.login); if (b.action === 'pause') c.pausedAt = Date.now(); else delete c.pausedAt; return json(r, { ok: true, ...reg }); }
-      if (b.action === 'revoke') { reg.invites = reg.invites.filter((i) => i.token !== b.token); return json(r, { ok: true, ...reg }); }
+      if (b.action === 'pause' || b.action === 'resume') { const c = reg.channels.find((x) => x.login === b.login); if (b.action === 'pause') Object.assign(c, { pausedAt: Date.now(), pausedBy: 'owner' }); else { delete c.pausedAt; delete c.pausedBy; } return json(r, { ok: true, ...reg }); }
     }
     if (op === 'channels') return json(r, { ...reg, progressBatch: 2 });   // two per call, so three channels take two calls
     if (op === 'progress') {
@@ -111,7 +107,7 @@ for (const size of sizes) {
     ['/api/dev/export?channel=nesszerra', '/api/dev/export?channel=miolafff', '/api/dev/export?channel=oldstreamer'], 'every row has an Export link');
   assert.equal(await page.getAttribute('#export-registry', 'href'), '/api/dev/export?registry=1');
   assert.equal(await page.textContent('#export-registry'), 'Export channel list');
-  assert.equal(await page.locator('#sec-channels .btn-primary, #channel-list-title ~ .btn-primary').count(), 1, 'Create invite link stays the one primary action');
+  assert.equal(await page.locator('#sec-channels .btn-primary, #channel-list-title ~ .btn-primary').count(), 1, 'Copy sign-up link stays the one primary action');
   await page.click('a[href="#dev-tools"]');
   assert.equal(await page.$eval('#dev-tools', (d) => d.open), true);
   assert.match(await page.textContent('#s-requests'), /18,234/);
@@ -126,21 +122,15 @@ for (const size of sizes) {
   await page.click('#deploy-test');
   await page.waitForFunction(() => /Test deploy of live-fix\/overlay-text started/.test(document.querySelector('#release-status').textContent));
   page.on('dialog', (d) => d.accept());
-  // Channels: invite a streamer, turn an invited channel off, remove an expired invite.
+  // Channels: the sign-up link to send a streamer, and turning a signed-up channel off.
   assert.match(await page.textContent('#channels'), /miolafff.*Built in/s);
   assert.deepEqual(await page.$$eval('#log-channel option', (o) => o.map((x) => x.value)), ['nesszerra', 'miolafff', 'oldstreamer']);
-  await page.fill('#invite-login', 'NewStreamer');
-  await page.click('#invite-form button[type=submit]');
-  await page.waitForSelector('#invite-link-box:not([hidden])');
-  assert.match(await page.inputValue('#invite-link'), /\/start\/\?invite=(cd){16}$/);
-  assert.match(await page.textContent('#invite-status'), /Send this link to newstreamer/);
-  assert.match(await page.textContent('#invites'), /newstreamer.*Waiting/s);
+  assert.equal(await page.getAttribute('#signup-link', 'href'), base + '/start/');
+  assert.equal(await page.textContent('#signup-link'), base + '/start/');
+  assert.equal(await page.locator('#invite-form, #invites').count(), 0, 'no invite form or list');
   await page.click('#channels button:has-text("Turn off")');
-  await page.waitForFunction(() => /oldstreamer is off/.test(document.querySelector('#invite-status').textContent));
-  assert.match(await page.textContent('#channels'), /oldstreamer.*Off.*Turn on/s);
-  await page.click('#invites button:has-text("Remove")');
-  await page.waitForFunction(() => !/latecomer/.test(document.querySelector('#invites').textContent));
-  assert.equal(await page.isVisible('#invite-link-box'), true, 'removing another invite keeps the new link on screen');
+  await page.waitForFunction(() => /oldstreamer is off/.test(document.querySelector('#channel-status').textContent));
+  assert.match(await page.textContent('#channels'), /oldstreamer.*Off \(by you\).*Turn on/s);
   await page.locator('#sec-channels').screenshot({ path: path.join(shots, `dev-channels-${size.name}.png`) });
   await noOverflow(page, 'configured ' + size.name);
   await page.screenshot({ path: path.join(shots, `dev-configured-${size.name}.png`), fullPage: true });

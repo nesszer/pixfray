@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { channelState, readInvite, claimInvite } from './channels.js';
+import { channelState, signUp } from './channels.js';
 import { authOrigin } from './hosts.js';
 export class AuthStore extends DurableObject {
   constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS entries (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL)');}
@@ -15,8 +15,8 @@ export class AuthStore extends DurableObject {
       return Response.json(value);
     }
     if(url.pathname==='/list'&&request.method==='GET'){
-      // Owner listings only: the channel registry and invites (server/channels.js). Never sessions or tokens.
-      if(key!=='channel:'&&key!=='invite:')return Response.json({error:'Invalid prefix'},{status:400});
+      // Owner listings only: the channel registry (server/channels.js). Never sessions or tokens.
+      if(key!=='channel:')return Response.json({error:'Invalid prefix'},{status:400});
       const end=key.slice(0,-1)+';';   // ';' sorts right after ':'
       const rows=[...sql.exec('SELECT key,value FROM entries WHERE key>=? AND key<? AND expires>? ORDER BY key LIMIT 500',key,end,Date.now())];
       return Response.json(rows.map(r=>({key:r.key,value:JSON.parse(r.value)})));
@@ -96,17 +96,16 @@ export async function handleAuth(request,env){
   if(!configured(env))return Response.json({error:'Twitch app is not configured yet. Add the app client ID and secret to the Worker.'},{status:503});
   const callback=authOrigin(env,url)+'/auth/callback';
   if(path==='/auth/login'){
-    const nonce=randomToken(), invite=url.searchParams.get('invite')||'';
+    const nonce=randomToken();
     let pending, scope='';
     if(url.searchParams.get('bot')==='1'){
       if(env.CHAT_BOT!=='1'||!env.BOT_LOGIN)return Response.json({error:'This site has no PixFray chat bot'},{status:403});
       pending={bot:true,next:'/'};scope=BOT_SCOPES.join(' ');
-    }else if(invite){
-      // Signup from /start: moderation:read lets the channel's mods open the admin page (mods=0 skips it).
-      const inv=await readInvite(env,invite);
-      if(inv.status!=='valid')return startPage(invite,inv.status);
+    }else if(url.searchParams.get('signup')==='1'){
+      // Sign-up from /start turns on the signed-in account's own channel. moderation:read lets its mods open the
+      // admin page (mods=0 skips it).
       const mods=url.searchParams.get('mods')!=='0';
-      pending={channel:inv.login,invite,mods,next:'/admin/'};scope=mods?'moderation:read':'';
+      pending={signup:true,mods,next:'/admin/'};scope=mods?'moderation:read':'';
     }else{
       const channel=url.searchParams.get('channel')||'nesszerra';
       // A turned-off channel still signs in, so its broadcaster can turn it back on.
@@ -125,7 +124,7 @@ export async function handleAuth(request,env){
   const state=url.searchParams.get('state'),cookieState=request.headers.get('Cookie')?.match(/(?:^|;\s*)mini_oauth=([a-f0-9]{64})/)?.[1];
   if(!state||state!==cookieState)return Response.json({error:'OAuth state mismatch. Restart sign-in.'},{status:400});
   const pending=await consume(env,'oauth:'+state);
-  if(pending?.invite&&!url.searchParams.get('code'))return startPage(pending.invite,url.searchParams.get('error')==='access_denied'?'denied':'failed');
+  if(pending?.signup&&!url.searchParams.get('code'))return startPage(url.searchParams.get('error')==='access_denied'?'denied':'failed');
   if(pending?.connectMods&&!url.searchParams.get('code'))return adminPage(pending.channel,'mods=denied');
   if(!pending||!url.searchParams.get('code'))return Response.json({error:'Authorization expired or denied'},{status:400});
   const tokenRes=await fetch('https://id.twitch.tv/oauth2/token',{method:'POST',body:new URLSearchParams({client_id:env.TWITCH_CLIENT_ID,client_secret:env.TWITCH_CLIENT_SECRET,code:url.searchParams.get('code'),grant_type:'authorization_code',redirect_uri:callback})});
@@ -157,9 +156,9 @@ export async function handleAuth(request,env){
     await record(env,'bot:twitch',{id:user.id,login:user.login,at:Date.now()},Date.now()+20*365*86400000);
   }
   const modScope=validation.scopes?.includes('moderation:read');
-  if(pending.invite){
-    try{await claimInvite(env,pending.invite,user);}
-    catch(e){if(!e.reason)throw e;return startPage(pending.invite,e.reason);}
+  if(pending.signup){
+    try{pending.channel=await signUp(env,user);}
+    catch(e){if(!e.reason)throw e;return startPage(e.reason);}
     if(pending.mods&&modScope){await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);}
   }
   if(pending.connectMods){
@@ -168,12 +167,12 @@ export async function handleAuth(request,env){
     await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);
   }
   const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);
-  const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectBot?'&bot=allowed':pending.connectMods?'&mods=connected':'')+(pending.bot?'&bot=connected':'')+(pending.invite||pending.connectMods?'#chat':'');
+  const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectBot?'&bot=allowed':pending.connectMods?'&mods=connected':'')+(pending.bot?'&bot=connected':'')+(pending.signup||pending.connectMods?'#chat':'');
   const response=new Response(null,{status:303,headers:{Location:back}});
   response.headers.append('Set-Cookie',cookie('mini_session',key,21600));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
 }
-// Back to /start with the reason the invite didn't work (invalid, used, expired, wrong_account, full, denied, failed).
-function startPage(invite,error){return new Response(null,{status:303,headers:{Location:'/start/?invite='+encodeURIComponent(invite)+'&error='+encodeURIComponent(error),'Set-Cookie':cookie('mini_oauth','',0)}});}
+// Back to /start with the reason sign-up didn't finish (full, denied, failed).
+function startPage(error){return new Response(null,{status:303,headers:{Location:'/start/?error='+encodeURIComponent(error),'Set-Cookie':cookie('mini_oauth','',0)}});}
 function adminPage(channel,query){return new Response(null,{status:303,headers:{Location:'/admin/?channel='+channel+'&'+query+'#chat','Set-Cookie':cookie('mini_oauth','',0)}});}
 const verdict=moderator=>({owner:false,moderator,canManage:moderator,reason:moderator?'':'Current Twitch moderator role required'});
 export async function access(env,user,channel){

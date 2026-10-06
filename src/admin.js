@@ -727,7 +727,7 @@ $("#duel-module-off").addEventListener("change", async (e) => {
   setStatus($("#check-status"), box.checked ? "Saved: the Duel module is off." : "Saved: the Duel module step is open again.", "ok");
   await load();
 });
-// ---------- turning PixFray off (invited channels; the broadcaster or the owner) ----------
+// ---------- turning PixFray off (signed-up channels; the broadcaster or the owner, and only the owner undoes the owner's off) ----------
 const mayPower = () => !!(S.access?.broadcaster || S.access?.owner) && ["on", "paused"].includes(S.admin?.channelState);
 function renderPower() {
   const paused = S.admin.channelState === "paused", toggle = $("#power-toggle");

@@ -217,7 +217,7 @@ $('#save-config').addEventListener('click', (e) => busy(e.currentTarget, async (
 // ---------- channels (server/channels.js) ----------
 async function loadChannels() {
   const r = await api('/api/dev/channels');
-  if (!r.ok) { rows('#channels', [], errorText(r, 'Channels unavailable'), 7); rows('#invites', [], '–', 4); return; }
+  if (!r.ok) return rows('#channels', [], errorText(r, 'Channels unavailable'), 7);
   S.progress = {};
   renderChannels(r.data);
   loadProgress(r.data);
@@ -232,7 +232,7 @@ async function loadProgress(d, only) {
     const r = await api('/api/dev/progress?logins=' + logins.slice(i, i + size).join(','));
     if (run !== S.progressRun) return;
     if (r.ok) Object.assign(S.progress, r.data.progress);
-    else status('#invite-status', errorText(r, 'Could not read setup progress'), 'error');
+    else status('#channel-status', errorText(r, 'Could not read setup progress'), 'error');
     if (!only) S.progressSeen = Math.min(i + size, logins.length);
     if (i + size < logins.length) renderChannels(S.channels);
   }
@@ -243,19 +243,10 @@ function channelAction(action, login, button) {
   if (action === 'pause' && !confirm('Turn PixFray off on ' + login + '? The overlay, commands and viewer page stop; fighters and ranks are kept.')) return;
   return busy(button, async () => {
     const r = await api('/api/dev/channels', { method: 'POST', body: { action, login } });
-    if (!r.ok) return status('#invite-status', errorText(r, 'Could not change ' + login), 'error');
-    status('#invite-status', login + (action === 'pause' ? ' is off.' : ' is on.'), 'ok');
+    if (!r.ok) return status('#channel-status', errorText(r, 'Could not change ' + login), 'error');
+    status('#channel-status', login + (action === 'pause' ? ' is off.' : ' is on.'), 'ok');
     renderChannels(r.data);
     if (action === 'resume') loadProgress(r.data, [login]);
-  });
-}
-async function revoke(invite, button) {
-  return busy(button, async () => {
-    const r = await api('/api/dev/channels', { method: 'POST', body: { action: 'revoke', token: invite.token } });
-    if (!r.ok) return status('#invite-status', errorText(r, 'Could not revoke'), 'error');
-    if ($('#invite-link').value.endsWith(invite.token)) $('#invite-link-box').hidden = true;
-    status('#invite-status', 'Invite for ' + invite.login + ' removed.', 'ok');
-    renderChannels(r.data);
   });
 }
 // The same three steps as the Stream setup checklist in Mod controls (src/admin.js setupSteps).
@@ -277,7 +268,7 @@ function renderChannels(d) {
   const row = (login, state, c) => {
     const p = state === 'off' ? null : S.progress[login], steps = setupOf(p);
     return h('tr', {}, h('td', {}, admin(login)),
-      h('td', {}, h('span', { class: 'badge ' + (state === 'off' ? 'warning' : state === 'on' ? 'positive' : '') }, { builtin: 'Built in', on: 'On', off: 'Off' }[state])),
+      h('td', {}, h('span', { class: 'badge ' + (state === 'off' ? 'warning' : state === 'on' ? 'positive' : '') }, state === 'off' && c?.pausedBy === 'owner' ? 'Off (by you)' : { builtin: 'Built in', on: 'On', off: 'Off' }[state])),
       h('td', {}, steps === null ? '–' : h('span', { class: 'badge ' + (steps === 3 ? 'positive' : '') }, steps === 3 ? 'Done' : steps + ' of 3 steps')),
       h('td', {}, p ? (p.overlays ? p.overlays + ' open' : 'Not open') : '–'),
       h('td', {}, chatCell(p)),
@@ -288,42 +279,19 @@ function renderChannels(d) {
   };
   rows('#channels', [...d.builtin.map((login) => row(login, 'builtin')), ...d.channels.map((c) => row(c.login, c.pausedAt ? 'off' : 'on', c))], 'No channels.', 7);
   const on = d.builtin.length + d.channels.filter((c) => !c.pausedAt).length;
-  const done = Object.values(S.progress).filter((p) => setupOf(p) === 3).length, waiting = d.invites.filter((i) => i.status === 'valid').length;
+  const done = Object.values(S.progress).filter((p) => setupOf(p) === 3).length;
   $('#channels-title').textContent = on + (on === 1 ? ' channel is on' : ' channels are on') + ', ' + done + ' with setup done right now' + (S.progressLoading ? ' (checked ' + S.progressSeen + ' of ' + S.progressTotal + ' so far)' : '');
-  $('#channels-text').textContent = (waiting ? waiting + (waiting === 1 ? ' invite is' : ' invites are') + ' waiting to be used. ' : '') +
-    'Setup counts as done while the overlay is open in OBS and the duel commands work, so streamers who are live right now show up as done.';
-  const label = { valid: 'Waiting', used: 'Used', expired: 'Expired' };
-  rows('#invites', d.invites.map((i) => h('tr', {}, h('td', {}, i.login),
-    h('td', {}, h('span', { class: 'badge' + (i.status === 'used' ? ' positive' : i.status === 'expired' ? ' warning' : '') }, label[i.status] || i.status)),
-    h('td', {}, fmtTime(i.usedAt || i.createdAt)),
-    h('td', {}, i.status === 'used' ? '–' : h('div', { class: 'toolbar' },
-      i.status === 'valid' ? h('button', { class: 'btn btn-small', type: 'button', onclick: () => showInvite(i.login, location.origin + '/start/?invite=' + i.token) }, 'Show link') : null,
-      h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => revoke(i, e.currentTarget) }, i.status === 'valid' ? 'Revoke' : 'Remove'))))), 'No invites yet.', 4);
+  $('#channels-text').textContent = 'Setup counts as done while the overlay is open in OBS and the duel commands work, so streamers who are live right now show up as done.';
   // the error log can read any channel that is set up
   const pick = $('#log-channel'), current = pick.value;
   pick.replaceChildren(...[...d.builtin, ...d.channels.map((c) => c.login)].map((login) => h('option', { value: login }, login)));
   pick.value = current;
 }
-function showInvite(login, link) {
-  $('#invite-link-label').textContent = 'Invite link for ' + login;
-  $('#invite-link').value = link;
-  $('#invite-link-box').hidden = false;
-}
-$('#invite-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  busy(e.submitter || $('#invite-form button'), async () => {
-    const r = await api('/api/dev/channels', { method: 'POST', body: { action: 'invite', login: $('#invite-login').value } });
-    if (!r.ok) { $('#invite-link-box').hidden = true; return status('#invite-status', errorText(r, 'Could not create the invite'), 'error'); }
-    const login = r.data.invites.find((i) => i.token === r.data.token)?.login || $('#invite-login').value;
-    showInvite(login, r.data.link);
-    status('#invite-status', 'Send this link to ' + login + '. It works for 7 days, once.', 'ok');
-    $('#invite-login').value = '';
-    renderChannels(r.data);
-  });
-});
-$('#copy-invite').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('#invite-link').value); status('#invite-status', 'Copied.', 'ok'); }
-  catch { $('#invite-link').select(); status('#invite-status', 'Select the link and copy it with Ctrl+C.'); }
+// The sign-up page link to send a streamer: this site's /start/
+$('#signup-link').href = $('#signup-link').textContent = location.origin + '/start/';
+$('#copy-signup').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#signup-link').href); status('#channel-status', 'Copied.', 'ok'); }
+  catch { status('#channel-status', 'Select the link and copy it with Ctrl+C.'); }
 });
 
 // ---------- logs ----------

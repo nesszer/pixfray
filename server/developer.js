@@ -1,6 +1,6 @@
 import { chatStatus } from './game.js';
 import { CHANNELS } from './auth.js';
-import { channelState, overview, listRecords, inviteStatus, createInvite, revokeInvite, setPaused, LOGIN } from './channels.js';
+import { channelState, overview, listRecords, setPaused, LOGIN } from './channels.js';
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from './streamelements.js';
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
@@ -85,18 +85,16 @@ async function progress({ env, c, query }) {
 }
 
 // Backups. GET /api/dev/export?channel=<login> downloads one room's data; ?registry=1 downloads the channel list.
-// Neither contains the StreamElements key, Twitch tokens or invite tokens.
+// Neither contains the StreamElements key or Twitch tokens.
 function download(data, filename) {
   return new Response(JSON.stringify(data, null, 2), { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 }
 async function exportData({ env, c, query }) {
   const now = new Date(), day = now.toISOString().slice(0, 10), head = { format: 'mini-chat-export', version: 1, exportedAt: now.toISOString() };
   if (query.get('registry') === '1') {
-    const [channels, invites] = await Promise.all([listRecords(env, 'channel:'), listRecords(env, 'invite:')]);
+    const channels = await listRecords(env, 'channel:');
     return download({ ...head, kind: 'registry', builtin: CHANNELS,
-      channels: channels.map((r) => ({ id: r.value.id, login: r.value.login, enabledAt: r.value.enabledAt, pausedAt: r.value.pausedAt || 0 })),
-      // invite tokens are left out: a backup has no use for a link that works once, and it would be a live credential in a file
-      invites: invites.map((r) => ({ login: r.value.login, createdAt: r.value.createdAt, usedAt: r.value.usedAt || 0, by: r.value.by || '', status: inviteStatus(r.value) })) }, `mini-chat-channels-${day}.json`);
+      channels: channels.map((r) => ({ id: r.value.id, login: r.value.login, enabledAt: r.value.enabledAt, pausedAt: r.value.pausedAt || 0, pausedBy: r.value.pausedBy || '' })) }, `mini-chat-channels-${day}.json`);
   }
   const login = String(query.get('channel') || '').toLowerCase();
   if (!login) return fail(400, 'Use ?channel=<login> or ?registry=1', 'export_target_required');
@@ -107,16 +105,11 @@ async function exportData({ env, c, query }) {
   return download({ ...head, kind: 'channel', channel: login, status: state, ...await r.json() }, `mini-chat-${login}-${day}.json`);
 }
 
-// Owner Channels box: invite a streamer, revoke an invite, turn a channel off or on.
-async function channelsAction({ env, c, body }) {
+// Owner Channels box: turn a channel off or on. Off from here sticks: the streamer can't turn it back on.
+async function channelsAction({ env, body }) {
   const { action } = body || {};
   try {
-    if (action === 'invite') {
-      const token = await createInvite(env, body.login, c.user.login);
-      return json({ ok: true, token, link: (env.PUBLIC_ORIGIN || c.url.origin) + '/start/?invite=' + token, ...await overview(env) });
-    }
-    if (action === 'revoke') await revokeInvite(env, String(body.token || ''));
-    else if (action === 'pause' || action === 'resume') await setPaused(env, String(body.login || ''), action === 'pause');
+    if (action === 'pause' || action === 'resume') await setPaused(env, String(body.login || ''), action === 'pause', 'owner');
     else return fail(400, 'Unknown action', 'unknown_action');
   } catch (e) { if (e.reason) return fail(e.status, e.message, e.reason); throw e; }
   return json({ ok: true, ...await overview(env) });

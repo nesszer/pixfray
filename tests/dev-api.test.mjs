@@ -94,7 +94,7 @@ test('every developer route returns 401 signed out and 403 for a non-owner', asy
 
 test('mutations must be same-origin, unknown routes 404, wrong methods 405', async () => {
   const f = environment(GITHUB), owner = await cookieFor(f, true);
-  assert.equal((await call(f, '/api/dev/channels', 'POST', { action: 'invite', login: 'someone' }, owner, { Origin: 'https://evil.example' })).status, 403);
+  assert.equal((await call(f, '/api/dev/channels', 'POST', { action: 'pause', login: 'someone' }, owner, { Origin: 'https://evil.example' })).status, 403);
   assert.equal((await call(f, '/api/dev/nope', 'GET', undefined, owner)).status, 404);
   assert.equal((await call(f, '/api/dev/codex', 'GET', undefined, owner)).status, 404, 'the Codex switch is gone');
   assert.equal((await call(f, '/api/dev/deploy', 'GET', undefined, owner)).status, 405);
@@ -271,20 +271,15 @@ test('export of an unknown channel is 404, a paused channel still exports, and a
   assert.deepEqual([ok.status, ok.body.channel, ok.body.status], [200, 'paused_one', 'paused']);
 });
 
-test('export of the channel list has channels and invites but no invite tokens', async () => {
+test('export of the channel list has every channel and who turned it off', async () => {
   const f = environment(), owner = await cookieFor(f, true);
   f.entries.set('channel:oldone', { id: '7', login: 'oldone', enabledAt: 1000, pausedAt: 2000 });
-  const made = await call(f, '/api/dev/channels', 'POST', { action: 'invite', login: 'latecomer' }, owner);
-  assert.equal(made.status, 200);
   const res = await worker.fetch(req('/api/dev/export?registry=1', 'GET', undefined, owner), f.env, { waitUntil() {} });
   assert.match(res.headers.get('Content-Disposition'), /^attachment; filename="mini-chat-channels-\d{4}-\d{2}-\d{2}\.json"$/);
   const text = await res.text(), data = JSON.parse(text);
   assert.deepEqual([data.kind, data.builtin], ['registry', ['nesszerra', 'miolafff']]);
-  assert.deepEqual(data.channels, [{ id: '7', login: 'oldone', enabledAt: 1000, pausedAt: 2000 }]);
-  assert.equal(data.invites.length, 1);
-  assert.deepEqual([data.invites[0].login, data.invites[0].status], ['latecomer', 'valid']);
-  assert.ok(!text.includes(made.body.token), 'invite tokens are not exported');
-  assert.equal('token' in data.invites[0], false);
+  assert.deepEqual(data.channels, [{ id: '7', login: 'oldone', enabledAt: 1000, pausedAt: 2000, pausedBy: '' }]);
+  assert.equal('invites' in data, false);
 });
 
 test('rooms no longer create the leftover dev_settings table', () => {

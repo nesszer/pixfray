@@ -28,7 +28,7 @@ The Worker names keep "mini-chat": the Durable Object data is tied to them.
 ## Current state
 
 2026-10-01: v2 deployed to prod (chat.miolaf.xyz) with nesszerra and miolafff enabled; it
-replaced v1. Since 2026-10-02 other channels join by invite. 2026-10-05: prod moved to pixfray.xyz (chat.miolaf.xyz
+replaced v1. Other channels joined by invite from 2026-10-02 and by open signup on /start since 2026-10-06. 2026-10-05: prod moved to pixfray.xyz (chat.miolaf.xyz
 stays miolafff's) at commit 9a70201, version 7abbfb8b; the previous prod version was 5371f82d. Updated 2026-10-05.
 
 Git: `origin` is https://github.com/Finesssee/mini-chat.git and the latest commit is 389bdd4.
@@ -103,7 +103,7 @@ The run writes screenshots to `screenshots/e2e-*.png`. They are generated, not i
    table and its rows; nothing reads or drops them.
 12. There is no automatic backup. Before a risky change, export from the owner page: **Export**
    on a channel row (fighters, ranks, config and its history) and **Export channel list**
-   (channels and invites, without invite tokens). Neither holds StreamElements keys or tokens.
+   (the signed-up channels). Neither holds StreamElements keys or tokens.
 13. Anyone holding a channel's StreamElements key can send commands as any viewer, because
    StreamElements puts the viewer's id and name in the query. Keep the key off stream and press
    New key if it leaks (CONTRACTS.md, "StreamElements route checks").
@@ -137,10 +137,11 @@ Fixed in this pass:
 
 ### Channels
 - One ChannelRoom per channel. Profiles, Elo and settings are separate per channel.
-- `nesszerra` and `miolafff` are built in. Since 2026-10-02 other channels join by invite: the owner
-  creates one on `/admin/dev`, the streamer signs in on `/start/`, and the Stream setup checklist
-  takes it from there (docs/STREAMER_SETUP.md, CONTRACTS.md section 2a). Invited channels use
-  StreamElements for chat, not EventSub. The streamer or the owner can turn a channel off; data is
+- `nesszerra` and `miolafff` are built in. Since 2026-10-06 any other streamer turns on their own
+  channel by signing in on `/start/` (open signup, 200-channel cap; invites were removed), and the
+  Stream setup checklist takes it from there (docs/STREAMER_SETUP.md, CONTRACTS.md section 2a).
+  Signed-up channels use
+  StreamElements for chat, not EventSub. The streamer or the owner can turn a channel off (the owner's off sticks); data is
   kept and nothing is purged automatically.
 
 ### Viewer dashboard (`/`)
@@ -223,7 +224,7 @@ left alone.
 - Validate the limits on the server as well as in the browser.
 
 ### Owner page (`/admin/dev`)
-- Channels first: invite links and per-channel setup progress (overlay, Duel module, commands).
+- Channels first: the sign-up link to send and per-channel setup progress (overlay, Duel module, commands).
   The list renders first and progress loads after it in batches of 40 from
   `GET /api/dev/progress`. **Export** on each row and **Export channel list** download JSON
   backups (CONTRACTS.md section 2, `/api/dev/export`).

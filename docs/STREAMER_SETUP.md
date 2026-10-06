@@ -5,19 +5,20 @@ steps 2 to 5 match the 4 numbered steps of **Stream setup** on the mod controls 
 (`/admin/?channel=<you>#chat`). Each step holds its own buttons and turns Done by itself once it
 works. Setup takes about 10 minutes.
 
-## 1. Sign in with your invite
+## 1. Sign in on /start
 
-PixFray is invite-only. nesszerra creates an invite on `/admin/dev` (Channels) and sends you a
-link like `https://pixfray.xyz/start/?invite=<token>`.
+Open `https://pixfray.xyz/start/` and click **Sign in with Twitch**, as the Twitch account you
+stream on. PixFray turns on for that channel only; nobody can turn it on for someone else's.
 
-- The invite names one Twitch account, works once, and expires after 7 days.
-- Click **Sign in with Twitch as <you>**. Twitch asks to let PixFray read your moderator list
+- Up to 200 channels can be on. If PixFray is full, /start says so; you can also run your own copy
+  from the code on GitHub.
+- Twitch asks to let PixFray read your moderator list
   (`moderation:read`), so your mods can open your mod controls too. PixFray never posts in chat as
   you and never changes your channel.
 - If you cancel that permission, /start offers **Set up without mod access**. Only you can then
   open your mod controls, until you click **Connect mod access** in the checklist.
-- If Twitch signs you in as a different account, /start says so. Log out of twitch.tv and sign in
-  again as the account the invite names.
+- If Twitch signs you in as the wrong account, PixFray turns on for that account instead. Log out
+  of twitch.tv, sign in again as your streaming account, and ask the owner to turn the other one off.
 
 After sign-in you land on the Stream setup tab of your mod controls.
 

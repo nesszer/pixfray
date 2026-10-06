@@ -23,7 +23,7 @@ Query options: channel, demo=1, debug=1, cap=1..100, size=32..96.
 V2 replaced v1 on https://chat.miolaf.xyz on 2026-10-01. The commands above are the v1 overlay; v2 adds:
 - Twitch sign-in profiles and a viewer dashboard (`/`).
 - Mod controls with a versioned balance editor (`/admin/`).
-- An owner page (`/admin/dev/`): invite streamers, follow their setup, read error logs, and folded developer tools.
+- An owner page (`/admin/dev/`): see who signed up, follow their setup, read error logs, and folded developer tools.
 - Shared server-decided duels on the overlay (add `arena=1`).
 - 56 CC0 characters (Kenney, pzUH, Sogomn) and custom character uploads (up to 24 per channel).
 - Chat through a Twitch EventSub webhook to the Worker (nesszerra only) or through StreamElements custom
@@ -48,10 +48,11 @@ Chat commands for v2 duels:
   `!heavy` and `!heal` runs only if a mod's config sets `quickDuel` to false.
 - Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).
 
-Adding a streamer: on `/admin/dev` (Channels), type their Twitch login and send them the invite
-link. They sign in on `/start/` and follow the Stream setup checklist; docs/STREAMER_SETUP.md walks
-through it. nesszerra and miolafff are built in; up to 200 invited channels can be on, and each one
-can be turned off by its streamer or the owner without losing fighters or ranks.
+Adding a streamer: send them `/start/`. They sign in with the Twitch account they stream on, which
+turns PixFray on for that channel only, and follow the Stream setup checklist; docs/STREAMER_SETUP.md
+walks through it. nesszerra and miolafff are built in; up to 200 signed-up channels can be on, and
+each one can be turned off by its streamer or the owner without losing fighters or ranks. A channel
+the owner turns off stays off until the owner turns it back on.
 
 Rules and routes are in CONTRACTS.md. The plan and the open gaps are in HANDOFF.md.
 
