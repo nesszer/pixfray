@@ -31,7 +31,7 @@ The Worker names keep "mini-chat": the Durable Object data is tied to them.
 replaced v1. Other channels joined by invite from 2026-10-02 and by open signup on /start since 2026-10-06. 2026-10-05: prod moved to pixfray.xyz (chat.miolaf.xyz
 stays miolafff's) at commit 9a70201, version 7abbfb8b; the previous prod version was 5371f82d. Updated 2026-10-05.
 
-Git: `origin` is https://github.com/Finesssee/pixfray.git and the latest commit is 389bdd4.
+Git: `origin` is https://github.com/nesszer/pixfray.git and the latest commit is 389bdd4.
 The working tree holds changes beyond it (`git status`, `git diff`); this file describes the
 working tree. Generated screenshots are gitignored (`screenshots/`, root `*.png`).
 
