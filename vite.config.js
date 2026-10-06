@@ -1,7 +1,7 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig } from "vite";
 import site from "./site.config.js";
-// Multi-page build: "/" (viewer dashboard, Lane B), "/admin/" (Lane B), "/admin/dev/" (Lane E), "/start/" (streamer sign-up), "/intro/" (3D showcase), and /assets/duel3d.js (the overlay's 3D duel).
+// Multi-page build: "/" (viewer dashboard, Lane B), "/admin/" (Lane B), "/admin/dev/" (Lane E), "/start/" (streamer sign-up), "/intro/" (3D showcase).
 // Add new pages here as extra inputs; files in public/ are copied as-is.
 // The pages' HTML names the site through tokens filled in from site.config.js, so a copy of PixFray needs no HTML edits:
 // %SITE_CHANNEL% (default channel), %SITE_OWNER% (owner login), %SITE_ORIGIN%, %SITE_HOST% and %SITE_TEST_ORIGIN% (production and test sites).
@@ -10,8 +10,6 @@ const siteTokens = { name: "site-tokens", transformIndexHtml: { order: "pre", ha
 export default defineConfig({
   // MINI_PERSIST points local DO/KV state at another folder (tests/e2e use .cloudflare/e2e-state so they never share a dev server's state).
   plugins: [siteTokens, cloudflare(process.env.MINI_PERSIST ? { persistState: { path: process.env.MINI_PERSIST } } : {})],
-  environments: { client: { build: { rollupOptions: { input: { main: "index.html", admin: "admin/index.html", dev: "admin/dev/index.html", start: "start/index.html", intro: "intro/index.html", duel3d: "src/duel3d.js" },
-    // The overlay (public/overlay.js, outside the bundle) loads its 3D duel from a fixed path.
-    output: { entryFileNames: (chunk) => chunk.name === "duel3d" ? "assets/duel3d.js" : "assets/[name]-[hash].js" } } } } },
+  environments: { client: { build: { rollupOptions: { input: { main: "index.html", admin: "admin/index.html", dev: "admin/dev/index.html", start: "start/index.html", intro: "intro/index.html" } } } } },
   server: { host: "127.0.0.1", port: Number(process.env.MINI_PORT) || 5173, strictPort: true }
 });
