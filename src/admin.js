@@ -826,7 +826,7 @@ async function commandAction(action, payload, status) {
   if (!r.ok) { setStatus(status, "Couldn't save: " + (COMMAND_ERRORS[r.data?.error] || errorText(r)) + ".", "error"); return false; }
   S.admin.botCommands = r.data.botCommands;
   renderBotCommands();
-  return true;
+  return r.data;
 }
 $("#command-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -835,11 +835,12 @@ $("#command-form").addEventListener("submit", async (e) => {
   if (!reply) return setStatus(status, "Type the reply the bot should send.", "error");
   $("#command-save").disabled = true;
   setStatus(status, "Saving…");
-  const was = editingCommand, ok = await commandAction("saveCommand", { name, reply, ...(was ? { oldName: was } : {}) }, status);
+  const was = editingCommand, saved = await commandAction("saveCommand", { name, reply, ...(was ? { oldName: was } : {}) }, status);
   $("#command-save").disabled = false;
-  if (!ok) return;
+  if (!saved) return;
   editCommand("");
-  setStatus(status, (was ? "Saved " : "Added ") + name + ". Type it in chat to try it.", "ok");
+  if (saved.warning === "reply_may_be_cut") setStatus(status, (was ? "Saved " : "Added ") + name + ". With long names or counters it can reach " + saved.longest + " characters, so the bot cuts it at " + saved.max + ".", "warning");
+  else setStatus(status, (was ? "Saved " : "Added ") + name + ". Type it in chat to try it.", "ok");
 });
 $("#command-cancel").addEventListener("click", () => { editCommand(""); setStatus($("#command-status"), ""); });
 $("#bot-commands-table").addEventListener("click", async (e) => {

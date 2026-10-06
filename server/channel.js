@@ -17,7 +17,7 @@ import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from 
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
-import { MAX_BOT_COMMANDS, MAX_COMMAND_REPLY, MAX_COUNTER, COMMAND_COOLDOWN_MS, COMMAND_USER_COOLDOWN_MS, commandName, counterName, commandReplyText, replyCounters, renderCommandReply } from "./botcommands.js";
+import { MAX_BOT_COMMANDS, MAX_COMMAND_REPLY, MAX_COUNTER, COMMAND_COOLDOWN_MS, COMMAND_USER_COOLDOWN_MS, commandName, counterName, commandReplyText, replyCounters, renderCommandReply, replyWorstCase, fitChatLine, MAX_CHAT_LINE } from "./botcommands.js";
 import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget, seReminderText, seExpiredText, seResultText, seKeyHash, botNames } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
@@ -31,6 +31,16 @@ const MAX_CONFIG_HISTORY = 50;
 const CHECKIN_TEST_MS = 15 * 60_000;     // check-in test mode switches itself off after this
 const SEEN_WRITE_MS = 60_000;             // each command's "last seen" time is written at most once a minute
 const BOT_REPLIES_PER_30S = 18;          // the bot's chat replies per channel; Twitch allows 20 per 30 s unless it is a mod
+const BOT_RESERVED_LINES = 4;            // of those, kept for the bot's own result and expired-challenge lines
+const RESULT_WINDOW_MS = 120000;         // a result line not sent within 2 minutes of its reveal is given up
+const RESULT_RETRY_MS = 5000;            // how often the alarm retries a due result line that couldn't go out
+// Hidden bot-channel aliases for words new viewers guess: !accept and !duel, and !top (StreamElements owns it on SE channels).
+const BOT_ALIASES = { "!accept": "accept", "!duel": "challenge", "!top": "top" };
+// Commands that refuse the bot account as their target, with the reply (outside the BOT_DEBUG test site).
+const BOT_TARGET_ACTIONS = {
+  challenge: (names) => `The bot doesn't fight (yet)! Name a rival: ${names.challenge || "!challenge"} @name`,
+  give: () => "The bot doesn't take dollars. Give them to a rival!"
+};
 // !fray e2e (BOT_DEBUG): [who, action, target, expected reasons, gate]. B is the bot account, O the opponent. A gate step
 // starts or answers a duel the next steps need, so the run stops when it fails.
 const E2E_STEPS = [
@@ -892,8 +902,10 @@ export class ChannelRoom extends DurableObject {
     const se = this.seSettings(), settings = { ...se, names: botNames(se.names) };
     const first = (words[0] || "").toLowerCase();
     // "!pay" stays an alias of !give, the name it had while StreamElements' !give (!givepoints) was in the way.
-    const action = SE_ACTIONS.find((a) => String(settings.names[a] || "").toLowerCase() === first) || (first === "!pay" ? "give" : "");
+    let action = SE_ACTIONS.find((a) => String(settings.names[a] || "").toLowerCase() === first) || (first === "!pay" ? "give" : "");
     const custom = action || !first.startsWith("!") ? null : this.ctx.storage.sql.exec("SELECT name, reply FROM bot_commands WHERE name = ?", first).toArray()[0];
+    // Words new viewers guess (!accept, !duel, !top) work as hidden aliases, unless the channel made them its own commands.
+    if (!action && !custom && BOT_ALIASES[first] && !Object.values(settings.names).some((n) => String(n).toLowerCase() === first)) action = BOT_ALIASES[first];
     if (!action && !custom) return json({ ok: true, reason: "not_command", reply: "" });
     const subscriptionId = String(msg.subscription?.id || "");
     const state = this.readState(channel);
@@ -909,7 +921,11 @@ export class ChannelRoom extends DurableObject {
       if (verified.visible) this.broadcast(verified.state);
       await this.scheduleAlarm(verified.state);
     }
+    // The alarm posts each result at its reveal time; any result it missed goes out now, before this reply.
+    await this.postResults(channel, Date.now());
     if (custom) {
+      // A reply the cap would drop doesn't start the cooldown or add to its counters.
+      if (!this.botReplyRoom(Date.now())) return this.sendBotLines([custom.name], channel);
       const line = this.customReply(custom, ev, words, Date.now());
       if (!line) this.noteBotHeld(channel, "cooldown", { command: custom.name }, false);
       return this.sendBotLines([line], channel);
@@ -925,20 +941,34 @@ export class ChannelRoom extends DurableObject {
     const mode = botId && action === "help" ? String(words[1] || "").toLowerCase() : "";
     let lines;
     if (mode === "spar" || mode === "e2e") lines = await this.botDebug(channel, mode, { ev, words, botId, origin, settings, subscriptionId });
-    else {
+    else if (!botId && BOT_TARGET_ACTIONS[action] && input.target && this.getProfileByUsername(input.target, state.config)?.userId === validUserId(msg.botId)) {
+      // The bot account isn't a fighter or a wallet (yet; it may become a boss viewers fight together). The test site's
+      // sparring bot (BOT_DEBUG) still plays.
+      lines = [BOT_TARGET_ACTIONS[action](settings.names)];
+    } else {
       const since = this.readState(channel).revision;
       const out = await (await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })).json();
-      lines = [...this.expiredLines(this.readState(channel), since), out.reply, ...(botId && validUserId(input.userId) !== botId ? await this.botAnswer(channel, input, out, { botId, origin, settings, subscriptionId }) : [])];
+      const expired = this.expiredLines(this.readState(channel), since);
+      lines = [...expired, out.reply, ...(botId && validUserId(input.userId) !== botId ? await this.botAnswer(channel, input, out, { botId, origin, settings, subscriptionId }) : [])];
+      return this.sendBotLines(lines, channel, { system: expired.length });
     }
     return this.sendBotLines(lines, channel);
   }
 
   // The bot's reply lines that fit under BOT_REPLIES_PER_30S, as the Worker expects them: { reply, replies }.
-  sendBotLines(lines, channel = "") {
+  // Replies to commands stop BOT_RESERVED_LINES short of the cap; the bot's own lines (results, expired challenges;
+  // the first `system` lines) may use the rest, so a chatter spamming commands can't crowd out who won.
+  // How many more command replies fit under the cap right now.
+  botReplyRoom(now) {
+    return Math.max(0, BOT_REPLIES_PER_30S - BOT_RESERVED_LINES - (this.botReplies || []).filter((at) => now - at < 30000).length);
+  }
+
+  sendBotLines(lines, channel = "", { system = 0 } = {}) {
     const now = Date.now(), sent = [];
     this.botReplies = (this.botReplies || []).filter((at) => now - at < 30000);
-    for (const line of lines.filter(Boolean)) {
-      if (this.botReplies.length >= BOT_REPLIES_PER_30S) break;
+    for (const [i, line] of lines.entries()) {
+      if (!line) continue;
+      if (this.botReplies.length >= BOT_REPLIES_PER_30S - (i < system ? 0 : BOT_RESERVED_LINES)) { if (i < system) continue; break; }
       this.botReplies.push(now);
       sent.push(line);
     }
@@ -1097,12 +1127,14 @@ export class ChannelRoom extends DurableObject {
       const milestone = Boolean(config.streakBonus) && STREAK_MILESTONES.includes(streak);
       const points = config.checkinPoints + (milestone ? 1 : 0);
       const bonus = Math.min(MAX_BONUS, row.bonus_points + points);
-      if (test) return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total: pointsFor(row.wins, bonus) };
+      // The total counts only wins the stream has shown, like !wallet: a quick duel still playing doesn't give it away.
+      const wins = row.wins - (hiddenResults(state, now).get(userId)?.wins || 0);
+      if (test) return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total: pointsFor(wins, bonus) };
       sql.exec("UPDATE profiles SET bonus_points = ?, checkins = checkins + 1, streak = ?, last_stream = ?, last_stream_seq = ?, free_miss_at = ? WHERE user_id = ?",
         bonus, streak, stream.id, seq, freeMiss ? now : row.free_miss_at, userId);
       const active = state.players.find((p) => p.userId === userId);
       if (active) { active.bonus = bonus; this.writeState(state); }   // the next duel counts the new points
-      return { reason: "checked_in", streak, points, milestone, freeMiss, total: pointsFor(row.wins, bonus) };
+      return { reason: "checked_in", streak, points, milestone, freeMiss, total: pointsFor(wins, bonus) };
     });
   }
 
@@ -1143,8 +1175,11 @@ export class ChannelRoom extends DurableObject {
       if (!left) return { reason: "give_cap", max: cfg.giveMaxPerStream };
       if (amount > left) return { reason: "over_cap", left, max: cfg.giveMaxPerStream };
       if (amount > dollars) return { reason: "not_enough", dollars };
+      // A wallet holds at most MAX_DOLLARS; a gift that wouldn't fit is refused rather than losing the rest.
+      const room = MAX_DOLLARS - (sql.exec("SELECT dollars FROM profiles WHERE user_id = ?", to.userId).toArray()[0]?.dollars || 0);
+      if (amount > room) return { reason: "target_full", to: to.displayName || to.username, room: Math.max(0, room) };
       sql.exec("UPDATE profiles SET dollars = dollars - ?, give_stream = ?, given_in_stream = ? WHERE user_id = ?", amount, stream.id, given + amount, giver.userId);
-      sql.exec("UPDATE profiles SET dollars = MIN(?, dollars + ?) WHERE user_id = ?", MAX_DOLLARS, amount, to.userId);
+      sql.exec("UPDATE profiles SET dollars = dollars + ? WHERE user_id = ?", amount, to.userId);
       return { reason: "given", amount, to: to.displayName || to.username, dollars: dollars - amount, left: left - amount };
     });
   }
@@ -1337,7 +1372,8 @@ export class ChannelRoom extends DurableObject {
     sql.exec("INSERT INTO bot_commands (name, reply, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET reply = excluded.reply, updated_at = excluded.updated_at, updated_by = excluded.updated_by", name, reply, Date.now(), actorName);
     for (const counter of replyCounters(reply)) sql.exec("INSERT OR IGNORE INTO bot_counters (name, value) VALUES (?, 0)", counter);
     logRoomEvent(this, "command", `${actorName} saved ${name}`, { channel, action });
-    return { ok: true, reason: "command_saved", name };
+    const longest = replyWorstCase(reply);
+    return { ok: true, reason: "command_saved", name, ...(longest > MAX_CHAT_LINE ? { warning: "reply_may_be_cut", longest, max: MAX_CHAT_LINE } : {}) };
   }
 
   // A text command's reply, or "" during its cooldown (COMMAND_COOLDOWN_MS for everyone, COMMAND_USER_COOLDOWN_MS per
@@ -1349,13 +1385,13 @@ export class ChannelRoom extends DurableObject {
     cool.set(row.name, now + COMMAND_COOLDOWN_MS);
     cool.set(row.name + " " + user, now + COMMAND_USER_COOLDOWN_MS);
     const sql = this.ctx.storage.sql;
-    return renderCommandReply(row.reply, {
+    return fitChatLine(renderCommandReply(row.reply, {
       user: String(ev.chatter_user_name || ev.chatter_user_login || ""),
       toUser: words[1] || "",
       count: (name, add) => add
         ? sql.exec("INSERT INTO bot_counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = MIN(value + 1, ?) RETURNING value", name, MAX_COUNTER).toArray()[0].value
         : sql.exec("SELECT value FROM bot_counters WHERE name = ?", name).toArray()[0]?.value ?? 0,
-    });
+    }));
   }
 
   // Check-in test mode: {until, by} while on, else null. An expired row reads as off.
@@ -1469,17 +1505,25 @@ export class ChannelRoom extends DurableObject {
     for (const lock of state.rematchLocks) due.push(lock.until);
     // a bot channel announces each duel's result once the stream has played it
     if (this.botSource(state)) for (const duel of state.duels) if (duel.status === "completed" && duel.revealAt > Date.now()) due.push(duel.revealAt + 1);
+    if (this.dueResults(state, Date.now()).length) due.push(Date.now() + RESULT_RETRY_MS);   // one that couldn't go out yet
     const reminder = this.reminderDue(state);
     if (reminder) due.push(reminder);
     if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, Math.min(...due)));
     else await this.ctx.storage.deleteAlarm();
   }
 
+  // Errors are logged (owner diagnostics) and the next alarm is always set, so one failure can't stall result lines.
   async alarm() {
     const row = this.readStoredState();
     if (!row) return;
     const channel = normalizeChannel(row.channel);
     if (!channel) return;
+    try { await this.alarmTasks(channel); }
+    catch (error) { logRoomError(this, error, { path: "alarm", method: "ALARM" }); }
+    await this.scheduleAlarm(this.readState(channel));
+  }
+
+  async alarmTasks(channel) {
     const since = this.readState(channel).revision;
     let result = this.advance(channel, { type: "tick" }, Date.now());
     if (result.changed) this.broadcast(result.state);
@@ -1503,7 +1547,6 @@ export class ChannelRoom extends DurableObject {
     await this.postExpired(channel, since);
     await this.postResults(channel, Date.now());
     await this.postReminder(channel, Date.now());
-    await this.scheduleAlarm(this.readState(channel));
   }
 
   // "Challenge expired" lines for challenges that ran out after revision `since`, on a channel the bot reads. Each is said
@@ -1529,19 +1572,41 @@ export class ChannelRoom extends DurableObject {
 
   // The result of each duel the stream has now played (revealAt passed in the last 2 minutes), once, from the alarm.
   // The "Fight on" reply says to watch the stream; this line follows the replay, so chat never spoils it.
+  // A line held back by the reply cap or refused by Twitch stays due and is tried again (the alarm wakes every
+  // RESULT_RETRY_MS) until it is 2 minutes old. A bot command also posts due results first, in case the alarm missed one.
   async postResults(channel, now) {
-    const state = this.readState(channel);
-    if (!this.botSource(state)) return;
-    const sql = this.ctx.storage.sql, row = sql.exec("SELECT results_through FROM bot_reminder WHERE id = 1").toArray()[0];
-    if (!row) return;
-    const due = state.duels.filter((d) => d.status === "completed" && d.ratings && d.revealAt > row.results_through && d.revealAt <= now && now - d.revealAt < 120000);
+    if (this.postingResults) return this.postingResults;   // the alarm and a command at once: post each line once
+    this.postingResults = this.postResultsOnce(channel, now).finally(() => { this.postingResults = null; });
+    return this.postingResults;
+  }
+
+  dueResults(state, now) {
+    if (!this.botSource(state)) return [];
+    const row = this.ctx.storage.sql.exec("SELECT results_through FROM bot_reminder WHERE id = 1").toArray()[0];
+    if (!row) return [];
+    return state.duels.filter((d) => d.status === "completed" && d.ratings && d.revealAt > row.results_through && d.revealAt <= now && now - d.revealAt < RESULT_WINDOW_MS).sort((x, y) => x.revealAt - y.revealAt);
+  }
+
+  async postResultsOnce(channel, now) {
+    const state = this.readState(channel), due = this.dueResults(state, now);
     if (!due.length) return;
-    sql.exec("UPDATE bot_reminder SET results_through = ? WHERE id = 1", Math.max(...due.map((d) => d.revealAt)));
+    const sql = this.ctx.storage.sql, row = sql.exec("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1").toArray()[0];
+    if (!row?.broadcaster_id || !row?.bot_id) return;
     const name = (id) => { const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config); return p?.displayName || p?.username || "someone"; };
-    await this.postBotLines(channel, due.map((d) => {
+    for (const d of due) {   // in reveal order; one that can't go out now stops the rest, so chat keeps the order
       const loser = d.winnerId === d.a ? d.b : d.a;
-      return seResultText({ winner: name(d.winnerId), loser: name(loser), w: d.ratings[d.winnerId], l: d.ratings[loser], decision: d.decision, flawless: d.flawless });
-    }));
+      const line = seResultText({ winner: name(d.winnerId), loser: name(loser), w: d.ratings[d.winnerId], l: d.ratings[loser], decision: d.decision, flawless: d.flawless });
+      const { replies } = await this.sendBotLines([line], channel, { system: 1 }).json();
+      if (!replies.length) return;
+      // A failed call (network, Twitch 5xx or 429 after its retries) is tried again; a line Twitch read and dropped
+      // (AutoMod, chat settings) would be dropped again, so it counts as done.
+      let out, failed = false;
+      try { out = await sendChatMessage(this.env, { broadcasterId: row.broadcaster_id, senderId: row.bot_id, message: replies[0] }); }
+      catch (error) { out = { sent: false, reason: String(error?.message || error) }; failed = true; }
+      this.noteBotSent(channel, [out]);
+      if (failed) return;
+      sql.exec("UPDATE bot_reminder SET results_through = MAX(results_through, ?) WHERE id = 1", d.revealAt);
+    }
   }
 
   // Lines the bot posts on its own (no chat line to answer), under the reply cap.
@@ -1549,7 +1614,7 @@ export class ChannelRoom extends DurableObject {
     if (!lines.length) return;
     const row = this.ctx.storage.sql.exec("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1").toArray()[0];
     if (!row?.broadcaster_id || !row?.bot_id) return;
-    const { replies } = await this.sendBotLines(lines, channel).json();
+    const { replies } = await this.sendBotLines(lines, channel, { system: lines.length }).json();
     for (const message of replies) {
       try { this.noteBotSent(channel, [await sendChatMessage(this.env, { broadcasterId: row.broadcaster_id, senderId: row.bot_id, message })]); }
       catch (error) { this.noteBotSent(channel, [{ sent: false, reason: String(error?.message || error) }]); }

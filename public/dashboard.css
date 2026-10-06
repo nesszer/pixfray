@@ -181,6 +181,7 @@ td code { white-space: nowrap; }
 .status { font-size: var(--text-sm); color: var(--text-2); min-height: 1.55em; margin: var(--space-2) 0 0; }
 .status.ok { color: var(--positive); }
 .status.error { color: var(--negative); }
+.status.warning { color: var(--warning); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
 .btn-danger { color: var(--negative); border-color: var(--negative); }
 input[aria-invalid="true"] { border-color: var(--negative); }

@@ -188,8 +188,8 @@ async function checkHidden(pre, a, b) {
 // and only after the overlay showed the winner. A bot channel also gets the bot's result line, after the overlay.
 async function checkReveal(pre, a, b, results, since) {
   let post, shownAt = 0;
-  for (let i = 0; i < 120 && !shownAt; i++) {
-    await sleep(500);
+  for (let i = 0; i < 30 && !shownAt; i++) {   // one read per 2 s keeps under Cloudflare's per-IP rate limit (error 1015)
+    await sleep(2000);
     post = await board();
     if (nums(post, a.login) !== nums(pre, a.login)) shownAt = Date.now();
   }
@@ -268,7 +268,7 @@ try {
 
   // Every read command from both accounts.
   for (const who of [A, B]) {
-    await step(`${who.login}: !fray`, () => say(who, '!fray', /^PixFray duels: gear up at \S+, then name your rival with !challenge @name\. They answer !fight\. Again\? !rematch$/));
+    await step(`${who.login}: !fray`, () => say(who, '!fray', /^PixFray duels: gear up at \S+, then name your rival with !challenge @name\. They answer !fight\. Again\? !rematch\. More: !checkin !wallet !ranks !look$/));
     await step(`${who.login}: !elo`, () => say(who, '!elo', new RegExp(`^${esc(who.login)}: \\d+ Elo, rank \\d+ of \\d+`, 'i')));
     await step(`${who.login}: !elo @${other(who).login}`, () => say(who, `!elo @${other(who).login}`, new RegExp(`^${esc(other(who).login)}: \\d+ Elo, rank`, 'i')));
     // !ranks names the board's top five, in order (with ten fighters, a test account may not be among them).

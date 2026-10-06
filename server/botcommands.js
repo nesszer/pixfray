@@ -8,6 +8,7 @@ export const MAX_COMMAND_REPLY = 400;
 export const MAX_COUNTER = 1_000_000_000;
 export const COMMAND_COOLDOWN_MS = 5_000;        // per command, for everyone
 export const COMMAND_USER_COOLDOWN_MS = 15_000;  // per command, per chatter
+export const MAX_CHAT_LINE = 480;                // a filled-in reply is cut here (Twitch drops lines over 500)
 
 // "!Sens", "sens" -> "!sens"; "" when it isn't 1 to 24 letters, digits or underscores.
 export function commandName(raw) {
@@ -42,4 +43,21 @@ export function renderCommandReply(reply, { user = "", toUser = "", count = () =
     if (kind === "touser") return target;
     return name ? String(count(name.toLowerCase(), kind === "count" ? 1 : 0)) : whole;
   });
+}
+
+// The longest a reply can get once filled in: a name is up to 25 characters, a counter up to 10 digits.
+export function replyWorstCase(reply) {
+  return String(reply).replace(VARIABLE, (whole, kind, name) => {
+    kind = kind.toLowerCase();
+    if (kind === "count" || kind === "getcount") return name ? "0".repeat(String(MAX_COUNTER).length) : whole;
+    return "x".repeat(25);
+  }).length;
+}
+
+// A line cut to MAX_CHAT_LINE characters at a word break, with "…" when cut.
+export function fitChatLine(line, max = MAX_CHAT_LINE) {
+  line = String(line);
+  if (line.length <= max) return line;
+  const cut = line.slice(0, max - 1), space = cut.lastIndexOf(" ");
+  return (space > max / 2 ? cut.slice(0, space) : cut).trimEnd() + "…";
 }

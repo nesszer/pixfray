@@ -82,9 +82,10 @@ export async function handleStreamElements(request, env, { url, origin, channels
 }
 
 // $(1) as sent by StreamElements -> a Twitch login, or '' for none. '-' means no argument; chat clients
-// append invisible characters (U+E0000, U+034F) to repeated messages; those are stripped first.
+// append invisible characters (U+E0000, U+034F) to repeated messages; those are stripped first. Extra leading @ and
+// trailing punctuation ("@@bob", "@bob," or "bob!") still mean bob.
 export function seTarget(raw) {
-  const m = /^@?([a-z0-9_]{1,25})$/i.exec(String(raw || '').replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ''));
+  const m = /^@*([a-z0-9_]{1,25})[,.!?;:]*$/i.exec(String(raw || '').replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ''));
   return m ? m[1].toLowerCase() : '';
 }
 
@@ -125,13 +126,12 @@ const noFighter = (who, self, origin, channel) => self ? `@${who}, you have no f
 export function seHelpText({ names = {}, origin = '', channel = '' } = {}) {
   const n = a => names[a] || DEFAULT_SE_NAMES[a];
   const link = siteLink(origin, channel);
-  return `PixFray duels: gear up${link ? ' at ' + link : ' on the PixFray site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}. Again? ${n('rematch')}`;
+  return `PixFray duels: gear up${link ? ' at ' + link : ' on the PixFray site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}. Again? ${n('rematch')}. More: ${n('checkin')} ${n('wallet')} ${n('top')} ${n('look')}`;
 }
 
-// The bot's timed reminder (config.reminderMin): the !fray line, plus where to see every command.
+// The bot's timed reminder (config.reminderMin): the !fray line, which already lists the other commands.
 export function seReminderText({ names = {}, origin = '', channel = '' } = {}) {
-  const n = a => names[a] || DEFAULT_SE_NAMES[a];
-  return `${seHelpText({ names, origin, channel })} · Commands: ${n('help')}, ${n('checkin')}, ${n('wallet')}, ${n('top')}`;
+  return seHelpText({ names, origin, channel });
 }
 
 // The bot's line when a challenge runs out unanswered (StreamElements can't post on its own, so only the bot says it).
@@ -225,6 +225,7 @@ export function seGiveText(r, { who = '', target = '', origin = '', channel = ''
     case 'give_cap': return `@${me}, you gave the most for this stream ($${r.max}). Give more next stream!`;
     case 'over_cap': return `@${me}, you can give $${r.left} more this stream.`;
     case 'not_enough': return `@${me}, you only have $${r.dollars}.`;
+    case 'target_full': return r.room > 0 ? `@${short(r.to)} can hold only $${r.room} more.` : `@${short(r.to)} already holds the most dollars a fighter can.`;
     default: return "Couldn't reach Twitch to check the stream. Try again in a minute!";
   }
 }

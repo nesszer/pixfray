@@ -528,7 +528,7 @@ test('StreamElements !ranks, !elo, !fray and !look work even while duels are pau
   assert.deepEqual([se.names.top, se.names.elo, se.names.help, se.names.look], ['!ranks', '!elo', '!fray', '!look']);
   let m = 0;
   const cmd = (id, login, action, target = '') => r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: 't' + (++m) } });
-  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'PixFray duels: gear up at https://test.example/?channel=nesszerra, then name your rival with !challenge @name. They answer !fight. Again? !rematch');
+  assert.equal((await cmd('u1', 'alice', 'help')).body.reply, 'PixFray duels: gear up at https://test.example/?channel=nesszerra, then name your rival with !challenge @name. They answer !fight. Again? !rematch. More: !checkin !wallet !ranks !look');
   assert.equal((await cmd('u1', 'alice', 'top')).body.reply, 'The arena has no champions yet! Gear up at https://test.example/?channel=nesszerra and win a duel.');
   assert.equal((await cmd('u1', 'alice', 'elo')).body.reply, '@alice, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra');
   assert.equal((await cmd('u1', 'alice', 'look')).body.reply, '@alice, pick your fighter here: https://test.example/?channel=nesszerra#fighter');
@@ -552,7 +552,7 @@ test('StreamElements !ranks, !elo, !fray and !look work even while duels are pau
   assert.equal((await r.call('/admin')).body.streamelements.names.help, '!fray');
   // Renamed commands show up in !fray.
   await r.call('/se-admin', { method: 'POST', body: { action: 'setSeNames', names: { challenge: '!duel', accept: '!yes' } } });
-  assert.match((await cmd('u1', 'alice', 'help')).body.reply, /!duel @name\. They answer !yes\. Again\? !rematch$/);
+  assert.match((await cmd('u1', 'alice', 'help')).body.reply, /!duel @name\. They answer !yes\. Again\? !rematch\. More: /);
 });
 
 test('!checkin: once per stream while live, streaks with one free miss a week, milestone bonus; points survive a rank reset', async () => {
@@ -670,6 +670,13 @@ test('dollars: paid once per finished duel and hidden until the stream shows it;
   const dev = async (text) => (await r.call('/dev-chat', { method: 'POST', body: { userId: 'u3', username: 'cara', displayName: 'cara', text } })).body.reply;
   assert.equal(await dev('!wallet'), '@cara: $140 PixFray dollars, 3 of 20 upgrade points, 0-stream streak.');
   assert.equal(await dev('!pay @bob 5'), '@cara gave $5 to @bob. You have $135 left.');
+  // A wallet at the $1,000,000 cap: a gift that wouldn't fit is refused, and nobody loses dollars.
+  await live({ live: true, streamId: 's3' });
+  r.ctx.storage.sql.exec("UPDATE profiles SET dollars = 999990 WHERE user_id = 'u2'");
+  assert.equal(await dev('!pay @bob 20'), '@bob can hold only $10 more.');
+  assert.deepEqual([dollars().cara, dollars().bob], [135, 999990]);
+  assert.equal(await dev('!pay @bob 10'), '@cara gave $10 to @bob. You have $125 left.');
+  assert.equal(await dev('!pay @bob 1'), '@bob already holds the most dollars a fighter can.');
   // Mods tune it or turn !give off; payouts follow the config.
   const cfg = (patch) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'config', payload: { patch } } });
   assert.equal((await cfg({ winDollars: 101 })).body.error, 'invalid_config_winDollars');
@@ -999,10 +1006,11 @@ test('chat bot: commands by the channel names get a reply; chat, other commands 
   const se = (await r.call('/admin')).body.streamelements;
   assert.equal((await r.call('/se', { method: 'POST', body: { key: se.secret, action: 'help', userId: 'u1', username: 'alice' } })).body.reply, '');
   assert.equal(r.readState('nesszerra').chat.subscriptionId, 'sub-bot');
-  // At most 18 replies per 30 s (Twitch allows 20 for a bot that isn't a mod); 3 were sent above.
+  // At most 18 lines per 30 s (Twitch allows 20 for a bot that isn't a mod), and command replies stop 4 short of that
+  // so the bot's own result lines still fit; 3 were sent above.
   const replies = [];
   for (let i = 0; i < 20; i++) replies.push(await say('u1', 'alice', '!elo'));
-  assert.equal(replies.filter(Boolean).length, 15);
+  assert.equal(replies.filter(Boolean).length, 11);
 });
 
 test('chat bot: a notification confirms a pending subscription; without CHAT_BOT, StreamElements takes over as before', async () => {
@@ -1064,6 +1072,18 @@ test('chat bot: text commands from the admin page answer in chat, with counters,
   r.commandCooldowns.clear();
   assert.equal((await r.say('u1', 'alice', '!sens')).reply, '');
   assert.equal((await admin('deleteCommand', { name: 'hug' })).body.botCommands.commands.length, 2);
+  // A reply the cap would drop doesn't count or start the cooldown.
+  r.commandCooldowns.clear();
+  r.botReplies = Array(14).fill(Date.now());
+  assert.equal((await r.say('u1', 'alice', '!nt')).reason, 'reply_limit');
+  r.botReplies = [];
+  assert.equal((await r.say('u1', 'alice', '!nt')).reply, 'Nesszerra has tried 4 times!');
+  // A reply that can outgrow a chat line saves with a warning and is cut at a word break.
+  assert.equal(saved.body.warning, undefined);
+  const long = await admin('saveCommand', { name: 'long', reply: '${user} '.repeat(10) + 'x'.repeat(300) });
+  assert.deepEqual([long.body.ok, long.body.warning, long.body.longest, long.body.max], [true, 'reply_may_be_cut', 560, 480]);
+  const cut = (await r.say('u3', 'abcdefghijklmnopqrstuvwxy', '!long')).reply;
+  assert.ok(cut.length <= 480 && cut.endsWith('abcdefghijklmnopqrstuvwxy…'), cut);
 });
 
 test('chat bot status: heard, sent and dropped replies, held-back replies and !fray debug for mods', async () => {
@@ -1094,16 +1114,21 @@ test('chat bot status: heard, sent and dropped replies, held-back replies and !f
 });
 
 // The reminder posts through Helix as the bot. Twitch is faked: an app token, then every chat line is recorded.
+// down: true makes every chat send fail (Twitch 503).
 function fakeTwitch() {
   const sent = [], real = globalThis.fetch;
+  const AUTH = { idFromName: () => 'auth', get: () => ({ fetch: async () => Response.json(null) }) };
+  const tw = { sent, down: false, env: { AUTH, AUTH_SECRET: 'test-auth-secret', TWITCH_CLIENT_ID: 'cid' }, restore: () => { globalThis.fetch = real; } };
   globalThis.fetch = async (url, init = {}) => {
     url = String(url);
     if (url.startsWith('https://id.twitch.tv/oauth2/token')) return Response.json({ access_token: 'app', expires_in: 3600 });
-    if (url.endsWith('/helix/chat/messages')) { sent.push(JSON.parse(init.body)); return Response.json({ data: [{ is_sent: true }] }); }
+    if (url.endsWith('/helix/chat/messages')) {
+      if (tw.down) return new Response('unavailable', { status: 503 });
+      sent.push(JSON.parse(init.body)); return Response.json({ data: [{ is_sent: true }] });
+    }
     throw new Error('unexpected fetch ' + url);
   };
-  const AUTH = { idFromName: () => 'auth', get: () => ({ fetch: async () => Response.json(null) }) };
-  return { sent, env: { AUTH, AUTH_SECRET: 'test-auth-secret', TWITCH_CLIENT_ID: 'cid' }, restore: () => { globalThis.fetch = real; } };
+  return tw;
 }
 
 test('chat bot reminder: off by default; on, it posts the !fray line as the bot each interval, only while live', async () => {
@@ -1131,7 +1156,7 @@ test('chat bot reminder: off by default; on, it posts the !fray line as the bot 
     assert.equal(tw.sent.length, 1);
     assert.equal(tw.sent[0].broadcaster_id, 'owner1');
     assert.equal(tw.sent[0].sender_id, 'u9');
-    assert.match(tw.sent[0].message, /^PixFray duels: gear up at https:\/\/staging\.example\/\?channel=nesszerra.*Commands: !fray, !checkin, !wallet, !ranks$/);
+    assert.match(tw.sent[0].message, /^PixFray duels: gear up at https:\/\/staging\.example\/\?channel=nesszerra.*Again\? !rematch\. More: !checkin !wallet !ranks !look$/);
     await r.postReminder('nesszerra', due + 30 * 60000 + 1000);
     assert.equal(tw.sent.length, 1, 'not again until the next interval');
     // Turned off, or the bot disconnected: nothing due.
@@ -1190,6 +1215,84 @@ test('chat bot: after the stream has played a duel, the bot says who won and the
   } finally { tw.restore(); }
 });
 
+test('chat bot: a result line survives a full reply cap, a Twitch outage, a missed alarm and an alarm error', async () => {
+  const tw = fakeTwitch();
+  try {
+    const r = botRoom(tw.env);
+    await r.save('u1', 'alice'); await r.save('u2', 'bob'); await r.save('u3', 'cara');
+    await r.connectChat('sub-bot');
+    const reveal = () => { const s = r.readState('nesszerra'); for (const d of s.duels) if (d.revealAt > Date.now()) d.revealAt = Date.now() - 1; r.writeState(s); };
+    const duel = async ({ shown = true } = {}) => {
+      await r.say('u1', 'alice', '!challenge @bob'); await r.say('u2', 'bob', '!fight');
+      const s = r.readState('nesszerra'); s.rematchLocks = []; for (const p of s.players) p.respawnAt = 0; r.writeState(s);
+      if (shown) reveal();
+    };
+    const results = () => tw.sent.filter((m) => / beat /.test(m.message)).length;
+    // A viewer spamming commands fills only the command share of the cap; the result still goes out.
+    await duel({ shown: false });
+    for (let i = 0; i < 20; i++) await r.say('u3', 'cara', '!elo');
+    assert.equal(r.botStatus().heldReason, 'reply_limit', 'commands hit their share of the cap');
+    reveal();
+    await r.alarm();
+    assert.equal(results(), 1, 'the reserved lines carry the result');
+    // Twitch down: the line stays due and the alarm comes back within seconds, then it goes out once.
+    r.botReplies = [];
+    tw.down = true;
+    await duel();
+    await r.alarm();
+    assert.equal(results(), 1);
+    assert.ok(r.ctx.storage.alarm <= Date.now() + 5000, 'retried soon');
+    tw.down = false;
+    await r.alarm();
+    assert.equal(results(), 2);
+    await r.alarm();
+    assert.equal(results(), 2, 'once');
+    // The alarm never ran: the next command posts the result before its own reply.
+    await duel();
+    const before = tw.sent.length;
+    await r.say('u3', 'cara', '!look');
+    assert.equal(results(), 3);
+    assert.match(tw.sent[before].message, / beat /);
+    // An error inside the alarm is logged and the next alarm is still set.
+    const real = r.postReminder;
+    r.postReminder = async () => { throw new Error('boom'); };
+    await duel();
+    r.ctx.storage.alarm = null;
+    await r.alarm();
+    r.postReminder = real;
+    assert.equal(results(), 4, 'results go out before the failing step');
+    assert.match((await r.call('/dev/logs?source=room')).body[0].message, /^boom$/);
+    assert.ok(r.ctx.storage.alarm, 'the alarm is set again');
+  } finally { tw.restore(); }
+});
+
+test('chat bot: !accept, !duel and !top are hidden aliases, unless the channel uses those names', async () => {
+  const r = botRoom({});
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  await r.connectChat('sub-bot');
+  assert.match((await r.say('u1', 'alice', '!duel @bob')).reply, /^alice challenges @bob!/);
+  assert.match((await r.say('u2', 'bob', '!ACCEPT')).reply, /^Fight on: alice vs bob!/);
+  assert.match((await r.say('u1', 'alice', '!top')).reply, /^Top \d: /);
+  // Trailing punctuation still names the viewer.
+  assert.match((await r.say('u1', 'alice', '!elo @bob,')).reply, /^bob: /);
+  // A channel that renamed !challenge to !duel keeps its own meaning; a custom !top command wins over the alias.
+  const admin = async (action, payload) => (await r.call('/admin', { method: 'POST', body: { actorId: 'owner1', actorName: 'nesszerra', action, payload } }));
+  assert.equal((await admin('saveCommand', { name: '!top', reply: 'custom top' })).body.ok, true);
+  assert.equal((await r.say('u1', 'alice', '!top')).reply, 'custom top');
+});
+
+test('!checkin does not count a win the stream has not shown yet', async () => {
+  const r = botRoom({ DEV_TOOLS_TOKEN: 'x'.repeat(40) });
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  await r.connectChat('sub-bot');
+  await r.call('/dev-live', { method: 'POST', body: { live: true, streamId: 's1' } });
+  await r.say('u1', 'alice', '!challenge @bob'); await r.say('u2', 'bob', '!fight');
+  const d = r.readState('nesszerra').duels.find((x) => x.status === 'completed');
+  assert.ok(d.revealAt > Date.now());
+  const winner = d.winnerId === 'u1' ? ['u1', 'alice'] : ['u2', 'bob'];
+  assert.match((await r.say(winner[0], winner[1], '!checkin')).reply, / 1 of 20 points\./, 'the hidden win is not counted');
+});
+
 test('debug bot: a challenge aimed at the bot is fought back, !fray spar challenges you; off without BOT_DEBUG', async () => {
   const r = botRoom({ BOT_DEBUG: '1' });
   await r.save('u1', 'alice'); await r.save('u9', 'pixbot');
@@ -1211,9 +1314,11 @@ test('debug bot: a challenge aimed at the bot is fought back, !fray spar challen
   const plain = botRoom({});
   await plain.save('u1', 'alice'); await plain.save('u9', 'pixbot');
   await plain.connectChat('sub-bot');
+  // Without BOT_DEBUG the bot account is refused as a rival or a wallet.
   const once = await plain.say('u1', 'alice', '!challenge @pixbot');
-  assert.equal(once.replies.length, 1);
-  assert.ok(plain.readState('nesszerra').duels.some((d) => d.status === 'pending'), 'nobody answers for the bot');
+  assert.deepEqual(once.replies, ["The bot doesn't fight (yet)! Name a rival: !challenge @name"]);
+  assert.ok(!plain.readState('nesszerra').duels.length, 'no challenge opened');
+  assert.equal((await plain.say('u1', 'alice', '!give @pixbot 5')).reply, "The bot doesn't take dollars. Give them to a rival!");
   assert.match((await plain.say('u1', 'alice', '!fray spar')).reply, /gear up/i, 'spar is just the help reply');
 });
 

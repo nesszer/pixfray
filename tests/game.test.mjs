@@ -698,7 +698,7 @@ test('!rematch challenges the last finished duel\'s opponent, with the rematch l
   const { seReplyText, seHelpText, seLookText } = await import('../server/streamelements.js');
   assert.equal(seReplyText({ result: r, state: v.state, actorId: 'id-alice', action: 'rematch', target: '' }), 'alice wants a rematch with @dan! @dan, type !rematch or !fight to fight, or !decline to back out within 30 s.');
   assert.equal(seReplyText({ result: { ok: false, reason: 'no_previous_opponent' }, state: v.state, actorId: 'id-alice', action: 'rematch', target: '' }), 'alice, you have nobody to rematch yet. Start one: !challenge @name');
-  assert.match(seHelpText({ names: { rematch: '!again' } }), / Again\? !again$/);
+  assert.match(seHelpText({ names: { rematch: '!again' } }), / Again\? !again\. More: !checkin !wallet !ranks !look$/);
   assert.equal(seLookText({ who: 'Alice', hasFighter: true }), '@Alice, change your look on the PixFray site');
 });
 
@@ -735,7 +735,9 @@ test('invisible characters that chat clients append to repeated messages are ign
   assert.equal(seTarget('\u{E0000}'), '');
   assert.equal(seTarget('-'), '');
   assert.equal(seTarget('@Bob\u{E0000}'), 'bob');
-  assert.equal(seTarget('bad name!'), '');
+  assert.equal(seTarget('bad-name'), '');
+  // Extra @ and trailing punctuation still name the viewer.
+  for (const raw of ['@bob,', '@@bob', 'bob!', '@Bob?', 'bob.']) assert.equal(seTarget(raw), 'bob', raw);
 });
 
 test('StreamElements sign-up link always names the channel', async () => {
