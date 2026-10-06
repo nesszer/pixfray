@@ -258,7 +258,9 @@ function placeTag(tag, pos, visible) {
     else {
       let x = (proj.x + 1) / 2 * innerWidth;
       if (!tag.call && !tag.corner) { const hw = (tag.w ||= tag.el.firstElementChild.offsetWidth) / 2 + 8; x = Math.min(innerWidth - hw, Math.max(hw, x)); }
-      tag.el.style.transform = `translate3d(${x.toFixed(1)}px, ${((1 - proj.y) / 2 * innerHeight).toFixed(1)}px, 0)`;
+      // plain labels grow upward from their point, so one near the top is held down clear of the header's links
+      const y = (1 - proj.y) / 2 * innerHeight, top = tag.call || tag.corner ? 0 : 136;
+      tag.el.style.transform = `translate3d(${x.toFixed(1)}px, ${Math.max(top, y).toFixed(1)}px, 0)`;
     }
   }
   if (visible !== tag.on) { tag.on = visible; tag.el.classList.toggle('on', visible); }

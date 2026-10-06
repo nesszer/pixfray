@@ -751,7 +751,9 @@ async function channelRanks(channel, link, crew, meta) {
 // unless there is something to save or say.
 function tuckSaveBar() {
   const root = document.documentElement, quiet = !status.textContent && !dirty();
-  root.classList.toggle("bar-away", quiet && (root.dataset.tab === "ranks" || root.dataset.tab === "rules"));
+  // ...and it steps aside at the footer too, so the page's last links aren't under it
+  const foot = $(".site-foot"), atFoot = !!foot && foot.getBoundingClientRect().top < innerHeight;
+  root.classList.toggle("bar-away", (quiet && (root.dataset.tab === "ranks" || root.dataset.tab === "rules")) || atFoot);
   root.classList.toggle("at-top", quiet && scrollY < 40);
 }
 function watchSaveBar() {

@@ -297,3 +297,11 @@ body:not(.scrolled) .edge-fade.bottom { opacity: 0; }
 /* the header's "Pick your fighter" is the same gold-edged button as on the other pages; it fills on hover */
 .hud-nav .btn-primary { background: rgb(201 164 92 / .14); border-color: #c9a45c; color: var(--text); }
 .hud-nav .btn-primary:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+/* phones: streamers still get a way to /start from the header, and the sound switch keeps its words and a full-size target */
+@media (max-width: 760px) {
+  .hud-nav { gap: var(--space-4); }
+  .hud-nav a[href="/start/"] { display: inline-flex; align-items: center; min-height: 44px; font-size: 13px; }
+  .sound { min-height: 44px; min-width: 44px; }
+  .sound-label { display: inline; }
+}
+@media (max-width: 360px) { .hud-nav a[href="/start/"] { display: none; } }
