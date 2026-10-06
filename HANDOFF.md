@@ -73,9 +73,11 @@ The run writes screenshots to `screenshots/e2e-*.png`. They are generated, not i
    run only on the deployed sites, and this file records no check result for them. Local runs use
    seeded test sessions (`tests/seed-local.mjs`). A real subscription needs the deployed https
    site; Twitch cannot call localhost.
-2. Live-fix GitHub/Cloudflare flow (save → test deploy → promote → hotfix → rollback) is only
-   tested against mocked APIs. It needs `GITHUB_TOKEN`, `GITHUB_REPO`,
-   `CF_API_TOKEN` and `CF_ACCOUNT_ID` set as Worker secrets (docs/LIVE_FIX.md).
+2. Releases run from a local checkout with the `gh` and `cf` CLIs (`npx cf deploy --mode test`,
+   then `npx cf deploy`); the owner page hides its code editor and release steps while GitHub
+   isn't set up. That in-browser flow (save → test deploy → promote → hotfix → rollback) is only
+   tested against mocked APIs and needs `GITHUB_TOKEN`, `GITHUB_REPO`, `CF_API_TOKEN` and
+   `CF_ACCOUNT_ID` as Worker secrets (docs/LIVE_FIX.md).
 3. Twitch sends chat to the webhook only after nesszerra grants `user:read:chat`, `user:bot` and
    `channel:bot` (sign in at `/auth/login?connect=1`). Until then Connect chat answers 403 with a
    Reconnect Twitch link.

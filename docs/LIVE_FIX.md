@@ -5,12 +5,18 @@ owner page (`/admin/dev/`) to fix the live game without a laptop build. The top 
 for the sign-up link and following each streamer's setup; the tools below are folded until opened. What's needed: which secrets to add, how a fix reaches production, and how
 to undo it.
 
-**Status on 2026-10-03:** the site is deployed (https://chat.miolaf.xyz), and the project's git
+**How releases work today (2026-10-06):** from a local checkout, with the `gh` and `cf`
+command-line tools. Deploy to staging with `npx cf deploy --mode test`, check
+https://staging.pixfray.xyz, then deploy to production with `npx cf deploy`. GitHub isn't set up
+on the Worker, so the owner page hides the code editor and release steps and shows this flow
+instead. The rest of this file describes the in-browser flow for when `GITHUB_TOKEN` is set.
+
+**Status on 2026-10-03:** the site is deployed (now https://pixfray.xyz), and the project's git
 `origin` is https://github.com/Finesssee/pixfray.git. The flow below has only been tested
 against mocked APIs, and this file doesn't record whether `GITHUB_TOKEN`, the Cloudflare API
 token or the Actions secrets are set. Wherever one is missing, the GitHub and Cloudflare
 routes answer `501` with `reason: github_not_configured` or
-`cloudflare_not_configured`, and the page disables those buttons. Diagnostics, the error log, live
+`cloudflare_not_configured`, and the page hides the code editor and release steps. Diagnostics, the error log, live
 settings work without any of them.
 
 ## The flow

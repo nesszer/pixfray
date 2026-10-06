@@ -80,13 +80,17 @@ for (const size of sizes) {
   await page.screenshot({ path: path.join(shots, `dev-signed-out-${size.name}.png`), fullPage: true });
   await ctx.close();
 
-  // 2. Owner, integrations not configured: actions are disabled and the page says why.
+  // 2. Owner, integrations not configured: the editor and release steps are hidden, and the page points to the local CLI flow.
   ({ ctx, page } = await open(size, { stub: { configured: false } }));
   assert.equal(await page.isVisible('#app'), true);
   assert.match(await page.textContent('#summary-title'), /chat offline/);
   assert.match(await page.textContent('#github-missing'), /GITHUB_TOKEN, GITHUB_REPO/);
   assert.equal(await page.isDisabled('#deploy-test'), true);
   assert.equal(await page.isDisabled('#save-file'), true);
+  assert.deepEqual(await page.$$eval('#sec-code, #sec-release', (s) => s.map((x) => x.hidden)), [true, true]);
+  assert.equal(await page.$eval('#local-release', (p) => p.hidden), false);
+  assert.match(await page.textContent('#local-release'), /npx cf deploy --mode test/);
+  assert.equal(await page.textContent('#dev-tools-title'), 'Developer tools: raw settings and integrations');
   assert.match(await page.textContent('#s-requests-note'), /not configured/);
   assert.equal(await page.$eval('#dev-tools', (d) => d.open), false, 'developer tools start folded');
   assert.equal(await page.locator('#sec-codex, #codex-toggle').count(), 0);
@@ -142,6 +146,7 @@ if (process.env.MINI_OWNER_COOKIE) {
   const { ctx, page } = await open(sizes[0], { cookie: process.env.MINI_OWNER_COOKIE });
   assert.equal(await page.isVisible('#app'), true);
   assert.match(await page.textContent('#github-missing'), /GITHUB_TOKEN/);
+  assert.equal(await page.$eval('#local-release', (p) => p.hidden), false);
   assert.match(await page.textContent('#config-version'), /version \d+/);
   assert.match(await page.textContent('#channels'), /nesszerra.*Built in/s);
   await page.screenshot({ path: path.join(shots, 'dev-real-owner-1280.png'), fullPage: true });

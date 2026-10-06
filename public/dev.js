@@ -93,6 +93,10 @@ function renderIntegrations(i) {
   missing.hidden = !!g.configured;
   missing.textContent = g.configured ? '' : 'GitHub is not configured yet (' + (g.missing || []).join(', ') + '), so saving, deploying and rolling back are unavailable. See docs/LIVE_FIX.md.';
   for (const id of ['#deploy-test', '#promote', '#rollback', '#hotfix', '#save-file', '#open-pr', '#load-file', '#load-tree']) $(id).disabled = !g.configured;
+  // Without GitHub, releases happen from a local checkout (gh and cf CLIs), so the editor and release steps stay out of the way.
+  $('#sec-code').hidden = $('#sec-release').hidden = !g.configured;
+  $('#local-release').hidden = !!g.configured;
+  $('#dev-tools-title').textContent = g.configured ? 'Developer tools: code editor, releases and raw settings' : 'Developer tools: raw settings and integrations';
 }
 
 // ---------- release ----------
