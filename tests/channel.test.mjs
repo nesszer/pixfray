@@ -300,8 +300,8 @@ test('versioned config editor: history, optimistic version check, rollback', asy
   assert.equal(cheap.status, 200);
   assert.equal((await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'rollbackConfig', payload: { version: 1 } } })).status, 200);
   const restored = (await r.call('/admin')).body.config;
-  assert.equal(restored.trailPrice, 120, 'a setting missing from the old version goes back to its default');
-  assert.equal(restored.buildSlotPrice, 200);
+  assert.equal(restored.trailPrice, 40, 'a setting missing from the old version goes back to its default');
+  assert.equal(restored.buildSlotPrice, 60);
 });
 
 test('rank reset reaches stored profiles; removePlayer deletes the profile', async () => {
@@ -815,20 +815,20 @@ test('shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   // The catalog: built-ins with the config prices, and the hat price per win.
   const catalog = (await r.call('/pets')).body;
   assert.equal(catalog.pets.length, 14);
-  assert.deepEqual(catalog.pets.find((p) => p.id === 'fox'), { id: 'fox', label: 'Fox', tier: 'rare', boost: { power: 2, guard: 0, luck: 0 }, price: 180, custom: false });
-  assert.equal(catalog.hatPricePerWin, 10);
+  assert.deepEqual(catalog.pets.find((p) => p.id === 'fox'), { id: 'fox', label: 'Fox', tier: 'rare', boost: { power: 2, guard: 0, luck: 0 }, price: 60, custom: false });
+  assert.equal(catalog.hatPricePerWin, 3);
   // Buying: identity, unknown items, money.
   assert.equal((await r.call('/shop', { method: 'POST', userId: 'u1', body: { userId: 'u2', kind: 'pet', id: 'fox' } })).status, 403);
   assert.equal((await buy('u9', 'pet', 'fox')).body.error, 'no_fighter');
   assert.equal((await buy('u1', 'pet', 'unicorn')).body.error, 'unknown_item');
-  assert.deepEqual((({ status, body }) => [status, body.error, body.price, body.dollars])(await buy('u1', 'pet', 'fox')), [409, 'not_enough', 180, 0]);
+  assert.deepEqual((({ status, body }) => [status, body.error, body.price, body.dollars])(await buy('u1', 'pet', 'fox')), [409, 'not_enough', 60, 0]);
   await gift('alice', 250);
   const bought = (await buy('u1', 'pet', 'fox')).body;
-  assert.deepEqual([bought.ok, bought.price, bought.dollars, bought.owned.pets, bought.owned.hats, bought.owned.slots], [true, 180, 70, ['fox'], [], 1]);
+  assert.deepEqual([bought.ok, bought.price, bought.dollars, bought.owned.pets, bought.owned.hats, bought.owned.slots], [true, 60, 190, ['fox'], [], 1]);
   assert.equal((await buy('u1', 'pet', 'fox')).body.error, 'owned');
   // Hats: free ones are already unlocked; locked ones cost wins x hatPricePerWin; 0 turns hat sales off.
   assert.equal((await buy('u1', 'hat', 'cap')).body.error, 'already_unlocked');
-  assert.equal((await buy('u1', 'hat', 'wizard')).body.price, 30);
+  assert.equal((await buy('u1', 'hat', 'wizard')).body.price, 9);
   assert.equal((await r.save('u1', 'alice', { hat: 'tophat' })).body.error, 'hat_locked');
   assert.equal((await r.save('u1', 'alice', { hat: 'wizard' })).body.profile.hat, 'wizard', 'a bought hat saves before its wins');
   const cfg = (patch) => r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'config', payload: { patch } } });
@@ -840,7 +840,7 @@ test('shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.equal((await r.save('u1', 'alice', { pet: 'wolf' })).body.error, 'pet_locked');
   assert.equal((await r.save('u1', 'alice', { pet: 7 })).body.error, 'invalid_profile');
   const saved = (await r.save('u1', 'alice', { pet: 'fox' })).body.profile;
-  assert.deepEqual([saved.pet, saved.petTier, saved.petBoost, saved.dollars], ['fox', 'rare', { power: 2, guard: 0, luck: 0 }, 40]);
+  assert.deepEqual([saved.pet, saved.petTier, saved.petBoost, saved.dollars], ['fox', 'rare', { power: 2, guard: 0, luck: 0 }, 181]);
   assert.deepEqual((({ pets, hats }) => ({ pets, hats }))((await r.call('/profile?userId=u1')).body.owned), { pets: ['fox'], hats: ['wizard'] });
   assert.equal(r.readState('nesszerra').players.find((p) => p.userId === 'u1').petBoost.power, 2, 'duels count the boost');
   assert.deepEqual((({ pet, petTier }) => [pet, petTier])((await r.call('/looks?u=alice')).body.alice), ['fox', 'rare']);
@@ -864,11 +864,11 @@ test('shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.equal((await upload({ image: b64(Buffer.from('not a png at all, just some text that is long enough to read')) })).body.reason, 'not_png');
   const item = (await upload({})).body.item;
   assert.match(item.id, /^p-blob-[0-9a-f]{6}$/);
-  assert.deepEqual([item.tier, item.boost, item.price, item.url], ['epic', { power: 0, guard: 1, luck: 2 }, 420, '/api/pets/nesszerra/' + item.id]);
+  assert.deepEqual([item.tier, item.boost, item.price, item.url], ['epic', { power: 0, guard: 1, luck: 2 }, 140, '/api/pets/nesszerra/' + item.id]);
   const png = await r.fetch(new Request('https://room/pets/' + item.id, { headers: { 'X-Mini-Internal': SECRET, 'X-Mini-Channel': 'nesszerra' } }));
   assert.equal(png.headers.get('content-type'), 'image/png');
   await gift('bob', 500);
-  assert.equal((await buy('u2', 'pet', item.id)).body.price, 420);
+  assert.equal((await buy('u2', 'pet', item.id)).body.price, 140);
   assert.equal((await r.save('u2', 'bob', { pet: item.id })).body.profile.petTier, 'epic');
   assert.equal(await cmd('u2', 'bob'), "@bob's pet: Blob (epic), +1 guard, +2 luck.");
   assert.equal((await r.call('/pets/' + item.id, { method: 'DELETE' })).body.ok, true);
@@ -890,16 +890,16 @@ test('cosmetics and builds: the shop list, buying, wearing, build slots with the
   const shop = (await r.call('/shop')).body;
   assert.equal(shop.pets.length, 14);
   assert.deepEqual(Object.keys(shop.items), ['recolor', 'petcolor', 'accessory', 'trail', 'effect', 'taunt', 'title']);
-  assert.deepEqual(shop.items.trail.find((x) => x.id === 'flames'), { id: 'flames', label: 'Flames', price: 120 });
-  assert.deepEqual(shop.slots, { max: 5, prices: [200, 400, 400, 400] });
+  assert.deepEqual(shop.items.trail.find((x) => x.id === 'flames'), { id: 'flames', label: 'Flames', price: 40 });
+  assert.deepEqual(shop.slots, { max: 5, prices: [60, 120, 120, 120] });
   // Buying: unknown ids, money, owned.
   assert.equal((await buy('accessory', 'jetpack')).body.error, 'unknown_item');
   assert.equal((await buy('trail', 'flames')).body.error, 'not_enough');
   await gift('alice', 2000);
   // The page sends the price it showed; after a mod's change the buy is refused with the new price.
   const stale = await buy('trail', 'flames', 100);
-  assert.deepEqual([stale.status, stale.body.error, stale.body.price], [409, 'price_changed', 120]);
-  assert.deepEqual((({ price, dollars }) => [price, dollars])((await buy('trail', 'flames', 120)).body), [120, 1880]);
+  assert.deepEqual([stale.status, stale.body.error, stale.body.price], [409, 'price_changed', 40]);
+  assert.deepEqual((({ price, dollars }) => [price, dollars])((await buy('trail', 'flames', 40)).body), [40, 1960]);
   assert.equal((await buy('trail', 'flames')).status, 409);
   for (const [kind, id] of [['recolor', 'crimson'], ['petcolor', 'gold'], ['accessory', 'cape'], ['effect', 'fireworks'], ['taunt', 'gg'], ['title', 'legend']]) assert.equal((await buy(kind, id)).body.ok, true, kind);
   // Wearing: only bought ones; "" takes one off; left out keeps it.
@@ -914,9 +914,9 @@ test('cosmetics and builds: the shop list, buying, wearing, build slots with the
   const looks = (await r.call('/looks?u=alice')).body.alice;
   assert.deepEqual([looks.recolor, looks.accessory, looks.trail, looks.winEffect, looks.taunt, looks.title], ['crimson', 'cape', 'flames', 'fireworks', 'gg', 'legend']);
   assert.equal(r.readState('nesszerra').players.find((x) => x.userId === 'u1').trail, 'flames', 'the overlay state carries them');
-  // Build slots: 1 free, the 2nd costs 200, then 400 each, up to 5.
+  // Build slots: 1 free, the 2nd costs 60, then 120 each, up to 5.
   assert.equal((await r.save('u1', 'alice', { build: 1 })).body.error, 'invalid_build');
-  assert.deepEqual((({ price, owned }) => [price, owned.slots])((await buy('slot', '')).body), [200, 2]);
+  assert.deepEqual((({ price, owned }) => [price, owned.slots])((await buy('slot', '')).body), [60, 2]);
   // Slot 1 keeps its own character, stats and cosmetics; slot 0 is untouched.
   p = (await r.save('u1', 'alice', { build: 1, avatar: 'soldier', stats: { power: 0, guard: 0, luck: 0 }, recolor: '', trail: '', title: 'legend' })).body.profile;
   assert.deepEqual([p.build, p.avatar, p.recolor, p.trail], [1, 'soldier', '', '']);
@@ -925,7 +925,7 @@ test('cosmetics and builds: the shop list, buying, wearing, build slots with the
   // Switching back = saving slot 0's loadout to slot 0.
   p = (await r.save('u1', 'alice', { ...prof.builds[0], build: 0 })).body.profile;
   assert.deepEqual([p.build, p.avatar, p.trail], [0, 'player', 'flames']);
-  for (const price of [400, 400, 400]) assert.equal((await buy('slot', '')).body.price, price);
+  for (const price of [120, 120, 120]) assert.equal((await buy('slot', '')).body.price, price);
   assert.equal((await buy('slot', '')).body.error, 'max_slots');
   prof = (await r.call('/profile?userId=u1')).body;
   assert.deepEqual([prof.owned.slots, prof.builds.length, prof.builds[2]], [5, 5, null]);

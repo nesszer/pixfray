@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reduceGame, createInitialState, parseGameCommand, defaultConfig, hiddenResults, shownProfile, replayMs } from '../server/game.js';
+import { reduceGame, createInitialState, parseGameCommand, defaultConfig, hiddenResults, shownProfile, replayMs, normalizeGameState } from '../server/game.js';
 
 const T0 = 1_800_000_000_000;
 let seq = 0;
@@ -819,4 +819,18 @@ test('upgrades and hat come from the saved profile; no respec while a challenge 
   w.say('alice', '!challenge @bob');
   assert.equal(w.register('alice', { stats: { guard: 4 } }).reason, 'in_duel');
   assert.equal(w.register('alice', { stats: { power: 4 }, hat: 'cap' }).ok, true, 'same build, new hat is fine');
+});
+
+test('the 2026-10-06 price cut moves prices still at the old defaults and keeps prices a mod changed', () => {
+  const old = { ...defaultConfig(), petPriceCommon: 30, recolorPrice: 60, buildSlotPrice: 200, petPriceLegendary: 777, hatPricePerWin: 10 };
+  const state = normalizeGameState({ ...createInitialState('nesszerra'), config: old, configVersion: 4 });
+  assert.equal(state.config.petPriceCommon, 10);
+  assert.equal(state.config.recolorPrice, 20);
+  assert.equal(state.config.buildSlotPrice, 60);
+  assert.equal(state.config.hatPricePerWin, 3);
+  assert.equal(state.config.petPriceLegendary, 777, 'a custom price stays');
+  assert.equal(state.priceSchema, 2);
+  // once migrated, a mod may set an old default on purpose
+  const later = normalizeGameState({ ...state, config: { ...state.config, petPriceCommon: 30 } });
+  assert.equal(later.config.petPriceCommon, 30);
 });

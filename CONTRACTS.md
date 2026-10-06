@@ -332,10 +332,10 @@ Custom characters:
 | giveEnabled | true | boolean (`!pay` on or off) |
 | giveMaxPerStream | 100 | 0 to 10000 (dollars one viewer can give per stream) |
 | giveMinDuels | 5 | 0 to 1000 (finished duels before a viewer can give) |
-| petPriceCommon, petPriceUncommon, petPriceRare, petPriceEpic, petPriceLegendary | 30, 75, 180, 420, 900 | 1 to 100000 (dollars per pet of that tier) |
-| hatPricePerWin | 10 | 0 to 1000 (a locked hat costs this times the wins it needs; 0 = hats aren't sold) |
-| recolorPrice, petColorPrice, accessoryPrice, trailPrice, effectPrice, tauntPrice, titlePrice | 60, 40, 80, 120, 150, 25, 50 | 1 to 100000 (dollars per item of that kind) |
-| buildSlotPrice, buildSlotPriceMore | 200, 400 | 1 to 100000 (the 2nd build slot, then each of the 3rd to 5th) |
+| petPriceCommon, petPriceUncommon, petPriceRare, petPriceEpic, petPriceLegendary | 10, 25, 60, 140, 300 | 1 to 100000 (dollars per pet of that tier) |
+| hatPricePerWin | 3 | 0 to 1000 (a locked hat costs this times the wins it needs; 0 = hats aren't sold) |
+| recolorPrice, petColorPrice, accessoryPrice, trailPrice, effectPrice, tauntPrice, titlePrice | 20, 15, 25, 40, 50, 10, 15 | 1 to 100000 (dollars per item of that kind) |
+| buildSlotPrice, buildSlotPriceMore | 60, 120 | 1 to 100000 (the 2nd build slot, then each of the 3rd to 5th) |
 | abilities.strike | `{damage:20, cooldownMs:2000}` | damage 1 to 1000, cooldownMs 250 to 600000 |
 | abilities.heavy | `{damage:35, cooldownMs:5000}` | same as strike |
 | abilities.heal | `{amount:15, cooldownMs:12000}` | amount 1 to 1000, cooldownMs 250 to 600000 |
@@ -344,6 +344,7 @@ Values must be integers (except `enabled`, `quickDuel`, `streakBonus` and `giveE
 which belonged to the removed chat relay and which older history versions still carry; it is ignored (and dropped when a config is read) so those versions can still be rolled back. A patch may contain any
 subset of fields. Versioning works like this:
 - The first preset was strike 10 / heavy 25 / heal 15 with `inactivityMs` 60000. A channel still at `configVersion` 1 with exactly that config moves to the current defaults when its room loads; a channel whose config was edited keeps its values.
+- Shop prices were cut to about a third on 2026-10-06 (a duel pays about $4). A stored config whose price is still the old default (30, 75, 180, 420, 900; hat 10 per win; 60, 40, 80, 120, 150, 25, 50; slots 200, 400) moves to the new one once, and the state records `priceSchema: 2`. A price a mod changed is kept.
 - `configVersion` starts at 1. Each successful change increments it and stores a history row, and
   the last 200 versions are kept.
 - The dashboard should send `baseVersion` and, on a 409, reload and show the conflict.

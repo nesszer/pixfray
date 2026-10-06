@@ -35,22 +35,23 @@ const DEFAULT_CONFIG = {
   giveMaxPerStream: 100,
   giveMinDuels: 5,
   // Shop (server/pets.js): pet prices by tier, and hats before their wins at wins needed x hatPricePerWin (0 = off).
-  petPriceCommon: 30,
-  petPriceUncommon: 75,
-  petPriceRare: 180,
-  petPriceEpic: 420,
-  petPriceLegendary: 900,
-  hatPricePerWin: 10,
-  // Stage 4 (server/cosmetics.js): each cosmetic kind has one price, and build slots cost 200 for the 2nd, then 400 each.
-  recolorPrice: 60,
-  petColorPrice: 40,
-  accessoryPrice: 80,
-  trailPrice: 120,
-  effectPrice: 150,
-  tauntPrice: 25,
-  titlePrice: 50,
-  buildSlotPrice: 200,
-  buildSlotPriceMore: 400,
+  // A duel pays about $4, so a common pet is ~3 duels, a recolor ~5 and a legendary pet ~75 (prices cut to a third on 2026-10-06).
+  petPriceCommon: 10,
+  petPriceUncommon: 25,
+  petPriceRare: 60,
+  petPriceEpic: 140,
+  petPriceLegendary: 300,
+  hatPricePerWin: 3,
+  // Stage 4 (server/cosmetics.js): each cosmetic kind has one price, and build slots cost 60 for the 2nd, then 120 each.
+  recolorPrice: 20,
+  petColorPrice: 15,
+  accessoryPrice: 25,
+  trailPrice: 40,
+  effectPrice: 50,
+  tauntPrice: 10,
+  titlePrice: 15,
+  buildSlotPrice: 60,
+  buildSlotPriceMore: 120,
   abilities: {
     strike: { damage: 20, cooldownMs: 2_000 },
     heavy: { damage: 35, cooldownMs: 5_000 },
@@ -59,6 +60,10 @@ const DEFAULT_CONFIG = {
 };
 
 // The first preset (10/25 damage) made duels drag on for 10+ hits. Channels that never edited it move to the current one.
+// Shop prices before the 2026-10-06 cut. A stored config still at one of these moves to the new default once (priceSchema 2);
+// a price a mod changed is kept.
+const OLD_PRICES = { petPriceCommon: 30, petPriceUncommon: 75, petPriceRare: 180, petPriceEpic: 420, petPriceLegendary: 900, hatPricePerWin: 10,
+  recolorPrice: 60, petColorPrice: 40, accessoryPrice: 80, trailPrice: 120, effectPrice: 150, tauntPrice: 25, titlePrice: 50, buildSlotPrice: 200, buildSlotPriceMore: 400 };
 const LEGACY_CONFIG = { ...DEFAULT_CONFIG, inactivityMs: 60_000, abilities: { strike: { damage: 10, cooldownMs: 3_000 }, heavy: { damage: 25, cooldownMs: 8_000 }, heal: { amount: 15, cooldownMs: 10_000 } } };
 
 const ANNOUNCE = ["off", "top", "bottom"];
@@ -1006,6 +1011,10 @@ function normalizeState(input) {
   delete state.relay;
   state.config = normalizeConfig(state.config);
   if (state.configVersion === 1 && JSON.stringify(state.config) === JSON.stringify(normalizeConfig(LEGACY_CONFIG))) state.config = clone(DEFAULT_CONFIG);
+  if (state.priceSchema !== 2) {
+    for (const [key, old] of Object.entries(OLD_PRICES)) if (state.config[key] === old) state.config[key] = DEFAULT_CONFIG[key];
+    state.priceSchema = 2;
+  }
   state.players = Array.isArray(state.players) ? state.players.filter((p) => p && typeof p.userId === "string").slice(-MAX_ACTIVE_PLAYERS) : [];
   state.duels = Array.isArray(state.duels) ? state.duels : [];
   state.rematchLocks = Array.isArray(state.rematchLocks) ? state.rematchLocks : [];

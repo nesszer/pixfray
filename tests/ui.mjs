@@ -137,24 +137,24 @@ try {
   for (const s of sizes) {
     const { context, page } = await newPage(s);
     let posted = null, bought = null, repriced = false;
-    // The first confirmed buy meets a price a mod just changed (Mouse $30 -> $35); the page reloads the shop list.
+    // The first confirmed buy meets a price a mod just changed (Mouse $10 -> $11); the page reloads the shop list.
     await page.route('**/api/shop/nesszerra', async (r) => {
       if (r.request().method() === 'GET') {
         if (!repriced) return r.continue();
         const res = await r.fetch(), list = await res.json();
-        list.pets = list.pets.map((p) => (p.id === 'mouse' ? { ...p, price: 35 } : p));
+        list.pets = list.pets.map((p) => (p.id === 'mouse' ? { ...p, price: 11 } : p));
         return r.fulfill({ response: res, json: list });
       }
       bought = r.request().postDataJSON();
-      if (!repriced) { repriced = true; return json(r, { error: 'price_changed', reason: 'price_changed', price: 35 }, 409); }
-      return json(r, { ok: true, reason: 'bought', kind: 'pet', id: bought.id, price: 35, dollars: 7, owned: { pets: [bought.id], hats: [], slots: 1 } });
+      if (!repriced) { repriced = true; return json(r, { error: 'price_changed', reason: 'price_changed', price: 11 }, 409); }
+      return json(r, { ok: true, reason: 'bought', kind: 'pet', id: bought.id, price: 11, dollars: 1, owned: { pets: [bought.id], hats: [], slots: 1 } });
     });
     await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
     await page.route('**/api/profile/nesszerra', async (r) => {
-      if (r.request().method() === 'POST') { posted = r.request().postDataJSON(); return json(r, { profile: { ...board[1], bonus: 1, checkins: 4, streak: 3, dollars: 42, ...posted }, revision: 9 }); }
-      return json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now, bonus: 1, checkins: 4, streak: 3, dollars: 42 });
+      if (r.request().method() === 'POST') { posted = r.request().postDataJSON(); return json(r, { profile: { ...board[1], bonus: 1, checkins: 4, streak: 3, dollars: 12, ...posted }, revision: 9 }); }
+      return json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now, bonus: 1, checkins: 4, streak: 3, dollars: 12 });
     });
     await page.goto(base + '/?channel=nesszerra');
     await page.waitForSelector('#save:not([hidden])');
@@ -165,34 +165,34 @@ try {
     assert.equal(await page.locator('#admin-link').isHidden(), true);
     assert.match(await page.locator('#stat-elo').textContent(), /1012/);
     assert.equal((await page.locator('#stat-streak').textContent()).trim(), '3');
-    assert.equal(await page.locator('#stat-dollars').textContent(), '$42');
+    assert.equal(await page.locator('#stat-dollars').textContent(), '$12');
     assert.match(await page.locator('#cmd-give').textContent(), /up to \$100 per stream, after your first 5 duels/);
     await page.waitForSelector('#leaderboard tr.me', { state: 'attached' });
     await page.locator('label[for=char-adventurer]').click();
     await page.locator('.swatch[data-color="#34d399"]').click();
-    // Builds: one free slot; the next costs $200.
+    // Builds: one free slot; the next costs $60.
     assert.match(await page.locator('#build-list').textContent(), /Build 1\s*On stream/);
-    assert.equal(await page.getByRole('button', { name: 'Buy build slot 2 for $200' }).isDisabled(), true, '$42 is not enough for a slot');
+    assert.equal(await page.getByRole('button', { name: 'Buy build slot 2 for $60' }).isDisabled(), true, '$12 is not enough for a slot');
     // Hats and upgrades: 2 wins + 1 check-in point = 3 points; the crown needs 20 wins.
     assert.match(await page.locator('#points-note').textContent(), /3 of 3 points/);
     await page.locator('#tab-shop').click();
-    assert.match(await page.locator('#shop-note').textContent(), /^You have \$42\./);
+    assert.match(await page.locator('#shop-note').textContent(), /^You have \$12\./);
     assert.equal(await page.locator('#hats .char-option:has(#hat-crown)').getAttribute('class'), 'char-option locked');
     await page.locator('label[for=hat-cap]').click();
     assert.ok((await page.locator('#upgrades-help').textContent()).includes('2 from wins and 1 from check-ins'));
     // Shop: hats past the wins can be bought; a pet buy needs a second click to confirm, then the pet is picked.
-    const crown = page.getByRole('button', { name: /^Buy Crown hat for \$200, you need \$158 more$/ });
-    assert.equal(await crown.isDisabled(), true, '$42 is not enough for the crown');
-    assert.equal(await crown.textContent(), 'Need $158 more', 'an item out of reach says how far off it is');
+    const crown = page.getByRole('button', { name: /^Buy Crown hat for \$60, you need \$48 more$/ });
+    assert.equal(await crown.isDisabled(), true, '$12 is not enough for the crown');
+    assert.equal(await crown.textContent(), 'Need $48 more', 'an item out of reach says how far off it is');
     // Cosmetics: every price is the channel's config default; trying one on blocks Save until it's bought.
     // The shop shows one section at a time; its section links switch between them.
     assert.equal(await page.locator('#shop-accessory').isHidden(), true, 'only the Hats section shows first');
     await page.locator('.jump a[href="#shop-accessory"]').click();
     assert.equal(await page.locator('#hat-picker').isHidden(), true);
-    assert.equal(await page.getByRole('button', { name: 'Buy Cape for $80' }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Buy Cape for $25' }).isDisabled(), true);
     await page.locator('.jump a[href="#shop-title"]').click();
     assert.equal(await page.locator('.jump a[aria-current]').textContent(), 'Titles');
-    assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $50' }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $15' }).isDisabled(), true);
     await page.locator('label[for=title-wall]').click();
     assert.match(await page.locator('#save-status').textContent(), /Trying on Iron Wall\. Buy it to save this look\./);
     await page.locator('#save').click();
@@ -203,22 +203,22 @@ try {
     await page.screenshot({ path: shots + '/viewer-shop-' + s.name + '.png', fullPage: true });
     await page.locator('#tab-pets').click();
     assert.equal(await page.locator('#pet-none').isChecked(), true);
-    assert.equal(await page.getByRole('button', { name: 'Buy Dragon for $900' }).isDisabled(), true);
-    const buyMouse = page.getByRole('button', { name: 'Buy Mouse for $30' });
+    assert.equal(await page.getByRole('button', { name: 'Buy Dragon for $300' }).isDisabled(), true);
+    const buyMouse = page.getByRole('button', { name: 'Buy Mouse for $10' });
     await buyMouse.click();
-    assert.equal(await buyMouse.textContent(), 'Confirm: spend $30');
+    assert.equal(await buyMouse.textContent(), 'Confirm: spend $10');
     assert.equal(bought, null, 'the first click only asks to confirm');
     await buyMouse.click();
     await page.waitForFunction(() => /price changed/.test(document.querySelector('#pet-status').textContent));
-    assert.deepEqual(bought, { kind: 'pet', id: 'mouse', price: 30 });
-    assert.equal(await page.locator('#pet-status').textContent(), 'Not bought: the price changed to $35. Check it and buy again.');
-    const buyMouse2 = page.getByRole('button', { name: 'Buy Mouse for $35' });
+    assert.deepEqual(bought, { kind: 'pet', id: 'mouse', price: 10 });
+    assert.equal(await page.locator('#pet-status').textContent(), 'Not bought: the price changed to $11. Check it and buy again.');
+    const buyMouse2 = page.getByRole('button', { name: 'Buy Mouse for $11' });
     await buyMouse2.click(); await buyMouse2.click();
     await page.waitForFunction(() => document.querySelector('#pet-status').textContent.startsWith('Bought'));
-    assert.deepEqual(bought, { kind: 'pet', id: 'mouse', price: 35 });
+    assert.deepEqual(bought, { kind: 'pet', id: 'mouse', price: 11 });
     assert.equal(await page.locator('#pet-mouse').isChecked(), true);
-    assert.equal(await page.locator('#stat-dollars').textContent(), '$7');
-    assert.match(await page.locator('#pet-note').textContent(), /you own 1, you have \$7/);
+    assert.equal(await page.locator('#stat-dollars').textContent(), '$1');
+    assert.match(await page.locator('#pet-note').textContent(), /you own 1, you have \$1/);
     assert.equal(await page.locator('#items-petcolor input').count(), 9, 'eight pet colors and none');
     await page.evaluate(() => scrollTo(0, 0));
     await page.screenshot({ path: shots + '/viewer-pets-' + s.name + '.png', fullPage: true });
@@ -780,7 +780,7 @@ try {
       assert.equal(await page.locator('#next-step').isHidden(), true);
       await page.locator('#tab-shop').click();
       await page.locator('.jump a[href="#shop-title"]').click();
-      assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $50' }).isDisabled(), true, 'buying is closed');
+      assert.equal(await page.getByRole('button', { name: 'Buy Iron Wall title for $15' }).isDisabled(), true, 'buying is closed');
       await noOverflow(page, 'viewer paused signed-in');
       await page.screenshot({ path: shots + '/viewer-paused-signed-in-1280.png' });
     }
