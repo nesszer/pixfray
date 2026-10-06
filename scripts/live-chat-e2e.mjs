@@ -1,10 +1,12 @@
-// Live end-to-end check through real Twitch chat and the StreamElements bot, against the deployed site.
+// Live end-to-end check through real Twitch chat and the channel's bot (the PixFray chat bot where it reads chat,
+// else StreamElements), against the deployed site.
 // Two headed Chromes with remote debugging, each signed in to Twitch (and to PixFray with a saved fighter):
 //   A = the broadcaster (LIVE_A_CDP, default :9333), B = a second account (LIVE_B_CDP, default :9334).
 // Both accounts type every command in the channel's popout chat; each bot reply must show in both tabs.
 // It refuses to run while the channel is live. The test duels change both accounts' Elo, wins and losses.
 // Duel replies must not give the result away: the leaderboard may change only after the overlay announced the winner.
-// Run: npm run test:live   (env: LIVE_CHANNEL, LIVE_ORIGIN, LIVE_A_CDP, LIVE_B_CDP, LIVE_SECRETS, LIVE_OUT)
+// On a PixFray bot channel the overlay shows no winner banner; the bot posts the result line instead, after the overlay.
+// Run: npm run test:live   (env: LIVE_CHANNEL, LIVE_ORIGIN, LIVE_A_CDP, LIVE_B_CDP, LIVE_SECRETS, LIVE_OUT, LIVE_BOT)
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,6 +27,7 @@ const DUPLICATE_MS = 31_000;   // Twitch drops a repeat of the same text from th
 
 fs.mkdirSync(OUT, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+const runStart = Date.now();
 const log = [];
 const note = (s) => { console.log(s); log.push(s); };
 let failed = 0;
@@ -48,10 +51,25 @@ async function isLive() {
   return r.data.length > 0;
 }
 
-// Chat lines as "name: text", without the timestamps some accounts turn on.
+// Chat lines as "name: text", without timestamps or the "Replying to @x: ..." header of a threaded reply.
+const lineText = (n) => {
+  const a = n.querySelector('.chat-author__display-name')?.innerText, b = n.querySelector('[data-a-target="chat-line-message-body"]')?.innerText;
+  return (a && b != null ? a + ': ' + b : n.innerText).replace(/\s+/g, ' ').trim().replace(/^\d{1,2}:\d{2}(\s*[AP]M)?\s*/i, '');
+};
 async function lines(page, freshOnly = false) {
-  return page.$$eval(freshOnly ? '.chat-line__message:not([data-e2e-seen])' : '.chat-line__message', (ns) => ns.map((n) => n.innerText.replace(/\s+/g, ' ').trim().replace(/^\d{1,2}:\d{2}(\s*[AP]M)?\s*/i, '')));
+  return page.$$eval(freshOnly ? '.chat-line__message:not([data-e2e-seen])' : '.chat-line__message', (ns, src) => ns.map((n) => (0, eval)(src)(n)), lineText.toString());
 }
+// Every new chat line with the time it showed, so lines the bot posts on its own (results, expiries) can be found later.
+async function collect(page) {
+  await page.evaluate((src) => {
+    const text = (0, eval)(src);
+    window.__e2eChat = [];
+    document.querySelectorAll('.chat-line__message').forEach((n) => n.setAttribute('data-e2e-log', ''));
+    const grab = () => { for (const n of document.querySelectorAll('.chat-line__message:not([data-e2e-log])')) { n.setAttribute('data-e2e-log', ''); window.__e2eChat.push({ text: text(n), t: Date.now() }); } };
+    new MutationObserver(grab).observe(document.body, { childList: true, subtree: true });
+  }, lineText.toString());
+}
+const chatSince = (since) => A.page.evaluate((s) => window.__e2eChat.filter((l) => l.t >= s), since);
 const markSeen = (page) => page.$$eval('.chat-line__message', (ns) => ns.forEach((n) => n.setAttribute('data-e2e-seen', '')));
 
 // The popout chat tab is reused between runs and left open, so you can watch it.
@@ -70,6 +88,7 @@ async function openChat(cdp) {
 }
 
 let A, B;
+let BOT = '', REPLY_FROM = 'StreamElements';   // set from the channel's state: who answers commands
 const other = (who) => (who === A ? B : A);
 
 // Wait until `page` shows a new line equal to `line` (case-insensitive).
@@ -100,7 +119,7 @@ async function post(who, text) {
   check(await waitLine(other(who).page, mine), `${who.login} "${text}" never appeared in ${other(who).login}'s chat`);
 }
 
-// Post a command, wait for the StreamElements reply matching `expect` after it, and confirm both tabs show it.
+// Post a command, wait for the bot's reply matching `expect` after it, and confirm both tabs show it.
 async function say(who, text, expect) {
   await post(who, text);
   const mine = `${who.login}: ${text}`.toLowerCase();
@@ -110,13 +129,14 @@ async function say(who, text, expect) {
     await sleep(700);
     const fresh = await lines(who.page, true);
     const at = fresh.findIndex((l) => l.toLowerCase() === mine);
-    hit = fresh.slice(at + 1).filter((l) => /^StreamElements:/i.test(l)).map((l) => l.replace(/^StreamElements:\s*/i, '')).find((l) => expect.test(l)) || '';
+    const from = REPLY_FROM.toLowerCase() + ':';
+    hit = fresh.slice(at + 1).filter((l) => l.toLowerCase().startsWith(from)).map((l) => l.slice(from.length).trim()).find((l) => expect.test(l)) || '';
   }
   if (!hit) {
     const fresh = await lines(who.page, true);
     throw new Error(`no reply matching ${expect} to ${who.login} "${text}" within ${REPLY_MS / 1000} s; new lines: ${fresh.join(' || ').slice(0, 300) || 'none'}`);
   }
-  check(await waitLine(other(who).page, 'StreamElements: ' + hit), `reply "${hit}" never appeared in ${other(who).login}'s chat`);
+  check(await waitLine(other(who).page, REPLY_FROM + ': ' + hit), `reply "${hit}" never appeared in ${other(who).login}'s chat`);
   return hit;
 }
 
@@ -156,8 +176,9 @@ async function checkHidden(pre, a, b) {
 }
 
 // Then it must move once the stream has played the duel: winner up Elo and a win, loser down Elo and a loss,
-// and only after the overlay announced the winner.
-async function checkReveal(pre, a, b, banners, since) {
+// and only after the overlay announced the winner. A bot channel gets the bot's result line (after the overlay, no
+// banner); any other channel gets the overlay's winner banner.
+async function checkReveal(pre, a, b, results, since) {
   let post, shownAt = 0;
   for (let i = 0; i < 120 && !shownAt; i++) {
     await sleep(500);
@@ -169,10 +190,18 @@ async function checkReveal(pre, a, b, banners, since) {
   const w0 = row(pre, w.login), l0 = row(pre, l.login), w1 = row(post, w.login), l1 = row(post, l.login);
   check(w1.elo > w0.elo && l1.elo < l0.elo, `Elo did not move: winner ${w0.elo}→${w1.elo}, loser ${l0.elo}→${l1.elo}`);
   check(w1.wins === w0.wins + 1 && w1.losses === w0.losses && l1.losses === l0.losses + 1 && l1.wins === l0.wins, 'wins/losses not counted once');
-  const banner = (await banners()).find((x) => x.t >= since && x.text.toLowerCase().includes(w.login) && / wins/.test(x.text));
-  check(banner, `the overlay never announced ${w.login} as the winner`);
-  check(banner.t <= shownAt, `the board showed the result ${banner.t - shownAt} ms before the overlay did`);
-  return `overlay "${banner.text}" ${((shownAt - banner.t) / 1000).toFixed(1)} s before the board: ${w.login} ${w0.elo}→${w1.elo}, ${l.login} ${l0.elo}→${l1.elo}`;
+  const shown = (await results()).find((x) => x.at >= since && x.text.toLowerCase().includes(w.login) && / wins/.test(x.text));
+  check(shown, `the overlay never announced ${w.login} as the winner`);
+  check(shown.at <= shownAt, `the board showed the result ${shown.at - shownAt} ms before the overlay did`);
+  const detail = `overlay "${shown.text}"${shown.banner ? ' (banner)' : ' (no banner)'} ${((shownAt - shown.at) / 1000).toFixed(1)} s before the board: ${w.login} ${w0.elo}→${w1.elo}, ${l.login} ${l0.elo}→${l1.elo}`;
+  if (!BOT) { check(shown.banner, 'no winner banner on a channel without the PixFray bot'); return detail; }
+  check(!shown.banner, 'the overlay showed a winner banner although the bot announces the result');
+  const want = new RegExp(`^${esc(BOT)}: ${esc(w.login)} beat ${esc(l.login)}(?: on HP| in sudden death)?(?:, flawless)?! ${esc(w.login)} ${w1.elo} Elo \\(\\+${w1.elo - w0.elo}\\), ${esc(l.login)} ${l1.elo} Elo \\(-${l0.elo - l1.elo}\\)\\.$`, 'i');
+  let line;
+  for (let i = 0; i < 40 && !line; i++) { line = (await chatSince(since)).find((x) => want.test(x.text)); if (!line) await sleep(500); }
+  check(line, `no bot result line matching ${want} within 20 s of the board`);
+  check(line.t >= shown.at, `the bot posted the result ${shown.at - line.t} ms before the overlay showed it`);
+  return `${detail}; chat "${line.text}" ${((line.t - shown.at) / 1000).toFixed(1)} s after the overlay`;
 }
 
 let local;
@@ -181,11 +210,15 @@ try {
   if (await isLive()) { note(`STOP ${CHANNEL} is live; this test only posts while the channel is offline.`); process.exit(2); }
   note(`ok ${CHANNEL} is offline`);
   A = await openChat(A_CDP); B = await openChat(B_CDP);
+  await collect(A.page);
   check(A.login !== B.login, 'both Chromes are signed in as ' + A.login);
   note(`ok A=${A.login} (${A_CDP}), B=${B.login} (${B_CDP})`);
   const start = await board();
   for (const who of [A, B]) check(row(start, who.login)?.registered, `${who.login} has no saved fighter; sign in at ${ORIGIN}/?channel=${CHANNEL} and save one`);
   note('ok both accounts have a saved fighter');
+  const { config, chat } = await (await fetch(`${ORIGIN}/api/state/${CHANNEL}`)).json();
+  if (chat?.bot) { BOT = process.env.LIVE_BOT || 'pixfray'; REPLY_FROM = BOT; }
+  note(`ok replies come from ${REPLY_FROM}${BOT ? ' (the PixFray bot reads chat)' : ''}`);
 
   // A headless overlay with its debug hook, to see who walks in and which duels it plays.
   local = await chromium.launch({ channel: 'chrome', headless: true });
@@ -201,18 +234,13 @@ try {
   await overlay.goto(`${ORIGIN}/overlay.html?channel=${CHANNEL}&arena=1&debug=1`);
   await overlay.waitForFunction(() => typeof window.__arenaDebug === 'function', null, { timeout: 20_000 });
   const arena = () => overlay.evaluate(() => window.__arenaDebug());
-  // Replays leave the debug list once played, so note every duel id the overlay starts.
-  // Winner banners also last only seconds, so keep each one with the time it first showed.
+  // Replays leave the debug list once played, so note every duel id the overlay starts. The debug hook keeps each
+  // winner it showed (results: text, banner or not, and the time).
   await overlay.evaluate(() => {
-    window.__e2eReplays = new Set(); window.__e2eBanners = [];
-    setInterval(() => {
-      const d = window.__arenaDebug();
-      d.replays.forEach((r) => window.__e2eReplays.add(r.id));
-      for (const text of d.banners) if (!window.__e2eBanners.some((b) => b.text === text && Date.now() - b.t < 5000)) window.__e2eBanners.push({ text, t: Date.now() });
-    }, 100);
+    window.__e2eReplays = new Set();
+    setInterval(() => window.__arenaDebug().replays.forEach((r) => window.__e2eReplays.add(r.id)), 100);
   });
-  const banners = () => overlay.evaluate(() => window.__e2eBanners);
-  const { config } = await (await fetch(`${ORIGIN}/api/state/${CHANNEL}`)).json();
+  const results = () => overlay.evaluate(() => window.__arenaDebug().results || []);
 
   // Chatting brings the fighter onto the overlay, in the saved look.
   await step(`${B.login} chats and walks onto the overlay in their saved look`, async () => {
@@ -278,7 +306,7 @@ try {
     await sleep(config.respawnMs + 1000);
     return say(A, `!challenge @${B.login}`, /^Rematch in \d+ s! Catch your breath first\.$/);
   });
-  await step('duel 1: the board shows the result only after the overlay announced it', () => checkReveal(pre1, A, B, banners, since1));
+  await step('duel 1: the board shows the result only after the overlay announced it', () => checkReveal(pre1, A, B, results, since1));
 
   // Duel 2: both name each other, which starts the duel without !fight.
   await step(`${A.login} and ${B.login} challenge each other, and chat gets no result`, async () => {
@@ -288,7 +316,7 @@ try {
     duels++;
     checkFightOn(result, pre, A, B);
     const hidden = await checkHidden(pre, A, B);
-    return `${result} — ${hidden}; ${await checkReveal(pre, A, B, banners, since)}`;
+    return `${result} — ${hidden}; ${await checkReveal(pre, A, B, results, since)}`;
   });
 
   // Duel 3: !rematch names nobody; it finds the last opponent, and a !rematch back starts the duel.
@@ -299,7 +327,7 @@ try {
     duels++;
     checkFightOn(result, pre, B, A);
     const hidden = await checkHidden(pre, A, B);
-    return `${result} — ${hidden}; ${await checkReveal(pre, A, B, banners, since)}`;
+    return `${result} — ${hidden}; ${await checkReveal(pre, A, B, results, since)}`;
   });
 
   await step('the overlay played every duel without page errors', async () => {
@@ -312,10 +340,18 @@ try {
 
   // A challenge left unanswered expires after the timeout.
   await step('an unanswered challenge expires', async () => {
+    const since = Date.now();
     await openChallenge(A, B, [`!challenge @${B.login}`, `!challenge ${B.login}`, `!challenge @${B.login.toUpperCase()}`]);
     note(`  waiting ${config.challengeTimeoutMs / 1000 + 3} s for the challenge to expire`);
     await sleep(config.challengeTimeoutMs + 3000);
-    return say(B, '!fight', new RegExp(`^${esc(B.login)}, nobody has challenged you yet`, 'i'));
+    let expired = '';
+    if (BOT) {   // the room alarm has the bot say so, without anyone typing
+      const want = new RegExp(`^${esc(BOT)}: Challenge expired: @${esc(B.login)} didn't answer ${esc(A.login)} within \\d+ s\\.`, 'i');
+      for (let i = 0; i < 20 && !expired; i++) { expired = (await chatSince(since)).find((x) => want.test(x.text))?.text || ''; if (!expired) await sleep(500); }
+      check(expired, 'the bot never said the challenge expired');
+    }
+    const reply = await say(B, '!fight', new RegExp(`^${esc(B.login)}, nobody has challenged you yet`, 'i'));
+    return expired ? `chat "${expired}"; ${reply}` : reply;
   });
 
   await step('a malformed key is refused before the room', async () => {
@@ -329,6 +365,13 @@ try {
     try {
       await admin.goto(`${ORIGIN}/admin/?channel=${CHANNEL}`);
       const snap = await admin.evaluate((u) => fetch(u).then((r) => (r.ok ? r.json() : { status: r.status })), `/api/admin/${CHANNEL}`);
+      if (BOT) {   // the bot answers every command: it heard and sent in this run, and nothing failed
+        const s = snap.botStatus;
+        check(s, `admin answered ${snap.status || 'without botStatus'} (is Chrome A signed in to PixFray?)`);
+        check(s.heardAt >= runStart && s.sentAt >= runStart, `bot last heard ${new Date(s.heardAt).toISOString()}, last sent ${new Date(s.sentAt).toISOString()}`);
+        check(!(s.failedAt >= runStart), `a bot reply failed in this run: ${s.failedReason}`);
+        return `bot: ${s.sent} sent, ${s.failed} failed in all`;
+      }
       check(snap.streamelements, `admin answered ${snap.status || 'without streamelements'} (is Chrome A signed in to PixFray?)`);
       const seen = snap.streamelements.seen || {};
       const stale = ['challenge', 'accept', 'decline', 'rematch', 'top', 'elo', 'help'].filter((a) => !(Date.now() - (seen[a] || 0) < 3600_000));

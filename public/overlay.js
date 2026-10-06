@@ -101,6 +101,7 @@ async function start() {
   const CHAT_BOTS = new Set(['streamelements', 'nightbot', 'moobot', 'fossabot', 'streamlabs', 'wizebot', 'sery_bot', 'soundalerts', 'kofistreambot', 'botrixoficial', 'pixfray']);   // same list as server/channel.js
   const FLOOR = 32;          // room under the feet for the nameplate
   const banners = [];        // winner banners above finished duels
+  const results = [];        // every winner the overlay showed, with or without a banner (debug and e2e)
   let shake = null;          // screen shake after a heavy blow or a knockout
   let push = null;           // knockout push-in: the view zooms toward the knockout for a moment
   const PUSH = .18, PUSH_IN = 250, PUSH_HOLD = 1600, PUSH_OUT = 700;
@@ -579,6 +580,8 @@ async function start() {
           (event.flawless ? ', FLAWLESS!' : '!') + (Number.isFinite(rw?.delta) ? ' ' + signed(rw.delta) + ' Elo' : '');
         // The banner names the winner; the Elo change already floats over both fighters. Where the PixFray bot reads
         // chat it posts the result there once the stream has shown it, so the overlay leaves the banner out.
+        results.push({ duelId: event.duelId, text, banner: !arenaChat?.bot, at: now });
+        if (results.length > 20) results.shift();
         if (arenaChat?.bot) break;
         const sub = [event.decision === 'hp' ? 'TIME! ON HP' : '', event.flawless ? 'FLAWLESS' : ''].filter(Boolean).join(' · ');
         banners.push({ x: meetX ?? winner?.x ?? width / 2, text, title: nameOf(event.winnerId) + ' wins!', sub, color: event.flawless ? '#fde047' : '#ffffff',
@@ -1246,6 +1249,7 @@ async function start() {
       announcement: liveAnnouncements().map(a => a.text).join(' | '),
       meets: [...meetPoints.values()].map(m => Math.round(m.x)),
       banners: banners.filter(b => Date.now() < b.until).map(b => b.text),
+      results: results.map(r => ({ ...r })),
     });
   }
   updateStatus();

@@ -188,7 +188,10 @@ try {
   await page.waitForFunction(() => window.__arenaDebug?.().chat?.bot === true);
   await page.evaluate(() => window.__sendArena(1, { type: 'event', revision: 11, event: { id: 'evt-bot', type: 'duel_completed', duelId: 'duel-2', winnerId: '202', loserId: '101', at: Date.now(), ratings: { '202': { delta: 12 }, '101': { delta: -12 } } } }));
   await page.waitForFunction(() => window.__arenaDebug().players.find((p) => p.userId === '202')?.float === '+12 Elo');   // the event played
-  assert.ok(!(await page.evaluate(() => window.__arenaDebug())).banners.some((b) => /Bex Prime wins/.test(b)), 'no winner banner when the bot announces in chat');
+  const botEnd = await page.evaluate(() => window.__arenaDebug());
+  assert.ok(!botEnd.banners.some((b) => /Bex Prime wins/.test(b)), 'no winner banner when the bot announces in chat');
+  assert.deepEqual(botEnd.results.map((r) => [r.duelId, r.text, r.banner]), [['duel-1', 'Aria Prime wins, FLAWLESS! +11 Elo', true], ['duel-2', 'Bex Prime wins! +12 Elo', false]],
+    'the debug hook lists every winner, with or without a banner');
   assert.ok(apiReads.some(item => item.path === '/api/state/nesszerra' && item.method === 'GET'));
   assert.ok(apiReads.some(item => item.path === '/api/catalog/nesszerra' && item.method === 'GET'));
   assert.deepEqual(errors, []);
