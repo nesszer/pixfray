@@ -330,6 +330,7 @@ try {
   await demoPage.waitForFunction(() => window.__arenaDebug().push, null, { timeout: 45000 });
   await demoPage.waitForFunction(() => window.__arenaDebug?.().results.some(r => /wins/.test(r.text)), null, { timeout: 45000 });
   assert.ok(!(await demoPage.evaluate(() => window.__arenaDebug().banners)).some(b => /wins/.test(b)), 'the demo shows no winner banner');
+  assert.ok((await demoPage.evaluate(() => window.__arenaDebug().players)).some(p => p.bubble), 'the winner says its taunt in a bubble');
   assert.equal(await demoPage.evaluate(() => window.__arenaSockets.length + window.__chatSockets.length), 0,
     'arena demo uses no arena or Twitch websocket');
   assert.deepEqual(demoApiReads, [], 'arena demo does not write or read arena APIs');
@@ -338,14 +339,17 @@ try {
   const flatPage = await context.newPage();
   flatPage.on('pageerror', error => errors.push(error.message));
   await flatPage.route('**/api/**', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
-  await flatPage.goto(base + '/overlay.html?arena=1&demo=1&debug=1&fx=off');
+  await flatPage.goto(base + '/overlay.html?arena=1&demo=1&debug=1&fx=off&bubbles=0');
   await flatPage.waitForFunction(() => window.__arenaDebug?.().duels.some((duel) => Object.values(duel.hp || {}).some((hp) => hp < 100)), null, { timeout: 20000 });
   const flat = await flatPage.evaluate(() => window.__arenaDebug());
   assert.equal(flat.fx, 'off');
   assert.deepEqual([flat.sparks, flat.glows, flat.push], [0, 0, false]);
+  // bubbles=0: the winner's taunt shows no bubble either.
+  await flatPage.waitForFunction(() => window.__arenaDebug().results.length > 0, null, { timeout: 45000 });
+  assert.deepEqual((await flatPage.evaluate(() => window.__arenaDebug().players)).filter(p => p.bubble), [], 'no bubbles with bubbles=0');
   assert.deepEqual(errors, []);
   await context.close();
-  console.log('PASS: authoritative profiles, health snapshots, event deduplication, stale revisions, reconnect, transparent drawing, local-only demo duel, hit effects and fx=off.');
+  console.log('PASS: authoritative profiles, health snapshots, event deduplication, stale revisions, reconnect, transparent drawing, local-only demo duel, hit effects, fx=off and bubbles=0.');
 } finally {
   await browser.close();
 }

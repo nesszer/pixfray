@@ -76,7 +76,7 @@ async function start() {
   // A new deploy changes the snapshot's build id; the overlay reloads itself between duels so OBS never needs a manual refresh.
   let firstBuild = '', staleBuild = false;
   const sound = params.get('sound') === '1';   // quiet duel sounds, off unless asked for
-  const bubbles = params.get('bubbles') !== '0';   // bubbles=0 hides chat-message bubbles; duel taunts still show
+  const bubbles = params.get('bubbles') !== '0';   // bubbles=0 hides every speech bubble: chat messages and win taunts
   const fxOn = params.get('fx') !== 'off';         // fx=off: no hit glow, sparks or knockout push-in
   const status = document.querySelector('#status');
   const storageKey = 'mini-chat:cosmetics:' + channel;
@@ -569,9 +569,9 @@ async function start() {
         // Both stay big and in place for the afterglow, then walk off.
         for (const f of [winner, loser]) if (f) { f.bigUntil = now + KO_HOLD_MS; f.holdUntil = now + KO_HOLD_MS; }
         if (winner) { winner.anim = { kind: 'cheer', start: now, until: now + 1400 }; hop(winner, 220); }
-        // The winner's win effect and taunt (preset lines only).
+        // The winner's win effect and taunt (preset lines only; no taunt bubble with bubbles=0).
         if (winner?.winEffect) winner.winFx = { id: winner.winEffect, start: now, seed: (now % 997) + 1 };
-        if (winner && TAUNTS[winner.taunt]) { winner.text = TAUNTS[winner.taunt]; winner.messageId = ''; winner.bubbleUntil = now + 4500; }
+        if (bubbles && winner && TAUNTS[winner.taunt]) { winner.text = TAUNTS[winner.taunt]; winner.messageId = ''; winner.bubbleUntil = now + 4500; }
         const rw = event.ratings?.[event.winnerId], rl = event.ratings?.[event.loserId];
         if (Number.isFinite(rw?.delta)) floatText(winner, signed(rw.delta) + ' Elo', '#4ade80', 2200);
         if (Number.isFinite(rl?.delta)) floatText(loser, signed(rl.delta) + ' Elo', '#fb7185', 2200);
@@ -1238,7 +1238,8 @@ async function start() {
       replays: [...replays.values()],
       players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
         x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '',
-        grow: Math.round((p.grow || 1) * 100) / 100, die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '' })),
+        grow: Math.round((p.grow || 1) * 100) / 100, die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '',
+        bubble: p.text && Date.now() < p.bubbleUntil ? p.text : '' })),
       announce, cap, build: firstBuild, staleBuild, fx: fxOn ? 'on' : 'off', glows: glows.length, sparks: sparks.length, push: !!push,
       announcement: liveAnnouncements().map(a => a.text).join(' | '),
       meets: [...meetPoints.values()].map(m => Math.round(m.x)),
