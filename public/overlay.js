@@ -77,6 +77,10 @@ async function start() {
   let firstBuild = '', staleBuild = false;
   const sound = params.get('sound') === '1';   // quiet duel sounds, off unless asked for
   const bubbles = params.get('bubbles') !== '0';   // bubbles=0 hides chat-message bubbles; duel taunts still show
+  // 3D duels (src/duel3d.js): on by default, fx=off keeps duels 2D. The demo framed on the site's pages stays 2D unless
+  // fx=3d asks, so those pages run no WebGL. 'off' after a WebGL failure or a slow machine.
+  const fxParam = params.get('fx');
+  let fx3d = arenaEnabled && fxParam !== 'off' && (fxParam === '3d' || window.self === window.top) ? 'on' : 'off';
   const status = document.querySelector('#status');
   const storageKey = 'mini-chat:cosmetics:' + channel;
   let settings = Object.create(null);
@@ -110,6 +114,18 @@ async function start() {
   let lastFrame = performance.now(), lastCleanup = 0;
   const particles = [];
   const trail = createTrail();   // walking trails (cosmetics.js), in screen space
+  // One duel at a time plays in 3D: { id, a, b, begun, ending }. Others stay 2D. The module loads on the first duel.
+  let duel3d = null, duel3dLoading = null, fxDuel = null, fxFrames = [];
+  function loadDuel3D() {
+    if (duel3d || duel3dLoading || fx3d === 'off') return;
+    // the built file in production; the dev server serves the source
+    duel3dLoading = import('/assets/duel3d.js').catch(() => import('/src/duel3d.js')).then(() => {
+      duel3d = globalThis.pixfrayDuel3D();
+      canvas.style.position = 'relative'; canvas.style.zIndex = '1';   // the 2D canvas (bars, dice, names) stays on top
+      document.body.insertBefore(duel3d.canvas, canvas);
+    }).catch(() => { fx3d = 'off'; fxDuel = null; });
+  }
+  const in3D = p => !!(p?.userId && fxDuel?.begun && duel3d && duel3d.phase !== 'idle' && (p.userId === fxDuel.a || p.userId === fxDuel.b));
   function updateStatus(detail = '') {
     if (!status) return;
     const chatStatus = channel + ' · ' + connectionState + ' · ' + players.size + '/' + cap + ' characters';
@@ -371,6 +387,7 @@ async function start() {
   const liveAnnouncements = () => announcements.filter(a => Date.now() < a.until);
   function burst(p, color, count, rise) {
     if (!p) return;
+    if (in3D(p)) { duel3d.burst(p.key, color, count, rise); return; }
     for (let i = 0; i < count; i++) {
       particles.push({ x: p.x + (Math.random() - .5) * size * .5, y: -size * (p.grow || 1) * (.3 + Math.random() * .5), owner: p, color,
         vx: (Math.random() - .5) * 120, vy: rise ? -40 - Math.random() * 60 : -120 - Math.random() * 120, born: Date.now(), life: 700 });
@@ -435,7 +452,9 @@ async function start() {
         const at = Date.now(), amount = Number(event.amount) || 0;
         showHp();
         if (target) target.fx = { look, start: at, until: at + 450 };
-        burst(target, event.crit ? '#fde047' : look === 'smash' ? '#f97316' : look === 'glow' ? '#4ade80' : '#fb7185', event.crit || event.finisher ? 22 : 10, false);
+        const color = event.crit ? '#fde047' : look === 'smash' ? '#f97316' : look === 'glow' ? '#4ade80' : '#fb7185';
+        if (in3D(target)) duel3d.hit(target.key, { color, heavy, crit: event.crit === true, finisher: !!event.finisher, stop });
+        else burst(target, color, event.crit || event.finisher ? 22 : 10, false);
         floatText(target, (event.crit ? 'CRIT! ' : '') + '-' + amount, event.crit ? '#fde047' : '#fb7185');
         if (event.finisher && target) {
           shake = { start: at, until: at + 450, mag: 9 };
@@ -496,6 +515,7 @@ async function start() {
             meetPoints.set(event.duelId, meet);
           }
           for (const id of [event.a, event.b]) { const f = findPlayer(String(id)); if (f && !(f.koHoldUntil > now)) f.koUntil = 0; }   // state may already show the KO
+          if (fx3d === 'on' && !fxDuel && fa && fb) { fxDuel = { id: event.duelId, a: String(event.a), b: String(event.b), lane: (fa.lane + fb.lane) / 2, begun: false }; loadDuel3D(); }
           setTimeout(() => replays.delete(event.duelId), 60000);   // safety net if duel_completed never arrives
         }
         announceArena('Round ' + event.round + ': ' + nameOf(event.a) + ' vs ' + nameOf(event.b), undefined, event.duelId);
@@ -792,6 +812,37 @@ async function start() {
     if (moving) return { frame: pick(a.walk || sprite.frames) };
     return { frame: pick(a.idle || sprite.frames) };
   }
+  // A fighter's look for one sprite frame at the sprite's own resolution, for its voxel copy in a 3D duel: the body
+  // (recolored), hat and accessory, with room around the frame for hats and capes. box: the frame inside the canvas.
+  function composeFrame(sprite, frame, p) {
+    const padX = Math.round(frame.w * .5), padTop = Math.round(frame.h * .5), w = frame.w, h = frame.h;
+    const c = document.createElement('canvas'); c.width = w + padX * 2; c.height = h + padTop;
+    const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+    const look = { headHint: sprite.head, t: 0, moving: false };
+    if (p.accessory) drawAccessory(g, p.accessory, sprite.image, frame, padX, padTop, w, h, { ...look, layer: 'back' });
+    const body = recoloredFrame(sprite.image, frame, p.recolor);
+    if (body) g.drawImage(body, 0, 0, body.width, body.height, padX, padTop, w, h);
+    else g.drawImage(sprite.image, frame.x, frame.y, w, h, padX, padTop, w, h);
+    if (p.hat) drawHat(g, p.hat, sprite.image, frame, padX, padTop, w, h, sprite.head);
+    if (p.accessory) drawAccessory(g, p.accessory, sprite.image, frame, padX, padTop, w, h, look);
+    return { canvas: c, box: { x: padX, y: padTop, w, h } };
+  }
+  // The 3D duel turns on once both fighters stand at the meeting point on one floor line, and back to 2D just before
+  // they walk off (or at once if a fighter leaves). A duel that ends before they meet stays 2D.
+  function stepFxDuel(clock) {
+    const fa = findPlayer(fxDuel.a), fb = findPlayer(fxDuel.b);
+    const open = openDuels().some(d => d.id === fxDuel.id && d.status === 'active');
+    if (!fxDuel.begun) {
+      const loaded = f => (sprites.get(f.renderAvatar) || sprites.get(f.avatar))?.loaded;
+      if (!open || !fa || !fb || fx3d === 'off' || !loaded(fa) || !loaded(fb)) { fxDuel = null; return; }
+      if (!duel3d || !fa.arrived || !fb.arrived || duel3d.phase !== 'idle') return;
+      duel3d.begin({ xa: fa.x, xb: fb.x, feetY: height - FLOOR - fxDuel.lane, s: size * DUEL_GROW, vw: width, vh: height });
+      fxDuel.begun = true; fxFrames = [];
+      return;
+    }
+    if (duel3d.phase === 'idle') { fxDuel = null; return; }
+    if (!fxDuel.ending && (!fa || !fb || (!open && clock >= Math.max(fa.holdUntil || 0, fb.holdUntil || 0) - 450))) { duel3d.end(); fxDuel.ending = true; }
+  }
   // Distance between the two fighters of a duel: room for two grown fighters and their nameplates.
   const duelGap = () => Math.max(size * 2, 190);
   // Hit stop: a fighter's animation clock pauses while a blow lands, then the animation carries on where it stopped.
@@ -867,14 +918,17 @@ async function start() {
   function draw(now) {
     if (demoPaused) { drawing = false; return; }
     if (demo && now - lastFrame < 30) { requestAnimationFrame(draw); return; }
-    const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
+    const frameMs = now - lastFrame, dt = Math.min(0.05, Math.max(0, frameMs / 1000)); lastFrame = now;
     const clock = Date.now();
     ctx.clearRect(0, 0, width, height);
     ctx.save();
+    let shakeX = 0, shakeY = 0;
     if (shake && clock < shake.until) {
       const m = shake.mag * (shake.until - clock) / (shake.until - shake.start);
-      ctx.translate((Math.random() - .5) * 2 * m, (Math.random() - .5) * 2 * m);
+      shakeX = (Math.random() - .5) * 2 * m; shakeY = (Math.random() - .5) * 2 * m;
+      ctx.translate(shakeX, shakeY);
     }
+    if (fxDuel) stepFxDuel(clock);
     if (clock - lastCleanup > 1000) {
       for (const [key, p] of players) if (!p.fromArena && clock - p.lastSeen > 600000) players.delete(key);
       lastCleanup = clock; updateStatus();
@@ -890,6 +944,7 @@ async function start() {
       const opponent = duel ? findPlayer(String(duel.a) === p.userId ? duel.b : duel.a) : null;
       const ko = p.koUntil > clock;
       let moving = false;
+      p.arrived = false;
       if (duel?.status === 'active' && opponent) {
         // Duels happen where the characters stand: both walk to the midpoint between them and face each other.
         let meet = meetPoints.get(duel.id);
@@ -903,6 +958,9 @@ async function start() {
         const diff = target - p.x;
         if (Math.abs(diff) > 2) { p.x += Math.sign(diff) * Math.min(Math.abs(diff), (meet.speed || 110) * dt); moving = true; p.direction = Math.sign(diff); }
         else p.direction = opponent.x >= p.x ? 1 : -1;
+        // a 3D duel puts both fighters on one floor line, so its stage is level
+        if (fxDuel?.id === duel.id) p.lane += (fxDuel.lane - p.lane) * Math.min(1, dt * 8);
+        p.arrived = !moving && (fxDuel?.id !== duel.id || Math.abs(p.lane - fxDuel.lane) < .5);
       } else if (duel?.status === 'pending' && opponent) {
         p.direction = opponent.x >= p.x ? 1 : -1;
       } else if (!ko && !(p.holdUntil > clock)) {
@@ -951,7 +1009,7 @@ async function start() {
       if (anim?.kind === 'dodge' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * .4 * p.direction;
       // The pet trots behind its fighter, facing the same way; it is drawn first so the fighter stays in front.
       if (p.pet) {
-        drawPet(ctx, petArt(p.pet), p.x - p.direction * s * .55, y, s * .42, { facing: p.direction, t: clock + p.phase, moving, tier: p.petTier, tint: recolorFilter(p.petColor) || 'none' });
+        drawPet(ctx, petArt(p.pet), p.x - p.direction * s * (in3D(p) ? .8 : .55), y, s * .42, { facing: p.direction, t: clock + p.phase, moving, tier: p.petTier, tint: recolorFilter(p.petColor) || 'none' });
       }
       if (p.trail && moving && !ko) trail.spawn(p.key, p.trail, p.x, y, s, p.direction, clock);
       ctx.save();
@@ -961,10 +1019,19 @@ async function start() {
         const bob = single && moving ? Math.abs(Math.sin((clock + p.phase) / 140)) * s * .06 : 0;
         const squash = single && moving ? 1 + Math.sin((clock + p.phase) / 70) * .04 : 1;
         const drawHeight = s * (sprite.fit || 1), drawWidth = drawHeight * frame.w / frame.h;
+        // In a 3D duel the voxel fighter takes this pose and the 2D sprite fades out (and back in when the duel ends).
+        const cover = in3D(p) ? duel3d.cover(clock) : 0;
+        if (cover > 0) {
+          const look = (p.renderAvatar || p.avatar) + '|' + frame.x + ',' + frame.y + ',' + frame.w + ',' + frame.h + '|' + (p.recolor || '') + '|' + (p.hat || '') + '|' + (p.accessory || '');
+          const hitFlash = anim?.kind === 'hit' && progress > 0 && progress < .6 ? 1 : anim?.kind === 'attack' && !drawn && progress > 0 ? .35 : 0;
+          duel3d.pose(p.key, { x: p.x + offset, y, h: drawHeight, dir: p.direction, look, source: () => composeFrame(sprite, frame, p),
+            fall: ko && !drawn ? Math.min(1, (clock - (p.koStart || clock - 400)) / 400) : 0, flash: hitFlash });
+          ctx.globalAlpha = 1 - cover;
+        }
         ctx.translate(p.x + offset, y - bob);
         if (ko && !drawn) {
           const fall = Math.min(1, (clock - (p.koStart || clock - 400)) / 400);
-          ctx.globalAlpha = .55;
+          ctx.globalAlpha *= .55;
           ctx.rotate(-p.direction * fall * Math.PI / 2);
         }
         const flash = anim?.kind === 'hit' && progress > 0 && progress < .6 ? 'brightness(2.2) saturate(0.4)'
@@ -987,12 +1054,15 @@ async function start() {
         drawFallback(p, 0, 0, now);
       }
       ctx.restore();
-      drawEffects(p, p.x, y, clock, s, ac);
+      // The 3D knockout push-in zooms the duel; its health bars, dice and names zoom with it (vx, vy, vs).
+      const zoom = in3D(p) ? duel3d.view(clock) : null;
+      const vx = zoom ? zoom.cx + (p.x - zoom.cx) * zoom.z : p.x, vy = zoom ? zoom.cy + (y - zoom.cy) * zoom.z : y, vs = zoom ? s * zoom.z : s;
+      drawEffects(p, vx, vy, clock, vs, ac);
       const health = healthOf(p, duel);
       if (health) {
-        drawHealthBar(p, p.x, y, health, s);
-        const half = Math.max(72, Math.min(116, s * 0.9)) / 2 + 4;   // the bar and its "hp/max" text: bubbles stay clear
-        bars.push({ lo: p.x - half, hi: p.x + half, top: y - s - 40, bottom: y - s - 8 });
+        drawHealthBar(p, vx, vy, health, vs);
+        const half = Math.max(72, Math.min(116, vs * 0.9)) / 2 + 4;   // the bar and its "hp/max" text: bubbles stay clear
+        bars.push({ lo: vx - half, hi: vx + half, top: vy - vs - 40, bottom: vy - vs - 8 });
       }
       ctx.font = 'bold 20px system-ui, sans-serif';
       const shownElo = replayRatings(p.userId)?.before ?? p.arenaProfile?.elo;
@@ -1000,13 +1070,13 @@ async function start() {
         ? p.label + ' · ' + Math.round(Number(shownElo))
         : p.label;
       p.labelWidth = ctx.measureText(rankedLabel).width;
-      labels.push({ text: rankedLabel, color: p.color, x: p.x, y: y + 23, w: p.labelWidth, rank: duel ? Infinity : p.lastSeen, title: p.arenaProfile?.registered ? TITLES[p.title] || '' : '' });
-      if (p.winFx && clock - p.winFx.start < WIN_EFFECT_MS) wins.push({ fx: p.winFx, x: p.x, y, s });
+      labels.push({ text: rankedLabel, color: p.color, x: vx, y: vy + 23, w: p.labelWidth, rank: duel ? Infinity : p.lastSeen, title: p.arenaProfile?.registered ? TITLES[p.title] || '' : '' });
+      if (p.winFx && clock - p.winFx.start < WIN_EFFECT_MS) wins.push({ fx: p.winFx, x: vx, y: vy, s: vs });
       else p.winFx = null;
       if (p.text && clock < p.bubbleUntil && !health) {
         ctx.font = 'bold 14px system-ui, sans-serif';
         const text = p.text.length > 38 ? p.text.slice(0, 37) + '…' : p.text;
-        bubbles.push({ text, x: p.x, top: y - s - 33, w: Math.min(width, ctx.measureText(text).width + 16), until: p.bubbleUntil });
+        bubbles.push({ text, x: vx, top: vy - vs - 33, w: Math.min(width, ctx.measureText(text).width + 16), until: p.bubbleUntil });
       }
     }
     drawLabels(labels, bubbles, bars);
@@ -1015,6 +1085,15 @@ async function start() {
     drawBanners(clock);
     ctx.restore();
     drawAnnouncement();
+    if (duel3d?.render(clock, { x: shakeX, y: shakeY }) && frameMs < 250) {
+      // a machine that can't keep up (frames over 45 ms on average) finishes the duel in 2D and stays 2D;
+      // a long gap is a paused source, not a slow one
+      fxFrames.push(frameMs);
+      if (fxFrames.length >= 45) {
+        if (fxFrames.reduce((a, b) => a + b, 0) / fxFrames.length > 45) { fx3d = 'off'; duel3d.end(); if (fxDuel) fxDuel.ending = true; }
+        fxFrames = [];
+      }
+    }
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
@@ -1160,7 +1239,7 @@ async function start() {
       players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
         x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '',
         grow: Math.round((p.grow || 1) * 100) / 100, die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '' })),
-      announce, cap, build: firstBuild, staleBuild,
+      announce, cap, build: firstBuild, staleBuild, fx: fx3d, fx3d: duel3d ? { duel: fxDuel?.id || '', ...duel3d.state() } : null,
       announcement: liveAnnouncements().map(a => a.text).join(' | '),
       meets: [...meetPoints.values()].map(m => Math.round(m.x)),
       banners: banners.filter(b => Date.now() < b.until).map(b => b.text),

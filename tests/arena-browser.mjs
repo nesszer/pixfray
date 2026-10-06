@@ -322,14 +322,38 @@ try {
   const demoDuel = await demoPage.evaluate(() => window.__arenaDebug().duels[0]);
   assert.equal(demoDuel.status, 'completed', 'a demo duel arrives settled, like a real !fight');
   assert.ok(Object.values(demoDuel.ratings).every(r => r.after - r.before === r.delta), 'demo ratings carry before, after and delta');
+  // By default the two fighters turn into voxel fighters on a 3D stage once they meet, and back to 2D after.
+  await demoPage.waitForFunction(() => window.__arenaDebug?.().fx3d?.phase === 'on', null, { timeout: 15000 });
+  const fx = await demoPage.evaluate(() => window.__arenaDebug());
+  assert.equal(fx.fx, 'on');
+  assert.equal(fx.fx3d.fighters, 2, 'both fighters of the duel are voxel fighters');
+  assert.ok(fx.fx3d.region.w > 100 && fx.fx3d.region.h > 100, '3D region covers the duel');
+  assert.equal(await demoPage.evaluate(() => [...document.querySelectorAll('canvas')].filter(c => c.style.display !== 'none' && c.style.position === 'fixed').length), 1,
+    'one visible 3D canvas during the duel');
   await demoPage.waitForFunction(() => window.__arenaDebug?.().banners.some(b => /wins/.test(b)), null, { timeout: 45000 });
+  await demoPage.waitForFunction(() => window.__arenaDebug().fx3d.phase === 'idle', null, { timeout: 15000 });
+  assert.equal(await demoPage.evaluate(() => [...document.querySelectorAll('canvas')].filter(c => c.style.display !== 'none' && c.style.position === 'fixed').length), 0,
+    'the 3D canvas hides between duels');
   assert.equal(await demoPage.evaluate(() => window.__arenaSockets.length + window.__chatSockets.length), 0,
     'arena demo uses no arena or Twitch websocket');
   assert.deepEqual(demoApiReads, [], 'arena demo does not write or read arena APIs');
   assert.equal(await demoPage.evaluate(() => localStorage.getItem('mini-chat:cosmetics:nesszerra')), null);
+  // fx=off keeps duels 2D: the 3D module is never loaded.
+  const flatPage = await context.newPage();
+  flatPage.on('pageerror', error => errors.push(error.message));
+  const flatLoads = [];
+  flatPage.on('request', r => { if (/duel3d/.test(r.url())) flatLoads.push(r.url()); });
+  await flatPage.route('**/api/**', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+  await flatPage.goto(base + '/overlay.html?arena=1&demo=1&debug=1&fx=off');
+  await flatPage.waitForFunction(() => window.__arenaDebug?.().players.some(p => p.die >= 1 && p.die <= 6), null, { timeout: 15000 });
+  await flatPage.waitForTimeout(1500);
+  const flat = await flatPage.evaluate(() => window.__arenaDebug());
+  assert.equal(flat.fx, 'off');
+  assert.equal(flat.fx3d, null);
+  assert.deepEqual(flatLoads, [], 'fx=off does not load the 3D module');
   assert.deepEqual(errors, []);
   await context.close();
-  console.log('PASS: authoritative profiles, health snapshots, event deduplication, stale revisions, reconnect, transparent drawing, and local-only demo duel.');
+  console.log('PASS: authoritative profiles, health snapshots, event deduplication, stale revisions, reconnect, transparent drawing, local-only demo duel, 3D duel and fx=off.');
 } finally {
   await browser.close();
 }
