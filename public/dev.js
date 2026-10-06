@@ -38,7 +38,7 @@ async function start() {
   S.session = s.data;
   const who = $('#who'); who.replaceChildren();
   if (s.data?.user) who.append(h('span', {}, 'Signed in as ' + s.data.user.displayName), h('button', { class: 'btn btn-small', type: 'button', onclick: signOut }, 'Sign out'));
-  else who.append(h('a', { class: 'btn btn-small', href: LOGIN }, 'Sign in with Twitch'));
+  // signed out: the gate holds the one sign-in button
   if (!s.ok) return gate(errorText(s, 'The server is unreachable'), []);
   if (!s.data.user) return gate('Sign in with the nesszerra Twitch account to open the owner page.', [h('a', { class: 'btn btn-primary', href: LOGIN }, 'Sign in with Twitch')]);
   if (!s.data.owner) return gate('The owner page is limited to the nesszerra account. Moderators can use Mod controls.', [h('a', { class: 'btn', href: '/admin/' }, 'Open mod controls')]);

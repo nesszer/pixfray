@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PixFray owner page — nesszerra</title>
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#17110c">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css" data-design>
@@ -9,7 +10,7 @@
 <body>
 <header class="topbar"><div class="topbar-inner">
   <a class="brand" href="/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
-  <nav aria-label="Pages"><a href="/">Your fighter</a><a href="/admin/">Mod controls</a><a href="/admin/dev/" aria-current="page">Owner</a></nav>
+  <nav aria-label="Pages"><a href="/intro/">See a duel</a><a href="/start/">For streamers</a><a href="/admin/">Mods</a><a href="/admin/dev/" aria-current="page">Owner</a><a class="nav-cta" href="/">Pick your fighter</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 <main class="page">
@@ -20,9 +21,29 @@
   </header>
 
   <!-- Shown until owner access is confirmed. -->
-  <section class="gate" id="gate">
-    <p class="muted" id="gate-text">Checking your access…</p>
-    <div class="toolbar" id="gate-actions"></div>
+  <section class="gate" id="gate" aria-label="Sign in to the owner page">
+    <div class="gate-main">
+      <p id="gate-text">Checking your access…</p>
+      <div class="toolbar" id="gate-actions"></div>
+      <div class="gate-list">
+        <h3>Inside</h3>
+        <ul>
+          <li>Invite links for new streamers, one per Twitch login</li>
+          <li>Setup progress for every channel, with an on/off switch</li>
+          <li>Worker requests, errors and open pages for today</li>
+          <li>Logs per channel, plus test deploys and rollbacks</li>
+        </ul>
+      </div>
+    </div>
+    <div class="gate-inside">
+      <div class="gate-peek" aria-hidden="true" inert>
+        <div class="peek-tabs"><span class="on" aria-disabled="true">Channels</span><span aria-disabled="true">Site health</span><span aria-disabled="true">Logs</span><span class="peek-tag">Locked preview</span></div>
+        <div class="peek-row"><span>Invite a streamer</span><span class="peek-btn">Create invite link</span></div>
+        <div class="peek-row"><span>Channels on</span><span class="switch on"></span></div>
+        <div class="peek-row"><span>Setup progress</span><span class="peek-link">Open stream setup</span></div>
+        <div class="peek-row"><span>A bad deploy</span><span class="peek-link">Roll back a version</span></div>
+      </div>
+    </div>
   </section>
 
   <div id="app" hidden>
@@ -194,5 +215,10 @@
     </div>
   </div>
 </main>
+<footer class="site-foot"><div class="site-foot-inner">
+  <a class="foot-brand" href="/intro/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
+  <nav aria-label="More"><a href="/intro/">See a duel</a><a href="/">Pick a channel</a><a href="/start/">For streamers</a></nav>
+  <p>Duels for Twitch chat. Your fighter is saved per channel, and signing in shares only your public Twitch name.</p>
+</div></footer>
 <script type="module" src="/dev.js"></script>
 </body></html>
