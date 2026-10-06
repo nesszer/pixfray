@@ -13,11 +13,11 @@ import {
 } from "./game.js";
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
-import { checkChatSubscription, liveStream } from "./eventsub.js";
+import { checkChatSubscription, liveStream, sendChatMessage } from "./eventsub.js";
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget } from "./streamelements.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget, seReminderText, botNames } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -201,6 +201,8 @@ export class ChannelRoom extends DurableObject {
     // Test site only (DEV_TOOLS_TOKEN): a pretend live stream for !checkin. stream_id '' = pretend offline.
     sql.exec("CREATE TABLE IF NOT EXISTS dev_live (id INTEGER PRIMARY KEY CHECK (id = 1), stream_id TEXT NOT NULL, started_at INTEGER NOT NULL)");
     sql.exec("CREATE TABLE IF NOT EXISTS checkin_test (id INTEGER PRIMARY KEY CHECK (id = 1), until INTEGER NOT NULL, by_name TEXT NOT NULL)");
+    // The bot's !fray reminder (config.reminderMin): who to post as and where, learned from the bot's last command, and when it's next due.
+    sql.exec("CREATE TABLE IF NOT EXISTS bot_reminder (id INTEGER PRIMARY KEY CHECK (id = 1), broadcaster_id TEXT NOT NULL, bot_id TEXT NOT NULL, origin TEXT NOT NULL, next_at INTEGER NOT NULL DEFAULT 0)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
     sql.exec("CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')");
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
@@ -857,13 +859,15 @@ export class ChannelRoom extends DurableObject {
   async botCommand(channel, msg, origin) {
     const ev = msg.event && typeof msg.event === "object" ? msg.event : {};
     const words = String(ev.message?.text || "").trim().split(/\s+/);
-    const settings = this.seSettings();
+    const se = this.seSettings(), settings = { ...se, names: botNames(se.names) };
     const first = (words[0] || "").toLowerCase();
-    const action = SE_ACTIONS.find((a) => String(settings.names[a] || "").toLowerCase() === first);
+    // "!pay" stays an alias of !give, the name it had while StreamElements' !give (!givepoints) was in the way.
+    const action = SE_ACTIONS.find((a) => String(settings.names[a] || "").toLowerCase() === first) || (first === "!pay" ? "give" : "");
     if (!action) return json({ ok: true, reason: "not_command", reply: "" });
     const subscriptionId = String(msg.subscription?.id || "");
     const state = this.readState(channel);
     if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) return json({ ok: true, reason: "unknown_subscription", reply: "" });
+    this.rememberReminder(String(ev.broadcaster_user_id || ""), validUserId(msg.botId), origin);
     if (!state.chat.connected) {   // Twitch only notifies enabled subscriptions, so this confirms a pending one
       const verified = this.advance(channel, { type: "chat_verified", subscriptionId }, Date.now());
       if (verified.visible) this.broadcast(verified.state);
@@ -1300,6 +1304,8 @@ export class ChannelRoom extends DurableObject {
     }
     for (const profile of state.players) if (profile.respawnAt > 0) due.push(profile.respawnAt);
     for (const lock of state.rematchLocks) due.push(lock.until);
+    const reminder = this.reminderDue(state);
+    if (reminder) due.push(reminder);
     if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, Math.min(...due)));
     else await this.ctx.storage.deleteAlarm();
   }
@@ -1328,7 +1334,45 @@ export class ChannelRoom extends DurableObject {
         if (visible) this.broadcast(result.state);
       }
     }
-    await this.scheduleAlarm(result.state);
+    await this.postReminder(channel, Date.now());
+    await this.scheduleAlarm(this.readState(channel));
+  }
+
+  // Saves who the reminder posts as (the bot) and in which channel, from a bot command. Writes only when something changed.
+  rememberReminder(broadcasterId, botId, origin) {
+    broadcasterId = validUserId(broadcasterId);
+    if (!broadcasterId || !botId) return;
+    origin = String(origin || "").slice(0, 200);
+    const sql = this.ctx.storage.sql, row = sql.exec("SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1").toArray()[0];
+    if (row && row.broadcaster_id === broadcasterId && row.bot_id === botId && row.origin === origin) return;
+    sql.exec("INSERT INTO bot_reminder (id, broadcaster_id, bot_id, origin) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET broadcaster_id = excluded.broadcaster_id, bot_id = excluded.bot_id, origin = excluded.origin", broadcasterId, botId, origin);
+  }
+
+  // When the next !fray reminder is due, or 0: only with the bot connected, a known bot account and config.reminderMin > 0.
+  // The first one comes a full interval after the reminder is turned on (or the room first sees the bot).
+  reminderDue(state, now = Date.now()) {
+    const every = Number(state.config.reminderMin) || 0, sql = this.ctx.storage.sql;
+    const row = sql.exec("SELECT next_at FROM bot_reminder WHERE id = 1").toArray()[0];
+    if (!row) return 0;
+    if (!every || !this.botSource(state)) { if (row.next_at) sql.exec("UPDATE bot_reminder SET next_at = 0 WHERE id = 1"); return 0; }
+    const latest = now + every * 60000;
+    if (!row.next_at || row.next_at > latest) { sql.exec("UPDATE bot_reminder SET next_at = ? WHERE id = 1", latest); return latest; }
+    return row.next_at;
+  }
+
+  // Posts the reminder as the bot when it's due and Twitch says the channel is live. Offline, it just waits another interval.
+  async postReminder(channel, now) {
+    const state = this.readState(channel), due = this.reminderDue(state, now);
+    if (!due || now < due) return;
+    const sql = this.ctx.storage.sql, row = sql.exec("SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1").toArray()[0];
+    sql.exec("UPDATE bot_reminder SET next_at = ? WHERE id = 1", now + state.config.reminderMin * 60000);
+    try {
+      if (!await this.currentStream(channel, now)) return;
+      const out = await sendChatMessage(this.env, { broadcasterId: row.broadcaster_id, senderId: row.bot_id, message: seReminderText({ names: botNames(this.seSettings().names), origin: row.origin, channel }) });
+      logRoomEvent(this, "command", "bot reminder " + (out.sent ? "sent" : "dropped " + out.reason), { channel, via: "reminder" });
+    } catch (error) {
+      logRoomEvent(this, "warn", "bot reminder failed", { channel, error: String(error?.message || error).slice(0, 200) });
+    }
   }
 }
 

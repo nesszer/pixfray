@@ -34,6 +34,8 @@ const DEFAULT_CONFIG = {
   giveEnabled: true,
   giveMaxPerStream: 100,
   giveMinDuels: 5,
+  // The PixFray bot posts the !fray line every this many minutes while the channel is live (0 = off, else 10 to 240).
+  reminderMin: 0,
   // Shop (server/pets.js): pet prices by tier, and hats before their wins at wins needed x hatPricePerWin (0 = off).
   // A duel pays about $4, so a common pet is ~3 duels, a recolor ~5 and a legendary pet ~75 (prices cut to a third on 2026-10-06).
   petPriceCommon: 10,
@@ -646,6 +648,7 @@ function validateConfigPatch(patch) {
     lossDollars: [0, 100],
     giveMaxPerStream: [0, 10_000],
     giveMinDuels: [0, 1_000],
+    reminderMin: [0, 240],
     petPriceCommon: [1, 100_000],
     petPriceUncommon: [1, 100_000],
     petPriceRare: [1, 100_000],
@@ -673,7 +676,7 @@ function validateConfigPatch(patch) {
       continue;   // removed with the relay; old history versions may still carry it, so rollbacks skip it
     } else if (ranges[key]) {
       const value = boundedInt(patch[key], ranges[key][0], ranges[key][1]);
-      if (value === null) return { ok: false, reason: "invalid_config_" + key };
+      if (value === null || (key === "reminderMin" && value > 0 && value < 10)) return { ok: false, reason: "invalid_config_" + key };
       out[key] = value;
     } else if (key === "abilities") {
       if (!patch.abilities || typeof patch.abilities !== "object" || Array.isArray(patch.abilities)) return { ok: false, reason: "invalid_config_abilities" };

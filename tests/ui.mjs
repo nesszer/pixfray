@@ -14,7 +14,7 @@ const now = Date.now();
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const user = { id: '1001', login: 'viewer_one', displayName: 'Viewer_One' };
 const mod = { id: '2002', login: 'mod_two', displayName: 'Mod_Two' };
-const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24, checkinPoints: 1, streakBonus: true, winDollars: 5, lossDollars: 3, giveEnabled: true, giveMaxPerStream: 100, giveMinDuels: 5, petPriceCommon: 30, petPriceUncommon: 75, petPriceRare: 180, petPriceEpic: 420, petPriceLegendary: 900, hatPricePerWin: 10,
+const config = { enabled: true, maxHp: 100, maxDuels: 5, challengeTimeoutMs: 30000, inactivityMs: 45000, respawnMs: 3000, rematchDelayMs: 30000, streamDelayMs: 6000, sharedCooldownMs: 1000, initialElo: 1000, eloK: 24, checkinPoints: 1, streakBonus: true, winDollars: 5, lossDollars: 3, giveEnabled: true, giveMaxPerStream: 100, giveMinDuels: 5, reminderMin: 0, petPriceCommon: 30, petPriceUncommon: 75, petPriceRare: 180, petPriceEpic: 420, petPriceLegendary: 900, hatPricePerWin: 10,
   recolorPrice: 60, petColorPrice: 40, accessoryPrice: 80, trailPrice: 120, effectPrice: 150, tauntPrice: 25, titlePrice: 50, buildSlotPrice: 200, buildSlotPriceMore: 400,
   abilities: { strike: { damage: 20, cooldownMs: 2000 }, heavy: { damage: 35, cooldownMs: 5000 }, heal: { amount: 15, cooldownMs: 12000 } } };
 const board = [

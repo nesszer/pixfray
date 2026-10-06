@@ -406,6 +406,7 @@ test('config edits are validated, versioned, and only affect new duels', () => {
   const id = w.fight('alice', 'bob');
   assert.equal(w.state.configVersion, 1);
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { maxDuels: 9 } } }).reason, 'invalid_config_maxDuels');
+  assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { reminderMin: 5 } } }).reason, 'invalid_config_reminderMin', 'the bot reminder is off (0) or 10 to 240 minutes');
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { bogus: 1 } } }).reason, 'unknown_config_field');
   assert.equal(w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { patch: { abilities: { strike: { amount: 5 } } } } }).reason, 'invalid_config_ability_field');
   const ok = w.apply({ type: 'admin', actorId: 'mod', action: 'config', payload: { baseVersion: 1, patch: { abilities: { strike: { damage: 40 } } } } });

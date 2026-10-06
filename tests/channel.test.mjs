@@ -1017,6 +1017,62 @@ function botRoom(env) {
   return r;
 }
 
+test('chat bot: !give gives dollars (and !pay still does); replies name !give', async () => {
+  const r = botRoom({});
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  await r.connectChat('sub-bot');
+  assert.match((await r.say('u1', 'alice', '!give')).reply, /!give @name/);
+  assert.match((await r.say('u1', 'alice', '!pay')).reply, /!give @name/, '!pay is an alias');
+  assert.equal((await r.say('u1', 'alice', '!givepoints')).reply, '', "StreamElements' name isn't ours");
+});
+
+// The reminder posts through Helix as the bot. Twitch is faked: an app token, then every chat line is recorded.
+function fakeTwitch() {
+  const sent = [], real = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if (url.startsWith('https://id.twitch.tv/oauth2/token')) return Response.json({ access_token: 'app', expires_in: 3600 });
+    if (url.endsWith('/helix/chat/messages')) { sent.push(JSON.parse(init.body)); return Response.json({ data: [{ is_sent: true }] }); }
+    throw new Error('unexpected fetch ' + url);
+  };
+  const AUTH = { idFromName: () => 'auth', get: () => ({ fetch: async () => Response.json(null) }) };
+  return { sent, env: { AUTH, AUTH_SECRET: 'test-auth-secret', TWITCH_CLIENT_ID: 'cid' }, restore: () => { globalThis.fetch = real; } };
+}
+
+test('chat bot reminder: off by default; on, it posts the !fray line as the bot each interval, only while live', async () => {
+  const tw = fakeTwitch();
+  try {
+    const r = botRoom(tw.env);
+    await r.save('u1', 'alice');
+    await r.connectChat('sub-bot');
+    await r.say('u1', 'alice', '!elo');   // the room learns the bot (u9) and the channel (owner1)
+    assert.equal(r.reminderDue(r.readState('nesszerra')), 0, 'off by default');
+    const state = r.readState('nesszerra');
+    r.writeState({ ...state, config: { ...state.config, reminderMin: 30 } });
+    const due = r.reminderDue(r.readState('nesszerra'));
+    assert.ok(due > Date.now() + 29 * 60000 && due <= Date.now() + 30 * 60000, 'first one a full interval out');
+    await r.scheduleAlarm(r.readState('nesszerra'));
+    assert.ok(r.ctx.storage.alarm <= due);
+    // Offline: nothing posted, and it waits another interval.
+    await r.call('/dev-live', { method: 'POST', body: { live: false } });
+    await r.postReminder('nesszerra', due);
+    assert.equal(tw.sent.length, 0);
+    assert.equal(r.reminderDue(r.readState('nesszerra'), due), due + 30 * 60000);
+    // Live: one line from the bot in the channel, with this channel's names and link.
+    await r.call('/dev-live', { method: 'POST', body: { live: true } });
+    await r.postReminder('nesszerra', due + 30 * 60000);
+    assert.equal(tw.sent.length, 1);
+    assert.equal(tw.sent[0].broadcaster_id, 'owner1');
+    assert.equal(tw.sent[0].sender_id, 'u9');
+    assert.match(tw.sent[0].message, /^PixFray duels: gear up at https:\/\/staging\.example\/\?channel=nesszerra.*Commands: !fray, !checkin, !wallet, !ranks$/);
+    await r.postReminder('nesszerra', due + 30 * 60000 + 1000);
+    assert.equal(tw.sent.length, 1, 'not again until the next interval');
+    // Turned off, or the bot disconnected: nothing due.
+    r.writeState({ ...r.readState('nesszerra'), config: { ...r.readState('nesszerra').config, reminderMin: 0 } });
+    assert.equal(r.reminderDue(r.readState('nesszerra')), 0);
+  } finally { tw.restore(); }
+});
+
 test('debug bot: a challenge aimed at the bot is fought back, !fray spar challenges you; off without BOT_DEBUG', async () => {
   const r = botRoom({ BOT_DEBUG: '1' });
   await r.save('u1', 'alice'); await r.save('u9', 'pixbot');

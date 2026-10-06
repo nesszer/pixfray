@@ -114,6 +114,15 @@ export function seHelpText({ names = {}, origin = '', channel = '' } = {}) {
   return `PixFray duels: gear up${link ? ' at ' + link : ' on the PixFray site'}, then name your rival with ${n('challenge')} @name. They answer ${n('accept')}. Again? ${n('rematch')}`;
 }
 
+// The bot's timed reminder (config.reminderMin): the !fray line, plus where to see every command.
+export function seReminderText({ names = {}, origin = '', channel = '' } = {}) {
+  const n = a => names[a] || DEFAULT_SE_NAMES[a];
+  return `${seHelpText({ names, origin, channel })} · Commands: ${n('help')}, ${n('checkin')}, ${n('wallet')}, ${n('top')}`;
+}
+
+// A channel on the PixFray bot has no StreamElements in the way, so its give command is !give (unless mods renamed it).
+export const botNames = names => ({ ...names, give: !names.give || names.give === '!pay' ? '!give' : names.give });
+
 // !look: a link straight to the Fighter tab, where the sender picks or changes their fighter.
 export function seLookText({ who = '', hasFighter = false, origin = '', channel = '' } = {}) {
   const link = siteLink(origin, channel, '#fighter');

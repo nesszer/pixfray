@@ -32,9 +32,13 @@ const GROUPS = [
   { title: "Dollars", fields: [
     { key: "winDollars", label: "Dollars for a win", unit: "$", min: 0, max: 100 },
     { key: "lossDollars", label: "Dollars for a loss", unit: "$", min: 0, max: 100 },
-    { key: "giveEnabled", label: "Viewers can give dollars", bool: true, hint: "!pay @name amount, only while the stream is live" },
+    { key: "giveEnabled", label: "Viewers can give dollars", bool: true, hint: "!give @name amount (!pay with StreamElements), only while the stream is live" },
     { key: "giveMaxPerStream", label: "Most one viewer gives per stream", unit: "$", min: 0, max: 10000 },
     { key: "giveMinDuels", label: "Finished duels before giving", unit: "duels", min: 0, max: 1000 },
+  ] },
+  // The PixFray bot's timed !fray line (server/channel.js postReminder). Only channels the bot reads chat for.
+  { title: "Chat bot", visible: (c, a) => Boolean(a.chatBot) && (a.chatStatus || a.chat || {}).connected === true && (a.chatStatus || a.chat || {}).source !== "streamelements", fields: [
+    { key: "reminderMin", label: "!fray reminder every (0 = off)", unit: "min", min: 0, max: 240 },
   ] },
   // The shop (server/pets.js): pet prices by tier, and locked hats cost this much per win they need (0 = not for sale).
   { title: "Shop", fields: [
@@ -355,7 +359,7 @@ function renderConfig() {
     return;
   }
   editedBase = S.admin.configVersion; editedConfig = config;
-  box.replaceChildren(...GROUPS.map((g) => h("fieldset", { class: "config-group", hidden: g.visible ? !g.visible(config) : false }, h("legend", {}, g.title),
+  box.replaceChildren(...GROUPS.map((g) => h("fieldset", { class: "config-group", hidden: g.visible ? !g.visible(config, S.admin) : false }, h("legend", {}, g.title),
     h("div", { class: "config-grid" }, g.fields.map((f) => {
       const id = "cfg-" + f.key.replace(/\./g, "-"), value = get(config, f.key);
       if (f.bool) return h("div", {}, h("label", { class: "check", for: id }, h("input", { id, type: "checkbox", "data-key": f.key, checked: Boolean(value) }), " " + f.label), h("p", { class: "hint" }, f.hint));
