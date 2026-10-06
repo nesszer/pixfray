@@ -120,6 +120,12 @@ export function seReminderText({ names = {}, origin = '', channel = '' } = {}) {
   return `${seHelpText({ names, origin, channel })} · Commands: ${n('help')}, ${n('checkin')}, ${n('wallet')}, ${n('top')}`;
 }
 
+// The bot's line when a challenge runs out unanswered (StreamElements can't post on its own, so only the bot says it).
+export function seExpiredText({ a = 'someone', b = 'someone', timeoutMs = 30000, names = {} } = {}) {
+  const n = x => names[x] || DEFAULT_SE_NAMES[x];
+  return `Challenge expired: @${b} didn't answer ${a} within ${secs(timeoutMs)} s. ${a}, try again with ${n('challenge')} @${b}`;
+}
+
 // A channel on the PixFray bot has no StreamElements in the way, so its give command is !give (unless mods renamed it).
 export const botNames = names => ({ ...names, give: !names.give || names.give === '!pay' ? '!give' : names.give });
 

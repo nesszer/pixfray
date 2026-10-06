@@ -1131,6 +1131,32 @@ test('chat bot reminder: off by default; on, it posts the !fray line as the bot 
   } finally { tw.restore(); }
 });
 
+test('chat bot: an unanswered challenge gets a "challenge expired" line, from the alarm or the next command, once', async () => {
+  const tw = fakeTwitch();
+  try {
+    const r = botRoom(tw.env);
+    await r.save('u1', 'alice'); await r.save('u2', 'bob');
+    await r.connectChat('sub-bot');
+    const expire = () => { const s = r.readState('nesszerra'); for (const d of s.duels) if (d.status === 'pending') d.expiresAt = Date.now() - 1; r.writeState(s); };
+    // The alarm notices it: the bot posts the line itself, and it counts as a sent reply.
+    assert.match((await r.say('u1', 'alice', '!challenge @bob')).reply, /alice challenges @bob/);
+    expire();
+    await r.alarm();
+    assert.deepEqual(tw.sent.map((m) => [m.sender_id, m.message]), [['u9', "Challenge expired: @bob didn't answer alice within 30 s. alice, try again with !challenge @bob"]]);
+    assert.equal((await r.call('/admin')).body.botStatus.sent, 1);
+    await r.alarm();
+    assert.equal(tw.sent.length, 1, 'said once');
+    // A later command notices it first: the line comes before that command's reply, and the alarm doesn't repeat it.
+    await r.say('u1', 'alice', '!challenge @bob');
+    expire();
+    const late = await r.say('u2', 'bob', '!fight');
+    assert.match(late.replies[0], /^Challenge expired: @bob didn't answer alice/);
+    assert.match(late.replies[1], /nobody has challenged you yet/);
+    await r.alarm();
+    assert.equal(tw.sent.length, 1);
+  } finally { tw.restore(); }
+});
+
 test('debug bot: a challenge aimed at the bot is fought back, !fray spar challenges you; off without BOT_DEBUG', async () => {
   const r = botRoom({ BOT_DEBUG: '1' });
   await r.save('u1', 'alice'); await r.save('u9', 'pixbot');

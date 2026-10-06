@@ -18,7 +18,7 @@ import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
 import { MAX_BOT_COMMANDS, MAX_COMMAND_REPLY, MAX_COUNTER, COMMAND_COOLDOWN_MS, COMMAND_USER_COOLDOWN_MS, commandName, counterName, commandReplyText, replyCounters, renderCommandReply } from "./botcommands.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget, seReminderText, botNames } from "./streamelements.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget, seReminderText, seExpiredText, botNames } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -915,8 +915,9 @@ export class ChannelRoom extends DurableObject {
     let lines;
     if (mode === "spar" || mode === "e2e") lines = await this.botDebug(channel, mode, { ev, words, botId, origin, settings, subscriptionId });
     else {
+      const since = this.readState(channel).revision;
       const out = await (await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })).json();
-      lines = [out.reply, ...(botId && validUserId(input.userId) !== botId ? await this.botAnswer(channel, input, out, { botId, origin, settings, subscriptionId }) : [])];
+      lines = [...this.expiredLines(this.readState(channel), since), out.reply, ...(botId && validUserId(input.userId) !== botId ? await this.botAnswer(channel, input, out, { botId, origin, settings, subscriptionId }) : [])];
     }
     return this.sendBotLines(lines, channel);
   }
@@ -1466,6 +1467,7 @@ export class ChannelRoom extends DurableObject {
     if (!row) return;
     const channel = normalizeChannel(row.channel);
     if (!channel) return;
+    const since = this.readState(channel).revision;
     let result = this.advance(channel, { type: "tick" }, Date.now());
     if (result.changed) this.broadcast(result.state);
     const state = result.state;
@@ -1485,8 +1487,38 @@ export class ChannelRoom extends DurableObject {
         if (visible) this.broadcast(result.state);
       }
     }
+    await this.postExpired(channel, since);
     await this.postReminder(channel, Date.now());
     await this.scheduleAlarm(this.readState(channel));
+  }
+
+  // "Challenge expired" lines for challenges that ran out after revision `since`, on a channel the bot reads. Each is said
+  // once: the alarm and a later command can both notice the same one.
+  expiredLines(state, since) {
+    if (!this.botSource(state)) return [];
+    this.expiredSaid ||= new Set();
+    const names = botNames(this.seSettings().names), lines = [];
+    const name = (id) => { const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config); return p?.displayName || p?.username || "someone"; };
+    for (const e of state.events) {
+      if (e.type !== "challenge_expired" || Number(e.id) <= since || this.expiredSaid.has(e.id)) continue;
+      this.expiredSaid.add(e.id);
+      lines.push(seExpiredText({ a: name(e.a), b: name(e.b), timeoutMs: state.config.challengeTimeoutMs, names }));
+    }
+    if (this.expiredSaid.size > 200) this.expiredSaid = new Set([...this.expiredSaid].slice(-100));
+    return lines;
+  }
+
+  // Posts the expired-challenge lines from the alarm as the bot (there is no chat line to answer), under the reply cap.
+  async postExpired(channel, since) {
+    const lines = this.expiredLines(this.readState(channel), since);
+    if (!lines.length) return;
+    const row = this.ctx.storage.sql.exec("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1").toArray()[0];
+    if (!row?.broadcaster_id || !row?.bot_id) return;
+    const { replies } = await this.sendBotLines(lines, channel).json();
+    for (const message of replies) {
+      try { this.noteBotSent(channel, [await sendChatMessage(this.env, { broadcasterId: row.broadcaster_id, senderId: row.bot_id, message })]); }
+      catch (error) { this.noteBotSent(channel, [{ sent: false, reason: String(error?.message || error) }]); }
+    }
   }
 
   // Saves who the reminder posts as (the bot) and in which channel, from a bot command. Writes only when something changed.

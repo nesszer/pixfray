@@ -244,6 +244,10 @@ Bot replies and status (room table `bot_status`, one row):
 - Replies the room holds back are logged as `warn` "bot reply held back: <reason>", at most once a
   minute per reason: `reply_limit` (over 18 replies in 30 s), `unknown_subscription` (a message
   from an old chat subscription). A custom command on its cooldown is counted but not logged.
+- A challenge that runs out unanswered gets one line from the bot: "Challenge expired: @b didn't
+  answer a within 30 s. a, try again with !challenge @b". The room alarm posts it through Helix
+  (counted as a sent or dropped reply); if a chat command notices the expiry first, the line goes
+  before that command's reply. StreamElements channels get no such line.
 - `GET /api/admin/:channel` returns `botStatus` `{heardAt, heard, sentAt, sent, failedAt, failed,
   failedReason, failedText, heldAt, heldReason, recent, cap}`; the admin page shows it under Chat.
 - `!fray debug` from the broadcaster, a mod or the bot answers one line: chat connected or not,
