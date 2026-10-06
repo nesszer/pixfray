@@ -268,7 +268,7 @@ function renderAll() {
     stat("In the arena", a.players.length));
   if (document.activeElement !== $("#announce")) $("#announce").value = a.config.announce || "off";
   if (document.activeElement !== $("#cap")) $("#cap").value = a.config.maxOnStream || 50;
-  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe(); renderChecklist(); renderPower();
+  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe(); renderChecklist(); renderCheckinTest(); renderPower();
 }
 // Where chat comes from and whether it works. StreamElements counts as working only once a command has
 // arrived with this site's key; choosing it as the source isn't enough. The Stream setup tab uses the same rules.
@@ -732,6 +732,28 @@ $("#duel-module-off").addEventListener("change", async (e) => {
   setStatus($("#check-status"), box.checked ? "Saved: the Duel module is off." : "Saved: the Duel module step is open again.", "ok");
   await load();
 });
+// ---------- check-in test mode: !checkin answers while offline for 15 minutes, saving nothing ----------
+function renderCheckinTest() {
+  const t = S.admin.checkinTest, on = !!t && t.until > Date.now();
+  $("#checkin-test-title").textContent = on ? "!checkin test mode is on" : "Test !checkin while offline";
+  $("#checkin-test-text").replaceChildren(on
+    ? "Until " + new Date(t.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + (t.by ? " (turned on by " + t.by + ")" : "") + ", "
+    : "For 15 minutes, ", h("code", {}, "!checkin"), on
+    ? " answers while the stream is offline with a reply that starts [Test, not saved]. Nothing is saved: no points, no streak. While the stream is live, check-ins count as usual."
+    : " answers while the stream is offline and shows what a viewer would get. Nothing is saved: no points, no streak.");
+  $("#checkin-test-toggle").textContent = on ? "Turn test mode off" : "Turn on test mode for 15 minutes";
+}
+$("#checkin-test-toggle").addEventListener("click", async (e) => {
+  const button = e.currentTarget, on = !(S.admin.checkinTest && S.admin.checkinTest.until > Date.now());
+  button.disabled = true;
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: "checkinTest", value: on } });
+  button.disabled = false;
+  if (!r.ok) return setStatus($("#checkin-test-status"), "Couldn't change it: " + errorText(r) + ".", "error");
+  S.admin.checkinTest = r.data.checkinTest;
+  renderCheckinTest();
+  setStatus($("#checkin-test-status"), on ? "Test mode is on. Type !checkin in chat to try it." : "Test mode is off.", "ok");
+});
+
 // ---------- turning PixFray off (signed-up channels; the broadcaster or the owner, and only the owner undoes the owner's off) ----------
 const mayPower = () => !!(S.access?.broadcaster || S.access?.owner) && ["on", "paused"].includes(S.admin?.channelState);
 function renderPower() {

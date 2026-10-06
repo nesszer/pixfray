@@ -145,6 +145,7 @@ export function seCheckinText(r, { who = '', origin = '', channel = '', maxPoint
       const gain = r.points ? `+${r.points} upgrade point${r.points === 1 ? '' : 's'} (${extras})` : `${extras}`;
       const link = siteLink(origin, channel, '#upgrades');
       const total = r.total >= maxPoints ? `${maxPoints} of ${maxPoints} points, the most a fighter can hold.` : `${r.total} of ${maxPoints} points.`;
+      if (r.test) return `[Test, not saved] @${me} would check in: ${gain}. ${total}`;
       return `@${me} checked in: ${gain}. ${total}${r.points && link ? ' Spend them at ' + link : ''}`;
     }
     case 'already_checked_in': return `@${me}, you already checked in this stream (${r.streak}-stream streak). Come back next stream!`;

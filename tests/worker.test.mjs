@@ -561,3 +561,12 @@ test('chat bot: several reply lines go out in order, about a second apart, and o
   assert.deepEqual(waits, [1100, 1100]);
   assert.deepEqual(out.map((r) => r.sent), [false, true, true]);
 });
+
+test('check-in test mode: a mod or the owner turns it on through /api/admin; viewers cannot', async () => {
+  const f = environment();
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'checkinTest', value: true }, await signedIn(f)), f.env)).status, 403);
+  assert.equal(f.forwarded.some((x) => x.path === '/checkin-test'), false);
+  const res = await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'checkinTest', value: true }, await signedIn(f, true)), f.env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(f.forwarded.find((x) => x.path === '/checkin-test').body, { on: true, by: 'V' });
+});

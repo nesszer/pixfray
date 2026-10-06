@@ -590,7 +590,9 @@ try {
     await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
     await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
     await page.route('**/api/admin/nesszerra', (r) => {
-      if (r.request().method() === 'POST') { const body = r.request().postDataJSON(); posts.push(body); if (body.action === 'setDuelModuleOff') duelModuleOff = body.value; return json(r, { ok: true }); }
+      if (r.request().method() === 'POST') { const body = r.request().postDataJSON(); posts.push(body); if (body.action === 'setDuelModuleOff') duelModuleOff = body.value;
+        if (body.action === 'checkinTest') return json(r, { ok: true, checkinTest: body.value ? { until: Date.now() + 15 * 60000, by: 'ModMia' } : null });
+        return json(r, { ok: true }); }
       return json(r, { type: 'snapshot', channel: 'nesszerra', revision: 5, paused: false, chat: { connected: true, lastSeen: now, status: 'enabled' }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
         chatStatus, history: [{ version: 1, config, actorId: 'system', at: now - 86400000, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 }, streamelements: streamelements(), overlays, modsReady: true, access: { owner: false, moderator: true, canManage: true } });
     });
@@ -632,6 +634,18 @@ try {
     await page.waitForFunction(() => document.querySelector('#check-title').textContent === 'Stream setup is done', null, { timeout: 15000 });
     assert.match(await page.locator('#check-overlay').textContent(), /1 overlay is connected right now/);
     assert.equal(await page.locator('#setup-next').isHidden(), true);
+    // check-in test mode: on for 15 minutes, then off again
+    assert.equal(await page.locator('#checkin-test-title').textContent(), 'Test !checkin while offline');
+    await page.click('#checkin-test-toggle');
+    await page.waitForFunction(() => document.querySelector('#checkin-test-title').textContent === '!checkin test mode is on');
+    assert.deepEqual(posts.at(-1), { action: 'checkinTest', value: true });
+    assert.match(await page.locator('#checkin-test-text').textContent(), /^Until .+ \(turned on by ModMia\), !checkin answers while the stream is offline/);
+    assert.equal(await page.locator('#checkin-test-toggle').textContent(), 'Turn test mode off');
+    await noOverflow(page, 'checkin test ' + s.name);
+    await page.locator('#checkin-test').screenshot({ path: shots + '/admin-checkin-test-' + s.name + '.png' });
+    await page.click('#checkin-test-toggle');
+    await page.waitForFunction(() => document.querySelector('#checkin-test-title').textContent === 'Test !checkin while offline');
+    assert.deepEqual(posts.at(-1), { action: 'checkinTest', value: false });
     await context.close();
   }
   // 7b. Step 4 "Let your moderators help" reads differently for the broadcaster, the site owner on another channel, and a moderator.

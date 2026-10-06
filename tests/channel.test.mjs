@@ -1055,3 +1055,41 @@ test('debug bot: !fray e2e plays every command once against the asker and posts 
   assert.match((await r.say('u9', 'pixbot', '!fray e2e @nobody')).reply, /@nobody has no saved fighter/);
   assert.match((await r.say('owner1', 'nesszerra', '!fray e2e')).reply, /@nesszerra has no saved fighter/);
 });
+
+test('!checkin test mode: answers while offline with what a check-in would give, saves nothing, ends by itself, and steps aside when live', async (t) => {
+  const r = room({ DEV_TOOLS_TOKEN: 'x'.repeat(40) }, { quick: true });
+  const se = (await r.call('/admin')).body.streamelements;
+  let m = 0;
+  const say = async (id, login) => (await r.call('/se?origin=https%3A%2F%2Ftest.example', { method: 'POST', body: { key: se.secret, action: 'checkin', userId: id, username: login, displayName: login, messageId: 't' + (++m) } })).body.reply;
+  const live = (body) => r.call('/dev-live', { method: 'POST', body });
+  const test = (on) => r.call('/checkin-test', { method: 'POST', body: { on, by: 'ModMia' } });
+  await r.save('u1', 'alice');
+  await live({ live: true, streamId: 's1' });
+  assert.match(await say('u1', 'alice'), /^@alice checked in: \+1 upgrade point \(1-stream streak\)/);
+  await live({ live: false });
+  assert.equal((await r.call('/admin')).body.checkinTest, null);
+  const on = (await test(true)).body.checkinTest;
+  assert.equal(on.by, 'ModMia');
+  assert.ok(on.until > Date.now() + 14 * 60_000 && on.until <= Date.now() + 15 * 60_000);
+  assert.deepEqual((await r.call('/admin')).body.checkinTest, on);
+  const before = (await r.call('/profile?userId=u1')).body;
+  const reply = '[Test, not saved] @alice would check in: +1 upgrade point (2-stream streak). 2 of 20 points.';
+  assert.equal(await say('u1', 'alice'), reply, 'the next stream continues the streak');
+  assert.equal(await say('u1', 'alice'), reply, 'repeatable: nothing was saved');
+  const after = (await r.call('/profile?userId=u1')).body;
+  assert.deepEqual([after.bonus, after.checkins, after.streak], [before.bonus, before.checkins, before.streak]);
+  assert.equal(r.ctx.storage.sql.exec('SELECT COUNT(*) AS n FROM streams').toArray()[0].n, 1, 'no stream row for a test');
+  assert.match(await say('u2', 'bob'), /no fighter/, 'a viewer without a fighter still hears how to get one');
+  // live wins over test mode: a real check-in, saved
+  await live({ live: true, streamId: 's2' });
+  assert.match(await say('u1', 'alice'), /^@alice checked in: \+1 upgrade point \(2-stream streak\)/);
+  await live({ live: false });
+  assert.equal((await test(false)).body.checkinTest, null);
+  assert.equal(await say('u1', 'alice'), 'Check-ins open while nesszerra is live. See you next stream!');
+  // it switches itself off after 15 minutes
+  await test(true);
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now + 15 * 60_000 + 1);
+  assert.equal(await say('u1', 'alice'), 'Check-ins open while nesszerra is live. See you next stream!');
+  assert.equal((await r.call('/admin')).body.checkinTest, null);
+});

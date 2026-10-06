@@ -229,6 +229,11 @@ export default {async fetch(request,env,ctx){
         const out=await r.json();if(!r.ok)return json(out,r.status);
         return json({ok:true,streamelements:seView(env,url,channel,out.streamelements)});
       }
+      // Check-in test mode: !checkin answers while offline for 15 minutes, saving nothing. Any mod can turn it on or off.
+      if(data.action==='checkinTest'){
+        const r=await roomFetch(null,env,channel,'/checkin-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on:data.value===true,by:user.displayName||user.login})});
+        return json(await r.json(),r.status);
+      }
       if(data.action==='connectChat'&&env.CHAT_BOT!=='1'&&(channel!==site.defaultChannel||env.SE_ONLY==='1'))return json({error:'This channel uses StreamElements for chat. Choose Use StreamElements.'},400);
       if(data.action==='connectChat'||data.action==='disconnectChat'||data.action==='useStreamElements')return await chatAction(env,url,channel,data.action,{takeover:data.takeover===true});
       return internal(request,env,channel,'/admin',{...data,actorId:user.id,actorName:user.displayName||user.login});

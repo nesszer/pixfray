@@ -27,6 +27,7 @@ const MAX_LIVE_SOCKETS = 200;
 const MAX_SOCKETS_PER_CLIENT = 16;      // one network can't fill the room and lock OBS out
 const REJECTED_WRITE_MS = 60_000;          // a wrong StreamElements key is recorded at most once a minute
 const MAX_CONFIG_HISTORY = 50;
+const CHECKIN_TEST_MS = 15 * 60_000;     // check-in test mode switches itself off after this
 const SEEN_WRITE_MS = 60_000;             // each command's "last seen" time is written at most once a minute
 const BOT_REPLIES_PER_30S = 18;          // the bot's chat replies per channel; Twitch allows 20 per 30 s unless it is a mod
 // !fray e2e (BOT_DEBUG): [who, action, target, expected reasons, gate]. B is the bot account, O the opponent. A gate step
@@ -199,6 +200,7 @@ export class ChannelRoom extends DurableObject {
     sql.exec("CREATE TABLE IF NOT EXISTS streams (seq INTEGER PRIMARY KEY, stream_id TEXT NOT NULL UNIQUE, started_at INTEGER NOT NULL)");
     // Test site only (DEV_TOOLS_TOKEN): a pretend live stream for !checkin. stream_id '' = pretend offline.
     sql.exec("CREATE TABLE IF NOT EXISTS dev_live (id INTEGER PRIMARY KEY CHECK (id = 1), stream_id TEXT NOT NULL, started_at INTEGER NOT NULL)");
+    sql.exec("CREATE TABLE IF NOT EXISTS checkin_test (id INTEGER PRIMARY KEY CHECK (id = 1), until INTEGER NOT NULL, by_name TEXT NOT NULL)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
     sql.exec("CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')");
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
@@ -280,7 +282,7 @@ export class ChannelRoom extends DurableObject {
       this.seedConfigHistory(state);
       const history = this.ctx.storage.sql.exec("SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?", MAX_CONFIG_HISTORY).toArray()
         .map((row) => ({ version: row.version, config: safeJsonParse(row.config, {}), actorId: row.actor_id, actorName: row.actor_name, at: row.at, note: row.note }));
-      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings(), overlays: this.ctx.getWebSockets("overlay").length });
+      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings(), overlays: this.ctx.getWebSockets("overlay").length, checkinTest: this.checkinTest() });
     }
 
     if (path === "/leaderboard" && request.method === "GET") {
@@ -393,6 +395,14 @@ export class ChannelRoom extends DurableObject {
         this.ctx.storage.sql.exec("UPDATE se_settings SET duel_module_off = ? WHERE id = 1", body.value.value === true ? 1 : 0);
       } else return json({ error: "unknown StreamElements action" }, 400);
       return json({ ok: true, streamelements: this.seSettings() });
+    }
+    // Check-in test mode (mods, via /api/admin action checkinTest): {on:true} for CHECKIN_TEST_MS, {on:false} ends it.
+    if (path === "/checkin-test" && request.method === "POST") {
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      if (body.value.on === true) this.ctx.storage.sql.exec("INSERT OR REPLACE INTO checkin_test (id, until, by_name) VALUES (1, ?, ?)", Date.now() + CHECKIN_TEST_MS, String(body.value.by || "").slice(0, 48));
+      else this.ctx.storage.sql.exec("DELETE FROM checkin_test");
+      return json({ ok: true, checkinTest: this.checkinTest() });
     }
     // Test site only (worker dev token): one chat line as if Twitch had delivered it on the current subscription.
     if (path === "/dev-chat" && request.method === "POST") {
@@ -1005,20 +1015,23 @@ export class ChannelRoom extends DurableObject {
       logRoomEvent(this, "warn", "twitch stream lookup failed", { channel, error: String(error?.message || error).slice(0, 200) });
       return { reason: "twitch_error" };
     }
-    if (!stream) return { reason: "not_live" };
+    // Test mode while offline: the check-in a next stream would give, worked out the same way but never saved.
+    const test = !stream && Boolean(this.checkinTest(now));
+    if (!stream && !test) return { reason: "not_live" };
     return this.ctx.storage.transactionSync(() => {
       const sql = this.ctx.storage.sql, state = this.readState(channel), config = state.config;
       const row = sql.exec("SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at FROM profiles WHERE user_id = ?", userId).toArray()[0];
       if (!row) return { reason: "no_fighter" };
-      if (row.last_stream === stream.id) return { reason: "already_checked_in", streak: row.streak };
-      sql.exec("INSERT OR IGNORE INTO streams (stream_id, started_at) VALUES (?, ?)", stream.id, stream.startedAt || now);
-      const seq = sql.exec("SELECT seq FROM streams WHERE stream_id = ?", stream.id).toArray()[0].seq;
+      if (!test && row.last_stream === stream.id) return { reason: "already_checked_in", streak: row.streak };
+      if (!test) sql.exec("INSERT OR IGNORE INTO streams (stream_id, started_at) VALUES (?, ?)", stream.id, stream.startedAt || now);
+      const seq = test ? (sql.exec("SELECT MAX(seq) AS seq FROM streams").toArray()[0]?.seq || 0) + 1 : sql.exec("SELECT seq FROM streams WHERE stream_id = ?", stream.id).toArray()[0].seq;
       const missed = row.last_stream_seq > 0 ? seq - row.last_stream_seq - 1 : -1;
       const freeMiss = missed === 1 && now - row.free_miss_at >= FREE_MISS_MS;
       const streak = missed === 0 || freeMiss ? row.streak + 1 : 1;
       const milestone = Boolean(config.streakBonus) && STREAK_MILESTONES.includes(streak);
       const points = config.checkinPoints + (milestone ? 1 : 0);
       const bonus = Math.min(MAX_BONUS, row.bonus_points + points);
+      if (test) return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total: pointsFor(row.wins, bonus) };
       sql.exec("UPDATE profiles SET bonus_points = ?, checkins = checkins + 1, streak = ?, last_stream = ?, last_stream_seq = ?, free_miss_at = ? WHERE user_id = ?",
         bonus, streak, stream.id, seq, freeMiss ? now : row.free_miss_at, userId);
       const active = state.players.find((p) => p.userId === userId);
@@ -1168,6 +1181,12 @@ export class ChannelRoom extends DurableObject {
       paid = true;
     }
     return paid;
+  }
+
+  // Check-in test mode: {until, by} while on, else null. An expired row reads as off.
+  checkinTest(now = Date.now()) {
+    const row = this.ctx.storage.sql.exec("SELECT until, by_name FROM checkin_test WHERE id = 1").toArray()[0];
+    return row && row.until > now ? { until: row.until, by: row.by_name } : null;
   }
 
   // The channel's live stream {id, startedAt} or null. Twitch's answer is kept for a minute; a failed lookup throws.
