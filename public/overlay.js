@@ -76,6 +76,7 @@ async function start() {
   // A new deploy changes the snapshot's build id; the overlay reloads itself between duels so OBS never needs a manual refresh.
   let firstBuild = '', staleBuild = false;
   const sound = params.get('sound') === '1';   // quiet duel sounds, off unless asked for
+  const bubbles = params.get('bubbles') !== '0';   // bubbles=0 hides chat-message bubbles; duel taunts still show
   const status = document.querySelector('#status');
   const storageKey = 'mini-chat:cosmetics:' + channel;
   let settings = Object.create(null);
@@ -587,7 +588,7 @@ async function start() {
     applyArenaProfile(p);
     if (!p.arenaProfile?.registered) queueLook(username);
     const ranked = Boolean(p.arenaProfile?.registered);
-    p.lastSeen = now; p.messageId = message.id || ''; p.text = String(message.text || '').slice(0, 72); p.bubbleUntil = now + 4000;
+    p.lastSeen = now; p.messageId = message.id || ''; p.text = bubbles ? String(message.text || '').slice(0, 72) : ''; p.bubbleUntil = now + 4000;
     const command = parseCommand(message.text || '');
     if (command?.type === 'jump') {
       if (now - p.lastJump >= 3000) { hop(p, 300); p.lastJump = now; }

@@ -42,7 +42,8 @@ can turn PixFray off at any time without losing fighters or ranks.
 - Mods tune every number in the balance editor on the mod controls page (versioned and undoable).
 
 Overlay link options: `channel`, `size=32..96`, `cap=1..100`, `arena=1` (duels), `announce=top|bottom`,
-`sound=1` (quiet synthesized duel sounds), `demo=1` (a preview with fake chatters), `debug=1`.
+`sound=1` (quiet synthesized duel sounds), `bubbles=0` (no chat-message bubbles; duels
+still show), `demo=1` (a preview with fake chatters), `debug=1`.
 
 ## Run it locally
 
