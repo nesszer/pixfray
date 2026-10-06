@@ -705,7 +705,7 @@ function liveLanding() {
   import("./fighter3d.js").then(({ createFighter3D }) => {
     const canvas = h("canvas", { class: "landing-3d", "aria-hidden": "true" });
     $("#pick").prepend(canvas);
-    try { landing.arena = createFighter3D(canvas, { zoom: 0.9 }); } catch { canvas.remove(); return; }
+    try { landing.arena = createFighter3D(canvas, { zoom: 0.8 }); } catch { canvas.remove(); return; }
     const cap = h("p", { class: "landing-who", "aria-hidden": "true" });
     canvas.after(cap);
     $("#pick").classList.add("is-live");

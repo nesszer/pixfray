@@ -1580,3 +1580,5 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
 .step-grid strong { font-family: var(--font-display); font-weight: 650; letter-spacing: 0; }
 /* admin gate: the locked tabs read at full contrast; the lock label and the not-allowed cursor say they're locked */
 .gate-peek .peek-tabs > span[aria-disabled] { opacity: 1; color: var(--text-2); }
+/* picker: the island is at most one screen tall, so with any number of channels the fighter stands in the first view, feet included */
+@media (min-width: 901px) { .landing-3d { bottom: auto; height: min(100%, 100svh); } }
