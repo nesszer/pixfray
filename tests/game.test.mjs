@@ -757,6 +757,15 @@ test('StreamElements "seeing stars" names the knocked-out fighter, not the one w
   assert.equal(reply({ userId: 'u2' }), 'That fight is still playing on stream. Give it a few seconds!');
 });
 
+test('the bot result line says how the duel was won', async () => {
+  const { seResultText } = await import('../server/streamelements.js');
+  const w = { after: 1014, delta: 14 }, l = { after: 989, delta: -11 };
+  assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l }), 'Bean beat Aria! Bean 1014 Elo (+14), Aria 989 Elo (-11).');
+  assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l, flawless: true }), 'Bean beat Aria, flawless! Bean 1014 Elo (+14), Aria 989 Elo (-11).');
+  assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l, decision: 'hp' }), 'Bean beat Aria on HP! Bean 1014 Elo (+14), Aria 989 Elo (-11).');
+  assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l, decision: 'sudden_death' }), 'Bean beat Aria in sudden death! Bean 1014 Elo (+14), Aria 989 Elo (-11).');
+});
+
 // ---------- upgrades (server/upgrades.js) ----------
 test('upgrade points: one per win plus check-in points, up to 20, at most 8 per stat; a rank reset trims luck, then guard, then power', async () => {
   const u = await import('../server/upgrades.js');

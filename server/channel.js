@@ -771,7 +771,7 @@ export class ChannelRoom extends DurableObject {
       channel: state.channel,
       revision: state.revision,
       paused: !state.chat.connected || !state.config.enabled,
-      chat: { connected: Boolean(state.chat.connected), lastSeen: Number(state.chat.lastSeen) || 0, status: String(state.chat.status || "disconnected") },
+      chat: { connected: Boolean(state.chat.connected), lastSeen: Number(state.chat.lastSeen) || 0, status: String(state.chat.status || "disconnected"), bot: this.botSource(state) },
       config: state.config,
       configVersion: state.configVersion,
       round: state.round,
@@ -1540,7 +1540,7 @@ export class ChannelRoom extends DurableObject {
     const name = (id) => { const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config); return p?.displayName || p?.username || "someone"; };
     await this.postBotLines(channel, due.map((d) => {
       const loser = d.winnerId === d.a ? d.b : d.a;
-      return seResultText({ winner: name(d.winnerId), loser: name(loser), w: d.ratings[d.winnerId], l: d.ratings[loser] });
+      return seResultText({ winner: name(d.winnerId), loser: name(loser), w: d.ratings[d.winnerId], l: d.ratings[loser], decision: d.decision, flawless: d.flawless });
     }));
   }
 

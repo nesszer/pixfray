@@ -140,11 +140,12 @@ export function seExpiredText({ a = 'someone', b = 'someone', timeoutMs = 30000,
   return `Challenge expired: @${b} didn't answer ${a} within ${secs(timeoutMs)} s. ${a}, try again with ${n('challenge')} @${b}`;
 }
 
-// The bot's line once the stream has played a duel (duel.revealAt): who won and both Elo changes. Never earlier, so chat
-// doesn't spoil the stream.
-export function seResultText({ winner = 'someone', loser = 'someone', w = {}, l = {} } = {}) {
+// The bot's line once the stream has played a duel (duel.revealAt): who won, how, and both Elo changes. Never earlier, so
+// chat doesn't spoil the stream. On a bot channel this line is the winner announcement (the overlay shows no banner).
+export function seResultText({ winner = 'someone', loser = 'someone', w = {}, l = {}, decision = 'ko', flawless = false } = {}) {
   const d = x => (x < 0 ? '-' : '+') + Math.abs(Number(x) || 0);
-  return `${winner} beat ${loser}! ${winner} ${w.after} Elo (${d(w.delta)}), ${loser} ${l.after} Elo (${d(l.delta)}).`;
+  const how = (decision === 'hp' ? ' on HP' : decision === 'sudden_death' ? ' in sudden death' : '') + (flawless ? ', flawless' : '');
+  return `${winner} beat ${loser}${how}! ${winner} ${w.after} Elo (${d(w.delta)}), ${loser} ${l.after} Elo (${d(l.delta)}).`;
 }
 
 // A channel on the PixFray bot has no StreamElements in the way, so its give command is !give (unless mods renamed it).

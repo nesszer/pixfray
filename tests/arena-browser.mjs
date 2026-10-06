@@ -180,6 +180,15 @@ try {
   }));
   await page.waitForFunction(() => window.__arenaDebug?.().revision === 9);
   assert.equal((await page.evaluate(() => window.__arenaDebug())).duels.find((x) => x.id === 'duel-2').hp['101'], 41);
+  // Where the PixFray bot reads chat, it announces the winner there, so the overlay shows no winner banner.
+  await page.evaluate(() => window.__sendArena(1, { type: 'snapshot', channel: 'nesszerra', revision: 10, paused: false,
+    chat: { connected: true, lastSeen: Date.now(), status: 'enabled', bot: true }, config: { maxHp: 100 },
+    players: window.__arenaDebug().players.map((p) => ({ userId: p.userId, username: p.userId, displayName: p.label, avatar: p.avatar, color: p.color, elo: p.elo, registered: true })),
+    duels: [], events: [] }));
+  await page.waitForFunction(() => window.__arenaDebug?.().chat?.bot === true);
+  await page.evaluate(() => window.__sendArena(1, { type: 'event', revision: 11, event: { id: 'evt-bot', type: 'duel_completed', duelId: 'duel-2', winnerId: '202', loserId: '101', at: Date.now(), ratings: { '202': { delta: 12 }, '101': { delta: -12 } } } }));
+  await page.waitForFunction(() => window.__arenaDebug().players.find((p) => p.userId === '202')?.float === '+12 Elo');   // the event played
+  assert.ok(!(await page.evaluate(() => window.__arenaDebug())).banners.some((b) => /Bex Prime wins/.test(b)), 'no winner banner when the bot announces in chat');
   assert.ok(apiReads.some(item => item.path === '/api/state/nesszerra' && item.method === 'GET'));
   assert.ok(apiReads.some(item => item.path === '/api/catalog/nesszerra' && item.method === 'GET'));
   assert.deepEqual(errors, []);

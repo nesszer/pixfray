@@ -1184,7 +1184,7 @@ test('chat bot: after the stream has played a duel, the bot says who won and the
     await r.alarm();
     const [w, l] = duel.winnerId === 'u1' ? ['alice', 'bob'] : ['bob', 'alice'];
     assert.equal(tw.sent.length, 1);
-    assert.match(tw.sent[0].message, new RegExp(`^${w} beat ${l}! ${w} \\d+ Elo \\(\\+\\d+\\), ${l} \\d+ Elo \\(-\\d+\\)\\.$`));
+    assert.match(tw.sent[0].message, new RegExp(`^${w} beat ${l}(?: on HP| in sudden death)?(?:, flawless)?! ${w} \\d+ Elo \\(\\+\\d+\\), ${l} \\d+ Elo \\(-\\d+\\)\\.$`));
     await r.alarm();
     assert.equal(tw.sent.length, 1, 'said once');
   } finally { tw.restore(); }

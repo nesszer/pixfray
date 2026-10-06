@@ -448,7 +448,7 @@ async function start() {
     if (roller) roller.die = { value: Math.max(1, Math.min(6, Math.round(event.die))), start: now, until: now + 1000 };
     if (replay) {
       replay.rolls = (replay.rolls || 0) + 1;
-      if (replay.rolls === 13) banners.push({ x: meetPoints.get(replay.id)?.x ?? roller?.x ?? width / 2, text: 'Sudden death!', color: '#fde047', start: now, until: now + 1200 });
+      if (replay.rolls === 13) banners.push({ x: meetPoints.get(replay.id)?.x ?? roller?.x ?? width / 2, text: 'Sudden death!', title: 'Sudden death!', color: '#fde047', start: now, until: now + 1200 });
     }
     const showHp = () => { if (replay && event.hp && typeof event.hp === 'object') replay.hp = { ...event.hp }; };   // the bar moves when the blow lands
     setTimeout(() => {
@@ -577,7 +577,12 @@ async function start() {
         if (Number.isFinite(rl?.delta)) floatText(loser, signed(rl.delta) + ' Elo', '#fb7185', 2200);
         const text = (event.decision === 'hp' ? 'Time! ' : '') + nameOf(event.winnerId) + ' wins' + (event.decision === 'hp' ? ' on HP' : '') +
           (event.flawless ? ', FLAWLESS!' : '!') + (Number.isFinite(rw?.delta) ? ' ' + signed(rw.delta) + ' Elo' : '');
-        banners.push({ x: meetX ?? winner?.x ?? width / 2, text, color: event.flawless ? '#fde047' : '#a7f3d0', start: now, until: now + 2200 });
+        // The banner names the winner; the Elo change already floats over both fighters. Where the PixFray bot reads
+        // chat it posts the result there once the stream has shown it, so the overlay leaves the banner out.
+        if (arenaChat?.bot) break;
+        const sub = [event.decision === 'hp' ? 'TIME! ON HP' : '', event.flawless ? 'FLAWLESS' : ''].filter(Boolean).join(' · ');
+        banners.push({ x: meetX ?? winner?.x ?? width / 2, text, title: nameOf(event.winnerId) + ' wins!', sub, color: event.flawless ? '#fde047' : '#ffffff',
+          start: now, until: now + 2400 });
         if (banners.length > 10) banners.shift();
         break;
       }
@@ -740,15 +745,22 @@ async function start() {
   function drawBanners(now) {
     for (let i = banners.length - 1; i >= 0; i--) if (now >= banners[i].until) banners.splice(i, 1);
     for (const b of banners) {
+      // Outlined game text like the hit numbers, no box: it pops in a little large, settles, and fades out rising.
+      const age = now - b.start, t = Math.min(1, age / 220), out = Math.max(0, 1 - (b.until - now) / 300);
+      const pop = 1 + .35 * (1 - t) * (1 - t) - .06 * Math.sin(Math.PI * t);
       ctx.save();
-      ctx.globalAlpha = Math.max(0, Math.min(1, (now - b.start) / 60, (b.until - now) / 300));
-      ctx.font = '700 28px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      const w = Math.min(width - 16, ctx.measureText(b.text).width + 32), x = Math.max(w / 2 + 8, Math.min(width - w / 2 - 8, b.x));
-      const top = height - FLOOR - 28 - size * DUEL_GROW - 150;
-      ctx.fillStyle = 'rgba(12,16,25,.86)'; ctx.fillRect(x - w / 2, top, w, 44);
-      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1; ctx.strokeRect(x - w / 2, top, w, 44);
-      ctx.fillStyle = b.color; ctx.fillText(b.text, x, top + 32, w - 16);
+      ctx.globalAlpha = Math.min(1, age / 80) * (1 - out);
+      ctx.font = '800 34px system-ui, sans-serif';
+      const w = Math.min(width - 16, ctx.measureText(b.title).width + 16), x = Math.max(w / 2 + 8, Math.min(width - w / 2 - 8, b.x));
+      const top = height - FLOOR - 28 - size * DUEL_GROW - 150 - out * 8;
+      ctx.translate(x, top + 24); ctx.scale(pop, pop);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+      ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(10,12,20,.92)';
+      ctx.strokeText(b.title, 0, 0, w); ctx.fillStyle = b.color; ctx.fillText(b.title, 0, 0, w);
+      if (b.sub) {
+        ctx.font = '800 17px system-ui, sans-serif'; ctx.lineWidth = 5;
+        ctx.strokeText(b.sub, 0, 28, w); ctx.fillStyle = '#fbbf24'; ctx.fillText(b.sub, 0, 28, w);
+      }
       ctx.restore();
     }
   }
