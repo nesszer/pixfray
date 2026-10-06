@@ -588,7 +588,7 @@ function renderLeaderboard() {
   const character = (id) => {   // still thumbnail; it never animates in the table
     const entry = entryOf(id), canvas = h("canvas", { class: "sprite", width: 32, height: 32, "aria-hidden": "true" }), v = voxCanvas();
     if (entry) { addSprite(canvas, entry, { active: () => false }); vox(v, () => composeLook(entry)); }
-    return [h("span", { class: "lb-char" }, entry ? h("span", { class: "thumb" }, v, canvas) : null, h("span", {}, entry?.label || id))];
+    return [h("span", { class: "lb-char", title: entry?.label || id }, entry ? h("span", { class: "thumb" }, v, canvas) : null, h("span", {}, entry?.label || id))];
   };
   const row = (p, i) => h("tr", { class: [p.userId === me ? "me" : "", i < 3 ? "podium" : ""].filter(Boolean).join(" ") || null },
     h("td", { class: "num" }, i + 1), h("td", {}, h("span", { style: { color: p.color }, "aria-hidden": "true" }, "■ "), p.displayName || p.username, p.userId === me ? h("span", { class: "muted" }, " (you)") : null),

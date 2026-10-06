@@ -1569,3 +1569,14 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
   .story-stage figcaption { position: static; margin: 0; padding: var(--space-2) var(--space-3); border-radius: 0; border-left: 3px solid var(--trim); background: var(--surface); line-height: 1.4; min-height: calc(2 * 1.4em + var(--space-4)); }
   .story .step-grid > li { scroll-margin-top: 240px; }
 }
+/* Round 31. Builder Ranks beside the stage: the character column shows the fighter only (its name stays for screen readers and on hover), so every column fits */
+@media (min-width: 901px) {
+  #leaderboard .lb-char:has(.thumb) > span:last-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #leaderboard th, #leaderboard td { padding-inline: var(--space-2); }
+}
+/* builder: each Wearing label lines up with its button */
+#loadout dt, #loadout dd { display: flex; align-items: center; min-height: 40px; }
+/* /start: step titles use the display face like every other heading */
+.step-grid strong { font-family: var(--font-display); font-weight: 650; letter-spacing: 0; }
+/* admin gate: the locked tabs read at full contrast; the lock label and the not-allowed cursor say they're locked */
+.gate-peek .peek-tabs > span[aria-disabled] { opacity: 1; color: var(--text-2); }
