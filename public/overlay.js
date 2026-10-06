@@ -30,12 +30,12 @@ const CANCEL_TEXT = {
   player_removed: 'player removed',
 };
 
-// true when the server says the channel is off ({ off: 'paused' | 'not_enabled' }); any other answer lets the overlay run.
+// The server's reason when the channel is off ('paused' | 'not_enabled'); '' (any other answer) lets the overlay run.
 async function channelOff(channel) {
   try {
     const r = await fetch('/api/state/' + channel, { headers: { Accept: 'application/json' } });
-    return r.status === 403 && !!(await r.json())?.off;
-  } catch { return false; }
+    return r.status === 403 ? String((await r.json())?.off || '') : '';
+  } catch { return ''; }
 }
 
 async function start() {
@@ -53,8 +53,19 @@ async function start() {
   const arenaDemo = arenaEnabled && demo;
   const debug = params.get('debug') === '1';
   // A channel that is turned off or was never set up shows nothing. It checks again every 5 minutes, so turning
-  // PixFray back on needs no OBS refresh.
-  if (!demo && await channelOff(channel)) { setTimeout(() => location.reload(), 300_000); return; }
+  // PixFray back on needs no OBS refresh. A channel that was never set up (often a typo in the OBS link) says so
+  // for a minute, once per OBS session, so the streamer sees it in the OBS preview without it sitting on stream.
+  const off = demo ? '' : await channelOff(channel);
+  if (off) {
+    const status = document.querySelector('#status');
+    let told = true;
+    try { told = sessionStorage.getItem('pixfray:off-told') === channel; sessionStorage.setItem('pixfray:off-told', channel); } catch { told = false; }
+    if (off === 'not_enabled' && status && !told) {
+      status.textContent = "PixFray isn't set up for \"" + channel + "\". Check the channel name in this OBS link, or set it up at " + location.host + "/start";
+      setTimeout(() => { status.textContent = ''; }, 60_000);
+    }
+    setTimeout(() => location.reload(), 300_000); return;
+  }
   // Most characters on screen. The channel setting (mod controls) arrives with every snapshot and wins over ?cap=.
   let cap = Math.max(1, Math.min(100, Number(params.get('cap')) || 100));
   const size = Math.max(24, Math.min(96, Number(params.get('size')) || 60));

@@ -7,6 +7,7 @@
 // Run: npm run test:live   (env: LIVE_CHANNEL, LIVE_ORIGIN, LIVE_A_CDP, LIVE_B_CDP, LIVE_SECRETS, LIVE_OUT)
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import site from '../site.config.js';
@@ -16,8 +17,8 @@ const CHANNEL = (process.env.LIVE_CHANNEL || site.defaultChannel).toLowerCase();
 const ORIGIN = process.env.LIVE_ORIGIN || site.origins.production;
 const A_CDP = process.env.LIVE_A_CDP || 'http://127.0.0.1:9333';
 const B_CDP = process.env.LIVE_B_CDP || 'http://127.0.0.1:9334';
-const SECRETS = process.env.LIVE_SECRETS || path.join(root, '..', '..', 'work', 'mini-chat-secrets-prod.json');
-const OUT = process.env.LIVE_OUT || path.join(root, '..', '..', 'work', 'live-e2e');
+const SECRETS = process.env.LIVE_SECRETS || path.join(os.homedir(), '.pixfray', 'secrets.json');
+const OUT = process.env.LIVE_OUT || path.join(root, 'screenshots', 'live-e2e');
 const NOBODY = 'nobody_e2e_404';   // a login with no fighter in any channel
 const REPLY_MS = 20_000;
 const DUPLICATE_MS = 31_000;   // Twitch drops a repeat of the same text from the same account within 30 s
@@ -187,7 +188,7 @@ try {
   note('ok both accounts have a saved fighter');
 
   // A headless overlay with its debug hook, to see who walks in and which duels it plays.
-  local = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+  local = await chromium.launch({ channel: 'chrome', headless: true });
   const overlay = await local.newPage({ viewport: { width: 1280, height: 720 } });
   const overlayErrors = [];
   overlay.on('pageerror', (e) => overlayErrors.push(e.message));

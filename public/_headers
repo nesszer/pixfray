@@ -15,10 +15,6 @@
   Content-Security-Policy: frame-ancestors 'none'
   X-Frame-Options: DENY
 
-# The test site and the OBS overlay stay out of search results.
+# The OBS overlay stays out of search results. The test site's pages and robots.txt say noindex from the Worker (server/worker.js).
 /overlay*
-  X-Robots-Tag: noindex, nofollow
-https://staging.pixfray.xyz/*
-  X-Robots-Tag: noindex, nofollow
-https://test.chat.miolaf.xyz/*
   X-Robots-Tag: noindex, nofollow

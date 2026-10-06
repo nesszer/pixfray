@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import worker from '../server/worker.js';
 import { ChannelRoom } from '../server/channel.js';
 import { digest, seal, unseal, isOwner, access } from '../server/auth.js';
-import { forgetRefused, WRONG_KEY_TEXT, LOST_TEXT, OFF_TEXT, SE_KEY } from '../server/streamelements.js';
+import { forgetRefused, seKeyHash, WRONG_KEY_TEXT, LOST_TEXT, OFF_TEXT, SE_KEY } from '../server/streamelements.js';
 import { forgetChannel } from '../server/channels.js';
 
 const ORIGIN = 'https://chat.miolaf.xyz', DAY = 86400000, KEY = 'ab'.repeat(24), OTHER = 'cd'.repeat(24);
@@ -77,6 +77,29 @@ test('SE: a valid key still reaches the room unchanged, with the same reply', as
   assert.equal(f.fetched.length, 1);
   assert.deepEqual([f.fetched[0].channel, f.fetched[0].path], ['nesszerra', '/se']);
   assert.deepEqual([f.fetched[0].body.key, f.fetched[0].body.action, f.fetched[0].body.username, f.fetched[0].body.target], [KEY, 'challenge', 'bob', 'alice']);
+});
+
+test('SE: once the room has sent its key hash, random keys are refused in the Worker; a rotated key gets through within 10 s', async (t) => {
+  let now = Date.parse('2026-10-03T10:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  const f = environment();
+  let current = KEY;
+  f.env.ROOMS.get = channel => ({ async fetch(url, options = {}) {
+    f.fetched.push({ channel, path: new URL(url).pathname });
+    const ok = JSON.parse(options.body).key === current;
+    return Response.json({ reply: ok ? 'ok' : WRONG_KEY_TEXT }, { status: ok ? 200 : 403, headers: { 'X-Se-Key': await seKeyHash(current) } });
+  } });
+  const call = (key) => se(f, '/api/se/nesszerra/help?k=' + key).then(text);
+  assert.deepEqual(await call(KEY), [200, 'ok']);
+  assert.equal(f.fetched.length, 1);
+  for (let i = 0; i < 20; i++) assert.deepEqual(await call((10 + i).toString(16).repeat(24).slice(0, 48)), [200, WRONG_KEY_TEXT]);
+  assert.equal(f.fetched.length, 2, 'one mismatch per 10 s reaches the room; the other random keys stop in the Worker');
+  // the streamer rotates the key: the new one works as soon as the 10 s window passes, and is remembered
+  current = OTHER; now += 10001;
+  assert.deepEqual(await call(OTHER), [200, 'ok']);
+  assert.deepEqual(await call(OTHER), [200, 'ok']);
+  assert.equal(f.fetched.length, 4);
+  assert.deepEqual(await call(KEY), [200, WRONG_KEY_TEXT], 'the old key is refused');
 });
 
 test('SE: a refused (channel, key) pair is answered locally for 60 s, then asked again', async (t) => {
@@ -226,7 +249,7 @@ test('connecting mod access writes the non-expiring modsconnected marker next to
 test('the AuthStore accepts ~20-year expiry for modsconnected markers but caps other keys at 100 days', async () => {
   const { AuthStore } = await import('../server/auth.js');
   const db = new DatabaseSync(':memory:');
-  const ctx = { storage: { sql: { exec(q, ...p) { const rows = db.prepare(q).all(...p).map(r => ({ ...r })); return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() }; } }, async setAlarm() {} } };
+  const ctx = { storage: { sql: { exec(q, ...p) { const rows = db.prepare(q).all(...p).map(r => ({ ...r })); return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() }; } }, alarm: null, async getAlarm() { return this.alarm; }, async setAlarm(t) { this.alarm = t; } } };
   const store = new AuthStore(ctx, { INTERNAL_SECRET: INTERNAL });
   const put = (key, days) => store.fetch(new Request('https://auth/entry?key=' + key, { method: 'POST', headers: { 'X-Mini-Internal': INTERNAL, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: { at: 1 }, expires: Date.now() + days * DAY }) })).then(r => r.status);
   assert.equal(await put('modsconnected:miolafff', 20 * 365), 200);
@@ -317,4 +340,16 @@ test('admin snapshot: a token seen without a marker gets one, and viewing keeps 
   assert.equal(f.expires.get('broadcaster:nesszerra'), writes);
   // and the token can still be opened after the extra field was added
   assert.equal((await unseal(f.env, f.entries.get('broadcaster:nesszerra'))).access_token, 'a1');
+});
+
+test('robots.txt and sitemap.xml follow the host: production lists its pages, the test site stays out of search', async () => {
+  const site = (await import('../site.config.js')).default, { env } = environment();
+  const get = async (origin, path) => { const r = await worker.fetch(new Request(origin + path), env); return { status: r.status, body: await r.text() }; };
+  const robots = await get(site.origins.production, '/robots.txt');
+  assert.match(robots.body, /Disallow: \/api\//);
+  assert.match(robots.body, new RegExp('Sitemap: ' + site.origins.production + '/sitemap.xml'));
+  const map = await get(site.origins.production, '/sitemap.xml');
+  for (const p of ['/', '/start/', '/intro/']) assert.match(map.body, new RegExp('<loc>' + site.origins.production + p + '</loc>'));
+  assert.equal((await get(site.origins.test, '/robots.txt')).body, 'User-agent: *\nDisallow: /\n');
+  assert.equal((await get(site.origins.test, '/sitemap.xml')).status, 404);
 });

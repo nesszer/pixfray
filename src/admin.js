@@ -1,11 +1,19 @@
 // Mod controls ("/admin/"): broadcaster and moderators only (GET /api/access/:channel -> canManage).
 // Uses GET/POST /api/admin/:channel (CONTRACTS.md section 2) and the read-only live socket for updates.
-import { api, errorText, h, $, setStatus, renderWho, signOut, seconds, timeAgo, dateTime, formatBytes, CHANNEL, withChannel, loginHref, applyChannel } from "./ui.js";
+import { api, errorText, h, $, setStatus, renderWho, signOut, seconds, timeAgo, dateTime, formatBytes, CHANNEL, CHANNEL_PICKED, withChannel, loginHref, applyChannel } from "./ui.js";
 import { skyBackdrop } from "./scrub.js";
 import site from "../site.config.js";
 skyBackdrop();
 applyChannel();
 if (CHANNEL !== site.defaultChannel) document.querySelector(".page-header .subtitle").textContent = "For the " + CHANNEL + " broadcaster. Changes reach every OBS overlay right away.";
+// The bare /admin/ (no ?channel) is for anyone: it names no channel until sign-in shows whose controls these are.
+const BARE = !CHANNEL_PICKED;
+if (BARE) {
+  document.querySelector(".page-header h1").textContent = "PixFray mod controls";
+  document.querySelector(".page-header .subtitle").textContent = "For streamers and their moderators. Changes reach every OBS overlay right away.";
+}
+const named = () => { if (BARE) { document.querySelector(".page-header h1").textContent = "Duel controls for " + CHANNEL; document.querySelector(".page-header .subtitle").textContent = "For the broadcaster and moderators. Changes reach every OBS overlay right away."; } };
+const startLink = (primary) => h("a", { class: primary ? "btn btn-primary" : "btn", href: "/start/" }, "Set up PixFray for your channel");
 
 const LIMITS = { maxCharacters: 24, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 // Editable config fields (CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
@@ -114,7 +122,7 @@ function gate(text, actions = []) {
 // the gate shows the arena these controls run, live: whether duels are on and who leads (public data only)
 let proofLoaded = false;
 async function gateProof() {
-  if (proofLoaded) return; proofLoaded = true;
+  if (proofLoaded || BARE) return; proofLoaded = true;
   const [st, lb] = await Promise.all([api("/api/state/" + CHANNEL), api("/api/leaderboard/" + CHANNEL)]);
   if (!st.ok && !lb.ok) return;
   const ranked = lb.ok && Array.isArray(lb.data) ? lb.data.filter((p) => p.wins + p.losses > 0).sort((a, b) => b.elo - a.elo) : [];
@@ -134,14 +142,24 @@ async function init() {
   if (!S.session.user) {
     if (S.session.configured === false) return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
     $("#who").replaceChildren();   // one sign-in button: the gate's
+    if (BARE) return gate("Sign in with Twitch to open mod controls. Streamers land on their own channel. Moderators: open the mod link your streamer shares; it ends in ?channel= and their name.", [h("a", { class: "btn btn-primary", href: "/auth/login?next=%2Fadmin%2F" }, "Sign in with Twitch"), startLink()]);
     return gate(CHANNEL === site.defaultChannel ? "Sign in with the " + site.owner.login + " account or a " + site.owner.login + " moderator account to open mod controls." : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]);
+  }
+  const login = S.session.user.login;
+  if (BARE && login !== CHANNEL) {
+    // Signed in on the bare page: a streamer with PixFray on goes to their own channel's controls.
+    const own = await api("/api/access/" + encodeURIComponent(login));
+    if (own.ok && own.data.canManage) return location.replace("/admin/?channel=" + login + location.hash);
   }
   const access = await api("/api/access/" + CHANNEL);
   S.access = access.ok ? access.data : null;
+  if (!S.access?.canManage && BARE) return gate("PixFray isn't on for " + login + " yet. Set it up on /start. Moderators: open the mod link your streamer shares.", [startLink(true), h("a", { class: "btn", href: "/" }, "Pick a channel")]);
+  if (access.data?.off === "not_enabled") return gate("PixFray isn't set up on " + CHANNEL + " yet. The " + CHANNEL + " account can turn it on in about 10 minutes.", [h("a", { class: "btn btn-primary", href: "/start/" }, "Set up PixFray"), h("a", { class: "btn", href: "/" }, "Pick a channel")]);
   if (!S.access?.canManage) {
     const why = S.access?.reason ? " (" + S.access.reason + ")" : access.ok ? "" : " (" + errorText(access) + ")";
     return gate((CHANNEL === site.defaultChannel ? "Only " + site.owner.login + " and current channel moderators can use mod controls" : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) + why + ".", [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")]);
   }
+  named();
   $("#gate").hidden = true; $("#app").hidden = false;
   $("#dev-link").hidden = $("#dev-section").hidden = !S.access.owner;
   $("#owner-chat").hidden = !S.access.owner || CHANNEL !== site.defaultChannel;

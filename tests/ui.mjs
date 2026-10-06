@@ -4,10 +4,11 @@
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
-const shots = 'D:/code/2026-10-01/i-ne/outputs/mini-chat/screenshots';
+const shots = fileURLToPath(new URL('../screenshots', import.meta.url));
 fs.mkdirSync(shots, { recursive: true });
-const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
+const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
 const errors = [];
 const sizes = [{ name: '1280', width: 1280, height: 900 }, { name: '390', width: 390, height: 844 }];
 const now = Date.now();
@@ -318,10 +319,18 @@ try {
     const { context, page } = await newPage(sizes[1]);
     await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false, reason: 'Moderator role required' }));
-    await page.goto(base + '/admin/');
+    await page.route('**/api/access/viewer_one', (r) => json(r, { error: 'PixFray is not enabled for this channel', off: 'not_enabled' }, 403));
+    await page.goto(base + '/admin/?channel=nesszerra');
     await page.waitForFunction(() => document.querySelector('#gate-text').textContent.includes('Only nesszerra'));
     assert.equal(await page.locator('#app').isHidden(), true);
     await page.screenshot({ path: shots + '/admin-not-mod-390.png', fullPage: true });
+    // The bare page names no channel: a viewer without a channel of their own is pointed to /start.
+    await page.goto(base + '/admin/');
+    await page.waitForFunction(() => document.querySelector('#gate-text').textContent.includes("PixFray isn't on for viewer_one yet"));
+    assert.equal(await page.locator('h1').first().textContent(), 'PixFray mod controls');
+    assert.equal(await page.locator('#gate-actions a[href="/start/"]').count(), 1);
+    await noOverflow(page, 'admin bare gate 390');
+    await page.screenshot({ path: shots + '/admin-bare-gate-390.png', fullPage: true });
     await context.close();
   }
 

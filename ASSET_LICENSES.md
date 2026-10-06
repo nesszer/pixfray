@@ -193,6 +193,13 @@ They are not bundled and need a row here when they are added.
 The site's look takes cues from Hearthstone's dark tavern pages, but uses no Blizzard artwork, logos
 or fonts.
 
+## Scene backdrops
+
+- Files: `public/assets/scene/*.webp`, including the scroll frames in `public/assets/scene/seq/`
+- Rendered for this project: stills of the site's own `/intro/` 3D scene (`src/intro/`), with fades
+  and crops added afterwards. Fighters that appear in them are the CC0 characters listed above.
+  No third-party artwork beyond those; same license as the code.
+
 ## Site icon
 
 - Files: `public/favicon.svg`, `public/favicon.ico`, `public/apple-touch-icon.png`

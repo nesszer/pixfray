@@ -22,7 +22,7 @@ return {
     entrypoint: "./server/worker.js",
     domains: [new URL(origin).hostname, ...Object.values(channelDomains)],
     // The pages go through the Worker too, so a channel domain can send other channels' pages to the main site.
-    assets: { runWorkerFirst: ["/api/*","/auth/*","/","/index.html","/admin","/admin/*","/start","/start/*"], notFoundHandling:"404-page" },
+    assets: { runWorkerFirst: ["/api/*","/auth/*","/","/index.html","/admin","/admin/*","/start","/start/*","/robots.txt","/sitemap.xml"], notFoundHandling:"404-page" },
     // Workers Logs: console output and requests, kept by Cloudflare (dashboard: Workers > this worker > Logs).
     // redactQueryString keeps StreamElements keys (?k=...) out of the stored request URLs.
     observability: { enabled: true, redactQueryString: true, logs: { enabled: true, invocationLogs: true } },

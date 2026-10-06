@@ -11,7 +11,7 @@ import { OFF_TEXT } from '../server/streamelements.js';
 const ORIGIN = 'https://chat.miolaf.xyz';
 function store() {
   const db = new DatabaseSync(':memory:');
-  const ctx = { storage: { sql: { exec(q, ...p) { const rows = db.prepare(q).all(...p).map(r => ({ ...r })); return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() }; } }, async setAlarm() {} } };
+  const ctx = { storage: { sql: { exec(q, ...p) { const rows = db.prepare(q).all(...p).map(r => ({ ...r })); return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() }; } }, alarm: null, async getAlarm() { return this.alarm; }, async setAlarm(t) { this.alarm = t; } } };
   return new AuthStore(ctx, { INTERNAL_SECRET: 'test-only-internal-key' });
 }
 function environment() {
@@ -85,6 +85,31 @@ test('sign-up: any streamer signs in with moderation:read and their own channel 
   twitch(t, STREAMER, ['moderation:read']);
   assert.equal((await callback(env, again.state)).headers.get('Location'), '/admin/?channel=newstreamer&signed_in=1#chat');
   assert.equal((await record(env, 'channel:newstreamer')).enabledAt, channel.enabledAt);
+});
+
+test('a renamed Twitch name: the new holder of the login gets no say over the old channel and cannot sign up over it', async (t) => {
+  const { env, auth } = environment();
+  const { state } = await login(env, 'signup=1');
+  twitch(t, STREAMER, ['moderation:read']);
+  assert.equal((await callback(env, state)).status, 303);
+  t.mock.restoreAll();
+  const newcomer = { id: '77', login: 'newstreamer', displayName: 'newstreamer' };
+  const cookie = await signIn(env, newcomer);
+  twitch(t, newcomer, []);   // Helix: not a moderator of the old channel
+  assert.deepEqual(await (await worker.fetch(req('/api/access/newstreamer', 'GET', undefined, cookie), env)).json(),
+    { owner: false, moderator: false, canManage: false, reason: 'Current Twitch moderator role required' });
+  assert.equal((await worker.fetch(req('/api/admin/newstreamer', 'POST', { action: 'pauseChannel' }, cookie), env)).status, 403);
+  const again = await login(env, 'signup=1');
+  assert.equal((await callback(env, again.state)).headers.get('Location'), '/start/?error=taken');
+  assert.equal((await record(env, 'channel:newstreamer')).id, '55', 'the channel stays with the account that set it up');
+  // the original account, still signed in under its id, keeps the channel
+  assert.equal((await (await worker.fetch(req('/api/access/newstreamer', 'GET', undefined, await signIn(env, STREAMER)), env)).json()).broadcaster, true);
+  // the cleanup alarm is set once, not pushed back by every write
+  const first = auth.ctx.storage.alarm;
+  assert.ok(first > Date.now());
+  await new Promise((r) => setTimeout(r, 5));
+  await record(env, 'session:x', { user: STREAMER }, Date.now() + 60000);
+  assert.equal(auth.ctx.storage.alarm, first);
 });
 
 test('sign-up without mod access (mods=0) asks for no scope and stores no broadcaster token', async (t) => {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
-import { digest, seal, unseal, CONNECT_SCOPES } from '../server/auth.js';
+import { digest, seal, unseal, openState, CONNECT_SCOPES } from '../server/auth.js';
 
 function environment() {
   const entries = new Map(), forwarded = [];
@@ -70,8 +70,11 @@ test('miolafff: the broadcaster manages their own channel, through StreamElement
   const login = await worker.fetch(req('/auth/login?channel=miolafff&next=/admin/'), f.env);
   assert.equal(login.status, 302);
   const nonce = new URL(login.headers.get('Location')).searchParams.get('state');
-  assert.deepEqual(f.entries.get('oauth:' + nonce), { channel: 'miolafff', connect: false, next: '/admin/' });
-  assert.equal((await worker.fetch(req('/auth/login?channel=miolafff&connect=1'), f.env)).status, 403);
+  assert.deepEqual(await openState(f.env, nonce), { channel: 'miolafff', connect: false, next: '/admin/' });
+  assert.equal([...f.entries.keys()].some((k) => k.startsWith('oauth:')), false, 'sign-in start writes nothing to AuthStore');
+  assert.equal((await worker.fetch(req('/auth/login?channel=miolafff&connect=1'), f.env)).status, 403);  // the bare /admin/ page signs in without naming a channel, so the page can send a streamer to their own
+  const bare = await worker.fetch(req('/auth/login?next=%2Fadmin%2F'), f.env);
+  assert.deepEqual(await openState(f.env, new URL(bare.headers.get('Location')).searchParams.get('state')), { connect: false, next: '/admin/' });
 });
 test('a viewer cannot grant themselves mod or developer permissions', async () => {
   const f = environment(), cookie = await signedIn(f);

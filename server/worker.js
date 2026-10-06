@@ -85,6 +85,18 @@ async function page(request,env,url){
   if(/^(staging|test)\./.test(url.hostname))out.headers.set('X-Robots-Tag','noindex, nofollow');
   return out;
 }
+// robots.txt and sitemap.xml follow the host: the production site lists its public pages, and the test site stays out of search.
+const PUBLIC_PAGES=['/','/start/','/intro/'];
+function seoFile(url,path){
+  const text=(body,type)=>new Response(body,{headers:{'Content-Type':type+'; charset=utf-8','Cache-Control':'public, max-age=3600'}});
+  const main=url.origin===site.origins.production;
+  if(path==='/sitemap.xml'){
+    if(!main)return new Response('Not found',{status:404});
+    return text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'+PUBLIC_PAGES.map(p=>'  <url><loc>'+url.origin+p+'</loc></url>\n').join('')+'</urlset>\n','application/xml');
+  }
+  if(url.origin===site.origins.test||/^(staging|test)\./.test(url.hostname))return text('User-agent: *\nDisallow: /\n','text/plain');
+  return text('User-agent: *\nDisallow: /api/\nDisallow: /auth/\n'+(main?'\nSitemap: '+url.origin+'/sitemap.xml\n':''),'text/plain');
+}
 // Admin-only view of the StreamElements setup: the key and the paste-ready command replies.
 function seView(env,url,channel,se){
   if(!se?.secret)return null;
@@ -152,6 +164,7 @@ export default {async fetch(request,env,ctx){
     if(request.headers.has('Authorization')&&!dev&&path.startsWith('/api/'))return json({error:'Invalid dev token'},401);
     if(mutating&&!dev&&request.headers.get('Origin')!==url.origin)return json({error:'Same-origin request required'},403);
     if(path.startsWith('/auth/'))return handleAuth(request,env);
+    if(path==='/robots.txt'||path==='/sitemap.xml')return seoFile(url,path);
     if(!path.startsWith('/api/'))return channelPageRedirect(env,url)||await page(request,env,url);
     if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
     const s=dev?null:await session(request,env),user=dev?await devUser(env):s?.user||null,owner=await isOwner(env,user);

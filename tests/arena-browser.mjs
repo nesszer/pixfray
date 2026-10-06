@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
 const browser = await chromium.launch({
-  executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  channel: 'chrome',
   headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */,
 });
 const errors = [];

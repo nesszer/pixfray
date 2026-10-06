@@ -25,7 +25,7 @@ function fakeCtx() {
       try { const v = fn(); db.exec('COMMIT'); return v; } catch (e) { db.exec('ROLLBACK'); throw e; } finally { depth--; }
     },
     alarm: null,
-    async setAlarm(t) { this.alarm = t; },
+    async setAlarm(t) { this.alarm = t; }, async getAlarm() { return this.alarm ?? null; },
     async deleteAlarm() { this.alarm = null; },
   };
   return {
@@ -741,20 +741,28 @@ test('dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   assert.ok(checked.body.reply.startsWith('@testbot_a checked in: +1 upgrade point'), checked.body.reply);
 });
 
-test('overlay sockets: one network is capped, and a full room drops an old socket instead of refusing', async () => {
+test('overlay sockets: one network is capped; a full room drops the oldest viewer socket, never an overlay', async () => {
   const r = room();
   const upgrade = (ip) => r.upgrade(new Request('https://room/live', { headers: { Upgrade: 'websocket', 'X-Mini-Client-Ip': ip } }), 'live', 'nesszerra');
-  for (let i = 0; i < 16; i++) r.ctx.acceptWebSocket(fakeSocket(null, 'live'), ['live', 'ip:198.51.100.7']);
+  r.ctx.acceptWebSocket(fakeSocket(null, 'live'), ['live', 'ip:198.51.100.7', 'overlay']);   // the streamer's OBS source, first in
+  for (let i = 1; i < 16; i++) r.ctx.acceptWebSocket(fakeSocket(null, 'live'), ['live', 'ip:198.51.100.7']);
   const capped = await upgrade('198.51.100.7');
   assert.equal(capped.status, 429);
   for (let i = 16; i < 200; i++) r.ctx.acceptWebSocket(fakeSocket(null, 'live'), ['live', 'ip:203.0.113.' + i]);
-  const oldest = r.ctx.sockets[0];
+  const [obs, oldestViewer] = r.ctx.sockets;
   const saved = globalThis.WebSocketPair;
   globalThis.WebSocketPair = class { constructor() { this[0] = {}; this[1] = fakeSocket(null, 'live'); } };
   try { await upgrade('192.0.2.1').catch(() => {}); }   // Node's Response can't build a 101; the eviction happens first
   finally { globalThis.WebSocketPair = saved; }
-  assert.deepEqual(oldest.closed, [1013, 'room full']);
+  assert.equal(obs.closed, null, 'the overlay stays');
+  assert.deepEqual(oldestViewer.closed, [1013, 'room full']);
   assert.ok(r.ctx.sockets.at(-1).tags.includes('ip:192.0.2.1'), 'the new socket is tagged with its network');
+  // A room holding only overlays refuses the newcomer rather than dropping one.
+  const full = room();
+  for (let i = 0; i < 200; i++) full.ctx.acceptWebSocket(fakeSocket(null, 'live'), ['live', 'ip:203.0.113.' + (i % 100), 'overlay']);
+  const refused = await full.upgrade(new Request('https://room/live', { headers: { Upgrade: 'websocket', 'X-Mini-Client-Ip': '192.0.2.9' } }), 'live', 'nesszerra');
+  assert.equal(refused.status, 503);
+  assert.ok(full.ctx.sockets.every((ws) => ws.closed === null));
 });
 
 test('overlay sockets opened with role=overlay are counted for the admin setup checklist', async () => {
@@ -1154,6 +1162,30 @@ test('chat bot: an unanswered challenge gets a "challenge expired" line, from th
     assert.match(late.replies[1], /nobody has challenged you yet/);
     await r.alarm();
     assert.equal(tw.sent.length, 1);
+  } finally { tw.restore(); }
+});
+
+test('chat bot: after the stream has played a duel, the bot says who won and the Elo change, once', async () => {
+  const tw = fakeTwitch();
+  try {
+    const r = botRoom(tw.env);
+    await r.save('u1', 'alice'); await r.save('u2', 'bob');
+    await r.connectChat('sub-bot');
+    await r.say('u1', 'alice', '!challenge @bob');
+    assert.match((await r.say('u2', 'bob', '!fight')).replies.join(' '), /Watch the stream for the winner/);
+    const duel = r.readState('nesszerra').duels.find((d) => d.status === 'completed');
+    assert.ok(duel.revealAt > Date.now());
+    await r.scheduleAlarm(r.readState('nesszerra'));
+    assert.ok(r.ctx.storage.alarm <= duel.revealAt + 1, 'the alarm wakes for the reveal');
+    await r.alarm();
+    assert.equal(tw.sent.length, 0, 'nothing before the stream has shown it');
+    const s = r.readState('nesszerra'); s.duels.find((d) => d.id === duel.id).revealAt = Date.now() - 1; r.writeState(s);
+    await r.alarm();
+    const [w, l] = duel.winnerId === 'u1' ? ['alice', 'bob'] : ['bob', 'alice'];
+    assert.equal(tw.sent.length, 1);
+    assert.match(tw.sent[0].message, new RegExp(`^${w} beat ${l}! ${w} \\d+ Elo \\(\\+\\d+\\), ${l} \\d+ Elo \\(-\\d+\\)\\.$`));
+    await r.alarm();
+    assert.equal(tw.sent.length, 1, 'said once');
   } finally { tw.restore(); }
 });
 

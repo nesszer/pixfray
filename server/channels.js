@@ -61,10 +61,21 @@ export async function signUp(env, user) {
   if (!LOGIN.test(login)) throw fail(400, 'This Twitch account name is not supported', 'failed');
   if (CHANNELS.includes(login)) return login;
   const existing = await record(env, 'channel:' + login);
+  // A Twitch name can pass to a new account after a rename; the channel stays with the account that set it up.
+  if (existing?.id && existing.id !== user.id) throw fail(403, 'This channel name was set up by another Twitch account', 'taken');
   if (existing) return login;
   if (enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'PixFray is full right now', 'full');
   await saveChannel(env, { id: user.id, login, enabledAt: Date.now() });
   return login;
+}
+
+// The signed-in account is this channel's broadcaster: same login and, for a signed-up channel, the same Twitch id it
+// signed up with (a new holder of a renamed account's old name gets nothing). Built-in channels match on login.
+export async function isBroadcaster(env, user, channel) {
+  if (!user || String(user.login || '').toLowerCase() !== channel) return false;
+  if (CHANNELS.includes(channel)) return true;
+  const rec = await record(env, 'channel:' + channel);
+  return !rec?.id || rec.id === user.id;
 }
 
 // Off and back on. by = 'owner' | 'broadcaster'. A channel the owner turned off stays off until the owner turns it

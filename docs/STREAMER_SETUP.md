@@ -1,8 +1,8 @@
 # Streamer setup
 
 This guide is for a streamer adding PixFray to their Twitch channel. After you sign in (step 1),
-steps 2 to 5 match the 4 numbered steps of **Stream setup** on the mod controls page
-(`/admin/?channel=<you>#chat`). Each step holds its own buttons and turns Done by itself once it
+steps 2 to 5 below match the four steps of **Stream setup** on the mod controls page
+(`/admin/?channel=<you>#chat`), in the same order and under the same titles. Each step holds its own buttons and turns Done by itself once it
 works. Setup takes about 10 minutes.
 
 ## 1. Sign in on /start
@@ -37,7 +37,7 @@ In StreamElements go to Chat bot, then Modules, and switch off Duel, or type
 
 ## 4. Add the commands to StreamElements
 
-The table in step 3, "Add the chat commands to StreamElements", lists 12 commands: `!challenge`, `!fight`, `!decline`,
+The table in **Add the chat commands to StreamElements** lists 12 commands: `!challenge`, `!fight`, `!decline`,
 `!rematch`, `!checkin`, `!wallet`, `!pay`, `!pet`, `!elo`, `!ranks`, `!fray` and `!look`. You can rename them first and click **Save names**.
 Keep `!pay` off `!give`: StreamElements' built-in `!givepoints` already answers to `!give`.
 
@@ -66,7 +66,7 @@ message**, so new viewers learn how to join. PixFray never posts on its own.
 
 ## 5. Let your moderators help (optional)
 
-Step 4, **Let your moderators help**, is Done when the moderator-list permission is stored. If you skipped
+**Let your moderators help** is Done when the moderator-list permission is stored. If you skipped
 it, click **Connect mod access** and approve the permission while signed in to Twitch as yourself.
 
 The step reads differently depending on who looks at it. You, the broadcaster, get the button.
@@ -85,7 +85,7 @@ The same answers are under "If something doesn't work" at the bottom of Stream s
 - **Two bots answer the same command:** the StreamElements Duel module is still on.
 - **A command answers "wrong key":** copy that row's reply again and replace the old one.
 - **Mod access expired:** your moderators can't open the mod controls. Click **Reconnect mod
-  access** in step 4 of Stream setup while signed in to Twitch as yourself.
+  access** under **Let your moderators help** while signed in to Twitch as yourself.
 
 ## Turning PixFray off
 

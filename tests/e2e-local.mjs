@@ -8,10 +8,11 @@ import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { cookies, users } from './seed-local.mjs';
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
 const ch = 'nesszerra';
-const shots = 'D:/code/2026-10-01/i-ne/outputs/mini-chat/screenshots';
+const shots = fileURLToPath(new URL('../screenshots', import.meta.url));
 fs.mkdirSync(shots, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log('[e2e]', ...a);
@@ -65,7 +66,7 @@ async function command(user, text) {
 const presence = (user, text = 'hi') => say(user, text);
 
 const errors = [];
-const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
+const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
 try {
   // 0. Seeded sessions: owner and three viewers.
   const sess = await api('/api/session', { cookie: cookies.owner });

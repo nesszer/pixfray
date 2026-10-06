@@ -1,128 +1,123 @@
 # PixFray
-Open-source Twitch mini-character overlay for nesszerra and other channels. Transparent Canvas rendering, 56 free CC0 characters, chat duels with Elo ranks, and demo mode.
 
-Live: https://pixfray.xyz (deployed on Cloudflare Workers Free; the test site is staging.pixfray.xyz).
-https://chat.miolaf.xyz is miolafff's own domain: it opens her channel, and other channels' pages move to
-pixfray.xyz. Older OBS and StreamElements links on chat.miolaf.xyz keep working.
+PixFray puts a small pixel character on your Twitch stream for each viewer who chats. Viewers pick
+and dress their fighter on the website, challenge each other in chat, and the duels play out on the
+stream overlay, with Elo ranks, upgrades, hats and pets. It is free and open source (MIT), and runs
+on one Cloudflare Worker on the free plan.
 
-OBS: https://pixfray.xyz/overlay.html?channel=nesszerra&size=64&cap=50
+Live site: https://pixfray.xyz. The test site is https://staging.pixfray.xyz.
 
-## Use
-Requires Node 22.18+. Run `npm install` then `npm run dev`. Open http://127.0.0.1:5173 and copy the generated URL into an OBS Browser Source at 1920×1080, 30 FPS.
+## For streamers: add PixFray to your channel
 
-Commands:
-- `!jump` — jump with a 3-second cooldown.
-- `!avatar adventurer` — any character ID the overlay has loaded, for example adventurer, female, player, soldier or zombie (the dashboard lists them all).
-- `!color #ff8844` — nameplate color.
+You need OBS (or another streaming app with a browser source) and a StreamElements account; the
+chat commands run as StreamElements custom commands. Nightbot and Fossabot can't run them.
 
-First chat message spawns a character; 10 minutes of inactivity hides it. Appearance persists in that OBS browser's localStorage, not across devices.
+1. Open https://pixfray.xyz/start/ and sign in with the Twitch account you stream on. That turns
+   PixFray on for your channel only.
+2. Follow the **Stream setup** checklist on the mod controls page it opens: add the overlay to OBS,
+   turn off the StreamElements Duel module, paste the chat commands into StreamElements, and
+   optionally let your moderators help.
 
-Query options: channel, demo=1, debug=1, cap=1..100, size=32..96.
+Setup takes about 10 minutes. [docs/STREAMER_SETUP.md](docs/STREAMER_SETUP.md) walks through each
+step and lists fixes for common problems. Up to 200 channels can be signed up on pixfray.xyz. You
+can turn PixFray off at any time without losing fighters or ranks.
 
-## V2 (deployed)
-V2 replaced v1 on https://chat.miolaf.xyz on 2026-10-01. The commands above are the v1 overlay; v2 adds:
-- Twitch sign-in profiles and a viewer dashboard (`/`).
-- Mod controls with a versioned balance editor (`/admin/`).
-- An owner page (`/admin/dev/`): see who signed up, follow their setup, read error logs, and folded developer tools.
-- Shared server-decided duels on the overlay (add `arena=1`).
-- 56 CC0 characters (Kenney, pzUH, Sogomn) and custom character uploads (up to 24 per channel).
-- Chat through a Twitch EventSub webhook to the Worker (nesszerra only) or through StreamElements custom
-  commands (every other channel), so nothing runs on the OBS PC. The owner signs in with
-  `/auth/login?connect=1` and clicks Connect chat on `/admin/` (TWITCH_SETUP.md).
+## How duels work
 
-Chat commands for v2 duels:
-- `!challenge @viewer`, then `!fight` (or `!accept`) or `!decline`. Use `!fight` with StreamElements, whose Duel module owns `!accept`.
-- `!rematch` challenges the last viewer you fought; if they answer `!rematch` (or `!fight`), the duel starts. The 30 s
-  rematch lock still applies.
-- Accepting rolls the duel at once (quick duels, the default). Fighters take turns, challenger first, and each swing is a d6:
-  6 crits for 50, 5 hits for 34, 3-4 misses, and on 1-2 the defender counters for 34. Both start
-  at 100 HP. After 12 rolls the fighter with more HP wins; equal HP goes to sudden death, where
-  the next blow wins. A winner who took no damage gets +3 Elo on top. The bot replies only "Fight on: A vs B! Watch
-  the stream for the winner.", and the overlay replays the duel in about 8-25 s and then announces
-  the winner and the Elo change. `!elo`, `!ranks` and the website show the old numbers until the
-  replay has played on stream (plus the channel's stream delay, 6 s by default and set in the admin Rules tab), so chat replies and ranks don't spoil the stream. The overlay itself gets the result at once, so someone who opens the overlay page can see it early. The default ability only changes how blows look. Each win earns an upgrade point
-  (power, guard, luck) and unlocks hats. `!checkin`, once per live stream, adds a point too, with
-  streak bonuses; 20 points in all, 8 per stat. Each finished duel pays PixFray dollars ($5 a win,
-  $3 a loss): `!wallet` shows them, `!pay @name 10` passes them on while the stream is live, and
-  mods gift them from the Players tab. See CONTRACTS.md section 6. The HP fight with `!strike`,
-  `!heavy` and `!heal` runs only if a mod's config sets `quickDuel` to false.
-- Overlay option `sound=1` plays quiet duel sounds (synthesized in the browser, no audio files).
+- `!challenge @viewer`, then the other viewer answers `!fight` or `!decline`. `!rematch` challenges
+  the last viewer you fought.
+- The duel is rolled at once. Fighters take turns, challenger first, and each swing is a d6: 6 crits
+  for 50, 5 hits for 34, 3-4 miss, and on 1-2 the defender counters for 34. Both start at 100 HP.
+  After 12 rolls the fighter with more HP wins; equal HP goes to sudden death. A winner who took no
+  damage gets +3 Elo.
+- The bot only says "Fight on: A vs B! Watch the stream for the winner." The overlay replays the
+  duel in about 8-25 s, then shows the winner and the Elo change. On a channel with the PixFray
+  chat bot, the bot then posts the result in chat. `!elo`, `!ranks` and the website
+  hold back the new numbers until the replay has played (plus the channel's stream delay), so chat
+  doesn't spoil the stream.
+- Each win earns an upgrade point (power, guard, luck) and unlocks hats. `!checkin`, once per live
+  stream, adds a point too, with streak bonuses. Duels pay PixFray dollars ($5 a win, $3 a loss):
+  `!wallet` shows them, `!pay @name 10` passes them on while the stream is live, and `!pet` shows
+  a fighter's pet. `!fray` explains how to join, and `!look` links to your fighter on the site.
+- Mods tune every number in the balance editor on the mod controls page (versioned and undoable).
 
-Adding a streamer: send them `/start/`. They sign in with the Twitch account they stream on, which
-turns PixFray on for that channel only, and follow the Stream setup checklist; docs/STREAMER_SETUP.md
-walks through it. nesszerra and miolafff are built in; up to 200 signed-up channels can be on, and
-each one can be turned off by its streamer or the owner without losing fighters or ranks. A channel
-the owner turns off stays off until the owner turns it back on.
+Overlay link options: `channel`, `size=32..96`, `cap=1..100`, `arena=1` (duels), `announce=top|bottom`,
+`sound=1` (quiet synthesized duel sounds), `demo=1` (a preview with fake chatters), `debug=1`.
 
-Rules and routes are in CONTRACTS.md. The plan and the open gaps are in HANDOFF.md.
+## Run it locally
 
-Tests: `npm run test:all` runs these in order:
-1. Unit tests.
-2. `cf build`.
-3. `cf build --mode test`.
-4. The workerd upload test.
-5. The browser tests and the local end-to-end duel, against a `cf dev` it starts on port 5199 with
-   its own state folder, seeded test sessions and `MINI_LOCAL_TEST=1`. The end-to-end test sends
-   signed EventSub webhooks, using the `AUTH_SECRET` from `.dev.vars` (or `MINI_AUTH_SECRET`).
+Requires Node 22.18+.
 
-`npm run test:live` is separate and runs against prod through real Twitch chat and the StreamElements
-bot. It needs two headed Chromes with remote debugging, each signed in to Twitch and PixFray with a
-saved fighter: the broadcaster on port 9333 and a second account on 9334 (`LIVE_A_CDP`, `LIVE_B_CDP`).
-It refuses to post while the channel (`LIVE_CHANNEL`, default nesszerra) is live. Both accounts send
-every command and every refusal (no name, self, no fighter, busy, wrong challenger, rematch lock,
-expired challenge), and play two duels (a named `!fight` and a mutual challenge). Each bot reply must
-show in both chat tabs, each duel reply must hide the result, the leaderboard must not change until
-the stream has played the duel and must then match it, and the overlay must show the second
-account's saved look and play both duels. The duels change both accounts' Elo, wins and losses. It
-takes about 5 minutes. The log and screenshots of the overlay and both chats go to
-`../../work/live-e2e/` (`LIVE_OUT`).
+```bash
+npm install
+```
 
-VALIDATION_V2.md has the commands and the spec audit. `MINI_PORT` and `MINI_PERSIST` change the dev
-port and the local state folder.
+Create `.dev.vars` in the repo folder with throwaway local values (never your deployed secrets):
+
+```bash
+printf 'AUTH_SECRET=%s\nINTERNAL_SECRET=%s\nTWITCH_CLIENT_ID=local-dev-client-id\nTWITCH_CLIENT_SECRET=local-dev-client-secret\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .dev.vars
+```
+
+On Windows, `pwsh -NoProfile -File scripts/configure-twitch.ps1` writes it for you. Then:
+
+```bash
+npm run dev
+```
+
+Open http://127.0.0.1:5173. `/overlay.html?demo=1&arena=1` shows the overlay with fake chatters.
+Twitch sign-in needs a real Twitch app and a public https site, so it only works once deployed.
 
 ## Run your own copy
-PixFray is one Cloudflare Worker (Workers Free is enough) and one Twitch app. To host it for your channel:
 
-1. Fork the repo and run `npm install` (Node 22.18+).
+PixFray is one Cloudflare Worker (Workers Free is enough) and one Twitch app.
+
+1. Fork the repo and run `npm install`.
 2. Edit `site.config.js`:
    - `owner`: your Twitch login and numeric user id. Only this account opens `/admin/dev`.
-   - `builtinChannels` and `defaultChannel`: channels that are always on, and the one used when a URL
-     names none. Other streamers turn on their own channel on `/start/`.
+   - `builtinChannels` and `defaultChannel`: channels that are always on, and the one used when a
+     URL names none. Other streamers turn on their own channel on `/start/`.
    - `workers` and `origins`: your Worker names and the https sites they answer on. Durable Object
      data belongs to the Worker name, so don't rename a Worker that has data.
    - `channelDomains`: a streamer's own domain that opens only their channel. Use `{}` for none.
    - `bot`: the Twitch account of your PixFray chat bot, per site. Leave a site out to run it
      without one; chat then comes in through StreamElements custom commands.
-3. Register a Twitch app as in TWITCH_SETUP.md, with `<origin>/auth/callback` as a redirect URL for
-   every origin and channel domain.
-4. Put the secrets in `~/.pixfray/secrets.json`, outside the repo folder (`scripts/configure-twitch.ps1`
-   writes it): `AUTH_SECRET` and `INTERNAL_SECRET` (long random strings, for example
-   `openssl rand -hex 32`), `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `DEV_TOOLS_TOKEN` for the
-   test site. `.dev.vars` (local dev only) holds its own throwaway values, never these.
-5. Run `cf auth login`, then `npx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json`. Check
-   the test site, then deploy production with the same command without `--mode test`. The hosts in
-   `origins` and `channelDomains` must be zones on your Cloudflare account.
-6. Sign in on `/admin/` as the owner. Send streamers to `/start/`; docs/STREAMER_SETUP.md is their
-   checklist.
+3. Register a Twitch app as in [TWITCH_SETUP.md](TWITCH_SETUP.md), with `<origin>/auth/callback` as
+   a redirect URL for every origin and channel domain.
+4. Put the deploy secrets in `~/.pixfray/secrets.json`, outside the repo folder: `AUTH_SECRET` and
+   `INTERNAL_SECRET` (long random strings, for example `openssl rand -hex 32`),
+   `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `DEV_TOOLS_TOKEN` for the test site.
+5. Run `npx cf auth login`, then `npx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json`.
+   Check the test site, then deploy production with the same command without `--mode test`. The
+   hosts in `origins` and `channelDomains` must be zones on your Cloudflare account.
+6. Sign in on `/admin/` as the owner. Send streamers to `/start/`.
 
-The pages need no edits: their HTML names the site through `%SITE_CHANNEL%`, `%SITE_OWNER%`,
-`%SITE_ORIGIN%`, `%SITE_HOST%` and `%SITE_TEST_ORIGIN%`, which `vite.config.js` fills in from `site.config.js`, and
-the scripts in `scripts/` read it too. An overlay link without `?channel=` shows `defaultChannel`.
+The pages, `robots.txt` and `sitemap.xml` need no edits: they take the site's names and domains
+from `site.config.js`. An overlay link without `?channel=` shows `defaultChannel`.
 
-Limits: three static files in `public/` still name the original domains, so edit them for yours:
-`_headers` (keeps the test site out of search results), `robots.txt` and `sitemap.xml`. HANDOFF.md
-and the other records describe the original deployment.
+## Tests
 
-## Cloudflare
-`cf auth login`, `npm run build`, `npm run deploy`.
-The live site is one Worker on Workers Free with two SQLite Durable Objects (ChannelRoom, AuthStore) and no paid products. Prod is `nesszerra-mini-chat`; the test site is `nesszerra-mini-chat-test` (`npm run deploy -- --mode test`).
+`npm run test:all` runs the unit tests, both builds, the workerd upload test, the browser tests and
+a local end-to-end duel against a `cf dev` it starts on port 5199 with its own state folder. The
+end-to-end test signs EventSub webhooks with the `AUTH_SECRET` from `.dev.vars`. `MINI_PORT` and
+`MINI_PERSIST` change the dev port and the local state folder.
 
-## Alpha boundary
-Uses anonymous read-only Twitch IRC over WebSocket. Real anonymous connection to #nesszerra was verified during development. Twitch documents token-based IRC authentication and recommends EventSub/API; anonymous access may change. public/chat.js isolates that adapter for later replacement.
+`npm run test:live` plays real duels through Twitch chat on a live deployment. It needs two
+Chromes with remote debugging, each signed in to Twitch and PixFray (`LIVE_A_CDP`, `LIVE_B_CDP`),
+refuses to post while the channel (`LIVE_CHANNEL`) is live, and changes both accounts' ranks.
 
-The overlay still joins chat over anonymous read-only IRC (unless `demo=1`) to show who is chatting. Duels, ranks and the commands for them go through the Worker.
+## Reference
+
+- [CONTRACTS.md](CONTRACTS.md): routes, rules and data formats.
+- [docs/STREAMER_SETUP.md](docs/STREAMER_SETUP.md): the streamer checklist.
+- [TWITCH_SETUP.md](TWITCH_SETUP.md): the Twitch app and the owner's EventSub chat connection.
+- [docs/DEVTOOLS.md](docs/DEVTOOLS.md) and [docs/LIVE_FIX.md](docs/LIVE_FIX.md): the owner page's
+  tools.
+
+The overlay joins chat over anonymous read-only Twitch IRC to show who is chatting
+([public/chat.js](public/chat.js)); Twitch may change anonymous access. Duels and ranks go through
+the Worker.
 
 ## License
-MIT software; CC0 character artwork. See ASSET_LICENSES.md. No Twitch/OBS credentials are included.
 
-VALIDATION_V2.md is the current verification record and HANDOFF.md the current state. VALIDATION.md and ORACLE_REVIEW.md are v1-era records kept for history.
+MIT for the software; the character artwork is CC0. See [ASSET_LICENSES.md](ASSET_LICENSES.md).
+No Twitch or OBS credentials are included.

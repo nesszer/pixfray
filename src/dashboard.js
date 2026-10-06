@@ -620,7 +620,7 @@ function renderPodium(rows) {
 async function loadLeaderboard() {
   const r = await api("/api/leaderboard/" + CHANNEL);
   if (r.ok && Array.isArray(r.data)) { state.leaderboard = r.data; renderLeaderboard(); }
-  else $("#leaderboard tbody").replaceChildren(h("tr", {}, h("td", { colspan: 6, class: "muted" }, "Couldn't load the leaderboard: " + errorText(r))));
+  else $("#leaderboard tbody").replaceChildren(h("tr", {}, h("td", { colspan: 6, class: "muted" }, r.status === 403 && r.data?.off ? "No ranks yet: PixFray isn't on for " + CHANNEL + "." : "Couldn't load the leaderboard: " + errorText(r))));
 }
 
 addEventListener("beforeunload", (e) => { if (signedIn() && edited()) e.preventDefault(); });

@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import site from '../site.config.js';
-import { channelState, signUp } from './channels.js';
+import { channelState, signUp, isBroadcaster } from './channels.js';
 import { authOrigin } from './hosts.js';
 export class AuthStore extends DurableObject {
   constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS entries (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL)');}
@@ -32,7 +32,8 @@ export class AuthStore extends DurableObject {
       if(!Number.isFinite(expires)||expires>Date.now()+(/^(channel|modsconnected|bot):/.test(key)?21*365:100)*86400000)return Response.json({error:'Invalid expiry'},{status:400});
       if(JSON.stringify(value).length>20000)return Response.json({error:'Record too large'},{status:413});
       sql.exec('INSERT INTO entries(key,value,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,expires=excluded.expires',key,JSON.stringify(value),expires);
-      await this.ctx.storage.setAlarm(Date.now()+3600000);
+      // Only when none is pending: pushing it back on every write would keep it from ever running under steady traffic.
+      if(await this.ctx.storage.getAlarm()===null)await this.ctx.storage.setAlarm(Date.now()+3600000);
       return Response.json({ok:true});
     }
     if(request.method==='DELETE'){sql.exec('DELETE FROM entries WHERE key=?',key);return Response.json({ok:true});}
@@ -64,6 +65,24 @@ export async function seal(env,value){
   const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode(env.AUTH_SECRET)),{name:'AES-GCM'},false,['encrypt']);
   const iv=crypto.getRandomValues(new Uint8Array(12)),cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify(value))));
   return {iv:btoa(String.fromCharCode(...iv)),data:btoa(String.fromCharCode(...cipher))};
+}
+// OAuth state: the sign-in's pending details, sealed with AUTH_SECRET and carried in the state parameter and the
+// mini_oauth cookie, so /auth/login writes nothing to AuthStore (a sign-in flood can't use up its quota).
+const b64url=bytes=>btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const unb64url=text=>Uint8Array.from(atob(text.replace(/-/g,'+').replace(/_/g,'/')),x=>x.charCodeAt(0));
+export const OAUTH_STATE=/^[A-Za-z0-9_-]{40,1500}$/;
+export async function sealState(env,pending){
+  const {iv,data}=await seal(env,{oauth:pending,exp:Date.now()+600000,n:randomToken().slice(0,16)});
+  const bytes=text=>Array.from(atob(text),x=>x.charCodeAt(0));
+  return b64url([...bytes(iv),...bytes(data)]);
+}
+export async function openState(env,state){
+  if(!OAUTH_STATE.test(state||''))return null;
+  try{
+    const raw=unb64url(state);if(raw.length<29)return null;
+    const v=await unseal(env,{iv:btoa(String.fromCharCode(...raw.slice(0,12))),data:btoa(String.fromCharCode(...raw.slice(12)))});
+    return v&&v.oauth&&typeof v.exp==='number'&&v.exp>Date.now()?v.oauth:null;
+  }catch{return null;}
 }
 export async function unseal(env,value){
   const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode(env.AUTH_SECRET)),{name:'AES-GCM'},false,['decrypt']);
@@ -97,7 +116,6 @@ export async function handleAuth(request,env){
   if(!configured(env))return Response.json({error:'Twitch app is not configured yet. Add the app client ID and secret to the Worker.'},{status:503});
   const callback=authOrigin(env,url)+'/auth/callback';
   if(path==='/auth/login'){
-    const nonce=randomToken();
     let pending, scope='';
     if(url.searchParams.get('bot')==='1'){
       if(env.CHAT_BOT!=='1'||!env.BOT_LOGIN)return Response.json({error:'This site has no PixFray chat bot'},{status:403});
@@ -108,23 +126,24 @@ export async function handleAuth(request,env){
       const mods=url.searchParams.get('mods')!=='0';
       pending={signup:true,mods,next:'/admin/'};scope=mods?'moderation:read':'';
     }else{
-      const channel=url.searchParams.get('channel')||site.defaultChannel;
+      // No ?channel (the bare /admin/ page): sign in only; the page then picks the account's own channel.
+      const bare=!url.searchParams.get('channel')&&url.searchParams.get('next')==='/admin/',channel=url.searchParams.get('channel')||site.defaultChannel;
       // A turned-off channel still signs in, so its broadcaster can turn it back on.
       if(!await channelState(env,channel))return Response.json({error:'PixFray is not enabled for this channel'},{status:403});
       const connect=url.searchParams.get('connect')==='1', connectBot=env.CHAT_BOT==='1'&&url.searchParams.get('connect')==='bot', connectMods=connectBot||url.searchParams.get('connect')==='mods';
       if(connect&&channel!==site.defaultChannel)return Response.json({error:'Chat for this channel comes through StreamElements; no Twitch connection needed'},{status:403});
       const asked=url.searchParams.get('next'),next=connectMods?'/admin/':['/admin/','/admin/dev/'].includes(asked)?asked:'/';
-      pending={channel,connect,...(connectMods?{connectMods:true}:{}),...(connectBot?{connectBot:true}:{}),next};scope=connect?CONNECT_SCOPES.join(' '):connectBot?'moderation:read channel:bot':connectMods?'moderation:read':'';
+      pending={...(bare&&!connect&&!connectMods?{}:{channel}),connect,...(connectMods?{connectMods:true}:{}),...(connectBot?{connectBot:true}:{}),next};scope=connect?CONNECT_SCOPES.join(' '):connectBot?'moderation:read channel:bot':connectMods?'moderation:read':'';
     }
-    await record(env,'oauth:'+nonce,pending,Date.now()+600000);
+    const nonce=await sealState(env,pending);
     const target=new URL('https://id.twitch.tv/oauth2/authorize');
     Object.entries({client_id:env.TWITCH_CLIENT_ID,redirect_uri:callback,response_type:'code',scope,state:nonce,force_verify:'true'}).forEach(([k,v])=>target.searchParams.set(k,v));
     return new Response(null,{status:302,headers:{Location:target.href,'Set-Cookie':cookie('mini_oauth',nonce,600)}});
   }
   if(path!=='/auth/callback')return new Response('Not found',{status:404});
-  const state=url.searchParams.get('state'),cookieState=request.headers.get('Cookie')?.match(/(?:^|;\s*)mini_oauth=([a-f0-9]{64})/)?.[1];
+  const state=url.searchParams.get('state'),cookieState=request.headers.get('Cookie')?.match(/(?:^|;\s*)mini_oauth=([A-Za-z0-9_-]+)/)?.[1];
   if(!state||state!==cookieState)return Response.json({error:'OAuth state mismatch. Restart sign-in.'},{status:400});
-  const pending=await consume(env,'oauth:'+state);
+  const pending=await openState(env,state);
   if(pending?.signup&&!url.searchParams.get('code'))return startPage(url.searchParams.get('error')==='access_denied'?'denied':'failed');
   if(pending?.connectMods&&!url.searchParams.get('code'))return adminPage(pending.channel,'mods=denied');
   if(!pending||!url.searchParams.get('code'))return Response.json({error:'Authorization expired or denied'},{status:400});
@@ -163,7 +182,7 @@ export async function handleAuth(request,env){
     if(pending.mods&&modScope){await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);}
   }
   if(pending.connectMods){
-    if(String(user.login).toLowerCase()!==pending.channel)return adminPage(pending.channel,'mods=wrong_account');
+    if(!await isBroadcaster(env,user,pending.channel))return adminPage(pending.channel,'mods=wrong_account');
     if(!modScope||pending.connectBot&&!validation.scopes?.includes('channel:bot'))return adminPage(pending.channel,'mods=denied');
     await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);
   }
@@ -181,7 +200,7 @@ export async function access(env,user,channel){
   if(owner)return {owner:true,moderator:false,canManage:true};
   if(!user)return {owner:false,moderator:false,canManage:false,reason:'Sign in with Twitch'};
   // The broadcaster manages their own channel; the login comes from Twitch at sign-in, never from a form field.
-  if(String(user.login||'').toLowerCase()===channel)return {owner:false,broadcaster:true,moderator:false,canManage:true};
+  if(await isBroadcaster(env,user,channel))return {owner:false,broadcaster:true,moderator:false,canManage:true};
   // The Helix verdict is cached for a minute so a raid of signed-in viewers can't exhaust the broadcaster's rate limit.
   const cacheKey='mod:'+channel+':'+user.id,cached=await record(env,cacheKey);
   if(cached!==null)return verdict(cached===true);

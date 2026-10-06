@@ -1,13 +1,11 @@
 # Twitch application setup
 
-Register a **confidential** application in [Twitch Developer Console](https://dev.twitch.tv/console/apps). Use your own account and these OAuth redirect URLs:
+Register a **confidential** application in [Twitch Developer Console](https://dev.twitch.tv/console/apps). Use your own account and add one OAuth redirect URL, `<origin>/auth/callback`, for every site in `site.config.js`, because sign-in returns to the site it started on:
 
-- `https://pixfray.xyz/auth/callback`
-- `https://chat.miolaf.xyz/auth/callback` (miolafff's domain; sign-in returns to the domain it started on)
-- `https://staging.pixfray.xyz/auth/callback`
-- `https://test.chat.miolaf.xyz/auth/callback`
+- each entry in `origins` (the production site and the test site), for example `https://pixfray.xyz/auth/callback` and `https://staging.pixfray.xyz/auth/callback`;
+- each entry in `channelDomains`, as `https://<domain>/auth/callback`.
 
-Keep the client secret out of chat, GitHub, OBS URLs, and screenshots. Run `pwsh -NoProfile -File scripts/configure-twitch.ps1` locally. It prompts for the secret without echoing it and saves ignored local configuration.
+Keep the client secret out of chat, GitHub, OBS URLs, and screenshots. Run `pwsh -NoProfile -File scripts/configure-twitch.ps1` locally. It prompts for the secret without echoing it and saves it to `~/.pixfray/secrets.json`, outside the repo.
 
 Chat reaches the game through a Twitch EventSub webhook (`channel.chat.message`) that calls the Worker at `/api/eventsub`. Nothing runs on the OBS PC, and there is no relay.
 
@@ -16,7 +14,7 @@ Chat reaches the game through a Twitch EventSub webhook (`channel.chat.message`)
 To connect a site:
 
 1. Deploy the Worker (the callback must be the public https site; Twitch cannot reach localhost).
-2. Sign in as **nesszerra** at `/auth/login?connect=1`. This grants `moderation:read` (current moderator checks), `user:read:chat`, `user:bot` and `channel:bot`, which Twitch requires before it will deliver chat to the app.
+2. Sign in as the owner account (`owner.login` in `site.config.js`) at `/auth/login?connect=1`. This grants `moderation:read` (current moderator checks), `user:read:chat`, `user:bot` and `channel:bot`, which Twitch requires before it will deliver chat to the app.
 3. Open `/admin/` and click **Connect chat**. The Worker creates exactly one webhook subscription with an app token and deletes stale ones. Until Twitch verifies the webhook, the page shows "waiting for Twitch to verify the webhook"; the room re-checks a pending subscription every 3 minutes and shows a failed verification instead of waiting forever. If Twitch reports missing authorization, the page links to **Reconnect Twitch** (`/auth/login?connect=1`); sign in again and click Connect chat.
 
 The webhook secret is derived from `AUTH_SECRET`, so there is no extra secret to set. The room re-checks the subscription at Twitch every hour and pauses duels ("Duels paused · chat offline") if Twitch revoked or removed it. Disconnect chat on `/admin/` deletes the subscription.

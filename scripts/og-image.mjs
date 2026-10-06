@@ -31,7 +31,7 @@ p { margin: 20px 0 0; font-size: 36px; color: #d6c6a8; }
 <h1>PixFray</h1><p>Pick your fighter and duel in ${site.defaultChannel}'s Twitch chat.</p>
 <div class="row">${picks.map(sprite).join('')}</div></div></body></html>`;
 
-const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const page = await browser.newPage({ viewport: { width: 1200, height: 630 } });
 const file = join(mkdtempSync(join(tmpdir(), 'og-')), 'og.html');   // file:// so the art and font load
 writeFileSync(file, html);

@@ -18,7 +18,7 @@ import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
 import { MAX_BOT_COMMANDS, MAX_COMMAND_REPLY, MAX_COUNTER, COMMAND_COOLDOWN_MS, COMMAND_USER_COOLDOWN_MS, commandName, counterName, commandReplyText, replyCounters, renderCommandReply } from "./botcommands.js";
-import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget, seReminderText, seExpiredText, botNames } from "./streamelements.js";
+import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget, seReminderText, seExpiredText, seResultText, seKeyHash, botNames } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -204,6 +204,8 @@ export class ChannelRoom extends DurableObject {
     sql.exec("CREATE TABLE IF NOT EXISTS checkin_test (id INTEGER PRIMARY KEY CHECK (id = 1), until INTEGER NOT NULL, by_name TEXT NOT NULL)");
     // The bot's !fray reminder (config.reminderMin): who to post as and where, learned from the bot's last command, and when it's next due.
     sql.exec("CREATE TABLE IF NOT EXISTS bot_reminder (id INTEGER PRIMARY KEY CHECK (id = 1), broadcaster_id TEXT NOT NULL, bot_id TEXT NOT NULL, origin TEXT NOT NULL, next_at INTEGER NOT NULL DEFAULT 0)");
+    // results_through: the latest duel revealAt the bot has announced, so a result line goes out once.
+    if (!sql.exec("PRAGMA table_info(bot_reminder)").toArray().some((c) => c.name === "results_through")) sql.exec("ALTER TABLE bot_reminder ADD COLUMN results_through INTEGER NOT NULL DEFAULT 0");
     // The bot's own text commands (admin page, Chat commands) and the counters their replies use (server/botcommands.js).
     sql.exec("CREATE TABLE IF NOT EXISTS bot_commands (name TEXT PRIMARY KEY, reply TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '')");
     sql.exec("CREATE TABLE IF NOT EXISTS bot_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)");
@@ -400,7 +402,11 @@ export class ChannelRoom extends DurableObject {
     if (path === "/se" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
-      return this.streamElements(channel, body.value, url.searchParams.get("origin") || "");
+      const res = await this.streamElements(channel, body.value, url.searchParams.get("origin") || "");
+      // The Worker keeps the current key's hash for a minute, so random keys are refused there without waking this room.
+      const secret = this.seSettings()?.secret;
+      if (secret) res.headers.set("X-Se-Key", await seKeyHash(secret));
+      return res;
     }
     if (path === "/se-admin" && request.method === "POST") {
       const body = await this.readJson(request);
@@ -784,8 +790,13 @@ export class ChannelRoom extends DurableObject {
       return json({ error: "too many overlay connections from this network" }, 429);
     }
     const live = this.ctx.getWebSockets("live");
-    if (live.length >= MAX_LIVE_SOCKETS) {   // full: drop an existing socket rather than refuse the new one
-      try { live[0].close(1013, "room full"); } catch {}
+    if (live.length >= MAX_LIVE_SOCKETS) {
+      // Full: drop the oldest viewer-page socket for the new one. Overlay sockets (the streamer's OBS source) are never
+      // dropped; when only overlays are left, the new socket is refused instead.
+      const overlays = new Set(this.ctx.getWebSockets("overlay"));
+      const spare = live.find((ws) => !overlays.has(ws));
+      if (!spare) return json({ error: "room full" }, 503);
+      try { spare.close(1013, "room full"); } catch {}
     }
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -1456,6 +1467,8 @@ export class ChannelRoom extends DurableObject {
     }
     for (const profile of state.players) if (profile.respawnAt > 0) due.push(profile.respawnAt);
     for (const lock of state.rematchLocks) due.push(lock.until);
+    // a bot channel announces each duel's result once the stream has played it
+    if (this.botSource(state)) for (const duel of state.duels) if (duel.status === "completed" && duel.revealAt > Date.now()) due.push(duel.revealAt + 1);
     const reminder = this.reminderDue(state);
     if (reminder) due.push(reminder);
     if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, Math.min(...due)));
@@ -1488,6 +1501,7 @@ export class ChannelRoom extends DurableObject {
       }
     }
     await this.postExpired(channel, since);
+    await this.postResults(channel, Date.now());
     await this.postReminder(channel, Date.now());
     await this.scheduleAlarm(this.readState(channel));
   }
@@ -1510,7 +1524,28 @@ export class ChannelRoom extends DurableObject {
 
   // Posts the expired-challenge lines from the alarm as the bot (there is no chat line to answer), under the reply cap.
   async postExpired(channel, since) {
-    const lines = this.expiredLines(this.readState(channel), since);
+    await this.postBotLines(channel, this.expiredLines(this.readState(channel), since));
+  }
+
+  // The result of each duel the stream has now played (revealAt passed in the last 2 minutes), once, from the alarm.
+  // The "Fight on" reply says to watch the stream; this line follows the replay, so chat never spoils it.
+  async postResults(channel, now) {
+    const state = this.readState(channel);
+    if (!this.botSource(state)) return;
+    const sql = this.ctx.storage.sql, row = sql.exec("SELECT results_through FROM bot_reminder WHERE id = 1").toArray()[0];
+    if (!row) return;
+    const due = state.duels.filter((d) => d.status === "completed" && d.ratings && d.revealAt > row.results_through && d.revealAt <= now && now - d.revealAt < 120000);
+    if (!due.length) return;
+    sql.exec("UPDATE bot_reminder SET results_through = ? WHERE id = 1", Math.max(...due.map((d) => d.revealAt)));
+    const name = (id) => { const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config); return p?.displayName || p?.username || "someone"; };
+    await this.postBotLines(channel, due.map((d) => {
+      const loser = d.winnerId === d.a ? d.b : d.a;
+      return seResultText({ winner: name(d.winnerId), loser: name(loser), w: d.ratings[d.winnerId], l: d.ratings[loser] });
+    }));
+  }
+
+  // Lines the bot posts on its own (no chat line to answer), under the reply cap.
+  async postBotLines(channel, lines) {
     if (!lines.length) return;
     const row = this.ctx.storage.sql.exec("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1").toArray()[0];
     if (!row?.broadcaster_id || !row?.bot_id) return;

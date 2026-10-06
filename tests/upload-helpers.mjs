@@ -39,7 +39,7 @@ export function fakeRoomCtx() {
         depth++; db.exec('BEGIN');
         try { const v = fn(); db.exec('COMMIT'); return v; } catch (e) { db.exec('ROLLBACK'); throw e; } finally { depth--; }
       },
-      alarm: null, async setAlarm(t) { this.alarm = t; }, async deleteAlarm() { this.alarm = null; },
+      alarm: null, async getAlarm() { return this.alarm; }, async setAlarm(t) { this.alarm = t; }, async deleteAlarm() { this.alarm = null; },
     },
     acceptWebSocket() {}, getWebSockets() { return []; },
   };
