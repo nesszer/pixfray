@@ -5,7 +5,7 @@
 // Both accounts type every command in the channel's popout chat; each bot reply must show in both tabs.
 // It refuses to run while the channel is live. The test duels change both accounts' Elo, wins and losses.
 // Duel replies must not give the result away: the leaderboard may change only after the overlay announced the winner.
-// On a PixFray bot channel the overlay shows no winner banner; the bot posts the result line instead, after the overlay.
+// The overlay shows no winner banner; on a PixFray bot channel the bot posts the result line, after the overlay.
 // Run: npm run test:live   (env: LIVE_CHANNEL, LIVE_ORIGIN, LIVE_A_CDP, LIVE_B_CDP, LIVE_SECRETS, LIVE_OUT, LIVE_BOT)
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
@@ -185,8 +185,7 @@ async function checkHidden(pre, a, b) {
 }
 
 // Then it must move once the stream has played the duel: winner up Elo and a win, loser down Elo and a loss,
-// and only after the overlay announced the winner. A bot channel gets the bot's result line (after the overlay, no
-// banner); any other channel gets the overlay's winner banner.
+// and only after the overlay showed the winner. A bot channel also gets the bot's result line, after the overlay.
 async function checkReveal(pre, a, b, results, since) {
   let post, shownAt = 0;
   for (let i = 0; i < 120 && !shownAt; i++) {
@@ -202,9 +201,8 @@ async function checkReveal(pre, a, b, results, since) {
   const shown = (await results()).find((x) => x.at >= since && x.text.toLowerCase().includes(w.login) && / wins/.test(x.text));
   check(shown, `the overlay never announced ${w.login} as the winner`);
   check(shown.at <= shownAt, `the board showed the result ${shown.at - shownAt} ms before the overlay did`);
-  const detail = `overlay "${shown.text}"${shown.banner ? ' (banner)' : ' (no banner)'} ${((shownAt - shown.at) / 1000).toFixed(1)} s before the board: ${w.login} ${w0.elo}→${w1.elo}, ${l.login} ${l0.elo}→${l1.elo}`;
-  if (!BOT) { check(shown.banner, 'no winner banner on a channel without the PixFray bot'); return detail; }
-  check(!shown.banner, 'the overlay showed a winner banner although the bot announces the result');
+  const detail = `overlay "${shown.text}" ${((shownAt - shown.at) / 1000).toFixed(1)} s before the board: ${w.login} ${w0.elo}→${w1.elo}, ${l.login} ${l0.elo}→${l1.elo}`;
+  if (!BOT) return detail;
   const want = new RegExp(`^${esc(BOT)}: ${esc(w.login)} beat ${esc(l.login)}(?: on HP| in sudden death)?(?:, flawless)?! ${esc(w.login)} ${w1.elo} Elo \\(\\+${w1.elo - w0.elo}\\), ${esc(l.login)} ${l1.elo} Elo \\(-${l0.elo - l1.elo}\\)\\.$`, 'i');
   let line;
   for (let i = 0; i < 40 && !line; i++) { line = (await chatSince(since)).find((x) => want.test(x.text)); if (!line) await sleep(500); }
@@ -244,7 +242,7 @@ try {
   await overlay.waitForFunction(() => typeof window.__arenaDebug === 'function', null, { timeout: 20_000 });
   const arena = () => overlay.evaluate(() => window.__arenaDebug());
   // Replays leave the debug list once played, so note every duel id the overlay starts. The debug hook keeps each
-  // winner it showed (results: text, banner or not, and the time).
+  // winner it showed (results: text and time).
   await overlay.evaluate(() => {
     window.__e2eReplays = new Set();
     setInterval(() => window.__arenaDebug().replays.forEach((r) => window.__e2eReplays.add(r.id)), 100);

@@ -117,10 +117,11 @@ try {
 
   const completed = { id: 'evt-2', type: 'duel_completed', duelId: 'duel-1', winnerId: '101', loserId: '202', flawless: true, ratings: { '101': { before: 1720, after: 1731, delta: 11, bonus: 3 }, '202': { before: 1690, after: 1679, delta: -11 } } };
   await page.evaluate((event) => window.__sendArena(0, { type: 'event', revision: 4, event: { ...event, at: Date.now() } }), completed);
-  await page.waitForFunction(() => window.__arenaDebug().banners.includes('Aria Prime wins, FLAWLESS! +11 Elo'));
+  await page.waitForFunction(() => window.__arenaDebug().results.some((r) => r.text === 'Aria Prime wins, FLAWLESS! +11 Elo'));
   // The same event id again (here with a different winner) must not be replayed.
   await page.evaluate((event) => window.__sendArena(0, { type: 'event', revision: 4, event: { ...event, winnerId: '202', loserId: '101', at: Date.now() } }), completed);
-  assert.deepEqual((await page.evaluate(() => window.__arenaDebug())).banners, ['Aria Prime wins, FLAWLESS! +11 Elo'], 'duplicate event IDs are not replayed');
+  assert.deepEqual((await page.evaluate(() => window.__arenaDebug())).results.map((r) => r.text), ['Aria Prime wins, FLAWLESS! +11 Elo'], 'duplicate event IDs are not replayed');
+  assert.deepEqual((await page.evaluate(() => window.__arenaDebug())).banners, [], 'no winner banner');
   // Events older than 10 s (for example replayed after a reconnect) are not announced.
   await page.evaluate(() => window.__sendArena(0, { type: 'event', revision: 4, event: { id: 'evt-old', type: 'challenge_created', a: '202', b: '101', at: Date.now() - 60000 } }));
   assert.doesNotMatch((await page.evaluate(() => window.__arenaDebug())).announcement, /challenges/, 'stale events are not announced');
@@ -180,18 +181,6 @@ try {
   }));
   await page.waitForFunction(() => window.__arenaDebug?.().revision === 9);
   assert.equal((await page.evaluate(() => window.__arenaDebug())).duels.find((x) => x.id === 'duel-2').hp['101'], 41);
-  // Where the PixFray bot reads chat, it announces the winner there, so the overlay shows no winner banner.
-  await page.evaluate(() => window.__sendArena(1, { type: 'snapshot', channel: 'nesszerra', revision: 10, paused: false,
-    chat: { connected: true, lastSeen: Date.now(), status: 'enabled', bot: true }, config: { maxHp: 100 },
-    players: window.__arenaDebug().players.map((p) => ({ userId: p.userId, username: p.userId, displayName: p.label, avatar: p.avatar, color: p.color, elo: p.elo, registered: true })),
-    duels: [], events: [] }));
-  await page.waitForFunction(() => window.__arenaDebug?.().chat?.bot === true);
-  await page.evaluate(() => window.__sendArena(1, { type: 'event', revision: 11, event: { id: 'evt-bot', type: 'duel_completed', duelId: 'duel-2', winnerId: '202', loserId: '101', at: Date.now(), ratings: { '202': { delta: 12 }, '101': { delta: -12 } } } }));
-  await page.waitForFunction(() => window.__arenaDebug().players.find((p) => p.userId === '202')?.float === '+12 Elo');   // the event played
-  const botEnd = await page.evaluate(() => window.__arenaDebug());
-  assert.ok(!botEnd.banners.some((b) => /Bex Prime wins/.test(b)), 'no winner banner when the bot announces in chat');
-  assert.deepEqual(botEnd.results.map((r) => [r.duelId, r.text, r.banner]), [['duel-1', 'Aria Prime wins, FLAWLESS! +11 Elo', true], ['duel-2', 'Bex Prime wins! +12 Elo', false]],
-    'the debug hook lists every winner, with or without a banner');
   assert.ok(apiReads.some(item => item.path === '/api/state/nesszerra' && item.method === 'GET'));
   assert.ok(apiReads.some(item => item.path === '/api/catalog/nesszerra' && item.method === 'GET'));
   assert.deepEqual(errors, []);
@@ -249,7 +238,8 @@ try {
   await quick.waitForFunction(() => window.__arenaDebug().players.find(p => p.userId === '101').ko, null, { timeout: 2000 });
   await quick.waitForFunction(() => window.__arenaDebug().replays.length === 0, null, { timeout: 3000 });
   q = await quick.evaluate(() => window.__arenaDebug());
-  assert.deepEqual(q.banners, ['Bex Prime wins! +12 Elo'], 'winner banner');
+  assert.deepEqual(q.results.map((r) => r.text), ['Bex Prime wins! +12 Elo'], 'the winner is recorded');
+  assert.deepEqual(q.banners, [], 'no winner banner');
   assert.equal(q.players.find(p => p.userId === '202').float, '+12 Elo', 'Elo change floats above the winner');
   assert.equal(q.players.find(p => p.userId === '101').float, '−12 Elo', 'Elo change floats above the loser');
   await quick.screenshot({ path: 'screenshots/overlay-quick-ko-1280.png' });
@@ -338,7 +328,8 @@ try {
   assert.equal((await demoPage.evaluate(() => window.__arenaDebug())).fx, 'on');
   await demoPage.waitForFunction(() => window.__arenaDebug().sparks > 0 && window.__arenaDebug().glows > 0, null, { timeout: 15000 });
   await demoPage.waitForFunction(() => window.__arenaDebug().push, null, { timeout: 45000 });
-  await demoPage.waitForFunction(() => window.__arenaDebug?.().banners.some(b => /wins/.test(b)), null, { timeout: 45000 });
+  await demoPage.waitForFunction(() => window.__arenaDebug?.().results.some(r => /wins/.test(r.text)), null, { timeout: 45000 });
+  assert.ok(!(await demoPage.evaluate(() => window.__arenaDebug().banners)).some(b => /wins/.test(b)), 'the demo shows no winner banner');
   assert.equal(await demoPage.evaluate(() => window.__arenaSockets.length + window.__chatSockets.length), 0,
     'arena demo uses no arena or Twitch websocket');
   assert.deepEqual(demoApiReads, [], 'arena demo does not write or read arena APIs');

@@ -32,7 +32,7 @@ can turn PixFray off at any time without losing fighters or ranks.
   damage gets +3 Elo.
 - The bot only says "Fight on: A vs B! Watch the stream for the winner." The overlay replays the
   duel in about 8-25 s, then shows the Elo change. On a channel with the PixFray chat bot, the bot
-  then announces the winner in chat; elsewhere the overlay shows a winner banner. `!elo`, `!ranks` and the website
+  then announces the winner in chat. `!elo`, `!ranks` and the website
   hold back the new numbers until the replay has played (plus the channel's stream delay), so chat
   doesn't spoil the stream.
 - Each win earns an upgrade point (power, guard, luck) and unlocks hats. `!checkin`, once per live

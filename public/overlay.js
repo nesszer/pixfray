@@ -100,8 +100,8 @@ async function start() {
   const DUEL_GROW = 1.5;     // fighters stand this much bigger while they duel
   const CHAT_BOTS = new Set(['streamelements', 'nightbot', 'moobot', 'fossabot', 'streamlabs', 'wizebot', 'sery_bot', 'soundalerts', 'kofistreambot', 'botrixoficial', 'pixfray']);   // same list as server/channel.js
   const FLOOR = 32;          // room under the feet for the nameplate
-  const banners = [];        // winner banners above finished duels
-  const results = [];        // every winner the overlay showed, with or without a banner (debug and e2e)
+  const banners = [];        // the "Sudden death!" banner above a duel that goes to sudden death
+  const results = [];        // every winner the overlay showed (debug and e2e)
   let shake = null;          // screen shake after a heavy blow or a knockout
   let push = null;           // knockout push-in: the view zooms toward the knockout for a moment
   const PUSH = .18, PUSH_IN = 250, PUSH_HOLD = 1600, PUSH_OUT = 700;
@@ -560,7 +560,6 @@ async function start() {
       }
       case 'duel_completed': {
         const winner = findPlayer(event.winnerId), loser = findPlayer(event.loserId);
-        const meetX = meetPoints.get(event.duelId)?.x;
         replays.delete(event.duelId); meetPoints.delete(event.duelId);
         if (loser) {
           const down = loser.koUntil > now;   // the finishing blow already knocked them down
@@ -578,15 +577,10 @@ async function start() {
         if (Number.isFinite(rl?.delta)) floatText(loser, signed(rl.delta) + ' Elo', '#fb7185', 2200);
         const text = (event.decision === 'hp' ? 'Time! ' : '') + nameOf(event.winnerId) + ' wins' + (event.decision === 'hp' ? ' on HP' : '') +
           (event.flawless ? ', FLAWLESS!' : '!') + (Number.isFinite(rw?.delta) ? ' ' + signed(rw.delta) + ' Elo' : '');
-        // The banner names the winner; the Elo change already floats over both fighters. Where the PixFray bot reads
-        // chat it posts the result there once the stream has shown it, so the overlay leaves the banner out.
-        results.push({ duelId: event.duelId, text, banner: !arenaChat?.bot, at: now });
+        // No winner banner: the knockout, the cheer and the Elo floats show it, and the PixFray bot names the winner in
+        // chat once the stream has shown it. The debug hook still lists each winner.
+        results.push({ duelId: event.duelId, text, at: now });
         if (results.length > 20) results.shift();
-        if (arenaChat?.bot) break;
-        const sub = [event.decision === 'hp' ? 'TIME! ON HP' : '', event.flawless ? 'FLAWLESS' : ''].filter(Boolean).join(' · ');
-        banners.push({ x: meetX ?? winner?.x ?? width / 2, text, title: nameOf(event.winnerId) + ' wins!', sub, color: event.flawless ? '#fde047' : '#ffffff',
-          start: now, until: now + 2400 });
-        if (banners.length > 10) banners.shift();
         break;
       }
       case 'duel_cancelled':

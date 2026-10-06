@@ -185,14 +185,14 @@ try {
   s = await state();
   const done = s.events.find((e) => e.type === 'duel_completed' && e.duelId === duel1.id);
   assert.ok(done, 'duel_completed event'); assert.equal(done.winnerId, users.alice.id);
-  await overlay.waitForFunction(() => window.__arenaDebug().banners.some((b) => /wins/.test(b)), null, { timeout: 5000 });
+  await overlay.waitForFunction(() => window.__arenaDebug().results.some((r) => /wins/.test(r.text)), null, { timeout: 5000 });
   d = await dbg();
   assert.equal(d.players.find((p) => p.userId === users.bob.id).ko, true, 'loser shows KO');
-  // A local chat subscription is not the PixFray bot, so nobody posts the result in chat and the overlay shows the banner.
-  assert.equal(d.chat?.bot, false, 'a local subscription is not the bot');
-  assert.deepEqual(d.results.filter((r) => r.duelId === duel1.id).map((r) => r.banner), [true], 'one winner banner for the duel');
+  assert.equal(d.chat?.bot, false, 'a local subscription is not the PixFray bot');
+  assert.equal(d.results.filter((r) => r.duelId === duel1.id).length, 1, 'the overlay showed the winner once');
+  assert.ok(!d.banners.some((b) => /wins/.test(b)), 'no winner banner');
   await overlay.screenshot({ path: shots + '/e2e-overlay-ko-1280.png' });
-  log('duel KO: alice beat bob; banner "' + d.banners.join(' | ') + '"');
+  log('duel KO: alice beat bob; overlay "' + d.results.at(-1).text + '", no banner');
 
   // 7. Elo and leaderboard.
   const lb = (await api('/api/leaderboard/' + ch)).data;
