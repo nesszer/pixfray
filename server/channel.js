@@ -17,6 +17,7 @@ import { checkChatSubscription, liveStream, sendChatMessage } from "./eventsub.j
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
+import { MAX_BOT_COMMANDS, MAX_COMMAND_REPLY, MAX_COUNTER, COMMAND_COOLDOWN_MS, COMMAND_USER_COOLDOWN_MS, commandName, counterName, commandReplyText, replyCounters, renderCommandReply } from "./botcommands.js";
 import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget, seReminderText, botNames } from "./streamelements.js";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
@@ -203,6 +204,9 @@ export class ChannelRoom extends DurableObject {
     sql.exec("CREATE TABLE IF NOT EXISTS checkin_test (id INTEGER PRIMARY KEY CHECK (id = 1), until INTEGER NOT NULL, by_name TEXT NOT NULL)");
     // The bot's !fray reminder (config.reminderMin): who to post as and where, learned from the bot's last command, and when it's next due.
     sql.exec("CREATE TABLE IF NOT EXISTS bot_reminder (id INTEGER PRIMARY KEY CHECK (id = 1), broadcaster_id TEXT NOT NULL, bot_id TEXT NOT NULL, origin TEXT NOT NULL, next_at INTEGER NOT NULL DEFAULT 0)");
+    // The bot's own text commands (admin page, Chat commands) and the counters their replies use (server/botcommands.js).
+    sql.exec("CREATE TABLE IF NOT EXISTS bot_commands (name TEXT PRIMARY KEY, reply TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '')");
+    sql.exec("CREATE TABLE IF NOT EXISTS bot_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
     sql.exec("CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')");
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
@@ -292,7 +296,7 @@ export class ChannelRoom extends DurableObject {
       this.seedConfigHistory(state);
       const history = this.ctx.storage.sql.exec("SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?", MAX_CONFIG_HISTORY).toArray()
         .map((row) => ({ version: row.version, config: safeJsonParse(row.config, {}), actorId: row.actor_id, actorName: row.actor_name, at: row.at, note: row.note }));
-      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings(), overlays: this.ctx.getWebSockets("overlay").length, checkinTest: this.checkinTest() });
+      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings(), overlays: this.ctx.getWebSockets("overlay").length, checkinTest: this.checkinTest(), botCommands: this.botCommands() });
     }
 
     if (path === "/leaderboard" && request.method === "GET") {
@@ -349,6 +353,10 @@ export class ChannelRoom extends DurableObject {
       if (action === "giftDollars") {
         const gift = this.giftDollars(channel, payload, actorId, String(body.value.actorName || "").slice(0, 48));
         return json(gift.ok ? gift : { ...gift, error: gift.reason }, gift.ok ? 200 : gift.reason === "profile_not_found" ? 404 : 400);
+      }
+      if (action === "saveCommand" || action === "deleteCommand" || action === "setCounter") {
+        const out = this.editBotCommands(channel, action, payload, String(body.value.actorName || actorId).slice(0, 48));
+        return json(out.ok ? { ...out, botCommands: this.botCommands() } : { ...out, error: out.reason }, out.ok ? 200 : 400);
       }
       if (action === "rollbackConfig") {
         const version = Number(payload.version);
@@ -863,7 +871,8 @@ export class ChannelRoom extends DurableObject {
     const first = (words[0] || "").toLowerCase();
     // "!pay" stays an alias of !give, the name it had while StreamElements' !give (!givepoints) was in the way.
     const action = SE_ACTIONS.find((a) => String(settings.names[a] || "").toLowerCase() === first) || (first === "!pay" ? "give" : "");
-    if (!action) return json({ ok: true, reason: "not_command", reply: "" });
+    const custom = action || !first.startsWith("!") ? null : this.ctx.storage.sql.exec("SELECT name, reply FROM bot_commands WHERE name = ?", first).toArray()[0];
+    if (!action && !custom) return json({ ok: true, reason: "not_command", reply: "" });
     const subscriptionId = String(msg.subscription?.id || "");
     const state = this.readState(channel);
     if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) return json({ ok: true, reason: "unknown_subscription", reply: "" });
@@ -873,6 +882,7 @@ export class ChannelRoom extends DurableObject {
       if (verified.visible) this.broadcast(verified.state);
       await this.scheduleAlarm(verified.state);
     }
+    if (custom) return this.sendBotLines([this.customReply(custom, ev, words, Date.now())]);
     const input = { action, userId: ev.chatter_user_id, username: ev.chatter_user_login, displayName: ev.chatter_user_name, target: seTarget(words[1]), targetRaw: words[1] || "", ...(action === "give" ? { amount: String(words[2] || "").slice(0, 16) } : {}), messageId: String(ev.message_id || msg.messageId || "") };
     // BOT_DEBUG (test site): the bot account also plays. "!fray spar" and "!fray e2e" replace the help reply.
     const botId = this.env?.BOT_DEBUG === "1" ? validUserId(msg.botId) : "";
@@ -883,6 +893,11 @@ export class ChannelRoom extends DurableObject {
       const out = await (await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })).json();
       lines = [out.reply, ...(botId && validUserId(input.userId) !== botId ? await this.botAnswer(channel, input, out, { botId, origin, settings, subscriptionId }) : [])];
     }
+    return this.sendBotLines(lines);
+  }
+
+  // The bot's reply lines that fit under BOT_REPLIES_PER_30S, as the Worker expects them: { reply, replies }.
+  sendBotLines(lines) {
     const now = Date.now(), sent = [];
     this.botReplies = (this.botReplies || []).filter((at) => now - at < 30000);
     for (const line of lines.filter(Boolean)) {
@@ -1193,6 +1208,70 @@ export class ChannelRoom extends DurableObject {
       paid = true;
     }
     return paid;
+  }
+
+  // The bot's text commands and counters, for the admin page.
+  botCommands() {
+    const sql = this.ctx.storage.sql;
+    return {
+      commands: sql.exec("SELECT name, reply FROM bot_commands ORDER BY name").toArray().map((r) => ({ name: r.name, reply: r.reply })),
+      counters: sql.exec("SELECT name, value FROM bot_counters ORDER BY name").toArray().map((r) => ({ name: r.name, value: r.value })),
+      max: MAX_BOT_COMMANDS,
+    };
+  }
+
+  // Admin page: saveCommand {name, reply, oldName?}, deleteCommand {name}, setCounter {name, value}. A name can't be a
+  // PixFray command's (the channel's names, their defaults and !pay). A counter first used in a reply starts at 0.
+  editBotCommands(channel, action, payload, actorName) {
+    const sql = this.ctx.storage.sql;
+    if (action === "setCounter") {
+      const name = counterName(payload.name), value = Number(payload.value);
+      if (!name) return { ok: false, reason: "invalid_counter_name" };
+      if (!Number.isInteger(value) || value < 0 || value > MAX_COUNTER) return { ok: false, reason: "invalid_counter_value" };
+      sql.exec("INSERT INTO bot_counters (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value", name, value);
+      logRoomEvent(this, "command", `${actorName} counter ${name} = ${value}`, { channel, action });
+      return { ok: true, reason: "counter_saved" };
+    }
+    const name = commandName(payload.name);
+    if (!name) return { ok: false, reason: "invalid_command_name" };
+    if (action === "deleteCommand") {
+      sql.exec("DELETE FROM bot_commands WHERE name = ?", name);
+      logRoomEvent(this, "command", `${actorName} deleted ${name}`, { channel, action });
+      return { ok: true, reason: "command_deleted" };
+    }
+    const reply = commandReplyText(payload.reply);
+    if (!reply) return { ok: false, reason: "empty_command_reply" };
+    if (reply.length > MAX_COMMAND_REPLY) return { ok: false, reason: "command_reply_too_long" };
+    const taken = new Set(["!pay", ...Object.values(botNames(this.seSettings().names)), ...Object.values(DEFAULT_SE_NAMES)].map((n) => String(n).toLowerCase()));
+    if (taken.has(name)) return { ok: false, reason: "command_name_taken" };
+    const oldName = commandName(payload.oldName);
+    const exists = sql.exec("SELECT 1 FROM bot_commands WHERE name = ?", name).toArray().length > 0;
+    if (exists && oldName !== name) return { ok: false, reason: "command_exists" };
+    const total = sql.exec("SELECT COUNT(*) AS n FROM bot_commands").toArray()[0].n;
+    if (!exists && !oldName && total >= MAX_BOT_COMMANDS) return { ok: false, reason: "too_many_commands" };
+    if (oldName && oldName !== name) sql.exec("DELETE FROM bot_commands WHERE name = ?", oldName);
+    sql.exec("INSERT INTO bot_commands (name, reply, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET reply = excluded.reply, updated_at = excluded.updated_at, updated_by = excluded.updated_by", name, reply, Date.now(), actorName);
+    for (const counter of replyCounters(reply)) sql.exec("INSERT OR IGNORE INTO bot_counters (name, value) VALUES (?, 0)", counter);
+    logRoomEvent(this, "command", `${actorName} saved ${name}`, { channel, action });
+    return { ok: true, reason: "command_saved", name };
+  }
+
+  // A text command's reply, or "" during its cooldown (COMMAND_COOLDOWN_MS for everyone, COMMAND_USER_COOLDOWN_MS per
+  // chatter). Counters change only when the reply is sent.
+  customReply(row, ev, words, now) {
+    const user = String(ev.chatter_user_id || ""), cool = (this.commandCooldowns ||= new Map());
+    if (now < (cool.get(row.name) || 0) || now < (cool.get(row.name + " " + user) || 0)) return "";
+    if (cool.size > 500) for (const [key, until] of cool) if (until <= now) cool.delete(key);
+    cool.set(row.name, now + COMMAND_COOLDOWN_MS);
+    cool.set(row.name + " " + user, now + COMMAND_USER_COOLDOWN_MS);
+    const sql = this.ctx.storage.sql;
+    return renderCommandReply(row.reply, {
+      user: String(ev.chatter_user_name || ev.chatter_user_login || ""),
+      toUser: words[1] || "",
+      count: (name, add) => add
+        ? sql.exec("INSERT INTO bot_counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = MIN(value + 1, ?) RETURNING value", name, MAX_COUNTER).toArray()[0].value
+        : sql.exec("SELECT value FROM bot_counters WHERE name = ?", name).toArray()[0]?.value ?? 0,
+    });
   }
 
   // Check-in test mode: {until, by} while on, else null. An expired row reads as off.

@@ -649,6 +649,59 @@ try {
     assert.deepEqual(posts.at(-1), { action: 'checkinTest', value: false });
     await context.close();
   }
+  // 7a. Chat commands: shown while the PixFray bot reads chat; add, edit, delete and set a counter.
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    const posts = [];
+    let data = { commands: [{ name: '!nt', reply: 'Nesszerra has tried $(count nt) times!' }, { name: '!tablet', reply: '60Wx45H (CTL-472 700hz custom firmware)' }], counters: [{ name: 'nt', value: 1 }], max: 50 };
+    const chatStatus = { connected: true, source: 'twitch', status: 'enabled', subscriptionId: 'sub-bot', createdAt: now - 86400000, lastNotificationAt: now - 120000, lastRevocationReason: '', checkedAt: now };
+    await page.route('**/api/session', (r) => json(r, { user: mod, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+    await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: true, canManage: true }));
+    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
+    await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
+    await page.route('**/api/admin/nesszerra', (r) => {
+      if (r.request().method() === 'POST') {
+        const body = r.request().postDataJSON(); posts.push(body);
+        if (body.action === 'saveCommand' && body.payload.name === '!fray') return json(r, { ok: false, reason: 'command_name_taken', error: 'command_name_taken' }, 400);
+        if (body.action === 'saveCommand') data = { ...data, commands: [...data.commands.filter((c) => c.name !== body.payload.oldName && c.name !== body.payload.name), { name: body.payload.name, reply: body.payload.reply }].sort((a, b) => a.name.localeCompare(b.name)) };
+        if (body.action === 'deleteCommand') data = { ...data, commands: data.commands.filter((c) => c.name !== body.payload.name) };
+        if (body.action === 'setCounter') data = { ...data, counters: data.counters.map((c) => c.name === body.payload.name ? { ...c, value: body.payload.value } : c) };
+        return json(r, { ok: true, botCommands: data });
+      }
+      return json(r, { type: 'snapshot', channel: 'nesszerra', revision: 5, paused: false, chat: { connected: true, lastSeen: now, status: 'enabled' }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
+        chatStatus, history: [{ version: 1, config, actorId: 'system', at: now - 86400000, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 }, streamelements: { key: 'k'.repeat(48), names: {}, origin: base, lastCommandAt: 0, rejectedAt: 0, seen: {}, duelModuleOff: true, timerText: 'x', commands: [] },
+        overlays: 1, modsReady: true, checkinTestAllowed: true, chatBot: { login: 'pixfray', debug: false }, botCommands: data, access: { owner: false, moderator: true, canManage: true } });
+    });
+    await page.goto(base + '/admin/');
+    await page.click('#tab-chat');
+    await page.waitForSelector('#bot-commands:not([hidden])');
+    assert.deepEqual(await page.locator('#bot-commands-table tbody td:first-child').allTextContents(), ['!nt', '!tablet']);
+    assert.equal(await page.locator('[data-counter="nt"]').inputValue(), '1');
+    // add (a PixFray name is refused with a reason), edit with a rename, set a counter, delete
+    await page.fill('#command-name', 'fray'); await page.fill('#command-reply', 'x'); await page.click('#command-save');
+    await page.waitForFunction(() => /PixFray already uses that name/.test(document.querySelector('#command-status').textContent));
+    await page.fill('#command-name', 'Sens'); await page.fill('#command-reply', '0.14 3600dpi'); await page.click('#command-save');
+    await page.waitForFunction(() => /Added !sens/.test(document.querySelector('#command-status').textContent));
+    assert.deepEqual(posts.at(-1), { action: 'saveCommand', payload: { name: '!sens', reply: '0.14 3600dpi' } });
+    assert.equal(await page.locator('#command-name').inputValue(), '');
+    await page.click('[data-edit="!tablet"]');
+    assert.equal(await page.locator('#command-save').textContent(), 'Save changes');
+    await page.fill('#command-name', '!pad'); await page.click('#command-save');
+    await page.waitForFunction(() => /Saved !pad/.test(document.querySelector('#command-status').textContent));
+    assert.deepEqual(posts.at(-1), { action: 'saveCommand', payload: { name: '!pad', reply: '60Wx45H (CTL-472 700hz custom firmware)', oldName: '!tablet' } });
+    assert.deepEqual(await page.locator('#bot-commands-table tbody td:first-child').allTextContents(), ['!nt', '!pad', '!sens']);
+    await page.fill('[data-counter="nt"]', '20'); await page.click('[data-save-counter="nt"]');
+    await page.waitForFunction(() => /Counter nt is 20 now/.test(document.querySelector('#counter-status').textContent));
+    assert.deepEqual(posts.at(-1), { action: 'setCounter', payload: { name: 'nt', value: 20 } });
+    await noOverflow(page, 'chat commands ' + s.name);
+    for (const id of ['#bot-commands-table', '#bot-counters-table']) assert.ok(await page.locator(id).locator('xpath=..').evaluate((n) => n.scrollWidth <= n.clientWidth + 1), id + ' does not scroll sideways at ' + s.name);
+    await page.locator('#bot-commands').screenshot({ path: shots + '/admin-bot-commands-' + s.name + '.png' });
+    page.once('dialog', (d) => d.accept());
+    await page.click('[data-delete="!sens"]');
+    await page.waitForFunction(() => /Deleted !sens/.test(document.querySelector('#command-status').textContent));
+    assert.deepEqual(posts.at(-1), { action: 'deleteCommand', payload: { name: '!sens' } });
+    await context.close();
+  }
   // 7b. Step 4 "Let your moderators help" reads differently for the broadcaster, the site owner on another channel, and a moderator.
   {
     const owner = { id: '9009', login: 'nesszerra', displayName: 'nesszerra' }, newstreamer = { id: '5505', login: 'newstreamer', displayName: 'NewStreamer' };

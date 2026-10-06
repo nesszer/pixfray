@@ -1026,6 +1026,37 @@ test('chat bot: !give gives dollars (and !pay still does); replies name !give', 
   assert.equal((await r.say('u1', 'alice', '!givepoints')).reply, '', "StreamElements' name isn't ours");
 });
 
+test('chat bot: text commands from the admin page answer in chat, with counters, cooldowns and protected names', async () => {
+  const r = botRoom({});
+  await r.connectChat('sub-bot');
+  const admin = async (action, payload) => (await r.call('/admin', { method: 'POST', body: { actorId: 'owner1', actorName: 'nesszerra', action, payload } }));
+  assert.equal((await admin('saveCommand', { name: 'sens', reply: '0.14 3600dpi' })).body.ok, true);
+  const saved = await admin('saveCommand', { name: '!NT', reply: 'Nesszerra has tried $(count nt) times!' });
+  assert.deepEqual(saved.body.botCommands.counters, [{ name: 'nt', value: 0 }], 'a new counter starts at 0');
+  assert.equal((await admin('setCounter', { name: 'nt', value: 1 })).body.ok, true);
+  assert.equal((await r.say('u1', 'alice', '!sens')).reply, '0.14 3600dpi');
+  assert.equal((await r.say('u1', 'alice', '!nt')).reply, 'Nesszerra has tried 2 times!');
+  assert.equal((await r.say('u2', 'bob', '!nt')).reply, '', 'global cooldown');
+  assert.equal((await r.say('u1', 'alice', 'sens')).reply, '', 'needs the !');
+  r.commandCooldowns.clear();
+  assert.equal((await r.say('u2', 'bob', '!NT now')).reply, 'Nesszerra has tried 3 times!');
+  await admin('saveCommand', { name: 'hug', reply: '${user} hugs ${touser} (${getcount nt})' });
+  assert.equal((await r.say('u1', 'alice', '!hug @bob')).reply, 'alice hugs bob (3)');
+  assert.equal((await r.say('u1', 'alice', '!unknown')).reason, 'not_command');
+  // Names PixFray uses, and bad input, are refused.
+  for (const name of ['fray', '!give', 'pay', 'fight', 'challenge']) assert.equal((await admin('saveCommand', { name, reply: 'x' })).body.error, 'command_name_taken', name);
+  assert.equal((await admin('saveCommand', { name: 'a b', reply: 'x' })).body.error, 'invalid_command_name');
+  assert.equal((await admin('saveCommand', { name: 'x', reply: '  ' })).body.error, 'empty_command_reply');
+  assert.equal((await admin('saveCommand', { name: 'sens', reply: 'dup' })).body.error, 'command_exists');
+  assert.equal((await admin('setCounter', { name: 'nt', value: -1 })).body.error, 'invalid_counter_value');
+  // Edit with a rename, then delete; the admin page sees the list.
+  assert.equal((await admin('saveCommand', { name: 'sensitivity', reply: '0.15', oldName: '!sens' })).body.ok, true);
+  assert.deepEqual((await r.call('/admin')).body.botCommands.commands.map((c) => c.name), ['!hug', '!nt', '!sensitivity']);
+  r.commandCooldowns.clear();
+  assert.equal((await r.say('u1', 'alice', '!sens')).reply, '');
+  assert.equal((await admin('deleteCommand', { name: 'hug' })).body.botCommands.commands.length, 2);
+});
+
 // The reminder posts through Helix as the bot. Twitch is faked: an app token, then every chat line is recorded.
 function fakeTwitch() {
   const sent = [], real = globalThis.fetch;

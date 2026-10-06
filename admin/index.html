@@ -246,6 +246,27 @@
           <div class="toolbar"><a class="btn" href="/auth/login?connect=1">Reconnect Twitch</a></div>
         </div>
       </section>
+      <section class="section" id="bot-commands" aria-labelledby="bot-commands-title" hidden>
+        <h2 id="bot-commands-title">Chat commands</h2>
+        <p class="small muted" id="bot-commands-intro">The PixFray bot answers these in chat. Each one replies at most every 5 seconds, and every 15 seconds to the same viewer.</p>
+        <div class="table-wrap"><table class="data" id="bot-commands-table">
+          <thead><tr><th scope="col">Command</th><th scope="col">Reply</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <form id="command-form" class="controls" novalidate>
+          <div><label for="command-name">Command</label><input id="command-name" maxlength="25" autocomplete="off" spellcheck="false" placeholder="!sens" required></div>
+          <div><label for="command-reply">Reply</label><input id="command-reply" maxlength="400" autocomplete="off" required><p class="hint"><code>${user}</code> is who typed it, <code>${touser}</code> the @name after the command. <code>${count deaths}</code> adds 1 to the counter "deaths" and shows it.</p></div>
+          <div><div class="toolbar"><button class="btn" id="command-save" type="submit">Add command</button><button class="btn" id="command-cancel" type="button" hidden>Cancel</button></div><p class="status" id="command-status" role="status"></p></div>
+        </form>
+        <div id="bot-counters" class="stack" hidden>
+          <h3>Counters</h3>
+          <div class="table-wrap"><table class="data" id="bot-counters-table">
+            <thead><tr><th scope="col">Counter</th><th scope="col" class="num">Value</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <p class="status" id="counter-status" role="status"></p>
+        </div>
+      </section>
       <section class="section" id="troubleshoot" aria-labelledby="trouble-title">
         <h2 id="trouble-title">If something doesn't work</h2>
         <details class="small"><summary>The overlay is blank in OBS</summary>

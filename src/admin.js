@@ -272,7 +272,7 @@ function renderAll() {
     stat("In the arena", a.players.length));
   if (document.activeElement !== $("#announce")) $("#announce").value = a.config.announce || "off";
   if (document.activeElement !== $("#cap")) $("#cap").value = a.config.maxOnStream || 50;
-  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe(); renderChecklist(); renderCheckinTest(); renderPower();
+  renderDuels(); renderPlayers(); renderRanks(); renderConfig(); renderHistory(); renderUsage(); renderChat(); renderSe(); renderChecklist(); renderCheckinTest(); renderBotCommands(); renderPower();
 }
 // Where chat comes from and whether it works. StreamElements counts as working only once a command has
 // arrived with this site's key; choosing it as the source isn't enough. The Stream setup tab uses the same rules.
@@ -757,6 +757,75 @@ $("#checkin-test-toggle").addEventListener("click", async (e) => {
   S.admin.checkinTest = r.data.checkinTest;
   renderCheckinTest();
   setStatus($("#checkin-test-status"), on ? "Test mode is on. Type !checkin in chat to try it." : "Test mode is off.", "ok");
+});
+
+// ---------- the bot's own text commands (server/botcommands.js), shown while the PixFray bot reads chat ----------
+let editingCommand = "", shownCommands = "";
+const COMMAND_ERRORS = { command_name_taken: "PixFray already uses that name", command_exists: "that command already exists; edit it in the table", invalid_command_name: "use 1 to 24 letters, digits or _", empty_command_reply: "type a reply", command_reply_too_long: "keep the reply under 400 characters", too_many_commands: "a channel can have 50 commands" };
+function renderBotCommands() {
+  const a = S.admin, chat = a.chatStatus || a.chat || {}, data = a.botCommands || { commands: [], counters: [] };
+  $("#bot-commands").hidden = !(a.chatBot && chat.connected === true && chat.source !== "streamelements");
+  const key = JSON.stringify(data);
+  if (key === shownCommands || $("#bot-commands").contains(document.activeElement) && document.activeElement.tagName === "INPUT" && document.activeElement.closest("#bot-counters")) return;
+  shownCommands = key;
+  $("#bot-commands-table tbody").replaceChildren(...(data.commands.length ? data.commands.map((c) => h("tr", {},
+    h("td", {}, h("code", {}, c.name)), h("td", {}, c.reply),
+    h("td", {}, h("button", { class: "btn btn-small", type: "button", "data-edit": c.name, "aria-label": "Edit " + c.name }, "Edit"), " ", h("button", { class: "btn btn-small btn-danger", type: "button", "data-delete": c.name, "aria-label": "Delete " + c.name }, "Delete"))))
+    : [h("tr", {}, h("td", { colspan: "3", class: "muted" }, "No commands yet. Add one below."))]));
+  $("#bot-counters").hidden = !data.counters.length;
+  $("#bot-counters-table tbody").replaceChildren(...data.counters.map((c) => h("tr", {},
+    h("td", {}, h("code", {}, c.name)),
+    h("td", { class: "num" }, h("input", { type: "number", min: "0", max: "1000000000", step: "1", inputmode: "numeric", value: String(c.value), "aria-label": "Value of " + c.name, "data-counter": c.name })),
+    h("td", {}, h("button", { class: "btn btn-small", type: "button", "data-save-counter": c.name, "aria-label": "Save " + c.name }, "Save")))));
+}
+function editCommand(name) {
+  const c = (S.admin.botCommands?.commands || []).find((x) => x.name === name);
+  editingCommand = c ? c.name : "";
+  $("#command-name").value = c ? c.name : "";
+  $("#command-reply").value = c ? c.reply : "";
+  $("#command-save").textContent = c ? "Save changes" : "Add command";
+  $("#command-cancel").hidden = !c;
+  if (c) $("#command-reply").focus();
+}
+async function commandAction(action, payload, status) {
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action, payload } });
+  if (!r.ok) { setStatus(status, "Couldn't save: " + (COMMAND_ERRORS[r.data?.error] || errorText(r)) + ".", "error"); return false; }
+  S.admin.botCommands = r.data.botCommands;
+  renderBotCommands();
+  return true;
+}
+$("#command-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = $("#command-status"), name = $("#command-name").value.trim().toLowerCase().replace(/^!?/, "!"), reply = $("#command-reply").value.trim();
+  if (!/^![a-z0-9_]{1,24}$/.test(name)) return setStatus(status, "Name the command with 1 to 24 letters, digits or _, like !sens.", "error");
+  if (!reply) return setStatus(status, "Type the reply the bot should send.", "error");
+  $("#command-save").disabled = true;
+  setStatus(status, "Saving…");
+  const was = editingCommand, ok = await commandAction("saveCommand", { name, reply, ...(was ? { oldName: was } : {}) }, status);
+  $("#command-save").disabled = false;
+  if (!ok) return;
+  editCommand("");
+  setStatus(status, (was ? "Saved " : "Added ") + name + ". Type it in chat to try it.", "ok");
+});
+$("#command-cancel").addEventListener("click", () => { editCommand(""); setStatus($("#command-status"), ""); });
+$("#bot-commands-table").addEventListener("click", async (e) => {
+  const edit = e.target.closest("[data-edit]"), del = e.target.closest("[data-delete]");
+  if (edit) return editCommand(edit.dataset.edit);
+  if (!del || !confirm("Delete " + del.dataset.delete + "? Its counter stays.")) return;
+  del.disabled = true;
+  if (await commandAction("deleteCommand", { name: del.dataset.delete }, $("#command-status"))) {
+    if (editingCommand === del.dataset.delete) editCommand("");
+    setStatus($("#command-status"), "Deleted " + del.dataset.delete + ".", "ok");
+  } else del.disabled = false;
+});
+$("#bot-counters-table").addEventListener("click", async (e) => {
+  const button = e.target.closest("[data-save-counter]");
+  if (!button) return;
+  const name = button.dataset.saveCounter, value = Number($(`[data-counter="${name}"]`).value), status = $("#counter-status");
+  if (!Number.isInteger(value) || value < 0 || value > 1e9) return setStatus(status, "Pick a whole number from 0 to 1000000000.", "error");
+  button.disabled = true;
+  if (await commandAction("setCounter", { name, value }, status)) setStatus(status, "Counter " + name + " is " + value + " now.", "ok");
+  else button.disabled = false;
 });
 
 // ---------- turning PixFray off (signed-up channels; the broadcaster or the owner, and only the owner undoes the owner's off) ----------
