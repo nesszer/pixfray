@@ -43,7 +43,8 @@ function twitch(t, as, scopes) {
     if (u.endsWith('/oauth2/token')) return Response.json({ access_token: 'user-token', refresh_token: 'r' });
     if (u.endsWith('/oauth2/validate')) return Response.json({ client_id: 'test-app', user_id: as.id, scopes });
     if (u.includes('login=nesszerra')) return Response.json({ data: [{ id: '1', login: 'nesszerra', display_name: 'nesszerra' }] });
-    return Response.json({ data: [{ id: as.id, login: as.login, display_name: as.displayName }] });
+    if (u.includes('/helix/videos')) return as.videos === 'fail' ? new Response('', { status: 503 }) : Response.json({ data: Array(as.videos ?? 1).fill({ id: 'v1' }) });
+    return Response.json({ data: [{ id: as.id, login: as.login, display_name: as.displayName, created_at: as.createdAt ?? '2020-01-01T00:00:00Z', broadcaster_type: as.type ?? '' }] });
   });
 }
 async function login(env, query) {
@@ -137,6 +138,51 @@ test('a built-in channel signing up stays built in', async (t) => {
   twitch(t, { id: '2', login: 'miolafff', displayName: 'miolafff' }, ['moderation:read']);
   assert.equal((await callback(env, state)).headers.get('Location'), '/admin/?channel=miolafff&signed_in=1#chat');
   assert.equal(await record(env, 'channel:miolafff'), null);
+});
+
+test('sign-up: a Twitch account under 30 days old or that never streamed waits, off, for the owner to approve it', async (t) => {
+  const { env } = environment();
+  const young = { ...STREAMER, createdAt: new Date(Date.now() - 5 * 86400000).toISOString(), videos: 0 };
+  const { state } = await login(env, 'signup=1');
+  twitch(t, young, ['moderation:read']);
+  const r = await callback(env, state);
+  assert.equal(r.headers.get('Location'), '/start/?error=review');
+  assert.equal(r.headers.get('Set-Cookie').includes('mini_session'), false);
+  assert.equal(await record(env, 'broadcaster:newstreamer'), null, 'no mod access until approved');
+  const rec = await record(env, 'channel:newstreamer');
+  assert.deepEqual(rec.review.reasons, ['young', 'never_streamed']);
+  assert.equal(rec.pausedBy, 'owner');
+  assert.equal((await worker.fetch(req('/api/state/newstreamer'), env)).status, 403, 'off while it waits');
+  // signing in again still waits, even once the account would pass
+  t.mock.restoreAll();
+  const again = await login(env, 'signup=1');
+  twitch(t, STREAMER, ['moderation:read']);
+  assert.equal((await callback(env, again.state)).headers.get('Location'), '/start/?error=review');
+  // the owner sees why on the owner page and turns it on, which approves it
+  const owner = await signIn(env, OWNER);
+  const list = await (await worker.fetch(req('/api/dev/channels', 'GET', undefined, owner), env)).json();
+  assert.deepEqual(list.channels.find((c) => c.login === 'newstreamer').review.reasons, ['young', 'never_streamed']);
+  assert.equal((await worker.fetch(req('/api/dev/channels', 'POST', { action: 'resume', login: 'newstreamer' }, owner), env)).status, 200);
+  const approved = await record(env, 'channel:newstreamer');
+  assert.equal(approved.review, undefined);
+  assert.equal(approved.pausedAt, undefined);
+  t.mock.restoreAll();
+  const later = await login(env, 'signup=1');
+  twitch(t, STREAMER, ['moderation:read']);
+  assert.equal((await callback(env, later.state)).headers.get('Location'), '/admin/?channel=newstreamer&signed_in=1#chat');
+});
+
+test('the streamer check: Affiliates and Partners skip the past-broadcast lookup; a failed lookup goes to review', async () => {
+  const { reviewReasons } = await import('../server/channels.js');
+  const now = Date.parse('2026-10-07T00:00:00Z'), old = '2025-01-01T00:00:00Z';
+  const never = () => { throw new Error('not asked'); };
+  assert.deepEqual(await reviewReasons({ id: '5', created_at: old, broadcaster_type: 'affiliate' }, never, now), []);
+  assert.deepEqual(await reviewReasons({ id: '5', created_at: old, broadcaster_type: 'partner' }, never, now), []);
+  assert.deepEqual(await reviewReasons({ id: '5', created_at: old, broadcaster_type: '' }, async () => ({ data: [{}] }), now), []);
+  assert.deepEqual(await reviewReasons({ id: '5', created_at: old, broadcaster_type: '' }, async () => ({ data: [] }), now), ['never_streamed']);
+  assert.deepEqual(await reviewReasons({ id: '5', created_at: old, broadcaster_type: '' }, async () => { throw new Error('503'); }, now), ['unchecked']);
+  assert.deepEqual(await reviewReasons({ id: '5', created_at: '2026-09-20T00:00:00Z', broadcaster_type: 'affiliate' }, never, now), ['young']);
+  assert.deepEqual(await reviewReasons({ id: '5', broadcaster_type: 'partner' }, never, now), ['young'], 'no creation date counts as young');
 });
 
 test(`the registry is capped at ${MAX_CHANNELS} channels that are on`, async (t) => {

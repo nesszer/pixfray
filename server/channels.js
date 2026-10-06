@@ -1,11 +1,13 @@
 // Channel registry. CHANNELS (server/auth.js) are built in and always on; any other streamer signs up on /start and
 // their channel lives in AuthStore:
-//   channel:<login> = { id, login, enabledAt, pausedAt?, pausedBy? }   kept ~20 years; paused keeps fighters and ranks
+//   channel:<login> = { id, login, enabledAt, pausedAt?, pausedBy?, review? }   kept ~20 years; paused keeps fighters and ranks
+//   review = { reasons, at }: sign-up didn't pass the streamer check and waits, off, for the owner to turn it on.
 import { record, CHANNELS } from './auth.js';
 
 export const MAX_CHANNELS = 200;
 export const CHANNEL_MS = 20 * 365 * 86400000;
 export const LOGIN = /^[a-z0-9_]{3,25}$/;
+export const STREAMER_MIN_AGE_MS = 30 * 86400000;
 
 // Per-isolate cache, so a page load or a chat command doesn't read AuthStore every time. Another isolate can serve
 // a just-paused channel for up to a minute.
@@ -54,17 +56,38 @@ const saveChannel = (env, rec) => { forgetChannel(rec.login); return record(env,
 const enabledCount = rows => rows.filter(r => !r.value.pausedAt).length;
 const fail = (status, error, reason) => Object.assign(new Error(error), { status, reason });
 
+// The streamer check for a new sign-up, from the signed-in Helix user: why it needs the owner's approval, [] when it
+// doesn't. 'young': the account is under 30 days old. 'never_streamed': not Affiliate or Partner and no past broadcast
+// saved. 'unchecked': the past-broadcast lookup failed. helix(path) returns the parsed JSON or throws.
+export async function reviewReasons(identity, helix, now = Date.now()) {
+  const reasons = [], created = Date.parse(identity?.created_at) || 0;
+  if (!created || now - created < STREAMER_MIN_AGE_MS) reasons.push('young');
+  if (!['affiliate', 'partner'].includes(identity?.broadcaster_type)) {
+    const streamed = await helix('/videos?type=archive&first=1&user_id=' + encodeURIComponent(identity.id)).then((d) => d?.data?.length > 0, () => null);
+    if (!streamed) reasons.push(streamed === null ? 'unchecked' : 'never_streamed');
+  }
+  return reasons;
+}
+
 // Sign-up from /start: the signed-in Twitch account turns on its own channel, never anyone else's. Signing up again
-// is a no-op (a channel turned off stays off; its broadcaster turns it back on from Stream setup).
-export async function signUp(env, user) {
+// is a no-op (a channel turned off stays off; its broadcaster turns it back on from Stream setup). A new channel that
+// fails check() is saved off with a review note for the owner, and sign-up stops with 'review'.
+export async function signUp(env, user, check = async () => []) {
   const login = String(user.login || '').toLowerCase();
   if (!LOGIN.test(login)) throw fail(400, 'This Twitch account name is not supported', 'failed');
   if (CHANNELS.includes(login)) return login;
   const existing = await record(env, 'channel:' + login);
   // A Twitch name can pass to a new account after a rename; the channel stays with the account that set it up.
   if (existing?.id && existing.id !== user.id) throw fail(403, 'This channel name was set up by another Twitch account', 'taken');
+  if (existing?.review) throw fail(403, 'This channel is waiting for the site owner to approve it', 'review');
   if (existing) return login;
   if (enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'PixFray is full right now', 'full');
+  const reasons = await check();
+  if (reasons.length) {
+    const now = Date.now();
+    await saveChannel(env, { id: user.id, login, enabledAt: now, pausedAt: now, pausedBy: 'owner', review: { reasons, at: now } });
+    throw fail(403, 'This channel is waiting for the site owner to approve it', 'review');
+  }
   await saveChannel(env, { id: user.id, login, enabledAt: Date.now() });
   return login;
 }
@@ -86,8 +109,9 @@ export async function setPaused(env, login, paused, by = 'owner') {
   if (!rec) throw fail(404, login + ' is not set up', 'not_found');
   if (!paused && rec.pausedBy === 'owner' && by !== 'owner') throw fail(403, 'The site owner turned PixFray off for this channel', 'owner_off');
   if (!paused && rec.pausedAt && enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'PixFray is full right now', 'full');
-  const { pausedAt, pausedBy, ...rest } = rec;
-  const next = paused ? { ...rest, pausedAt: pausedAt || Date.now(), pausedBy: pausedBy === 'owner' ? 'owner' : by } : rest;
+  // turning it on approves a channel waiting for review
+  const { pausedAt, pausedBy, review, ...rest } = rec;
+  const next = paused ? { ...rest, pausedAt: pausedAt || Date.now(), pausedBy: pausedBy === 'owner' ? 'owner' : by, ...(review ? { review } : {}) } : rest;
   await saveChannel(env, next);
   return next;
 }
@@ -98,6 +122,6 @@ export async function overview(env) {
   return {
     builtin: CHANNELS,
     max: MAX_CHANNELS,
-    channels: channels.map(r => ({ login: r.value.login, enabledAt: r.value.enabledAt, pausedAt: r.value.pausedAt || 0, pausedBy: r.value.pausedBy || '' })).sort((a, b) => b.enabledAt - a.enabledAt),
+    channels: channels.map(r => ({ login: r.value.login, enabledAt: r.value.enabledAt, pausedAt: r.value.pausedAt || 0, pausedBy: r.value.pausedBy || '', ...(r.value.review ? { review: r.value.review } : {}) })).sort((a, b) => b.enabledAt - a.enabledAt),
   };
 }

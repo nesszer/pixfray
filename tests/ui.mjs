@@ -179,7 +179,7 @@ try {
     });
     await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
-    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
+    await page.route('**/api/leaderboard/nesszerra*', (r) => json(r, board));
     await page.route('**/api/profile/nesszerra', async (r) => {
       if (r.request().method() === 'POST') { posted = r.request().postDataJSON(); return json(r, { profile: { ...board[1], bonus: 1, checkins: 4, streak: 3, dollars: 12, ...posted }, revision: 9 }); }
       return json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now, bonus: 1, checkins: 4, streak: 3, dollars: 12 });
@@ -290,7 +290,7 @@ try {
     let saved = null;
     await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
-    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board.filter((p) => p.userId !== user.id)));
+    await page.route('**/api/leaderboard/nesszerra*', (r) => json(r, board.filter((p) => p.userId !== user.id)));
     await page.route('**/api/profile/nesszerra', async (r) => {
       if (r.request().method() === 'POST') { saved = { ...user, username: user.login, ...r.request().postDataJSON(), elo: 1000, wins: 0, losses: 0 }; return json(r, { profile: saved, revision: 3 }); }
       return json(r, saved);
@@ -360,7 +360,7 @@ try {
       ], events: [] });
     await page.route('**/api/session', (r) => json(r, { user: role === 'owner' ? { id: '9009', login: 'nesszerra', displayName: 'nesszerra' } : mod, owner: role === 'owner', configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: role === 'owner', moderator: role === 'mod', canManage: true }));
-    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
+    await page.route('**/api/leaderboard/nesszerra*', (r) => json(r, board));
     await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [{ id: 'c-mascot', label: 'Mascot', frames: [{ x: 0, y: 0, w: 128, h: 128 }, { x: 128, y: 0, w: 128, h: 128 }], animations: { attack: [{ x: 256, y: 0, w: 128, h: 128 }] }, bytes: 48213, createdBy: mod.id, createdAt: now - 7200000 }], usage: { count: 1, limit: 24, bytes: 48213 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 24 } }));
     await page.route('**/api/admin/nesszerra', async (r) => {
       if (r.request().method() === 'GET') return json(r, { ...snapshot(), chatStatus, history: history(), customUsage: { count: 1, limit: 24, bytes: 48213 }, access: { owner: role === 'owner', moderator: role === 'mod', canManage: true } });
@@ -487,8 +487,8 @@ try {
     await page.click('#tab-players');
     await page.locator('#ranks tbody tr').first().getByRole('button', { name: 'Reset rank' }).click(); await page.waitForTimeout(150);
     assert.deepEqual(posts.at(-1), { action: 'resetRank', payload: { userId: '3003' } });
-    await page.locator('#reset-all-ranks').click(); await page.waitForTimeout(150);
-    assert.deepEqual(posts.at(-1), { action: 'resetAllRanks' });
+    assert.equal(await page.locator('#reset-all-ranks').isHidden(), true, 'resetting every rank is the broadcaster's');
+    assert.equal(await page.locator('#rotate-se').isHidden(), true, 'a new StreamElements key is the broadcaster's');
     // mod gift: a Twitch name (with or without @) and a whole amount
     await page.locator('#gift-user').fill('@Cara');
     await page.locator('#gift-send').click();
@@ -567,7 +567,7 @@ try {
       commands: ['challenge', 'accept', 'decline'].map((action) => ({ action, name: '!' + action, response: '$(customapi ' + base + '/api/se/nesszerra/' + action + '?k=' + 'k'.repeat(48) + ')' })) };
     await page.route('**/api/session', (r) => json(r, { user: mod, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: true, canManage: true }));
-    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
+    await page.route('**/api/leaderboard/nesszerra*', (r) => json(r, board));
     await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
     await page.route('**/api/admin/nesszerra', (r) => json(r, { type: 'snapshot', channel: 'nesszerra', revision: 5, paused: false, chat: { connected: true, lastSeen: se.lastCommandAt, status: 'enabled' }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
       chatStatus, history: [{ version: 1, config, actorId: 'system', at: now - 86400000, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 }, streamelements, access: { owner: false, moderator: true, canManage: true } }));
@@ -597,7 +597,7 @@ try {
       commands: actions.map((action) => ({ action, name: '!' + action, response: '$(customapi ' + base + '/api/se/nesszerra/' + action + '?k=' + 'k'.repeat(48) + ')' })) });
     await page.route('**/api/session', (r) => json(r, { user: mod, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: true, canManage: true }));
-    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
+    await page.route('**/api/leaderboard/nesszerra*', (r) => json(r, board));
     await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
     await page.route('**/api/admin/nesszerra', (r) => {
       if (r.request().method() === 'POST') { const body = r.request().postDataJSON(); posts.push(body); if (body.action === 'setDuelModuleOff') duelModuleOff = body.value;
@@ -666,7 +666,7 @@ try {
     const chatStatus = { connected: true, source: 'twitch', status: 'enabled', subscriptionId: 'sub-bot', createdAt: now - 86400000, lastNotificationAt: now - 120000, lastRevocationReason: '', checkedAt: now };
     await page.route('**/api/session', (r) => json(r, { user: mod, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: true, canManage: true }));
-    await page.route('**/api/leaderboard/nesszerra', (r) => json(r, board));
+    await page.route('**/api/leaderboard/nesszerra*', (r) => json(r, board));
     await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
     await page.route('**/api/admin/nesszerra', (r) => {
       if (r.request().method() === 'POST') {
@@ -738,7 +738,7 @@ try {
       const ch = c.channel;
       await page.route('**/api/session', (r) => json(r, { user: c.session, owner: c.owner, configured: true, channels: ['nesszerra'], productionEnabled: false }));
       await page.route('**/api/access/' + ch, (r) => json(r, c.access));
-      await page.route('**/api/leaderboard/' + ch, (r) => json(r, []));
+      await page.route('**/api/leaderboard/' + ch + '*', (r) => json(r, []));
       await page.route('**/api/assets/' + ch, (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
       await page.route('**/api/admin/' + ch, (r) => json(r, { type: 'snapshot', channel: ch, revision: 1, paused: false, chat: { connected: false, lastSeen: 0, status: 'disconnected' }, config: { ...config, enabled: !c.paused }, configVersion: 1, round: 1, players: [], duels: [], events: [],
         chatStatus: { connected: false, status: 'disconnected', subscriptionId: '', createdAt: 0 }, history: [{ version: 1, config, actorId: 'system', at: now, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 },

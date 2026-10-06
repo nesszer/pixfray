@@ -6,6 +6,7 @@ import {
   createInitialState,
   defaultConfig,
   hiddenResults,
+  NEW_ACCOUNT_MS,
   normalizeGameState,
   parseGameCommand,
   reduceGame,
@@ -14,6 +15,7 @@ import {
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.js";
+import { accountCreatedAt } from "./accounts.js";
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
@@ -82,6 +84,7 @@ const PRESENCE_REFRESH_MS = 30_000;        // chat-only viewers refresh their ar
 const LAST_SEEN_WRITE_MS = 60_000;         // chat.lastSeen alone is persisted at most once a minute
 const CHAT_CHECK_MS = 60 * 60_000;         // the alarm re-checks the Helix subscription at most hourly
 const CHAT_PENDING_CHECK_MS = 3 * 60_000;  // a subscription still awaiting webhook verification is re-checked sooner
+const ACCOUNT_RETRY_MS = 3_600_000;        // a failed Twitch account-age lookup is retried after an hour
 const LIVE_CACHE_MS = 60_000;              // !checkin asks Twitch whether the channel is live at most once a minute
 const FREE_MISS_MS = 7 * 24 * 60 * 60_000; // a streak survives one missed stream per week
 const STREAK_MILESTONES = [3, 7, 14, 30];  // +1 point when the streak reaches one of these (config.streakBonus)
@@ -206,6 +209,8 @@ export class ChannelRoom extends DurableObject {
     // the profile columns always hold the active one. Bought build slots are owned_items rows of kind "slot".
     for (const column of ["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`);
     if (!profileColumns.includes("build")) sql.exec("ALTER TABLE profiles ADD COLUMN build INTEGER NOT NULL DEFAULT 0");
+    // v3.0: when the fighter's Twitch account was made (0 = not known yet) and when the room last asked Twitch.
+    for (const column of ["account_created_at", "account_checked_at"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     sql.exec("CREATE TABLE IF NOT EXISTS builds (user_id TEXT NOT NULL, slot INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (user_id, slot))");
     // Streams with at least one check-in, numbered in order: a streak counts these, so a gap of one seq is one missed stream.
     sql.exec("CREATE TABLE IF NOT EXISTS streams (seq INTEGER PRIMARY KEY, stream_id TEXT NOT NULL UNIQUE, started_at INTEGER NOT NULL)");
@@ -315,8 +320,10 @@ export class ChannelRoom extends DurableObject {
       return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings(), overlays: this.ctx.getWebSockets("overlay").length, checkinTest: this.checkinTest(), botCommands: this.botCommands(), botStatus: this.botStatus() });
     }
 
+    // Dollars are private: the Worker asks for them (?private=1) only for mods and the owner.
     if (path === "/leaderboard" && request.method === "GET") {
-      return json(this.leaderboard(channel));
+      const board = this.leaderboard(channel);
+      return json(url.searchParams.get("private") === "1" ? board : board.map(({ dollars, ...p }) => p));
     }
 
     // Saved looks by login for the overlay (?u=a,b,c, at most 20): only viewers with a saved fighter are listed.
@@ -457,6 +464,7 @@ export class ChannelRoom extends DurableObject {
       const { userId, username, displayName, text: line } = body.value;
       const now = Date.now(), messageId = "dev:" + randomHex().slice(0, 24);
       const msg = { messageId, timestamp: now, subscription: { id: this.readState(channel).chat.subscriptionId || "" }, event: { chatter_user_id: userId, chatter_user_login: username, chatter_user_name: displayName, message_id: messageId, message: { text: String(line || "") } } };
+      await this.checkAccountAge(userId);
       const result = this.processChatMessage(channel, msg, now);
       if (result.visible) this.broadcast(result.state);
       if (result.changed) await this.scheduleAlarm(result.state);
@@ -844,7 +852,7 @@ export class ChannelRoom extends DurableObject {
       if (!subscriptionId || subscriptionId !== this.readState(channel).chat.subscriptionId) return json({ ok: true, ignored: true });
       result = this.advance(channel, { type: "chat_disconnected", reason: String(msg.subscription?.status || "revoked") }, now);
     } else if (kind === "notification" && msg.bot === true) return this.botCommand(channel, msg, origin);
-    else if (kind === "notification") result = this.processChatMessage(channel, msg, now);
+    else if (kind === "notification") { await this.checkAccountAge(msg.event?.chatter_user_id); result = this.processChatMessage(channel, msg, now); }
     else return json({ ok: true, ignored: true });
     if (result.visible) this.broadcast(result.state);
     if (result.changed) await this.scheduleAlarm(result.state);
@@ -1091,7 +1099,8 @@ export class ChannelRoom extends DurableObject {
     if (action === "challenge" && !target) return done(seReplyText({ result: { ok: false, reason: "target_required" }, state: state0, actorId: userId, action, target, names, origin, now }), "target_required");
     const messageId = source.kind + ":" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));
     const msg = { messageId, timestamp: now, quick: true, subscription: { id: source.subscriptionId }, event: { chatter_user_id: userId, chatter_user_login: username, chatter_user_name: String(input.displayName || username).slice(0, 48), message_id: messageId, message: { text: seCommandText(action, target) } } };
-    const result = this.processChatMessage(channel, msg, now);
+    await this.checkAccountAge(userId);
+    const result = this.processChatMessage(channel, msg, Date.now());
     if (result.visible) this.broadcast(result.state);
     if (result.changed) await this.scheduleAlarm(result.state);
     const r = result.result || {};
@@ -1412,6 +1421,28 @@ export class ChannelRoom extends DurableObject {
     return stream;
   }
 
+  // A saved fighter's Twitch account age, asked once (again after ACCOUNT_RETRY_MS while Twitch doesn't answer).
+  async checkAccountAge(userId) {
+    const id = validUserId(userId), sql = this.ctx.storage.sql, now = Date.now();
+    if (!id || !this.env?.TWITCH_CLIENT_ID) return;
+    const row = sql.exec("SELECT account_created_at, account_checked_at FROM profiles WHERE user_id = ?", id).toArray()[0];
+    if (!row || row.account_created_at > 0 || now - row.account_checked_at < ACCOUNT_RETRY_MS) return;
+    sql.exec("UPDATE profiles SET account_checked_at = ? WHERE user_id = ?", now, id);
+    try {
+      const at = await this.lookupAccount(id);
+      if (at > 0) sql.exec("UPDATE profiles SET account_created_at = ? WHERE user_id = ?", at, id);
+    } catch (error) { logRoomEvent(this, "warn", `account age lookup failed: ${String(error?.message || error).slice(0, 80)}`, { userId: id }); }
+  }
+
+  lookupAccount(userId) { return accountCreatedAt(this.env, userId); }
+
+  // Of these user ids, the ones whose Twitch account is younger than NEW_ACCOUNT_MS. Unknown ages count as old.
+  newAccounts(ids, now) {
+    const list = [...new Set(ids.map(validUserId).filter(Boolean))];
+    if (!list.length) return [];
+    return this.ctx.storage.sql.exec(`SELECT user_id FROM profiles WHERE account_created_at > ? AND user_id IN (${list.map(() => "?").join(", ")})`, now - NEW_ACCOUNT_MS, ...list).toArray().map((r) => r.user_id);
+  }
+
   // After a finished duel the stored profiles must match the game state, or the next command undoes the result.
   checkSavedProfiles(state, duelId) {
     const duel = state.duels.find((d) => d.id === duelId);
@@ -1454,7 +1485,9 @@ export class ChannelRoom extends DurableObject {
         if (parsed) {
           const lastId = parsed.action === "rematch" ? state.players.find((p) => p.userId === userId)?.lastOpponentId || userProfile?.lastOpponentId : "";
           const targetProfile = parsed.target ? this.getProfileByUsername(parsed.target, state.config) : lastId ? this.getProfile(lastId, state.config) : null;
-          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, quick: subscriptionId === SE_SUBSCRIPTION_ID || msg.quick === true, rolls: Array.from({ length: 48 }, () => Math.random()) });
+          const challengers = state.duels.filter((d) => d.status === "pending" && d.b === userId).map((d) => d.a);
+          const newAccounts = this.newAccounts([userId, targetProfile?.userId, lastId, ...challengers], now);
+          main = step({ type: "command", messageId: String(ev.message_id || msg.messageId).slice(0, 64), userId, username, displayName, text: textValue, timestamp: Number(msg.timestamp), profile, targetProfile, newAccounts, quick: subscriptionId === SE_SUBSCRIPTION_ID || msg.quick === true, rolls: Array.from({ length: 48 }, () => Math.random()) });
           if (!main.result.ok && main.result.reason !== "duplicate") step({ type: "command_rejected", userId, command: parsed.action, reason: main.result.reason, retryAt: main.result.retryAt });
         } else {
           const active = state.players.find((item) => item.userId === userId);
@@ -1595,7 +1628,7 @@ export class ChannelRoom extends DurableObject {
     const name = (id) => { const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config); return p?.displayName || p?.username || "someone"; };
     for (const d of due) {   // in reveal order; one that can't go out now stops the rest, so chat keeps the order
       const loser = d.winnerId === d.a ? d.b : d.a;
-      const line = seResultText({ winner: name(d.winnerId), loser: name(loser), w: d.ratings[d.winnerId], l: d.ratings[loser], decision: d.decision, flawless: d.flawless });
+      const line = seResultText({ winner: name(d.winnerId), loser: name(loser), w: d.ratings[d.winnerId], l: d.ratings[loser], decision: d.decision, flawless: d.flawless, unrated: d.unrated });
       const { replies } = await this.sendBotLines([line], channel, { system: 1 }).json();
       if (!replies.length) return;
       // A failed call (network, Twitch 5xx or 429 after its retries) is tried again; a line Twitch read and dropped

@@ -766,6 +766,8 @@ test('the bot result line says how the duel was won', async () => {
   assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l, flawless: true }), 'Bean beat Aria, flawless! Bean 1014 Elo (+14), Aria 989 Elo (-11).');
   assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l, decision: 'hp' }), 'Bean beat Aria on HP! Bean 1014 Elo (+14), Aria 989 Elo (-11).');
   assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l, decision: 'sudden_death' }), 'Bean beat Aria in sudden death! Bean 1014 Elo (+14), Aria 989 Elo (-11).');
+  assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l, unrated: 'pair_cap' }), 'Bean beat Aria! Just for fun (5 ranked duels between them in 24 h already): no Elo or dollars.');
+  assert.equal(seResultText({ winner: 'Bean', loser: 'Aria', w, l, unrated: 'new_account' }), 'Bean beat Aria! Just for fun (a Twitch account under 7 days old): no Elo or dollars.');
 });
 
 // ---------- upgrades (server/upgrades.js) ----------
@@ -845,4 +847,42 @@ test('the 2026-10-06 price cut moves prices still at the old defaults and keeps 
   // once migrated, a mod may set an old default on purpose
   const later = normalizeGameState({ ...state, config: { ...state.config, petPriceCommon: 30 } });
   assert.equal(later.config.petPriceCommon, 30);
+});
+
+test('a pair gets 5 rated duels a day; later ones are just for fun', () => {
+  const w = arena({ quick: true });
+  const fight = () => { const d = w.duel(w.fight('alice', 'bob')); w.advance(120_000); return d; };
+  for (let i = 0; i < 5; i += 1) assert.equal(fight().unrated, undefined, `duel ${i + 1} is rated`);
+  const before = { a: { ...w.player('alice') }, b: { ...w.player('bob') } };
+  const sixth = fight();
+  assert.equal(sixth.unrated, 'pair_cap');
+  assert.equal(sixth.payout, undefined, 'no dollars');
+  for (const [login, was] of [['alice', before.a], ['bob', before.b]]) {
+    const p = w.player(login);
+    assert.deepEqual([p.elo, p.wins, p.losses], [was.elo, was.wins, was.losses], `${login} unchanged`);
+  }
+  const done = w.state.events.filter((e) => e.type === 'duel_completed').at(-1);
+  assert.equal(done.unrated, 'pair_cap');
+  assert.equal(w.state.pairPlays.length, 5, 'unrated duels are not counted');
+  w.register('cara');
+  assert.equal(w.duel(w.fight('alice', 'cara')).unrated, undefined, 'other pairs are still rated');
+  w.advance(120_000);
+  w.now += 86_400_000; w.apply({ type: 'tick' });
+  assert.equal(w.state.pairPlays.length, 0, 'plays expire after 24 h');
+  w.register('alice'); w.register('bob');
+  assert.equal(w.duel(w.fight('alice', 'bob')).unrated, undefined, 'rated again the next day');
+});
+
+test('duels with an account younger than 7 days are unrated', () => {
+  const w = arena({ quick: true });
+  w.say('alice', '!challenge @bob');
+  w.apply({ type: 'command', messageId: 'm' + (++seq), userId: 'id-bob', username: 'bob', displayName: 'bob', text: '!accept', timestamp: w.now, newAccounts: ['id-bob'] });
+  const duel = w.state.duels.at(-1);
+  assert.equal(duel.status, 'completed');
+  assert.equal(duel.unrated, 'new_account');
+  assert.equal(duel.payout, undefined);
+  assert.equal(w.player('alice').elo, 1000);
+  assert.equal(w.player('alice').wins + w.player('alice').losses, 0);
+  const hidden = hiddenResults(w.state, w.now);
+  assert.deepEqual(hidden.get('id-alice'), { elo: 1000, wins: 0, losses: 0, dollars: 0 }, 'nothing hidden to undo');
 });

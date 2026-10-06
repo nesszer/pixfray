@@ -1,7 +1,7 @@
 // StreamElements chat source. Each game action is a StreamElements custom command whose reply is
 // $(customapi <url>): the bot GETs /api/se/<channel>/<action>?k=..&id=..&u=..&d=..&t=..&m=.. and posts our reply.
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
-import { hiddenResults } from './game.js';
+import { hiddenResults, PAIR_RATED_PER_DAY } from './game.js';
 import { boostText } from './pets.js';
 
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
@@ -142,9 +142,14 @@ export function seExpiredText({ a = 'someone', b = 'someone', timeoutMs = 30000,
 
 // The bot's line once the stream has played a duel (duel.revealAt): who won, how, and both Elo changes. Never earlier, so
 // chat doesn't spoil the stream. On a bot channel this line is the winner announcement (the overlay shows no banner).
-export function seResultText({ winner = 'someone', loser = 'someone', w = {}, l = {}, decision = 'ko', flawless = false } = {}) {
+// Why a duel counted for nothing (server/game.js beginDuel).
+const UNRATED_TEXT = { new_account: 'a Twitch account under 7 days old', pair_cap: `${PAIR_RATED_PER_DAY} ranked duels between them in 24 h already` };
+export const unratedText = reason => UNRATED_TEXT[reason] ? `Just for fun (${UNRATED_TEXT[reason]}): no Elo or dollars.` : '';
+
+export function seResultText({ winner = 'someone', loser = 'someone', w = {}, l = {}, decision = 'ko', flawless = false, unrated = '' } = {}) {
   const d = x => (x < 0 ? '-' : '+') + Math.abs(Number(x) || 0);
   const how = (decision === 'hp' ? ' on HP' : decision === 'sudden_death' ? ' in sudden death' : '') + (flawless ? ', flawless' : '');
+  if (unrated) return `${winner} beat ${loser}${how}! ${unratedText(unrated)}`;
   return `${winner} beat ${loser}${how}! ${winner} ${w.after} Elo (${d(w.delta)}), ${loser} ${l.after} Elo (${d(l.delta)}).`;
 }
 
@@ -244,7 +249,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
       // No result here: chat is ahead of the stream, so the overlay shows the winner first. Challenger first,
       // never winner first, so the order gives nothing away.
       const [a, b] = duel ? [duel.a, duel.b] : [actorId, other];
-      return `Fight on: ${nameOf(state, a)} vs ${nameOf(state, b)}! Watch the stream for the winner.`;
+      return `Fight on: ${nameOf(state, a)} vs ${nameOf(state, b)}! Watch the stream for the winner.` + (duel?.unrated ? ' ' + unratedText(duel.unrated) : '');
     }
     if (!duel) return MISSED_TEXT;   // ok but no duel = the text didn't parse as a command
     if (action === 'accept' || reason === 'duel_started') return `Duel on: ${nameOf(state, duel?.a)} vs ${nameOf(state, duel?.b)}!`;

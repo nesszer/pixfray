@@ -123,7 +123,7 @@ function gate(text, actions = []) {
 let proofLoaded = false;
 async function gateProof() {
   if (proofLoaded || BARE) return; proofLoaded = true;
-  const [st, lb] = await Promise.all([api("/api/state/" + CHANNEL), api("/api/leaderboard/" + CHANNEL)]);
+  const [st, lb] = await Promise.all([api("/api/state/" + CHANNEL), api("/api/leaderboard/" + CHANNEL + "?private=1")]);
   if (!st.ok && !lb.ok) return;
   const ranked = lb.ok && Array.isArray(lb.data) ? lb.data.filter((p) => p.wins + p.losses > 0).sort((a, b) => b.elo - a.elo) : [];
   const parts = [];
@@ -184,7 +184,7 @@ async function load() {
   return true;
 }
 async function loadLeaderboard() {
-  const r = await api("/api/leaderboard/" + CHANNEL);
+  const r = await api("/api/leaderboard/" + CHANNEL + "?private=1");
   S.leaderboard = r.ok && Array.isArray(r.data) ? r.data : [];
   if (S.admin) { renderRanks(); renderHistory(); }
 }
@@ -269,6 +269,8 @@ function renderAll() {
   collectNames();
   const a = S.admin, c = a.config, open = a.duels.filter((d) => OPEN.has(d.status));
   const chat = a.chatStatus || a.chat || {}, health = chatHealth();
+  // resetting all ranks, a new StreamElements key and moving chat from another site are the broadcaster's (server/worker.js)
+  for (const id of ["#reset-all-ranks", "#rotate-se"]) $(id).hidden = !mayBroadcast();
   $("#meta").textContent = "Signed in as " + (S.access.owner && CHANNEL === site.defaultChannel || S.access.broadcaster ? "the broadcaster" : S.access.owner ? "the site owner" : "a moderator") + ".";
   const waiting = c.enabled && !health.ok;
   $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : waiting ? health.title : "Duels are live";
@@ -610,7 +612,7 @@ async function chatAct(action, button, takeover = false, status = $("#chat-statu
   const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: takeover ? { action, takeover: true } : { action } });
   button.disabled = false;
   // One Twitch app serves both sites, and Twitch allows one chat subscription per channel: offer to move it here.
-  if (r.status === 409 && r.data?.connectedElsewhere && !takeover
+  if (r.status === 409 && r.data?.connectedElsewhere && !takeover && mayBroadcast()
     && confirm("Chat is connected to " + r.data.connectedElsewhere + ". Only one site can receive chat at a time. Move chat to this site? The other site pauses.")) return chatAct(action, button, true, status);
   if (!r.ok) {
     const fix = r.data?.reconnect ? (S.access.owner ? " Use Reconnect Twitch below." : " Ask " + site.owner.login + " to reconnect Twitch.") : "";
@@ -864,6 +866,7 @@ $("#bot-counters-table").addEventListener("click", async (e) => {
 });
 
 // ---------- turning PixFray off (signed-up channels; the broadcaster or the owner, and only the owner undoes the owner's off) ----------
+const mayBroadcast = () => !!(S.access?.broadcaster || S.access?.owner);
 const mayPower = () => !!(S.access?.broadcaster || S.access?.owner) && ["on", "paused"].includes(S.admin?.channelState);
 function renderPower() {
   const paused = S.admin.channelState === "paused", toggle = $("#power-toggle");

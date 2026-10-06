@@ -76,6 +76,26 @@ test('miolafff: the broadcaster manages their own channel, through StreamElement
   const bare = await worker.fetch(req('/auth/login?next=%2Fadmin%2F'), f.env);
   assert.deepEqual(await openState(f.env, new URL(bare.headers.get('Location')).searchParams.get('state')), { connect: false, next: '/admin/' });
 });
+test('a moderator cannot reset every rank, make a new StreamElements key or take chat over from another site', async () => {
+  const f = environment(), cookie = await signedIn(f);
+  f.entries.set('mod:nesszerra:2', true);
+  assert.equal((await (await worker.fetch(req('/api/access/nesszerra', 'GET', undefined, cookie), f.env)).json()).moderator, true);
+  for (const body of [{ action: 'resetAllRanks' }, { action: 'rotateSeKey' }, { action: 'connectChat', takeover: true }]) {
+    const r = await worker.fetch(req('/api/admin/nesszerra', 'POST', body, cookie), f.env);
+    assert.deepEqual([r.status, (await r.json()).reason], [403, 'broadcaster_only'], body.action);
+  }
+  assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { action: 'resetAll' }, cookie), f.env)).status, 200, 'clearing the arena stays with mods');
+});
+test('the leaderboard with dollars (?private=1) is for mods and the owner; the public one never asks for them', async () => {
+  const f = environment(), viewer = await signedIn(f);
+  await worker.fetch(req('/api/leaderboard/nesszerra?private=1'), f.env).then((r) => assert.equal(r.status, 401));
+  await worker.fetch(req('/api/leaderboard/nesszerra?private=1', 'GET', undefined, viewer), f.env).then((r) => assert.equal(r.status, 403));
+  assert.equal(f.forwarded.length, 0);
+  assert.equal((await worker.fetch(req('/api/leaderboard/nesszerra?private=1', 'GET', undefined, await signedIn(f, true)), f.env)).status, 200);
+  assert.equal(new URL(f.forwarded.at(-1).url).search, '?private=1');
+  assert.equal((await worker.fetch(req('/api/leaderboard/nesszerra?private=0'), f.env)).status, 200);
+  assert.equal(new URL(f.forwarded.at(-1).url).search, '');
+});
 test('a viewer cannot grant themselves mod or developer permissions', async () => {
   const f = environment(), cookie = await signedIn(f);
   assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { actorId: '1', owner: true, action: 'resetAllRanks' }, cookie), f.env)).status, 403);

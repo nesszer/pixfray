@@ -24,6 +24,7 @@ const PROBLEMS = {
   full: "PixFray is full right now. Try again in a few days, or run your own copy from the code on GitHub.",
   denied: "You cancelled the Twitch permission. You can set up without it: only you can open your mod controls until you connect it from the Stream setup page.",
   failed: "Twitch sign-in didn't finish. Try again.",
+  review: "Your channel is waiting for the site owner's approval. PixFray turns on at once for Twitch accounts at least 30 days old that have streamed before (a saved past broadcast, or Affiliate or Partner). Sign in here again later to check.",
   taken: "This channel name was set up by a different Twitch account (an earlier owner of the name). Open an issue on GitHub and the site owner can move it to you.",
 };
 

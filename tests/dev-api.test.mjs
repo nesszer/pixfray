@@ -380,7 +380,26 @@ test('code editor request validation happens before GitHub is called', async (t)
   }
   const big = await call(f, '/api/dev/code/save', 'POST', { path: 'README.md', content: 'x'.repeat(600 * 1024), branch: 'live-fix/a' }, owner);
   assert.equal(big.status, 413);
+  // Files the deploy workflow runs with its Cloudflare token can be read but not saved.
+  for (const path of ['package.json', 'package-lock.json', '.npmrc', 'site.config.js', 'cloudflare.config.ts', 'vite.config.js', 'scripts/release.mjs', 'scripts/lib/zip-read.mjs']) {
+    assert.equal(validPath(path), true, path);
+    const r = await call(f, '/api/dev/code/save', 'POST', { path, content: 'x', branch: 'live-fix/a' }, owner);
+    assert.deepEqual([r.status, r.body.reason], [403, 'build_file'], path);
+  }
   assert.equal(calls.length, 0);
+});
+
+test('the dev token can deploy the test site but not production', async (t) => {
+  const calls = stubFetch(t, [[['POST', /\/actions\/workflows\/deploy\.yml\/dispatches$/], [204, null]]]);
+  const token = 'd'.repeat(40), f = environment({ ...GITHUB, DEV_TOOLS_TOKEN: token, OWNER_TWITCH_ID: '1' });
+  const dev = (p, body) => call(f, '/api/dev/' + p, 'POST', body, undefined, { Authorization: 'Bearer ' + token });
+  for (const [p, body] of [['promote', {}], ['hotfix', { branch: 'hotfix/a' }], ['rollback', { target: 'production' }]]) {
+    const r = await dev(p, body);
+    assert.deepEqual([r.status, r.body.reason], [403, 'owner_session_required'], p);
+  }
+  assert.equal(calls.length, 0);
+  assert.equal((await dev('deploy', { ref: 'live-fix/a' })).status, 202);
+  assert.equal((await dev('rollback', { target: 'test' })).status, 202);
 });
 
 test('save creates the live-fix branch from main, then commits the file', async (t) => {

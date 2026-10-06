@@ -22,6 +22,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 // Paths the web editor may never read or write: local secrets, generated output, CI definitions.
 const DENIED_PATH = /(^|\/)(\.dev\.vars[^/]*|\.secrets[^/]*|\.env[^/]*|node_modules|\.git|\.wrangler|\.cloudflare|dist)(\/|$)|^\.github\/|\.dpapi$/i;
+// Files that run with the deploy workflow's Cloudflare token (install, build and release): readable, never saved here.
+const BUILD_FILE = /^(package\.json|package-lock\.json|\.npmrc|site\.config\.js|cloudflare\.config\.ts|vite\.config\.js|scripts\/|\.github\/)/i;
+// Production changes need the owner signed in with Twitch; the test site's dev token can't make them.
+const productionChange = (op, body) => op === 'promote' || op === 'hotfix' || (op === 'rollback' && body?.target === 'production');
 const json = (data, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 const fail = (status, error, reason, extra = {}) => json({ error, reason, ...extra }, status);
 
@@ -39,6 +43,7 @@ export async function handleDeveloper(request, env, c) {
   let body = null;
   // Caught here because worker.js returns this promise without awaiting it inside its try block.
   if (method === 'POST') try { body = await c.bodyJson(request, op === 'code/save' ? MAX_FILE_BYTES * 2 + 4096 : 8000); } catch (e) { return fail(e.status || 400, e.message || 'Invalid request body', e.status === 413 ? 'body_too_large' : 'invalid_body'); }
+  if (c.dev && productionChange(op, body)) return fail(403, 'Production deploys need the owner signed in with Twitch, not the dev token', 'owner_session_required');
   // ?channel= picks which channel's room to read (logs, diagnostics); Worker errors land in the default channel.
   const asked = c.url.searchParams.get('channel') || '', channel = asked && await channelState(env, asked) ? asked : site.defaultChannel;
   try { return await handler({ request, env, c, body, query: c.url.searchParams, room: (path, init) => c.roomFetch(channel, path, init) }); }
@@ -268,6 +273,7 @@ async function ensureBranch(g, gh, branch) {
 async function codeSave({ g, gh, body }) {
   const { path, content, branch, sha } = body;
   if (!validPath(path)) return fail(400, 'Invalid or protected path', 'invalid_path');
+  if (BUILD_FILE.test(path)) return fail(403, 'Build and deploy files (package.json, scripts/, configs, .github/) are changed in the repository, not here', 'build_file');
   if (typeof content !== 'string') return fail(400, 'content must be a string', 'invalid_content');
   const bytes = new TextEncoder().encode(content);
   if (bytes.length > MAX_FILE_BYTES) return fail(413, 'File is too large for the web editor (512 KB max)', 'file_too_large');

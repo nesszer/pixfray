@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import site from '../site.config.js';
-import { channelState, signUp, isBroadcaster } from './channels.js';
+import { channelState, signUp, isBroadcaster, reviewReasons } from './channels.js';
 import { authOrigin } from './hosts.js';
 export class AuthStore extends DurableObject {
   constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS entries (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL)');}
@@ -177,7 +177,8 @@ export async function handleAuth(request,env){
   }
   const modScope=validation.scopes?.includes('moderation:read');
   if(pending.signup){
-    try{pending.channel=await signUp(env,user);}
+    const helix=async p=>{const r=await fetch('https://api.twitch.tv/helix'+p,{headers});if(!r.ok)throw new Error('helix '+r.status);return r.json();};
+    try{pending.channel=await signUp(env,user,()=>reviewReasons(identity,helix));}
     catch(e){if(!e.reason)throw e;return startPage(e.reason);}
     if(pending.mods&&modScope){await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);}
   }

@@ -245,12 +245,12 @@ async function loadProgress(d, only) {
   if (!only) S.progressLoading = false;
   renderChannels(S.channels);
 }
-function channelAction(action, login, button) {
+function channelAction(action, login, button, approve = false) {
   if (action === 'pause' && !confirm('Turn PixFray off on ' + login + '? The overlay, commands and viewer page stop; fighters and ranks are kept.')) return;
   return busy(button, async () => {
     const r = await api('/api/dev/channels', { method: 'POST', body: { action, login } });
     if (!r.ok) return status('#channel-status', errorText(r, 'Could not change ' + login), 'error');
-    status('#channel-status', login + (action === 'pause' ? ' is off.' : ' is on.'), 'ok');
+    status('#channel-status', login + (action === 'pause' ? ' is off.' : approve ? ' is approved and on.' : ' is on.'), 'ok');
     renderChannels(r.data);
     if (action === 'resume') loadProgress(r.data, [login]);
   });
@@ -267,6 +267,9 @@ function chatCell(p) {
   if (p.rejectedAt > p.lastCommandAt) return h('span', { class: 'badge warning' }, 'Old key: copy replies again');
   return p.commandsWorking + ' of ' + p.commands + ' commands working';
 }
+// Why a sign-up waits for approval (server/channels.js reviewReasons).
+const REVIEW = { young: 'Twitch account under 30 days old', never_streamed: 'no past broadcast, not Affiliate or Partner', unchecked: "past broadcasts couldn't be checked" };
+const reviewText = (c) => c.review.reasons.map((r) => REVIEW[r] || r).join('; ');
 function renderChannels(d) {
   S.channels = d;
   $('#channels-max').textContent = d.max;
@@ -274,20 +277,23 @@ function renderChannels(d) {
   const row = (login, state, c) => {
     const p = state === 'off' ? null : S.progress[login], steps = setupOf(p);
     return h('tr', {}, h('td', {}, admin(login)),
-      h('td', {}, h('span', { class: 'badge ' + (state === 'off' ? 'warning' : state === 'on' ? 'positive' : '') }, state === 'off' && c?.pausedBy === 'owner' ? 'Off (by you)' : { builtin: 'Built in', on: 'On', off: 'Off' }[state])),
+      h('td', {}, h('span', { class: 'badge ' + (state === 'off' ? 'warning' : state === 'on' ? 'positive' : '') }, c?.review ? 'Waiting for approval' : state === 'off' && c?.pausedBy === 'owner' ? 'Off (by you)' : { builtin: 'Built in', on: 'On', off: 'Off' }[state]),
+        c?.review ? h('div', { class: 'small muted' }, reviewText(c)) : null),
       h('td', {}, steps === null ? '–' : h('span', { class: 'badge ' + (steps === 3 ? 'positive' : '') }, steps === 3 ? 'Done' : steps + ' of 3 steps')),
       h('td', {}, p ? (p.overlays ? p.overlays + ' open' : 'Not open') : '–'),
       h('td', {}, chatCell(p)),
-      h('td', {}, p ? ago(Math.max(p.lastCommandAt, p.lastChatAt)) : c?.pausedAt ? 'Off since ' + fmtTime(c.pausedAt) : '–'),
+      h('td', {}, p ? ago(Math.max(p.lastCommandAt, p.lastChatAt)) : c?.review ? 'Signed up ' + fmtTime(c.review.at) : c?.pausedAt ? 'Off since ' + fmtTime(c.pausedAt) : '–'),
       h('td', {}, h('div', { class: 'toolbar' },
-        c ? h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => channelAction(c.pausedAt ? 'resume' : 'pause', c.login, e.currentTarget) }, c.pausedAt ? 'Turn on' : 'Turn off') : null,
+        c ? h('button', { class: 'btn btn-small', type: 'button', onclick: (e) => channelAction(c.pausedAt ? 'resume' : 'pause', c.login, e.currentTarget, !!c.review) }, c.review ? 'Approve' : c.pausedAt ? 'Turn on' : 'Turn off') : null,
         h('a', { class: 'btn btn-small', href: '/api/dev/export?channel=' + encodeURIComponent(login), download: '', 'aria-label': 'Export ' + login }, 'Export'))));
   };
-  rows('#channels', [...d.builtin.map((login) => row(login, 'builtin')), ...d.channels.map((c) => row(c.login, c.pausedAt ? 'off' : 'on', c))], 'No channels.', 7);
+  // channels waiting for approval come first
+  const waiting = d.channels.filter((c) => c.review);
+  rows('#channels', [...waiting.map((c) => row(c.login, 'off', c)), ...d.builtin.map((login) => row(login, 'builtin')), ...d.channels.filter((c) => !c.review).map((c) => row(c.login, c.pausedAt ? 'off' : 'on', c))], 'No channels.', 7);
   const on = d.builtin.length + d.channels.filter((c) => !c.pausedAt).length;
   const done = Object.values(S.progress).filter((p) => setupOf(p) === 3).length;
   $('#channels-title').textContent = on + (on === 1 ? ' channel is on' : ' channels are on') + ', ' + done + ' with setup done right now' + (S.progressLoading ? ' (checked ' + S.progressSeen + ' of ' + S.progressTotal + ' so far)' : '');
-  $('#channels-text').textContent = 'Setup counts as done while the overlay is open in OBS and the duel commands work, so streamers who are live right now show up as done.';
+  $('#channels-text').textContent = (waiting.length ? waiting.length + (waiting.length === 1 ? ' sign-up is' : ' sign-ups are') + ' waiting for your approval at the top of the table. ' : '') + 'Setup counts as done while the overlay is open in OBS and the duel commands work, so streamers who are live right now show up as done.';
   // the error log can read any channel that is set up
   const pick = $('#log-channel'), current = pick.value;
   pick.replaceChildren(...[...d.builtin, ...d.channels.map((c) => c.login)].map((login) => h('option', { value: login }, login)));

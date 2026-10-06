@@ -128,6 +128,8 @@ test('chat commands run a full duel; Elo persists to the leaderboard; overlays g
   assert.ok(state.chat.lastSeen > 0, 'last notification time is recorded');
   const board = (await r.call('/leaderboard')).body;
   assert.deepEqual(board.map((p) => [p.username, p.elo, p.wins, p.losses]), [['alice', 1012, 1, 0], ['bob', 988, 0, 1]]);
+  assert.equal(board.some((p) => 'dollars' in p), false, 'dollars stay off the public leaderboard');
+  assert.ok((await r.call('/leaderboard?private=1')).body.every((p) => Number.isInteger(p.dollars)), 'mods see them');
   assert.ok(live.sent.length > 3);
   assert.equal(live.sent.at(-1).type, 'snapshot');
   assert.equal(live.sent.at(-1).revision, state.revision);
@@ -747,6 +749,27 @@ test('dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   const checked = await say('b1', 'testbot_a', '!checkin');
   assert.equal(checked.body.reason, 'checked_in');
   assert.ok(checked.body.reply.startsWith('@testbot_a checked in: +1 upgrade point'), checked.body.reply);
+});
+
+test('account age: looked up once per fighter; a duel with an account under 7 days old is just for fun', async () => {
+  const r = room({ DEV_TOOLS_TOKEN: 'x'.repeat(40), TWITCH_CLIENT_ID: 'cid' }, { quick: true });
+  const age = { b1: Date.now() - 400 * 86_400_000, b2: Date.now() - 2 * 86_400_000 };
+  const looked = [];
+  r.lookupAccount = async (id) => { looked.push(id); if (id === 'b3') throw new Error('helix down'); return age[id] ?? 0; };
+  await r.connectChat();
+  for (const [id, login] of [['b1', 'testbot_a'], ['b2', 'testbot_b'], ['b3', 'testbot_c']]) await r.save(id, login);
+  const say = (id, login, text) => r.call('/dev-chat', { method: 'POST', body: { userId: id, username: login, displayName: login, text } });
+  await say('b1', 'testbot_a', '!challenge @testbot_b');
+  const fight = await say('b2', 'testbot_b', '!fight');
+  assert.equal(fight.body.reason, 'quick_duel');
+  assert.ok(fight.body.reply.endsWith('Just for fun (a Twitch account under 7 days old): no Elo or dollars.'), fight.body.reply);
+  assert.deepEqual(r.ctx.storage.sql.exec('SELECT wins, losses, dollars FROM profiles').toArray().map((p) => p.wins + p.losses + p.dollars), [0, 0, 0]);
+  await say('b1', 'testbot_a', 'hi');
+  assert.deepEqual(looked, ['b1', 'b2'], 'a known age is not looked up again');
+  const failed = await say('b3', 'testbot_c', 'hi');
+  assert.equal(failed.status, 200, 'a failed lookup does not block chat');
+  await say('b3', 'testbot_c', 'hi again');
+  assert.deepEqual(looked, ['b1', 'b2', 'b3'], 'a failed lookup waits an hour before retrying');
 });
 
 test('overlay sockets: one network is capped; a full room drops the oldest viewer socket, never an overlay', async () => {

@@ -75,6 +75,11 @@ const MAX_RECENT_EVENTS = 100;
 const MAX_APPLIED_MESSAGE_IDS = 1_000;
 const MAX_DUEL_HISTORY = 25;
 const ACTIVE_TTL_MS = 10 * 60_000;
+// Anti-farming: the same two fighters get PAIR_RATED_PER_DAY duels that count per 24 h, and a Twitch account younger
+// than NEW_ACCOUNT_MS (the room looks it up) can duel but doesn't move Elo, wins or dollars.
+export const PAIR_RATED_PER_DAY = 5;
+export const NEW_ACCOUNT_MS = 7 * 86_400_000;
+const PAIR_WINDOW_MS = 86_400_000;
 const ABILITIES = new Set(["strike", "heavy", "heal"]);
 
 function clone(value) {
@@ -162,6 +167,7 @@ export function createInitialState(channel = site.defaultChannel) {
     players: [],
     duels: [],
     rematchLocks: [],
+    pairPlays: [],
     events: [],
     appliedMessageIds: [],
     nextDuelId: 1,
@@ -296,6 +302,7 @@ function expireState(state, now) {
   }
 
   state.rematchLocks = state.rematchLocks.filter((lock) => lock.until > now);
+  state.pairPlays = state.pairPlays.filter((play) => now - play.at < PAIR_WINDOW_MS);
   const inDuel = new Set(openDuels(state).flatMap((duel) => [duel.a, duel.b]));
   const before = state.players.length;
   state.players = state.players.filter((p) => inDuel.has(p.userId) || p.respawnAt > now || now - p.lastSeen <= ACTIVE_TTL_MS);
@@ -366,10 +373,14 @@ function createChallenge(state, actor, target, now) {
   return { ok: true, duelId: duel.id };
 }
 
-function beginDuel(state, duel, now) {
+function beginDuel(state, duel, now, event = {}) {
   const a = player(state, duel.a);
   const b = player(state, duel.b);
   if (!a?.registered || !b?.registered) return { ok: false, reason: "ranked_sign_in_required" };
+  const young = Array.isArray(event.newAccounts) ? event.newAccounts : [];
+  const pair = pairKey(duel.a, duel.b), plays = state.pairPlays.filter((play) => play.pair === pair && now - play.at < PAIR_WINDOW_MS).length;
+  if (young.includes(duel.a) || young.includes(duel.b)) duel.unrated = "new_account";
+  else if (plays >= PAIR_RATED_PER_DAY) duel.unrated = "pair_cap";
   state.round += 1;
   duel.round = state.round;
   duel.status = "active";
@@ -408,8 +419,9 @@ const QUICK_MAX_ROLLS = 12;
 // seconds behind chat (config.streamDelayMs). Until revealAt, chat replies, !elo, !ranks and the leaderboard keep the pre-fight
 // numbers (hiddenResults), so the stream shows the winner first. Pacing mirrors public/overlay.js: a walk-in
 // of up to 2.2 s, then about 1.8 s per roll before the result banner.
-const REPLAY_WALK_MS = 2200, REPLAY_ROLL_MS = 1800;
-export const replayMs = (rolls) => REPLAY_WALK_MS + REPLAY_ROLL_MS * Math.max(1, rolls);
+// REPLAY_SLACK_MS covers the overlay running a little long on a 12-roll fight, so chat never gets ahead of it.
+const REPLAY_WALK_MS = 2200, REPLAY_ROLL_MS = 1800, REPLAY_SLACK_MS = 500;
+export const replayMs = (rolls) => REPLAY_WALK_MS + REPLAY_ROLL_MS * Math.max(1, rolls) + REPLAY_SLACK_MS;
 const QUICK_FLAWLESS_BONUS = 3;
 const LUCK_ROLLS = 24;
 function settleQuickDuel(state, duel, rolls, now) {
@@ -470,19 +482,23 @@ function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } =
   if (!a || !b) return;
   const ratingA = a.elo;
   const ratingB = b.elo;
+  // An unrated duel (new account, or the pair's daily cap) is played out but changes no Elo, wins, losses or dollars.
+  const rated = !duel.unrated;
+  if (!rated) bonus = 0;
   const expectedA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
   const scoreA = winnerId === duel.a ? 1 : 0;
-  const nextA = Math.round(ratingA + state.config.eloK * (scoreA - expectedA)) + (scoreA === 1 ? bonus : 0);
-  const nextB = Math.round(ratingB + state.config.eloK * ((1 - scoreA) - (1 - expectedA))) + (scoreA === 0 ? bonus : 0);
+  const nextA = rated ? Math.round(ratingA + state.config.eloK * (scoreA - expectedA)) + (scoreA === 1 ? bonus : 0) : ratingA;
+  const nextB = rated ? Math.round(ratingB + state.config.eloK * ((1 - scoreA) - (1 - expectedA))) + (scoreA === 0 ? bonus : 0) : ratingB;
   a.elo = nextA;
   b.elo = nextB;
-  if (winnerId === duel.a) {
+  if (rated && winnerId === duel.a) {
     a.wins += 1;
     b.losses += 1;
-  } else {
+  } else if (rated) {
     b.wins += 1;
     a.losses += 1;
   }
+  if (rated) state.pairPlays.push({ pair: pairKey(duel.a, duel.b), at: now });
   // The loser is knocked out (hp 0) and respawns at full health after respawnMs; the winner is healed at once.
   const winner = winnerId === duel.a ? a : b;
   const loser = winnerId === duel.a ? b : a;
@@ -502,8 +518,8 @@ function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } =
   if (bonus) { duel.ratings[winnerId].bonus = bonus; duel.flawless = true; }
   // Dollars for saved fighters; the room adds them to the profiles once (server/channel.js payDuels).
   const payout = {};
-  if (winner.registered && state.config.winDollars > 0) payout[winner.userId] = state.config.winDollars;
-  if (loser.registered && state.config.lossDollars > 0) payout[loser.userId] = state.config.lossDollars;
+  if (rated && winner.registered && state.config.winDollars > 0) payout[winner.userId] = state.config.winDollars;
+  if (rated && loser.registered && state.config.lossDollars > 0) payout[loser.userId] = state.config.lossDollars;
   if (Object.keys(payout).length) duel.payout = payout;
   if (decision !== "ko") duel.decision = decision;
   state.rematchLocks.push({
@@ -520,6 +536,7 @@ function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } =
     ratings: clone(duel.ratings),
     ...(bonus ? { flawless: true } : {}),
     ...(decision !== "ko" ? { decision } : {}),
+    ...(rated ? {} : { unrated: duel.unrated }),
   });
 }
 
@@ -590,7 +607,7 @@ function applyCommand(state, event, now) {
     // Challenging someone who already challenged you accepts their challenge.
     const mutual = openDuels(state).find((item) => item.status === "pending" && item.a === target.userId && item.b === actor.userId);
     if (mutual) {
-      const started = beginDuel(state, mutual, now);
+      const started = beginDuel(state, mutual, now, event);
       if (started.ok && quick) return settleQuickDuel(state, mutual, event.rolls, now);
       return started.ok ? { ...started, reason: "duel_started" } : started;
     }
@@ -612,7 +629,7 @@ function applyCommand(state, event, now) {
       addEvent(state, "challenge_declined", now, { duelId: duel.id, declinedBy: actor.userId });
       return { ok: true, reason: "challenge_declined", duelId: duel.id };
     }
-    const started = beginDuel(state, duel, now);
+    const started = beginDuel(state, duel, now, event);
     if (started.ok && quick) return settleQuickDuel(state, duel, event.rolls, now);
     return started;
   }
@@ -820,7 +837,7 @@ export function hiddenResults(state, now) {
     if (duel.status !== "completed" || !(duel.revealAt > now) || !duel.ratings) continue;
     for (const id of [duel.a, duel.b]) {
       const h = out.get(id) || { elo: duel.ratings[id]?.before, wins: 0, losses: 0, dollars: 0 };   // duels are in order, so the first is the pre-fight Elo
-      if (duel.winnerId === id) h.wins += 1; else h.losses += 1;
+      if (!duel.unrated) { if (duel.winnerId === id) h.wins += 1; else h.losses += 1; }
       h.dollars += duel.payout?.[id] || 0;
       out.set(id, h);
     }
@@ -1021,6 +1038,7 @@ function normalizeState(input) {
   state.players = Array.isArray(state.players) ? state.players.filter((p) => p && typeof p.userId === "string").slice(-MAX_ACTIVE_PLAYERS) : [];
   state.duels = Array.isArray(state.duels) ? state.duels : [];
   state.rematchLocks = Array.isArray(state.rematchLocks) ? state.rematchLocks : [];
+  state.pairPlays = Array.isArray(state.pairPlays) ? state.pairPlays : [];
   state.events = Array.isArray(state.events) ? state.events.slice(-MAX_RECENT_EVENTS) : [];
   state.appliedMessageIds = Array.isArray(state.appliedMessageIds) ? state.appliedMessageIds.slice(-MAX_APPLIED_MESSAGE_IDS) : [];
   state.nextDuelId = Number.isInteger(state.nextDuelId) && state.nextDuelId > 0 ? state.nextDuelId : 1;

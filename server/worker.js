@@ -244,6 +244,9 @@ export default {async fetch(request,env,ctx){
         await setPaused(env,channel,data.action==='pauseChannel',roles.owner?'owner':'broadcaster');
         return json({ok:true,channelState:data.action==='pauseChannel'?'paused':'on'});
       }
+      // Can't be undone, or moves chat away from another site: the broadcaster or the owner, never a mod.
+      const only=data.action==='resetAllRanks'?'reset all ranks':data.action==='rotateSeKey'?'make a new StreamElements key':data.takeover===true?'move chat from another site':'';
+      if(only&&!roles.owner&&!roles.broadcaster)return json({error:'Only '+channel+' can '+only,reason:'broadcaster_only'},403);
       if(data.action==='rotateSeKey'||data.action==='setSeNames'||data.action==='setDuelModuleOff'){
         const r=await roomFetch(null,env,channel,'/se-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:data.action,names:data.names,value:data.value===true})});
         const out=await r.json();if(!r.ok)return json(out,r.status);
@@ -268,6 +271,11 @@ export default {async fetch(request,env,ctx){
     // Saved looks for the overlay: public, the same fields the leaderboard shows.
     if(route==='live')return internal(request,env,channel,url.searchParams.get('role')==='overlay'?'/live?role=overlay':'/live');
     if(route==='looks')return internal(request,env,channel,'/looks?u='+encodeURIComponent((url.searchParams.get('u')||'').slice(0,600)));
+    // The leaderboard is public; ?private=1 (the mod page) adds dollars for mods and the owner only.
+    if(route==='leaderboard'&&url.searchParams.get('private')==='1'){
+      if(!(await access(env,user,channel)).canManage)return json({error:'Moderator role required'},user?403:401);
+      return internal(request,env,channel,'/leaderboard?private=1');
+    }
     return internal(request,env,channel,'/'+route);
   }catch(error){
     if(!error.status)ctx?.waitUntil?.(logWorkerError(env,error,{path}));
