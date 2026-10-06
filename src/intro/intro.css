@@ -259,8 +259,8 @@ h2 { font-size: clamp(32px, 3.7vw, 54px); line-height: 1.04; }
 
 /* side shade behind the copy column, faded in by the frame loop */
 .scrim { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; }
-.scrim-l { background: linear-gradient(90deg, rgb(13 9 6 / .84), rgb(13 9 6 / .6) 34%, rgb(13 9 6 / 0) 50%); }
-.scrim-r { background: linear-gradient(270deg, rgb(13 9 6 / .84), rgb(13 9 6 / .6) 34%, rgb(13 9 6 / 0) 50%); }
+.scrim-l { background: linear-gradient(90deg, rgb(13 9 6 / .92), rgb(13 9 6 / .74) 36%, rgb(13 9 6 / 0) 54%); }
+.scrim-r { background: linear-gradient(270deg, rgb(13 9 6 / .92), rgb(13 9 6 / .74) 36%, rgb(13 9 6 / 0) 54%); }
 @media (max-width: 760px) { .scrim { display: none; } }
 
 /* callouts: a dot on the 3D point, a thin leader line, a two-line label */
@@ -292,5 +292,8 @@ body:not(.scrolled) .edge-fade.bottom { opacity: 0; }
 .site-foot nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text-2); font-size: 14px; text-decoration: none; }
 .site-foot nav a:hover, .site-foot nav a[aria-current] { color: var(--text); }
 .site-foot p { flex: 1 0 100%; margin: 0; color: var(--text-2); font-size: 14px; max-width: 68ch; }
-.chapter.finale .copy, .hud-bottom { translate: 0 calc(-1 * var(--foot-lift, 0px)); }
+.chapter.finale .copy, .hud-bottom, .stage, .tags, .edge-fade.bottom { translate: 0 calc(-1 * var(--foot-lift, 0px)); }   /* the whole scene lifts with the footer, so its captions stay in view */
 @media (max-width: 620px) { .site-foot .foot-brand, .site-foot p { display: none; } .site-foot-inner { padding: var(--space-3) var(--edge); } }   /* phones: the header carries the brand; the footer is just its links, so it lifts the copy less */
+/* the header's "Pick your fighter" is the same gold-edged button as on the other pages; it fills on hover */
+.hud-nav .btn-primary { background: rgb(201 164 92 / .14); border-color: #c9a45c; color: var(--text); }
+.hud-nav .btn-primary:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }

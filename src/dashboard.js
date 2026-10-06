@@ -699,7 +699,7 @@ async function pickChannel() {
 }
 // On wide screens the picker's island is the intro's live arena, not a picture: each channel's top fighter
 // stands on it, and hovering or focusing a row brings that channel's fighter on. Phones show it as a banner over the heading.
-const landing = { arena: null, show: null, first: null, fallback: null, labels: new Map() };
+const landing = { arena: null, show: null, first: null, fallback: null, labels: new Map(), links: new Map() };
 function liveLanding() {
   if (navigator.connection?.saveData || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   import("./fighter3d.js").then(({ createFighter3D }) => {
@@ -710,7 +710,8 @@ function liveLanding() {
     canvas.after(cap);
     $("#pick").classList.add("is-live");
     // the caption names whose fighter stands on the island, so hovering a row visibly brings that channel's fighter on
-    landing.show = (entry) => { cap.textContent = landing.labels.get(entry) || ""; const look = composeLook(entry); if (look) landing.arena.set(look); else whenImage(entry.url, () => landing.show(entry)); };
+    // the row whose fighter is on the island is marked too, so the scene and the list read as one
+    landing.show = (entry, link = landing.links.get(entry)) => { cap.textContent = landing.labels.get(entry) || ""; for (const a of landing.links.values()) a.classList.toggle("is-shown", a === link); const look = composeLook(entry); if (look) landing.arena.set(look); else whenImage(entry.url, () => landing.show(entry)); };
     if (landing.first || landing.fallback) landing.show(landing.first || landing.fallback);
   }).catch(() => {});
 }
@@ -732,17 +733,17 @@ async function channelRanks(channel, link, crew, meta) {
     meta.textContent = "No ranked duels yet. The top spot is open.";
     // the open spot: a character picked from the channel name, so each empty channel brings a different one on stage
     const people = new Set(CHARACTER_GROUPS[0].ids), all = [...byId.values()].filter((e) => people.has(e.id)), first = all[[...channel].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7) % Math.max(1, all.length)] || byId.values().next().value;
-    if (first) { add(first, "sprite is-open"); landing.labels.set(first, "The open spot in " + channel + "'s chat"); }
+    if (first) { add(first, "sprite is-open"); landing.labels.set(first, "The open spot in " + channel + "'s chat"); landing.links.set(first, link); }
     if (first && !landing.fallback) { landing.fallback = first; if (!landing.first) landing.show?.(first); }
-    if (first) for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => landing.show?.(first));
+    if (first) for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => landing.show?.(first, link));
     return;
   }
   meta.replaceChildren("Top fighter: " + (rows[0].displayName || rows[0].username) + " · ", h("span", { class: "nowrap" }, rows[0].elo + " Elo"));
   const top = byId.get(rows[0].avatar);
   if (top) {
-    landing.labels.set(top, (rows[0].displayName || rows[0].username) + ", top of " + channel + "'s chat");
+    landing.labels.set(top, (rows[0].displayName || rows[0].username) + ", top of " + channel + "'s chat"); landing.links.set(top, link);
     if (!landing.first) { landing.first = top; landing.show?.(top); }
-    for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => landing.show?.(top));
+    for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => landing.show?.(top, link));
   }
   for (const p of rows.slice(0, 3)) if (byId.get(p.avatar)) add(byId.get(p.avatar), "sprite");
 }
