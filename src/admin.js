@@ -5,7 +5,7 @@ import { skyBackdrop } from "./scrub.js";
 import site from "../site.config.js";
 skyBackdrop();
 applyChannel();
-if (CHANNEL !== site.defaultChannel) document.querySelector(".page-header .subtitle").textContent = "For the " + CHANNEL + " broadcaster. Changes apply to every OBS overlay right away.";
+if (CHANNEL !== site.defaultChannel) document.querySelector(".page-header .subtitle").textContent = "For the " + CHANNEL + " broadcaster. Changes reach every OBS overlay right away.";
 
 const LIMITS = { maxCharacters: 24, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 // Editable config fields (CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
@@ -255,8 +255,11 @@ function renderAll() {
     open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena.";
   const toggle = $("#toggle-duels");
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
-  // while chat is offline the fix is on the Stream setup tab, so that becomes the main action
+  // while chat is offline the fix is the main action: Connect chat right here where Twitch chat applies, else the Stream setup tab
+  const connectHere = waiting && !chat.connected && !$("#chat-box").hidden && !a.seOnly;
+  $("#summary-connect").hidden = !connectHere;
   $("#open-chat-setup").hidden = !waiting;
+  $("#open-chat-setup").className = "btn" + (connectHere ? "" : " btn-primary");
   toggle.classList.toggle("btn-primary", !waiting);
   $("#stats").replaceChildren(
     stat("Duels", !c.enabled ? "Paused" : waiting ? "Waiting" : "On", !c.enabled ? "down" : waiting ? "" : "up", !c.enabled ? "commands ignored" : waiting ? "for chat" : "accepting commands"),
@@ -285,7 +288,8 @@ function chatHealth() {
   return { ok: true, label: "Twitch chat", value: "Connected", note: last ? "last message " + timeAgo(last) : "no messages yet" };
 }
 function stat(label, value, cls, delta) {
-  return h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), delta ? h("div", { class: "delta " + (cls || "") }, delta) : null);
+  const word = typeof value === "string" && !/\d/.test(value);   // "Not connected" reads smaller than a number, on one line
+  return h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value" + (word ? " word" : "") }, value), delta ? h("div", { class: "delta " + (cls || "") }, delta) : null);
 }
 function hp(value, max, who) {
   const pct = Math.max(0, Math.min(100, Math.round((value / max) * 100)));
@@ -562,24 +566,25 @@ function renderChat() {
   $("#connect-chat").textContent = c.connected ? "Reconnect chat" : "Connect chat";
   $("#disconnect-chat").disabled = !c.subscriptionId && !c.connected;
 }
-async function chatAct(action, button, takeover = false) {
+async function chatAct(action, button, takeover = false, status = $("#chat-status")) {
   if (action === "disconnectChat" && !confirm("Disconnect Twitch chat? Duels pause and open duels are cancelled without scoring.")) return;
   button.disabled = true;
-  setStatus($("#chat-status"), action === "connectChat" ? "Asking Twitch for a chat subscription…" : "Disconnecting…");
+  setStatus(status, action === "connectChat" ? "Asking Twitch for a chat subscription…" : "Disconnecting…");
   const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: takeover ? { action, takeover: true } : { action } });
   button.disabled = false;
   // One Twitch app serves both sites, and Twitch allows one chat subscription per channel: offer to move it here.
   if (r.status === 409 && r.data?.connectedElsewhere && !takeover
-    && confirm("Chat is connected to " + r.data.connectedElsewhere + ". Only one site can receive chat at a time. Move chat to this site? The other site pauses.")) return chatAct(action, button, true);
+    && confirm("Chat is connected to " + r.data.connectedElsewhere + ". Only one site can receive chat at a time. Move chat to this site? The other site pauses.")) return chatAct(action, button, true, status);
   if (!r.ok) {
     const fix = r.data?.reconnect ? (S.access.owner ? " Use Reconnect Twitch below." : " Ask " + site.owner.login + " to reconnect Twitch.") : "";
-    return setStatus($("#chat-status"), "That didn't work: " + errorText(r) + fix, "error");
+    return setStatus(status, "That didn't work: " + errorText(r) + fix, "error");
   }
   verifying = action === "connectChat" && !r.data?.chatStatus?.connected;
-  setStatus($("#chat-status"), action === "disconnectChat" ? "Chat disconnected. Duels are paused." : verifying ? "Subscription created. Twitch is checking the connection; this updates when it's done." : "Chat connected. Duels are live.", "ok");
+  setStatus(status, action === "disconnectChat" ? "Chat disconnected. Duels are paused." : verifying ? "Subscription created. Twitch is checking the connection; this updates when it's done." : "Chat connected. Duels are live.", "ok");
   await load();
 }
 $("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.currentTarget));
+$("#summary-connect").addEventListener("click", (e) => chatAct("connectChat", e.currentTarget, false, $("#summary-status")));
 $("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat", e.currentTarget));
 
 // ---------- StreamElements ----------

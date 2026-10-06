@@ -181,7 +181,9 @@ try {
     await page.locator('label[for=hat-cap]').click();
     assert.ok((await page.locator('#upgrades-help').textContent()).includes('2 from wins and 1 from check-ins'));
     // Shop: hats past the wins can be bought; a pet buy needs a second click to confirm, then the pet is picked.
-    assert.equal(await page.getByRole('button', { name: /^Buy Crown hat for \$200$/ }).isDisabled(), true, '$42 is not enough for the crown');
+    const crown = page.getByRole('button', { name: /^Buy Crown hat for \$200, you need \$158 more$/ });
+    assert.equal(await crown.isDisabled(), true, '$42 is not enough for the crown');
+    assert.equal(await crown.textContent(), 'Need $158 more', 'an item out of reach says how far off it is');
     // Cosmetics: every price is the channel's config default; trying one on blocks Save until it's bought.
     // The shop shows one section at a time; its section links switch between them.
     assert.equal(await page.locator('#shop-accessory').isHidden(), true, 'only the Hats section shows first');
@@ -587,7 +589,10 @@ try {
       const prose = await page.locator('#se-setup > ol').boundingBox();
       assert.ok(prose.width <= 720, 'step prose stays at reading width, got ' + prose.width);
     } else {
-      assert.ok(await wrap.evaluate((n) => n.scrollWidth > n.clientWidth), 'table scrolls inside its wrap at 390');
+      // phones stack each command into rows, so nothing scrolls sideways and Copy reply stays in reach
+      assert.ok(await wrap.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), 'stacked table does not scroll sideways at 390');
+      const copy = await page.locator('#se-table tbody tr').first().getByRole('button', { name: /Copy/ }).boundingBox();
+      assert.ok(copy && copy.x + copy.width <= wrapBox.x + wrapBox.width + 1 && copy.height >= 44, 'Copy reply fits and is a 44px target at 390');
     }
     await noOverflow(page, 'setup checklist ' + s.name);
     await page.locator('#setup-check').screenshot({ path: shots + '/admin-checklist-' + s.name + '.png' });

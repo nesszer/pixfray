@@ -147,8 +147,11 @@ export async function mountUpload(root, ctx = {}) {
   }
   function renderProblems() {
     const list = problems();
-    problemsBox.replaceChildren(...(list.length ? [h('ul', { class: 'small' }, list.map((p) => h('li', {}, p)))] : []));
-    problemsBox.className = 'upload-problems' + (list.length ? ' callout negative' : '');
+    // Nothing chosen yet: the empty-form messages wait until the first file, and Save stays off meanwhile
+    const g = groups(), started = state.readProblems.length > 0 || ANIMATION_SLOTS.some((s) => (g[s] || []).length);
+    const shown = started ? list : list.filter((p) => p !== 'Add at least one PNG frame.' && p !== 'Choose a PNG image.');
+    problemsBox.replaceChildren(...(shown.length ? [h('ul', { class: 'small' }, shown.map((p) => h('li', {}, p)))] : []));
+    problemsBox.className = 'upload-problems' + (shown.length ? ' callout negative' : '');
     saveButton.disabled = state.busy || !!list.length || !state.blob || !nameInput.value.trim();
   }
   function renderPreviewButtons() {

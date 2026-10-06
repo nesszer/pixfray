@@ -230,9 +230,10 @@ async function buy(kind, item, label, price, btn, out, text = "Buy for $" + pric
     : "Bought " + label + " for $" + price + ". Save your fighter to bring it on stream.", "ok");
 }
 const buyButton = (kind, item, label, price, out, text = "Buy for $" + price) => {
-  const short = canShop() && (state.profile.dollars || 0) < price;
-  return h("button", { type: "button", class: "btn btn-small buy", disabled: !canShop() || short, title: short ? "You have $" + (state.profile.dollars || 0) : null,
-    "aria-label": "Buy " + label + " for $" + price, onclick: (e) => buy(kind, item, label, price, e.currentTarget, out, text) }, text);
+  const have = state.profile?.dollars || 0, short = canShop() && have < price;
+  // Out of reach: say how far, so the affordable items are the only gold buttons
+  return h("button", { type: "button", class: "btn btn-small buy" + (short ? " short" : ""), disabled: !canShop() || short, title: short ? "Costs $" + price + "; you have $" + have : null,
+    "aria-label": "Buy " + label + " for $" + price + (short ? ", you need $" + (price - have) + " more" : ""), onclick: (e) => buy(kind, item, label, price, e.currentTarget, out, text) }, short ? "Need $" + (price - have) + " more" : text);
 };
 // One picker tile: a radio (name = kind) with its picture and words, plus a Buy button while it isn't owned.
 // Anything can be picked to try it on in the preview; Save asks for the unowned ones to be bought first.

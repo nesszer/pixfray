@@ -6,16 +6,16 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
-<body>
+<body class="admin-page">
 <header class="topbar"><div class="topbar-inner">
   <a class="brand" href="/" data-keep-channel><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
   <nav aria-label="Pages"><a href="/intro/">See a duel</a><a href="/start/">For streamers</a><a href="/admin/" aria-current="page" data-keep-channel>Mods</a><a href="/admin/dev/" id="dev-link" hidden>Owner</a><a class="nav-cta" href="/" data-keep-channel>Pick your fighter</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 <main class="page">
-  <header class="page-header">
+  <header class="page-header compact">
     <h1 data-channel>Duel controls for nesszerra</h1>
-    <p class="subtitle">Only the broadcaster and channel moderators can open these. Changes apply to every OBS overlay right away.</p>
+    <p class="subtitle">For the broadcaster and moderators. Changes reach every OBS overlay right away.</p>
     <p class="meta" id="meta"></p>
   </header>
 
@@ -53,13 +53,14 @@
       <button type="button" role="tab" id="tab-players" aria-controls="panel-players" aria-selected="false" tabindex="-1">Players</button>
       <button type="button" role="tab" id="tab-rules" aria-controls="panel-rules" aria-selected="false" tabindex="-1">Rules</button>
       <button type="button" role="tab" id="tab-characters" aria-controls="panel-characters" aria-selected="false" tabindex="-1">Characters</button>
-      <button type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1">Stream setup</button>
+      <button type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1"><span class="wide-only">Stream setup</span><span class="narrow-only">Setup</span></button>
     </div>
     <div role="tabpanel" id="panel-live" aria-labelledby="tab-live" tabindex="0">
       <section class="summary" aria-live="polite">
         <h2 id="summary-title">Loading arena state…</h2>
         <p id="summary-text"></p>
-        <div class="toolbar"><button class="btn btn-primary" id="open-chat-setup" type="button" hidden>Open stream setup</button></div>
+        <div class="toolbar"><button class="btn btn-primary" id="summary-connect" type="button" hidden>Connect chat</button><button class="btn btn-primary" id="open-chat-setup" type="button" hidden>Open stream setup</button></div>
+        <p class="status" id="summary-status" role="status"></p>
         <p class="small" id="setup-next" hidden></p>
       </section>
       <section class="section" aria-label="Arena numbers">
@@ -70,7 +71,7 @@
         <div class="toolbar">
           <button class="btn" id="toggle-duels" type="button">Pause duels</button>
           <button class="btn" id="reset-health" type="button">Reset everyone's health</button>
-          <button class="btn" id="reset-round" type="button">Cancel open duels and restart rounds</button>
+          <button class="btn btn-danger" id="reset-round" type="button">Cancel open duels and restart rounds</button>
         </div>
         <p class="status" id="action-status" role="status"></p>
       </section>
