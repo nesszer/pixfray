@@ -11,9 +11,9 @@ scripted duels, and an alt account that types in real Twitch chat. Production ha
 - A request with `Authorization: Bearer <token>` acts as the owner for `/api/dev/*` and
   `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live|shop)`. A wrong or short
   token gets 401; an owner session without the token gets 404 from `/api/devtools`.
-- The token lives in `.secrets.local.json` (gitignored) next to the Twitch app credentials, so the
+- The token lives in `~/.pixfray/secrets.json` (outside the repo) next to the Twitch app credentials, so the
   normal test deploy uploads it:
-  `npx cf deploy --mode test --secrets-file .secrets.local.json`.
+  `npx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json`.
 - Chat posts go out only after Twitch confirms the channel is offline. If that check fails, nothing is
   sent.
 
@@ -52,8 +52,8 @@ node scripts/devtools.mjs clean
 ## Alt account in real chat
 
 Use a second Twitch account, never the main one. It signs in once with a device code (scope
-`user:write:chat` only), using the test Twitch app. Tokens are saved in `.devtools.local.json`
-(gitignored) and refreshed automatically.
+`user:write:chat` only), using the test Twitch app. Tokens are saved in `~/.pixfray/devtools.json`
+(outside the repo) and refreshed automatically.
 
 ```bash
 node scripts/devtools.mjs login

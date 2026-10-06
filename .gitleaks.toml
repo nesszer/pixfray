@@ -1,0 +1,8 @@
+# gitleaks: the default rules, plus one known local-only file. .dev.vars (gitignored) holds throwaway values for
+# `cf dev` and the tests, written by scripts/configure-twitch.ps1; the deployed secrets live in ~/.pixfray/ instead.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "local-dev-only .dev.vars"
+paths = ['''(^|[\/])\.dev\.vars$''']

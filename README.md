@@ -95,10 +95,11 @@ PixFray is one Cloudflare Worker (Workers Free is enough) and one Twitch app. To
      without one; chat then comes in through StreamElements custom commands.
 3. Register a Twitch app as in TWITCH_SETUP.md, with `<origin>/auth/callback` as a redirect URL for
    every origin and channel domain.
-4. Put the secrets in `.secrets.local.json` (ignored by git): `AUTH_SECRET` and `INTERNAL_SECRET`
-   (long random strings, for example `openssl rand -hex 32`), `TWITCH_CLIENT_ID`,
-   `TWITCH_CLIENT_SECRET`, and `DEV_TOOLS_TOKEN` for the test site.
-5. Run `cf auth login`, then `npx cf deploy --mode test --secrets-file .secrets.local.json`. Check
+4. Put the secrets in `~/.pixfray/secrets.json`, outside the repo folder (`scripts/configure-twitch.ps1`
+   writes it): `AUTH_SECRET` and `INTERNAL_SECRET` (long random strings, for example
+   `openssl rand -hex 32`), `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `DEV_TOOLS_TOKEN` for the
+   test site. `.dev.vars` (local dev only) holds its own throwaway values, never these.
+5. Run `cf auth login`, then `npx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json`. Check
    the test site, then deploy production with the same command without `--mode test`. The hosts in
    `origins` and `channelDomains` must be zones on your Cloudflare account.
 6. Sign in on `/admin/` as the owner. Send streamers to `/start/`; docs/STREAMER_SETUP.md is their

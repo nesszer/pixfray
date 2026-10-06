@@ -2,13 +2,15 @@
 // Test-site tooling: bot fighters, scripted duels and an alt account in real Twitch chat. See docs/DEVTOOLS.md.
 // Talks only to the test site (DEV_TOOLS_TOKEN exists only there) and posts to Twitch chat only while the channel is offline.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import siteConfig from '../site.config.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SECRETS = path.join(ROOT, '.secrets.local.json');   // DEV_TOOLS_TOKEN, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
-const ALT_FILE = path.join(ROOT, '.devtools.local.json'); // alt account tokens from `login`; gitignored
+// Real secrets stay outside the repo folder, in ~/.pixfray/ (README, Run your own copy).
+const SECRETS = process.env.MINI_SECRETS || path.join(os.homedir(), '.pixfray', 'secrets.json');   // DEV_TOOLS_TOKEN, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
+const ALT_FILE = process.env.MINI_DEVTOOLS_FILE || path.join(os.homedir(), '.pixfray', 'devtools.json'); // alt account tokens from `login`
 const BASE = (process.env.MINI_DEVTOOLS_BASE || siteConfig.origins.test).replace(/\/$/, '');
 const BOT_LETTERS = 'abcd';
 

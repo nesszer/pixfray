@@ -8,7 +8,10 @@ $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
 try { $clientSecret = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 if (-not $clientSecret) { throw 'Client Secret is required' }
-$secretPath = Join-Path $project '.secrets.local.json'
+# The deploy secrets live outside the repo folder; .dev.vars (local dev only) gets its own throwaway values.
+$secretDir = Join-Path $HOME '.pixfray'
+New-Item -ItemType Directory -Force -Path $secretDir | Out-Null
+$secretPath = Join-Path $secretDir 'secrets.json'
 $values = @{}
 if (Test-Path -LiteralPath $secretPath) {
   $values = Get-Content -Raw -LiteralPath $secretPath | ConvertFrom-Json -AsHashtable
@@ -23,8 +26,12 @@ foreach ($key in @('AUTH_SECRET', 'INTERNAL_SECRET')) {
 $values.TWITCH_CLIENT_ID = $ClientId
 $values.TWITCH_CLIENT_SECRET = $clientSecret
 $values | ConvertTo-Json | Set-Content -LiteralPath $secretPath -Encoding utf8NoBOM
-$values.GetEnumerator() | ForEach-Object { $_.Key + '=' + $_.Value } | Set-Content -LiteralPath (Join-Path $project '.dev.vars') -Encoding utf8NoBOM
+$devVars = Join-Path $project '.dev.vars'
+if (-not (Test-Path -LiteralPath $devVars)) {
+  $local = foreach ($key in @('AUTH_SECRET', 'INTERNAL_SECRET')) { $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Fill($b); $key + '=' + [Convert]::ToHexString($b).ToLowerInvariant() }
+  @($local) + @('TWITCH_CLIENT_ID=local-dev-client-id', 'TWITCH_CLIENT_SECRET=local-dev-client-secret') | Set-Content -LiteralPath $devVars -Encoding utf8NoBOM
+}
 $clientSecret = $null
-Write-Host 'Saved private local config. No secrets were printed.'
-Write-Host 'Deploy from the project using: cf deploy --mode test --secrets-file .secrets.local.json'
-Write-Host 'After testing: cf deploy --secrets-file .secrets.local.json'
+Write-Host "Saved the secrets to $secretPath. No secrets were printed."
+Write-Host "Deploy from the project using: npx cf deploy --mode test --secrets-file $secretPath"
+Write-Host "After testing: npx cf deploy --secrets-file $secretPath"
