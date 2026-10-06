@@ -85,7 +85,7 @@ export async function mountUpload(root, ctx = {}) {
   const modeFrames = h('input', { type: 'radio', name: 'up-mode', value: 'frames', id: 'up-mode-frames', checked: true });
   const singleInput = h('input', { id: 'up-single', type: 'file', accept: 'image/png' });
   const slotInputs = Object.fromEntries(ANIMATION_SLOTS.map((s) => [s, h('input', { id: 'up-slot-' + s, type: 'file', accept: 'image/png', multiple: true })]));
-  const slotCounts = Object.fromEntries(ANIMATION_SLOTS.map((s) => [s, h('span', { class: 'upload-count small muted' }, 'No files')]));
+  const slotCounts = Object.fromEntries(ANIMATION_SLOTS.map((s) => [s, h('span', { class: 'upload-count small muted' })]));
   const singleBox = h('div', { class: 'upload-field', hidden: true },
     h('label', { for: 'up-single' }, 'PNG image'), singleInput,
     h('p', { class: 'hint small muted' }, 'Larger images are scaled down to fit ' + limits.frameSize + ' x ' + limits.frameSize + ' px. The overlay moves the character and uses effects for attacks and knockouts.'));
@@ -95,12 +95,13 @@ export async function mountUpload(root, ctx = {}) {
   const previewCanvas = h('canvas', { class: 'upload-preview', width: 192, height: 192, role: 'img', 'aria-label': 'Animated preview of the character' });
   const previewButtons = h('div', { class: 'toolbar upload-anim', role: 'group', 'aria-label': 'Preview animation' });
   const sheetBox = h('div', { class: 'upload-sheet' });
+  const stage = h('div', { class: 'upload-stage empty' }, previewCanvas, h('p', { class: 'upload-placeholder small muted', 'aria-hidden': 'true' }, 'Your character plays here'));
   const atlasInfo = h('p', { class: 'small muted', id: 'up-atlas-info' }, 'Choose PNG files to see a preview.');
   const saveButton = h('button', { class: 'btn', type: 'button', disabled: true }, 'Save character');
   const status = h('p', { class: 'status', role: 'status' });
   const usageLine = h('p', { class: 'small muted upload-usage' });
   const deleteSelect = h('select', { id: 'up-delete' });
-  const deleteButton = h('button', { class: 'btn btn-danger btn-small', type: 'button' }, 'Delete character');
+  const deleteButton = h('button', { class: 'btn btn-danger', type: 'button' }, 'Delete character');
   const deleteStatus = h('p', { class: 'status', role: 'status' });
   const deleteBox = h('div', { class: 'upload-delete' }, h('label', { for: 'up-delete' }, 'Remove a custom character'), h('div', { class: 'toolbar' }, deleteSelect, deleteButton), deleteStatus);
 
@@ -116,7 +117,7 @@ export async function mountUpload(root, ctx = {}) {
         h('div', { class: 'upload-field upload-fps' }, h('label', { for: 'up-fps' }, 'Frames per second'), fpsInput),
         h('p', { class: 'hint small muted' }, 'Limits: PNG only, ' + limits.maxFrames + ' frames in total, ' + limits.frameSize + ' x ' + limits.frameSize + ' px per frame, ' + formatBytes(limits.maxAtlasBytes) + ' per atlas, ' + limits.maxCharacters + ' characters per channel.')),
       h('div', { class: 'upload-side' },
-        h('div', { class: 'upload-stage' }, previewCanvas), previewButtons, atlasInfo, sheetBox, problemsBox,
+        stage, previewButtons, atlasInfo, sheetBox, problemsBox,
         h('div', { class: 'toolbar' }, saveButton), status)),
     deleteBox));
 
@@ -129,6 +130,7 @@ export async function mountUpload(root, ctx = {}) {
     const list = items || [];
     deleteSelect.replaceChildren(...(list.length ? list.map((x) => h('option', { value: x.id }, (x.label || x.id) + ' (' + formatBytes(x.bytes || 0) + ')')) : [h('option', { value: '' }, 'No custom characters')]));
     deleteSelect.disabled = deleteButton.disabled = !list.length;
+    deleteBox.hidden = !list.length;   // nothing to remove yet
   }
   function groups() {
     if (state.mode === 'single') return state.single ? { idle: [state.single] } : {};
@@ -168,6 +170,7 @@ export async function mountUpload(root, ctx = {}) {
     sheetBox.replaceChildren();
     const g = groups();
     const hasFrames = ANIMATION_SLOTS.some((s) => (g[s] || []).length);
+    stage.classList.toggle('empty', !hasFrames); previewButtons.hidden = !hasFrames;
     if (!hasFrames || (state.mode === 'frames' && checkFrames(g, limits).length)) {
       atlasInfo.textContent = hasFrames ? 'Fix the problems below to see the packed atlas.' : 'Choose PNG files to see a preview.';
       renderPreviewButtons(); renderProblems(); return;
@@ -241,7 +244,7 @@ export async function mountUpload(root, ctx = {}) {
     const { frames, problems: bad } = await readPngFiles(slotInputs[s].files || []);
     state.slots[s] = frames;
     state.readProblems = state.readProblems.filter((p) => !p.startsWith('[' + s + '] ')).concat(bad.map((p) => '[' + s + '] ' + p));
-    slotCounts[s].textContent = frames.length ? frames.length + ' file' + (frames.length === 1 ? '' : 's') + ': ' + frames.map((f) => f.name).join(', ') : 'No files';
+    slotCounts[s].textContent = frames.length ? frames.length + ' file' + (frames.length === 1 ? '' : 's') + ': ' + frames.map((f) => f.name).join(', ') : '';
     repack();
   });
   nameInput.addEventListener('input', renderProblems);

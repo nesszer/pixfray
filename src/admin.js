@@ -461,8 +461,7 @@ function renderUsage() {
   $("#usage-title").textContent = u.count + " of " + limit + " custom character slots used";
   const bar = (label, value, max, text, key) => [h("div", { class: "bar-label" }, label),
     h("div", { class: "bar" + (key ? " is-key" : ""), style: { "--v": Math.min(100, (value / max) * 100) + "%" } }, h("span"), h("b", {}, text))];
-  $("#usage-bars").replaceChildren(...bar("Characters", u.count, limit, u.count + " / " + limit, true),
-    ...bar("Atlas storage", u.bytes, budget, formatBytes(u.bytes) + " / " + formatBytes(budget)));
+  $("#usage-bars").replaceChildren(...bar("Atlas storage", u.bytes, budget, formatBytes(u.bytes) + " / " + formatBytes(budget), true));   // the title already counts the slots
 }
 async function loadCustom() {
   const r = await api("/api/assets/" + CHANNEL);
@@ -603,7 +602,7 @@ function renderSe() {
   else if (se && se.rejectedAt > se.lastCommandAt) warn = "A StreamElements command arrived " + timeAgo(se.rejectedAt) + " with an old key and was refused. Copy every reply again from the table below and paste it into StreamElements.";
   else if (se?.lastCommandAt) note = "Last StreamElements command reached " + host + " " + timeAgo(se.lastCommandAt) + ".";
   health.hidden = !(warn || note);
-  health.className = warn ? "callout warning small" : "small muted";
+  health.className = warn ? "callout warning small" + (se.rejectedAt > se.lastCommandAt ? " negative" : "") : "small muted";
   health.textContent = warn || note;
   $("#se-setup").hidden = !se;   // no key on this site: an empty table and dead buttons only confuse
   if (!se) return;

@@ -1629,11 +1629,13 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
   #se-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2) var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
   #se-table td { display: block; padding: 0; border: 0; }
   #se-table td:nth-child(1) { font-weight: 650; align-self: center; }
-  #se-table td:nth-child(2), #se-table td:nth-child(4) { grid-column: 1 / -1; }
-  #se-table td:nth-child(2) input { width: 100%; }
-  #se-table td:nth-child(4) { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  #se-table td:nth-child(1) { grid-area: 1 / 1; }
+  #se-table td:nth-child(3) { grid-area: 1 / 2; align-self: center; }
+  #se-table td:nth-child(2) { grid-area: 2 / 1; }
+  #se-table td:nth-child(4) { grid-area: 2 / 2; }
+  #se-table td:nth-child(2) input { width: 100%; min-height: 44px; }
   #se-table td:nth-child(4) .btn { min-height: 44px; }
-  #se-table .reply-preview { font-size: var(--text-xs); overflow-wrap: anywhere; }
+  #se-table .reply-preview { display: none; }
 }
 /* file pickers look like the page's buttons, not browser chrome */
 input[type="file"] { font: inherit; font-size: var(--text-sm); color: var(--text-2); max-width: 100%; }
@@ -1642,4 +1644,17 @@ input[type="file"]::file-selector-button { font: 650 var(--text-sm)/1 var(--font
 input[type="file"]::file-selector-button:hover { border-color: var(--trim); background: var(--accent-soft); }
 /* builder: an item you can't afford yet says how far off it is, in quiet text */
 .btn.buy.short:disabled { color: var(--text-3); font-weight: 400; }
-.fighter-card .stat .value { white-space: nowrap; }
+#my-stats .stat .value, .fighter-card .stat .value { white-space: nowrap; }
+.btn.buy.short { white-space: nowrap; font-size: var(--text-xs); padding-inline: var(--space-2); }
+
+/* Round 33: character preview placeholder */
+.upload-stage { position: relative; }
+.upload-placeholder { display: none; position: absolute; inset: 0; margin: 0; place-content: center; text-align: center; }
+.upload-stage.empty .upload-placeholder { display: grid; }
+.upload-stage.empty canvas { visibility: hidden; }
+.upload-anim[hidden] { display: none; }
+
+/* Round 34: the live state and the moderation buttons share the first screen */
+.admin-page #panel-live > .summary + .section, .admin-page #panel-live > .moderation { margin-top: var(--space-5); }
+.admin-page #panel-live > .moderation > h2:first-child { font-size: var(--text-lg); padding-bottom: var(--space-2); margin-bottom: var(--space-3); }
+.config-bar.dirty .config-clean { display: none; }

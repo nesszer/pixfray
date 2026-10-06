@@ -357,7 +357,7 @@ try {
     assert.ok(!/round/i.test(headline.join(' ')), 'no global round number in the summary');
     assert.match(await page.locator('#stats').textContent(), /Twitch chat\s*Connected/);
     assert.match(await page.locator('#stats').textContent(), /Duels\s*On\s*accepting commands/);
-    // the summary holds at most the one primary action; the moderation buttons sit in their own section below the stats
+    // the summary holds at most the one primary action; the stats and then the moderation buttons follow, all inside the 1280x800 fold
     assert.equal(await page.locator('.summary #toggle-duels, .summary #reset-health, .summary #reset-round').count(), 0, 'moderation buttons are not in the summary');
     assert.equal(await page.locator('.summary .btn-primary:visible').count(), 0, 'no primary action while chat works');
     assert.deepEqual(await page.locator('#panel-live .moderation button').evaluateAll((b) => b.map((x) => x.id)), ['toggle-duels', 'reset-health', 'reset-round']);
