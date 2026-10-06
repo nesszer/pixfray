@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
 import { createHmac } from 'node:crypto';
 import { digest } from '../server/auth.js';
-import { eventsubSecret, signEventsub, localTestMode, sendChatMessage, sendChatMessages } from '../server/eventsub.js';
+import { eventsubSecret, signEventsub, localTestMode, sendChatMessage, sendChatMessages, botDropText } from '../server/eventsub.js';
 
 function environment() {
   const entries = new Map(), forwarded = [];
@@ -463,6 +463,18 @@ test('chat bot: only commands reach the room; its reply is sent as the bot, thre
   assert.equal(helix.length, 1);
   assert.equal(helix[0].url, 'https://api.twitch.tv/helix/chat/messages');
   assert.deepEqual(helix[0].body, { broadcaster_id: '1', sender_id: '99', message: 'PixFray: !ranks are at pixfray', reply_parent_message_id: 'chat-9' });
+  // what Twitch said goes back to the room, for the bot status and the owner log
+  await Promise.all(waits);
+  assert.equal(f.forwarded.length, 2);
+  assert.match(f.forwarded[1].url, /\/bot-sent$/);
+  assert.deepEqual(f.forwarded[1].body, { results: [{ sent: true, reason: '' }] });
+});
+
+test('chat bot: drop reasons read as words', () => {
+  assert.equal(botDropText('msg_duplicate'), 'the same line twice within 30 s (msg_duplicate)');
+  assert.match(botDropText('Twitch send chat message failed (403)'), /may not chat here \(403\)/);
+  assert.equal(botDropText('Twitch send chat message failed (500)'), 'Twitch send chat message failed (500)');
+  assert.equal(botDropText(''), 'unknown');
 });
 
 test('chat bot: a signed-up channel gets its verification, and the bot answers on its own channel', async (t) => {

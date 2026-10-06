@@ -103,7 +103,7 @@ export async function handleEventsub(request,env,{channels,roomFetch,origin=()=>
     const r=await send(channel,{bot:true,botId});
     const d=r.ok?await r.json().catch(()=>({})):{};
     const messages=(Array.isArray(d.replies)?d.replies:[d.reply]).map(x=>String(x||'')).filter(Boolean).slice(0,6);
-    if(messages.length&&sendChat)sendChat({broadcasterId:String(body.event.broadcaster_user_id||condition.broadcaster_user_id||''),senderId:botId,messages,replyTo:String(body.event.message_id||'')});
+    if(messages.length&&sendChat)sendChat({channel,broadcasterId:String(body.event.broadcaster_user_id||condition.broadcaster_user_id||''),senderId:botId,messages,replyTo:String(body.event.message_id||'')});
   }
   return new Response(null,{status:204});   // other channels, subscription types and message types are ignored
 }
@@ -190,6 +190,18 @@ export async function disconnectChat(env,{subscriptionId,url}){
 export function botMessage(message){
   const text=String(message||'').replace(/\s+/g,' ').trim();
   return (/^[!/.]/.test(text)?'PixFray: '+text:text).slice(0,MAX_BOT_MESSAGE);
+}
+// Twitch's reason for a line the bot couldn't post, in words for the owner log, the admin page and "!fray debug".
+// reason is a drop_reason code from Helix, or the error sendChatMessage threw ("... failed (403)").
+const DROP_TEXT={msg_duplicate:'the same line twice within 30 s',msg_rejected:'held by AutoMod',msg_rejected_mandatory:'blocked by AutoMod or blocked terms',msg_banned:'the bot is banned in this channel',msg_timedout:'the bot is timed out',msg_ratelimit:'Twitch rate limit',msg_followersonly:'followers-only chat',msg_subsonly:'subscriber-only chat',msg_slowmode:'slow mode',msg_emoteonly:'emote-only chat',msg_verified_email:'the bot account needs a verified email',empty:'nothing to send'};
+export function botDropText(reason){
+  reason=String(reason||'');
+  if(DROP_TEXT[reason])return DROP_TEXT[reason]+' ('+reason+')';
+  const status=/\((\d{3})\)/.exec(reason)?.[1];
+  if(status==='401')return "Twitch didn't accept the app token (401)";
+  if(status==='403')return 'Twitch says the bot may not chat here (403): sign the bot in again, and check it is not banned';
+  if(status==='429')return 'Twitch rate limit (429)';
+  return reason||'unknown';
 }
 // A bot that isn't a channel mod may send about one line per second there, so a 429 is retried twice after a short wait.
 export async function sendChatMessage(env,{broadcasterId,senderId,message,replyTo='',sleep=ms=>new Promise(r=>setTimeout(r,ms))}){

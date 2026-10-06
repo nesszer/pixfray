@@ -670,12 +670,15 @@ try {
       }
       return json(r, { type: 'snapshot', channel: 'nesszerra', revision: 5, paused: false, chat: { connected: true, lastSeen: now, status: 'enabled' }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
         chatStatus, history: [{ version: 1, config, actorId: 'system', at: now - 86400000, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 }, streamelements: { key: 'k'.repeat(48), names: {}, origin: base, lastCommandAt: 0, rejectedAt: 0, seen: {}, duelModuleOff: true, timerText: 'x', commands: [] },
-        overlays: 1, modsReady: true, checkinTestAllowed: true, chatBot: { login: 'pixfray', debug: false }, botCommands: data, access: { owner: false, moderator: true, canManage: true } });
+        overlays: 1, modsReady: true, checkinTestAllowed: true, chatBot: { login: 'pixfray', debug: false }, botCommands: data, botStatus: { heardAt: now - 60000, heard: 'alice !fray', sentAt: now - 60000, sent: 41, failedAt: now - 30000, failed: 1, failedReason: 'msg_duplicate', failedText: 'the same line twice within 30 s (msg_duplicate)', heldAt: 0, heldReason: '', recent: 0, cap: 18 }, access: { owner: false, moderator: true, canManage: true } });
     });
     await page.goto(base + '/admin/');
     await page.click('#tab-chat');
     await page.waitForSelector('#bot-commands:not([hidden])');
     assert.deepEqual(await page.locator('#bot-commands-table tbody td:first-child').allTextContents(), ['!nt', '!tablet']);
+    // the bot's health: a drop newer than the last sent reply is a warning
+    assert.match(await page.locator('#bot-health').textContent(), /^Bot: last command \d+ (s|min) ago \(alice !fray\), last reply sent \d+ (s|min) ago\. 41 sent, 1 dropped\. The last reply was dropped \d+ (s|min) ago: the same line twice within 30 s \(msg_duplicate\)\. Type !fray debug/);
+    assert.equal(await page.locator('#bot-health').getAttribute('class'), 'small callout warning');
     assert.equal(await page.locator('[data-counter="nt"]').inputValue(), '1');
     // add (a PixFray name is refused with a reason), edit with a rename, set a counter, delete
     await page.fill('#command-name', 'fray'); await page.fill('#command-reply', 'x'); await page.click('#command-save');

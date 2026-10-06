@@ -1057,6 +1057,33 @@ test('chat bot: text commands from the admin page answer in chat, with counters,
   assert.equal((await admin('deleteCommand', { name: 'hug' })).body.botCommands.commands.length, 2);
 });
 
+test('chat bot status: heard, sent and dropped replies, held-back replies and !fray debug for mods', async () => {
+  const r = botRoom({});
+  await r.save('u1', 'alice');
+  await r.connectChat('sub-bot');
+  assert.deepEqual((({ heardAt, sent, failed }) => [heardAt, sent, failed])((await r.call('/admin')).body.botStatus), [0, 0, 0]);
+  await r.say('u1', 'alice', '!elo');
+  await r.call('/bot-sent', { method: 'POST', body: { results: [{ sent: true, reason: '' }] } });
+  await r.call('/bot-sent', { method: 'POST', body: { results: [{ sent: false, reason: 'msg_duplicate' }] } });
+  const s = (await r.call('/admin')).body.botStatus;
+  assert.equal(s.heard, 'alice !elo');
+  assert.ok(s.heardAt > 0 && s.sentAt > 0 && s.failedAt >= s.sentAt);
+  assert.deepEqual([s.sent, s.failed, s.failedReason, s.failedText], [1, 1, 'msg_duplicate', 'the same line twice within 30 s (msg_duplicate)']);
+  assert.match((await r.call('/dev/logs?source=warn')).body[0].message, /^bot reply dropped: the same line twice/);
+  // !fray debug: broadcaster, mods and the bot get the status line; viewers get a no
+  const line = (await r.say('u2', 'modmia', '!fray debug', { mod: true })).reply;
+  assert.match(line, /^PixFray debug: chat connected · last command alice !elo \d+ s · replies 1 sent, 1 dropped \(last drop \d+ s: the same line twice within 30 s \(msg_duplicate\)\) · \d+\/18 replies in 30 s · reminder off$/);
+  assert.match((await r.say('u1', 'alice', '!fray debug')).reply, /only the broadcaster or a mod/);
+  // An old subscription's line, and the reply cap, are held back, noted and logged.
+  await r.call('/eventsub', { method: 'POST', body: { messageId: 'old1', messageType: 'notification', bot: true, botId: 'u9', timestamp: Date.now(), subscription: { id: 'sub-old' }, event: { chatter_user_id: 'u1', chatter_user_login: 'alice', message_id: 'o1', message: { text: '!elo' } } } });
+  assert.equal((await r.call('/admin')).body.botStatus.heldReason, 'unknown_subscription');
+  for (let i = 0; i < 20; i++) await r.say('u1', 'alice', '!elo');
+  assert.equal((await r.call('/admin')).body.botStatus.heldReason, 'reply_limit');
+  const warns = (await r.call('/dev/logs?source=warn')).body.map((x) => x.message);
+  assert.ok(warns.includes('bot reply held back: unknown_subscription') && warns.includes('bot reply held back: reply_limit'));
+  assert.equal(warns.filter((m) => m === 'bot reply held back: reply_limit').length, 1, 'once a minute per reason');
+});
+
 // The reminder posts through Helix as the bot. Twitch is faked: an app token, then every chat line is recorded.
 function fakeTwitch() {
   const sent = [], real = globalThis.fetch;

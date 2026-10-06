@@ -13,7 +13,7 @@ import {
 } from "./game.js";
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
-import { checkChatSubscription, liveStream, sendChatMessage } from "./eventsub.js";
+import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.js";
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
@@ -207,6 +207,10 @@ export class ChannelRoom extends DurableObject {
     // The bot's own text commands (admin page, Chat commands) and the counters their replies use (server/botcommands.js).
     sql.exec("CREATE TABLE IF NOT EXISTS bot_commands (name TEXT PRIMARY KEY, reply TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '')");
     sql.exec("CREATE TABLE IF NOT EXISTS bot_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)");
+    // The bot's health, for the admin page and "!fray debug": the last command heard, reply sent, reply Twitch dropped
+    // (with its reason) and reply the room held back (reply cap, cooldown, old subscription). Totals count since creation.
+    sql.exec("CREATE TABLE IF NOT EXISTS bot_status (id INTEGER PRIMARY KEY CHECK (id = 1), heard_at INTEGER NOT NULL DEFAULT 0, heard TEXT NOT NULL DEFAULT '', sent_at INTEGER NOT NULL DEFAULT 0, sent_total INTEGER NOT NULL DEFAULT 0, failed_at INTEGER NOT NULL DEFAULT 0, failed_total INTEGER NOT NULL DEFAULT 0, failed_reason TEXT NOT NULL DEFAULT '', held_at INTEGER NOT NULL DEFAULT 0, held_reason TEXT NOT NULL DEFAULT '')");
+    sql.exec("INSERT OR IGNORE INTO bot_status (id) VALUES (1)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
     sql.exec("CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')");
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
@@ -296,7 +300,7 @@ export class ChannelRoom extends DurableObject {
       this.seedConfigHistory(state);
       const history = this.ctx.storage.sql.exec("SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?", MAX_CONFIG_HISTORY).toArray()
         .map((row) => ({ version: row.version, config: safeJsonParse(row.config, {}), actorId: row.actor_id, actorName: row.actor_name, at: row.at, note: row.note }));
-      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings(), overlays: this.ctx.getWebSockets("overlay").length, checkinTest: this.checkinTest(), botCommands: this.botCommands() });
+      return json({ ...this.publicState(state), chatStatus: chatStatus(state), history, customUsage: customUsage(this), streamelements: this.seSettings(), overlays: this.ctx.getWebSockets("overlay").length, checkinTest: this.checkinTest(), botCommands: this.botCommands(), botStatus: this.botStatus() });
     }
 
     if (path === "/leaderboard" && request.method === "GET") {
@@ -380,6 +384,13 @@ export class ChannelRoom extends DurableObject {
     if (path === "/live" && request.method === "GET") return this.upgrade(request, "live", channel, url.searchParams.get("role") === "overlay");
 
     // Worker-only routes (never reachable from /api/admin): verified EventSub messages and subscription bookkeeping.
+    // What Twitch said about the bot's replies to one command, posted by the Worker after sending them.
+    if (path === "/bot-sent" && request.method === "POST") {
+      const body = await this.readJson(request);
+      if (!body.ok) return json({ error: body.error }, 400);
+      this.noteBotSent(channel, Array.isArray(body.value.results) ? body.value.results.slice(0, 10) : []);
+      return json({ ok: true });
+    }
     if (path === "/eventsub" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
@@ -875,14 +886,28 @@ export class ChannelRoom extends DurableObject {
     if (!action && !custom) return json({ ok: true, reason: "not_command", reply: "" });
     const subscriptionId = String(msg.subscription?.id || "");
     const state = this.readState(channel);
-    if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) return json({ ok: true, reason: "unknown_subscription", reply: "" });
+    if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) {
+      this.noteBotHeld(channel, "unknown_subscription", { subscriptionId: subscriptionId.slice(0, 64) });
+      return json({ ok: true, reason: "unknown_subscription", reply: "" });
+    }
+    const before = this.botStatus();
+    this.noteBotHeard(`${normalizeUsername(ev.chatter_user_login) || "?"} ${first}`);
     this.rememberReminder(String(ev.broadcaster_user_id || ""), validUserId(msg.botId), origin);
     if (!state.chat.connected) {   // Twitch only notifies enabled subscriptions, so this confirms a pending one
       const verified = this.advance(channel, { type: "chat_verified", subscriptionId }, Date.now());
       if (verified.visible) this.broadcast(verified.state);
       await this.scheduleAlarm(verified.state);
     }
-    if (custom) return this.sendBotLines([this.customReply(custom, ev, words, Date.now())]);
+    if (custom) {
+      const line = this.customReply(custom, ev, words, Date.now());
+      if (!line) this.noteBotHeld(channel, "cooldown", { command: custom.name }, false);
+      return this.sendBotLines([line], channel);
+    }
+    // "!fray debug" (broadcaster, mods or the bot account): the bot's health in one line, as the admin page shows it.
+    if (action === "help" && String(words[1] || "").toLowerCase() === "debug") {
+      const userId = validUserId(ev.chatter_user_id), allowed = userId === validUserId(msg.botId) || userId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
+      return this.sendBotLines([allowed ? this.botStatusLine(state, before, Date.now()) : "PixFray debug: only the broadcaster or a mod can use !fray debug."], channel);
+    }
     const input = { action, userId: ev.chatter_user_id, username: ev.chatter_user_login, displayName: ev.chatter_user_name, target: seTarget(words[1]), targetRaw: words[1] || "", ...(action === "give" ? { amount: String(words[2] || "").slice(0, 16) } : {}), messageId: String(ev.message_id || msg.messageId || "") };
     // BOT_DEBUG (test site): the bot account also plays. "!fray spar" and "!fray e2e" replace the help reply.
     const botId = this.env?.BOT_DEBUG === "1" ? validUserId(msg.botId) : "";
@@ -893,11 +918,11 @@ export class ChannelRoom extends DurableObject {
       const out = await (await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })).json();
       lines = [out.reply, ...(botId && validUserId(input.userId) !== botId ? await this.botAnswer(channel, input, out, { botId, origin, settings, subscriptionId }) : [])];
     }
-    return this.sendBotLines(lines);
+    return this.sendBotLines(lines, channel);
   }
 
   // The bot's reply lines that fit under BOT_REPLIES_PER_30S, as the Worker expects them: { reply, replies }.
-  sendBotLines(lines) {
+  sendBotLines(lines, channel = "") {
     const now = Date.now(), sent = [];
     this.botReplies = (this.botReplies || []).filter((at) => now - at < 30000);
     for (const line of lines.filter(Boolean)) {
@@ -905,6 +930,8 @@ export class ChannelRoom extends DurableObject {
       this.botReplies.push(now);
       sent.push(line);
     }
+    const cut = lines.filter(Boolean).length - sent.length;
+    if (cut) this.noteBotHeld(channel, "reply_limit", { cut });
     if (!sent.length) return json({ ok: true, reason: lines.some(Boolean) ? "reply_limit" : "no_reply", reply: "", replies: [] });
     return json({ ok: true, reply: sent[0], replies: sent });
   }
@@ -1210,6 +1237,51 @@ export class ChannelRoom extends DurableObject {
     return paid;
   }
 
+  // The bot's health row (bot_status), as the admin page reads it.
+  botStatus() {
+    const r = this.ctx.storage.sql.exec("SELECT * FROM bot_status WHERE id = 1").toArray()[0] || {};
+    return { heardAt: r.heard_at || 0, heard: r.heard || "", sentAt: r.sent_at || 0, sent: r.sent_total || 0, failedAt: r.failed_at || 0, failed: r.failed_total || 0, failedReason: r.failed_reason || "", failedText: r.failed_reason ? botDropText(r.failed_reason) : "", heldAt: r.held_at || 0, heldReason: r.held_reason || "", recent: (this.botReplies || []).filter((at) => Date.now() - at < 30000).length, cap: BOT_REPLIES_PER_30S };
+  }
+
+  noteBotHeard(what) {
+    this.ctx.storage.sql.exec("UPDATE bot_status SET heard_at = ?, heard = ? WHERE id = 1", Date.now(), String(what).slice(0, 80));
+  }
+
+  // A reply the room didn't send. Logged as a warning at most once a minute per reason (cooldowns aren't logged).
+  noteBotHeld(channel, reason, context = {}, log = true) {
+    const now = Date.now(), last = (this.heldLogged ||= {});
+    this.ctx.storage.sql.exec("UPDATE bot_status SET held_at = ?, held_reason = ? WHERE id = 1", now, reason);
+    if (!log || now - (last[reason] || 0) < 60_000) return;
+    last[reason] = now;
+    logRoomEvent(this, "warn", "bot reply held back: " + reason, { channel, via: "bot", reason, ...context });
+  }
+
+  // What Twitch said about the bot's lines ({sent, reason} each, from sendChatMessage). A dropped or failed line is
+  // logged as a warning with Twitch's reason; sent lines only update the status.
+  noteBotSent(channel, results, via = "reply") {
+    const sql = this.ctx.storage.sql, now = Date.now();
+    for (const r of [].concat(results || [])) {
+      if (r?.sent === true) { sql.exec("UPDATE bot_status SET sent_at = ?, sent_total = sent_total + 1 WHERE id = 1", now); continue; }
+      const reason = String(r?.reason || "unknown").slice(0, 200);
+      sql.exec("UPDATE bot_status SET failed_at = ?, failed_total = failed_total + 1, failed_reason = ? WHERE id = 1", now, reason);
+      logRoomEvent(this, "warn", "bot " + via + " dropped: " + botDropText(reason), { channel, via: "bot", reason });
+    }
+  }
+
+  // "!fray debug": the health line, from the status before this command was heard.
+  botStatusLine(state, s, now) {
+    const ago = (at) => at ? agoText(now - at) : "never";
+    const every = Number(state.config.reminderMin) || 0, due = every ? this.ctx.storage.sql.exec("SELECT next_at FROM bot_reminder WHERE id = 1").toArray()[0]?.next_at : 0;
+    return [
+      "PixFray debug: chat " + (state.chat.connected ? "connected" : "not connected"),
+      "last command " + (s.heard ? s.heard + " " + ago(s.heardAt) : "never"),
+      `replies ${s.sent} sent, ${s.failed} dropped` + (s.failedAt ? ` (last drop ${ago(s.failedAt)}: ${botDropText(s.failedReason)})` : ""),
+      `${s.recent}/${s.cap} replies in 30 s`,
+      s.heldAt ? `last held back ${ago(s.heldAt)}: ${s.heldReason}` : "",
+      "reminder " + (every ? `every ${every} min` + (due ? `, next in ${agoText(Math.max(0, due - now))}` : "") : "off"),
+    ].filter(Boolean).join(" · ");
+  }
+
   // The bot's text commands and counters, for the admin page.
   botCommands() {
     const sql = this.ctx.storage.sql;
@@ -1448,9 +1520,10 @@ export class ChannelRoom extends DurableObject {
     try {
       if (!await this.currentStream(channel, now)) return;
       const out = await sendChatMessage(this.env, { broadcasterId: row.broadcaster_id, senderId: row.bot_id, message: seReminderText({ names: botNames(this.seSettings().names), origin: row.origin, channel }) });
-      logRoomEvent(this, "command", "bot reminder " + (out.sent ? "sent" : "dropped " + out.reason), { channel, via: "reminder" });
+      if (out.sent) logRoomEvent(this, "command", "bot reminder sent", { channel, via: "reminder" });
+      this.noteBotSent(channel, [out], "reminder");
     } catch (error) {
-      logRoomEvent(this, "warn", "bot reminder failed", { channel, error: String(error?.message || error).slice(0, 200) });
+      this.noteBotSent(channel, [{ sent: false, reason: String(error?.message || error) }], "reminder");
     }
   }
 }
@@ -1460,4 +1533,10 @@ function chatCheckDue(state) {
   const id = state.chat?.subscriptionId;
   if (!id || id.startsWith("local-") || id === SE_SUBSCRIPTION_ID) return null;
   return (Number(state.chat.checkedAt) || 0) + (state.chat.connected ? CHAT_CHECK_MS : CHAT_PENDING_CHECK_MS);
+}
+
+// "45 s", "12 min", "3 h", "2 d": how long ago (or until) for the bot's one-line status.
+function agoText(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 90 ? s + " s" : s < 5400 ? Math.round(s / 60) + " min" : s < 172800 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " d";
 }

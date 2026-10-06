@@ -566,8 +566,24 @@ function renderChat() {
   $("#chat-actions").hidden = !!S.admin.seOnly;
   if (S.admin.seOnly) $("#owner-chat").hidden = true;
   $("#chat-text").textContent = parts.join(" ");
+  renderBotHealth(bot && c.source === "twitch" ? S.admin.botStatus : null);
   $("#connect-chat").textContent = c.connected ? "Reconnect chat" : "Connect chat";
   $("#disconnect-chat").disabled = !c.subscriptionId && !c.connected;
+}
+// The PixFray bot's health (server/channel.js botStatus): what it last heard and sent, and the last reply Twitch dropped
+// or the room held back. A drop newer than the last sent reply is a warning: the bot may be failing right now.
+const HELD_TEXT = { reply_limit: "the cap of 18 replies per 30 seconds", cooldown: "a command cooldown", unknown_subscription: "a line from an old chat subscription" };
+function renderBotHealth(b) {
+  const box = $("#bot-health");
+  box.hidden = !b;
+  if (!b) return;
+  const failing = b.failedAt > b.sentAt;
+  const parts = [b.heardAt ? `Bot: last command ${timeAgo(b.heardAt)} (${b.heard}), last reply sent ${timeAgo(b.sentAt)}. ${b.sent} sent, ${b.failed} dropped.` : "Bot: no commands heard yet."];
+  if (b.failedAt) parts.push((failing ? "The last reply was dropped " : "Last dropped reply ") + timeAgo(b.failedAt) + ": " + b.failedText + ".");
+  if (b.heldAt) parts.push("Last held back " + timeAgo(b.heldAt) + ": " + (HELD_TEXT[b.heldReason] || b.heldReason) + ".");
+  parts.push("Type !fray debug in chat for the same check.");
+  box.textContent = parts.join(" ");
+  box.className = "small" + (failing ? " callout warning" : "");
 }
 async function chatAct(action, button, takeover = false, status = $("#chat-status")) {
   if (action === "disconnectChat" && !confirm("Disconnect Twitch chat? Duels pause and open duels are cancelled without scoring.")) return;

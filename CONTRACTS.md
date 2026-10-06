@@ -49,7 +49,7 @@ fighter (saving and buying stay closed).
 | DELETE | `/api/pets/:channel/:id` | canManage | none | `{ok:true}`. Removes the pet from every owner (no refund) and from fighters who bring it | 404 |
 | GET | `/api/shop/:channel` | none | none | `{pets (as /api/pets), hatPricePerWin, items:{recolor, petcolor, accessory, trail, effect, taunt, title:[{id, label, price}]}, slots:{max:5, prices:[2nd, 3rd, 4th, 5th]}}` with this channel's prices. Taunts and titles are fixed preset lines; nothing a viewer types reaches the stream. Open while the channel is paused | 403 |
 | POST | `/api/shop/:channel` | cookie | `{kind:"pet"\|"hat"\|"slot"\|"recolor"\|"petcolor"\|"accessory"\|"trail"\|"effect"\|"taunt"\|"title", id, price?}` (`slot` needs no id: it buys the next build slot; `price` is the integer price the page showed, checked against the current one) | `{ok:true, reason:"bought", kind, id, price, dollars, owned}`. The dollars spent are the shown balance (hidden duel payouts don't count yet). Logged as a command | 400 `unknown_item`, `already_unlocked` (the hat's wins are reached), `hats_not_for_sale` (`hatPricePerWin` 0); 401; 403 while paused; 404 `no_fighter`; 409 `owned`, `not_enough` (`{price, dollars}`), `max_slots` (5 slots already), `price_changed` (`{price}`: a mod changed it since the page loaded) |
-| GET | `/api/admin/:channel` | canManage | none | Snapshot plus `{chatStatus (section 4), history:[{version,config,actorId,actorName,at,note}] (newest first, 50 max; actorName is the Twitch display name at save time, empty for older rows), customUsage:{count,limit,bytes}, access:{owner,moderator,canManage,reason}, overlays (open role=overlay sockets), modsReady (broadcaster token stored), modsLapsed (see 2a), seOnly (test site: chat comes from StreamElements only), channelState ("builtin"\|"on"\|"paused"), streamelements:{key,names,commands,seen:{action:ms},duelModuleOff,lastCommandAt,rejectedAt,timerText}}` | 401 signed out, 403 not a mod |
+| GET | `/api/admin/:channel` | canManage | none | Snapshot plus `{chatStatus (section 4), history:[{version,config,actorId,actorName,at,note}] (newest first, 50 max; actorName is the Twitch display name at save time, empty for older rows), customUsage:{count,limit,bytes}, botStatus (section 4, bot replies), access:{owner,moderator,canManage,reason}, overlays (open role=overlay sockets), modsReady (broadcaster token stored), modsLapsed (see 2a), seOnly (test site: chat comes from StreamElements only), channelState ("builtin"\|"on"\|"paused"), streamelements:{key,names,commands,seen:{action:ms},duelModuleOff,lastCommandAt,rejectedAt,timerText}}` | 401 signed out, 403 not a mod |
 | POST | `/api/admin/:channel` | canManage | `{action, payload?}`, max 12000 bytes. Any `actorId` you send is replaced by the session user. | `{ok:true, reason, revision, ...}` | 400 / 403 / 404 / 409 with `{ok:false, reason, error}` |
 | WS | `/api/live/:channel[?role=overlay]` | none | Upgrade | Read-only overlay socket (section 3). OBS overlays send `role=overlay` so the admin setup checklist can count them. | 426 without an upgrade, 429 over 64 sockets |
 | POST | `/api/eventsub` | Twitch EventSub HMAC signature (section 4) | Twitch webhook body, max 64 KB | verification: 200 `text/plain` challenge; notification, revocation, unknown types and duplicates: 204 | 400 missing headers or bad JSON, 403 bad signature or stale timestamp, 405, 413, 503 secrets missing or room failure (Twitch retries) |
@@ -234,6 +234,22 @@ Message types:
 - `revocation`: if the id matches, chat is disconnected with the Twitch status as the reason;
   duels pause and open duels are cancelled. Returns 204.
 - Anything else returns 204 and is ignored.
+
+Bot replies and status (room table `bot_status`, one row):
+- The Worker sends the room's replies with Helix Send Chat Message, then posts
+  `{results:[{sent, reason}]}` (10 max) to the room's internal `POST /bot-sent`. The room counts
+  sent and dropped replies; a drop is logged as a `warn` "bot reply dropped: <reason>" with the
+  reason in words (`botDropText` in server/eventsub.js: duplicate, slow mode, 429, ...). Reminder
+  posts do the same as "bot reminder sent" / "bot reminder dropped: ...".
+- Replies the room holds back are logged as `warn` "bot reply held back: <reason>", at most once a
+  minute per reason: `reply_limit` (over 18 replies in 30 s), `unknown_subscription` (a message
+  from an old chat subscription). A custom command on its cooldown is counted but not logged.
+- `GET /api/admin/:channel` returns `botStatus` `{heardAt, heard, sentAt, sent, failedAt, failed,
+  failedReason, failedText, heldAt, heldReason, recent, cap}`; the admin page shows it under Chat.
+- `!fray debug` from the broadcaster, a mod or the bot answers one line: chat connected or not,
+  the last command and its age, replies sent and dropped, replies used in the last 30 s, the last
+  held-back reason and the reminder state. Anyone else gets "only the broadcaster or a mod can use
+  !fray debug."
 
 A command older than 60 s or more than 10 s in the future (by the message timestamp) is rejected
 as `stale_command`.

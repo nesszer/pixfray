@@ -137,8 +137,8 @@ export default {async fetch(request,env,ctx){
         findChannel:async id=>id&&(await listRecords(env,'channel:')).find(x=>x.value?.id===id)?.value?.login||'',
         isEnabled:async channel=>isOn(await channelState(env,channel)),
         botUserId:async()=>env.CHAT_BOT==='1'?String((await record(env,'bot:twitch'))?.id||''):'',
-        // The bot's reply goes out after Twitch has its 204.
-        sendChat:args=>ctx?.waitUntil?.(sendChatMessages(env,args).then(rs=>{for(const r of rs)if(!r.sent)console.warn('bot reply dropped',r.reason);}))});
+        // The bot's reply goes out after Twitch has its 204; what Twitch said goes back to the room (bot status and owner log).
+        sendChat:args=>ctx?.waitUntil?.(sendChatMessages(env,args).then(results=>roomFetch(null,env,args.channel,'/bot-sent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({results})})).catch(e=>console.warn('bot reply report failed',e?.message)))});
     }
     // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
     if(path.startsWith('/api/se/')){
