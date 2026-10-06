@@ -6,7 +6,7 @@ for the sign-up link and following each streamer's setup; the tools below are fo
 to undo it.
 
 **Status on 2026-10-03:** the site is deployed (https://chat.miolaf.xyz), and the project's git
-`origin` is https://github.com/Finesssee/mini-chat.git. The flow below has only been tested
+`origin` is https://github.com/Finesssee/pixfray.git. The flow below has only been tested
 against mocked APIs, and this file doesn't record whether `GITHUB_TOKEN`, the Cloudflare API
 token or the Actions secrets are set. Wherever one is missing, the GitHub and Cloudflare
 routes answer `501` with `reason: github_not_configured` or
@@ -56,7 +56,7 @@ Neither file holds StreamElements keys or Twitch tokens. A paused channel can st
 | Name | Kind | Required for | Minimum permissions |
 | --- | --- | --- | --- |
 | `GITHUB_TOKEN` | secret | Code editor, PRs, deploy, promote, hotfix, rollback, runs | Fine-grained PAT for **one repo only**: Contents read/write, Pull requests read/write, Actions read/write, Metadata read. **Don't** grant Workflows; without it, the editor also can't change `.github/`. |
-| `GITHUB_REPO` | var | Same as above | `owner/name`, for example `Finesssee/mini-chat` |
+| `GITHUB_REPO` | var | Same as above | `owner/name`, for example `Finesssee/pixfray` |
 | `GITHUB_BASE_BRANCH` | var, optional | Same as above | Defaults to `main` |
 | `GITHUB_WORKFLOW` | var, optional | Same as above | Defaults to `deploy.yml` |
 | `CF_API_TOKEN` | secret | Request usage, version list | **Read-only** token: Account Analytics Read, Workers Scripts Read |

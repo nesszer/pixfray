@@ -45,7 +45,7 @@ function environment(extra = {}) {
   };
   return { env, entries, rooms };
 }
-const GITHUB = { GITHUB_TOKEN: 'test-only-gh-token', GITHUB_REPO: 'Finesssee/mini-chat' };
+const GITHUB = { GITHUB_TOKEN: 'test-only-gh-token', GITHUB_REPO: 'Finesssee/pixfray' };
 async function cookieFor(f, owner) {
   const cookie = (owner ? 'a' : 'b').repeat(64), user = owner ? { id: '1', login: 'nesszerra', displayName: 'nesszerra' } : { id: '2', login: 'viewer', displayName: 'Viewer' };
   f.entries.set('owner:nesszerra', { id: '1' });
@@ -394,7 +394,7 @@ test('save creates the live-fix branch from main, then commits the file', async 
   const r = await call(f, '/api/dev/code/save', 'POST', { path: 'public/overlay.js', content: 'héllo ✓\n', branch: 'live-fix/overlay', sha: 'a'.repeat(40), message: 'Fix overlay' }, owner);
   assert.equal(r.status, 200);
   assert.deepEqual(r.body, { ok: true, path: 'public/overlay.js', branch: 'live-fix/overlay', branchCreated: true, sha: 'c'.repeat(40), commit: 'd'.repeat(40) });
-  assert.ok(calls.every((c) => c.url.startsWith('https://api.github.com/repos/Finesssee/mini-chat/')));
+  assert.ok(calls.every((c) => c.url.startsWith('https://api.github.com/repos/Finesssee/pixfray/')));
   assert.equal(calls[0].headers.Authorization, 'Bearer test-only-gh-token');
   assert.ok(calls[0].headers['User-Agent']);
   assert.deepEqual(calls[2].body, { ref: 'refs/heads/live-fix/overlay', sha: 'b'.repeat(40) });
@@ -441,7 +441,7 @@ test('test deploy, promote, hotfix and rollback dispatch the deploy workflow wit
     [['PUT', /\/pulls\/7\/merge$/], [200, { sha: '2'.repeat(40), merged: true }]],
     [['GET', /\/pulls\/8$/], [200, { number: 8, state: 'open', merged: false, base: { ref: 'main' }, head: { ref: 'feature/x', sha: '1'.repeat(40) } }]],
     [['GET', /\/pulls\?state=open&head=Finesssee%3Ahotfix%2Fcrash$/], [200, []]],
-    [['POST', /\/pulls$/], [201, { number: 9, html_url: 'https://github.com/Finesssee/mini-chat/pull/9' }]],
+    [['POST', /\/pulls$/], [201, { number: 9, html_url: 'https://github.com/Finesssee/pixfray/pull/9' }]],
   ]);
   const f = environment(GITHUB), owner = await cookieFor(f, true);
   const dispatches = () => calls.filter((c) => c.url.endsWith('/dispatches')).map((c) => c.body);
