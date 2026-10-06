@@ -6,6 +6,6 @@ export default {
   defaultChannel: 'nesszerra',                            // used when a URL names no channel; the only channel that may use the broadcaster EventSub connect=1 flow
   workers: { production: 'nesszerra-mini-chat', test: 'nesszerra-mini-chat-test' },  // Durable Object data is tied to these names
   origins: { production: 'https://pixfray.xyz', test: 'https://staging.pixfray.xyz' },
-  channelDomains: { production: { miolafff: 'chat.miolaf.xyz' }, test: {} },
+  channelDomains: { production: {}, test: {} },  // chat.miolaf.xyz runs the frozen pre-PixFray Mini Chat (branch miolaf-frozen) until miolafff moves over
   bot: { production: 'pixfray', test: 'nesszers' },      // PixFray chat bot account per environment (CHAT_BOT); omit an env to keep the bot off there
 };
