@@ -67,7 +67,7 @@ const MAX_LOOKS = 20;                  // logins per /looks call
 const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
 const MAX_EVENTSUB_IDS = 5_000;
 // Chat bots never walk into the arena or duel.
-const CHAT_BOTS = new Set(["streamelements", "nightbot", "moobot", "fossabot", "streamlabs", "wizebot", "sery_bot", "soundalerts", "kofistreambot", "botrixoficial"]);
+const CHAT_BOTS = new Set(["streamelements", "nightbot", "moobot", "fossabot", "streamlabs", "wizebot", "sery_bot", "soundalerts", "kofistreambot", "botrixoficial", "pixfray"]);
 const PRESENCE_REFRESH_MS = 30_000;        // chat-only viewers refresh their arena presence at most this often
 const LAST_SEEN_WRITE_MS = 60_000;         // chat.lastSeen alone is persisted at most once a minute
 const CHAT_CHECK_MS = 60 * 60_000;         // the alarm re-checks the Helix subscription at most hourly

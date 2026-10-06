@@ -140,6 +140,7 @@ test('chat bots like StreamElements never join the arena', async () => {
   await r.connectChat();
   assert.equal((await r.chat('b1', 'streamelements', 'Thank you for following!')).body.reason, 'chat_bot');
   assert.equal((await r.chat('b2', 'nightbot', '!challenge @alice')).body.reason, 'chat_bot');
+  assert.equal((await r.chat('b3', 'pixfray', 'Fight on: alice vs bob!')).body.reason, 'chat_bot');
   assert.equal(r.readState('nesszerra').players.length, 0);
 });
 
