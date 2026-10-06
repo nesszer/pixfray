@@ -6,7 +6,7 @@ import { handleUploads } from './uploads.js';
 import { handlePets } from './pets.js';
 import { EVENTSUB_PATH,BOT_LOGIN_URL,handleEventsub,connectChat,disconnectChat,sendChatMessages,twitchUserId } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
-import { channelState,isOn,offError,setPaused,publicChannels,listRecords } from './channels.js';
+import { channelState,isOn,offError,setPaused,publicChannels,listRecords,searchChannels } from './channels.js';
 import { COSMETIC_KINDS,COSMETIC_FIELDS,MAX_BUILDS } from './cosmetics.js';
 import { siteOrigin,channelPageRedirect,isPage } from './hosts.js';
 export {ChannelRoom,AuthStore};
@@ -165,6 +165,12 @@ export default {async fetch(request,env,ctx){
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
     // The bare site asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
     if(path==='/api/channels')return json({channels:await publicChannels(env)});
+    // Any Twitch channel by name, marked with whether PixFray is on there. Off when Twitch isn't configured.
+    if(path==='/api/channels/search'){
+      if(!configured(env))return json({channels:[],search:false});
+      try{return json({channels:await searchChannels(env,url.searchParams.get('q'),request.headers.get('CF-Connecting-IP')||''),search:true});}
+      catch(e){if(e.status)return json({error:e.message,reason:e.reason},e.status);throw e;}
+    }
     if(path==='/api/health')return json({ok:true,version:'0.2.0',twitchConfigured:configured(env),productionEnabled:false});
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,dev,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
     const match=path.match(/^\/api\/(state|live|profile|leaderboard|looks|catalog|access|admin|assets|pets|shop)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);

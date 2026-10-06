@@ -649,7 +649,8 @@ function showOff(off) {
   const note = $("#off-note");
   note.hidden = false;
   if (off === "paused") { note.textContent = "PixFray is off on " + CHANNEL + "'s channel right now. Saved fighters and ranks are kept for when it's back."; return; }
-  note.replaceChildren("PixFray isn't set up on " + CHANNEL + "'s channel. ", h("a", { href: "/" }, "Pick another channel"), ".");
+  note.replaceChildren("PixFray isn't set up on " + CHANNEL + "'s channel yet. Fights happen in their chat, so " + CHANNEL + " turns it on first, on ",
+    h("a", { href: "/start/" }, "/start"), ". Until then, ", h("a", { href: "/" }, "pick another channel"), ".");
   for (const el of [form, $(".fighter-card"), $(".hero-pick .tabs")]) el.hidden = true;
   $("#panel-ranks").hidden = false;
 }
@@ -695,9 +696,62 @@ async function pickChannel() {
     const link = h("a", { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
       crew, h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta), h("span", { class: "channel-go" }, "Fight in " + c));
     channelRanks(c, link, crew, meta);
-    return h("li", {}, link);
+    return h("li", { "data-login": c }, link);
   }));
+  channelSearch(channels);
   liveLanding();
+}
+// Typing filters the PixFray channels at once, then asks Twitch (through /api/channels/search) for any channel by that
+// name. A channel without PixFray links to its page, which says the streamer hasn't set it up yet.
+function channelSearch(listed) {
+  const input = $("#channel-q"), status = $("#channel-status"), found = $("#channel-found"), results = $("#channel-results");
+  let timer = 0, ask = null, last = "";
+  const norm = (s) => s.trim().toLowerCase().replace(/^@/, "").replace(/^(https?:\/\/)?(www\.)?twitch\.tv\//, "").replace(/[/?#].*$/, "");
+  const row = (c) => {
+    const meta = [c.live ? "Live" + (c.game ? ": " + c.game : "") : "Offline", c.pixfray ? "" : "PixFray not set up yet"].filter(Boolean).join(" · ");
+    const link = h("a", { class: "channel" + (c.pixfray ? "" : " is-off"), href: "/?channel=" + encodeURIComponent(c.login) },
+      h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c.name.toLowerCase() === c.login ? c.name : c.login),
+        h("span", { class: "channel-meta" }, meta)),
+      h("span", { class: "channel-go" }, c.pixfray ? "Fight in " + c.login : "View"));
+    return h("li", { "data-login": c.login }, link);
+  };
+  const run = async (q) => {
+    ask?.abort(); ask = new AbortController();
+    const signal = ask.signal;
+    let r;
+    try { r = await fetch("/api/channels/search?q=" + encodeURIComponent(q), { signal, headers: { accept: "application/json" } }); }
+    catch { return; }
+    const data = await r.json().catch(() => null);
+    if (signal.aborted || norm(input.value) !== q) return;
+    if (!r.ok) { status.textContent = data?.error || "Twitch search is unavailable right now."; return; }
+    if (data?.search === false) return;
+    const rows = (Array.isArray(data?.channels) ? data.channels : []).filter((c) => !listed.includes(c.login));
+    results.replaceChildren(...rows.map(row));
+    found.hidden = !rows.length;
+    const shown = listed.filter((c) => c.includes(q)).length;
+    status.textContent = shown || rows.length ? "" : "No Twitch channel matches " + q + ".";
+  };
+  input.addEventListener("input", () => {
+    const q = norm(input.value);
+    let shown = 0;
+    for (const li of $("#channel-list").children) { const hit = !q || (li.dataset.login || "").includes(q); li.hidden = !hit; shown += hit ? 1 : 0; }
+    clearTimeout(timer); ask?.abort();
+    if (q === last) return;
+    last = q;
+    if (q.length < 2) { found.hidden = true; results.replaceChildren(); status.textContent = ""; return; }
+    status.textContent = shown ? "" : "Searching Twitch…";
+    timer = setTimeout(() => run(q), 300);
+  });
+  // Enter opens the one match, or the typed channel when the name is a valid Twitch login.
+  $("#channel-search").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = norm(input.value);
+    const visible = [...document.querySelectorAll("#channel-list li:not([hidden]) a, #channel-results li a")];
+    const exact = visible.find((a) => a.closest("li").dataset.login === q);
+    const go = exact || (visible.length === 1 ? visible[0] : null);
+    if (go) location.href = go.href;
+    else if (/^[a-z0-9_]{3,25}$/.test(q)) location.href = "/?channel=" + encodeURIComponent(q);
+  });
 }
 // On wide screens the picker's island is the intro's live arena, not a picture: each channel's top fighter
 // stands on it, and hovering or focusing a row brings that channel's fighter on. Phones show it as a banner over the heading.

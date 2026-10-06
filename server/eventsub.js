@@ -128,7 +128,7 @@ export async function appToken(env,fresh=false){
   await record(env,'app-token:twitch',await seal(env,{access_token:t.access_token,expiresAt}),expiresAt);
   return t.access_token;
 }
-async function helix(env,method,path,body){
+export async function helix(env,method,path,body){
   const call=async token=>fetch(HELIX+path,{method,headers:{'Client-Id':env.TWITCH_CLIENT_ID,Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
   let r=await call(await appToken(env));
   if(r.status===401)r=await call(await appToken(env,true));

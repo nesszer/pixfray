@@ -115,6 +115,21 @@ try {
     assert.equal(await page.locator('#save-signin').isVisible(), false);
     await noOverflow(page, 'channel picker ' + s.name);
     await page.screenshot({ path: shots + '/viewer-picker-' + s.name + '.png', fullPage: true });
+    // the search filters the PixFray channels and lists any other Twitch channel by that name
+    await page.route('**/api/channels/search?*', (r) => json(r, { search: true, channels: [
+      { login: 'nesszerra', name: 'nesszerra', live: false, game: '', pixfray: true },
+      { login: 'some_streamer', name: 'Some_Streamer', live: true, game: 'Chess', pixfray: false }] }));
+    await page.fill('#channel-q', 'some');
+    await page.waitForSelector('#channel-results a');
+    assert.equal(await page.locator('#channel-list li:visible').count(), 0, 'PixFray rows filter as you type');
+    assert.deepEqual(await page.locator('#channel-results a').evaluateAll((a) => a.map((x) => x.getAttribute('href'))), ['/?channel=some_streamer'], 'listed channels are not repeated');
+    assert.match(await page.locator('#channel-results').textContent(), /Live: Chess · PixFray not set up yet/);
+    await noOverflow(page, 'channel search ' + s.name);
+    await page.screenshot({ path: shots + '/viewer-picker-search-' + s.name + '.png', fullPage: true });
+    await page.fill('#channel-q', 'https://www.twitch.tv/miolafff');
+    assert.equal(await page.locator('#channel-list li:visible').count(), 1, 'a pasted Twitch link finds the channel');
+    await page.fill('#channel-q', '');
+    assert.ok(await page.locator('#channel-list li:visible').count() >= 2);
     await page.locator('#channel-list a', { hasText: 'miolafff' }).click();
     await page.waitForSelector('#characters input[name=character]');
     assert.match(await page.locator('#hero-title').textContent(), /miolafff/);
