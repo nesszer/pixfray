@@ -566,6 +566,7 @@ try {
     await page.waitForSelector('#se-health:not([hidden])');
     assert.match(await page.locator('#se-health').textContent(), se.expect);
     assert.equal(await page.locator('#se-health').evaluate((n) => n.classList.contains('warning')), se.warn);
+    assert.equal(await page.locator('#checkin-test').isHidden(), true);   // check-in test mode is for the site channel only
     // the Live tab tells the same story as Stream setup
     assert.equal(await page.locator('#summary-title').textContent(), se.live);
     assert.match(await page.locator('#stats').textContent(), new RegExp('StreamElements\\s*' + se.stat));
@@ -594,7 +595,7 @@ try {
         if (body.action === 'checkinTest') return json(r, { ok: true, checkinTest: body.value ? { until: Date.now() + 15 * 60000, by: 'ModMia' } : null });
         return json(r, { ok: true }); }
       return json(r, { type: 'snapshot', channel: 'nesszerra', revision: 5, paused: false, chat: { connected: true, lastSeen: now, status: 'enabled' }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
-        chatStatus, history: [{ version: 1, config, actorId: 'system', at: now - 86400000, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 }, streamelements: streamelements(), overlays, modsReady: true, access: { owner: false, moderator: true, canManage: true } });
+        chatStatus, history: [{ version: 1, config, actorId: 'system', at: now - 86400000, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 }, streamelements: streamelements(), overlays, modsReady: true, checkinTestAllowed: true, access: { owner: false, moderator: true, canManage: true } });
     });
     await page.goto(base + '/admin/');
     await page.waitForSelector('#setup-next:not([hidden])');

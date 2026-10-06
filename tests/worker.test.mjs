@@ -570,3 +570,11 @@ test('check-in test mode: a mod or the owner turns it on through /api/admin; vie
   assert.equal(res.status, 200);
   assert.deepEqual(f.forwarded.find((x) => x.path === '/checkin-test').body, { on: true, by: 'V' });
 });
+
+test('check-in test mode: only on the site channel', async () => {
+  const f = environment();
+  const res = await worker.fetch(req('/api/admin/miolafff', 'POST', { action: 'checkinTest', value: true }, await signedIn(f, true)), f.env);
+  assert.equal(res.status, 403);
+  assert.match((await res.json()).error, /only for nesszerra's channel/);
+  assert.equal(f.forwarded.some((x) => x.path === '/checkin-test'), false);
+});

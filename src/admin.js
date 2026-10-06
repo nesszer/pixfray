@@ -734,6 +734,7 @@ $("#duel-module-off").addEventListener("change", async (e) => {
 });
 // ---------- check-in test mode: !checkin answers while offline for 15 minutes, saving nothing ----------
 function renderCheckinTest() {
+  $("#checkin-test").hidden = !S.admin.checkinTestAllowed;
   const t = S.admin.checkinTest, on = !!t && t.until > Date.now();
   $("#checkin-test-title").textContent = on ? "!checkin test mode is on" : "Test !checkin while offline";
   $("#checkin-test-text").replaceChildren(on

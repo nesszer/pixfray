@@ -215,7 +215,7 @@ export default {async fetch(request,env,ctx){
         const modsReady=!!broadcaster,modsLapsed=!modsReady&&!!marker;
         if(broadcaster)await Promise.all([touchBroadcaster(env,channel,broadcaster),marker?null:markModsConnected(env,channel)]).catch(e=>console.warn('mods record refresh failed',e?.message));   // rare writes: weekly, and once per channel
         const bot=env.CHAT_BOT==='1'?await record(env,'bot:twitch'):null;
-        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,seOnly:env.SE_ONLY==='1',chatBot:env.CHAT_BOT==='1'?{login:bot?.login||'',debug:env.BOT_DEBUG==='1'}:null,modsReady,modsLapsed,channelState:state});
+        return json({...data,streamelements:seView(env,url,channel,data.streamelements),access:roles,checkinTestAllowed:channel===site.defaultChannel,seOnly:env.SE_ONLY==='1',chatBot:env.CHAT_BOT==='1'?{login:bot?.login||'',debug:env.BOT_DEBUG==='1'}:null,modsReady,modsLapsed,channelState:state});
       }
       const data=await bodyJson(request,12000);
       // Turn PixFray off or back on: the broadcaster or the owner, never a mod. Fighters and ranks are kept.
@@ -229,8 +229,10 @@ export default {async fetch(request,env,ctx){
         const out=await r.json();if(!r.ok)return json(out,r.status);
         return json({ok:true,streamelements:seView(env,url,channel,out.streamelements)});
       }
-      // Check-in test mode: !checkin answers while offline for 15 minutes, saving nothing. Any mod can turn it on or off.
+      // Check-in test mode: !checkin answers while offline for 15 minutes, saving nothing. Any mod can turn it on or off,
+      // on the site's own channel only, so a test never reaches another streamer's chat.
       if(data.action==='checkinTest'){
+        if(channel!==site.defaultChannel)return json({error:'Check-in test mode is only for '+site.defaultChannel+"'s channel"},403);
         const r=await roomFetch(null,env,channel,'/checkin-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on:data.value===true,by:user.displayName||user.login})});
         return json(await r.json(),r.status);
       }
