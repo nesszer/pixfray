@@ -120,7 +120,16 @@ async function post(who, text) {
 }
 
 // Post a command, wait for the bot's reply matching `expect` after it, and confirm both tabs show it.
+// The PixFray bot answers at most 18 lines in 30 s (its own result and expiry lines count too) and holds the rest,
+// so commands go out at no more than 14 per 31 s. Real chat is slower than this test.
+const said = [];
+async function pace() {
+  if (!BOT) return;
+  for (let recent; (recent = said.filter((t) => Date.now() - t < 31_000)).length >= 14;) await sleep(31_000 - (Date.now() - recent[0]) + 200);
+  said.push(Date.now());
+}
 async function say(who, text, expect) {
+  await pace();
   await post(who, text);
   const mine = `${who.login}: ${text}`.toLowerCase();
   const end = Date.now() + REPLY_MS;
@@ -264,9 +273,11 @@ try {
     await step(`${who.login}: !fray`, () => say(who, '!fray', /^PixFray duels: gear up at \S+, then name your rival with !challenge @name\. They answer !fight\. Again\? !rematch$/));
     await step(`${who.login}: !elo`, () => say(who, '!elo', new RegExp(`^${esc(who.login)}: \\d+ Elo, rank \\d+ of \\d+`, 'i')));
     await step(`${who.login}: !elo @${other(who).login}`, () => say(who, `!elo @${other(who).login}`, new RegExp(`^${esc(other(who).login)}: \\d+ Elo, rank`, 'i')));
-    await step(`${who.login}: !ranks lists both accounts`, async () => {
+    // !ranks names the board's top five, in order (with ten fighters, a test account may not be among them).
+    await step(`${who.login}: !ranks lists the board's top five`, async () => {
       const r = await say(who, '!ranks', /^Top \d+:/);
-      check(r.toLowerCase().includes(A.login) && r.toLowerCase().includes(B.login), 'both accounts not in: ' + r);
+      const top = (await board()).slice(0, 5).map((x, i) => `${i + 1}. ${x.displayName || x.username} ${x.elo}`);
+      check(top.every((t) => r.toLowerCase().includes(t.toLowerCase())), `expected ${top.join(' · ')} in: ${r}`);
       return r;
     });
   }
@@ -370,6 +381,7 @@ try {
         check(s, `admin answered ${snap.status || 'without botStatus'} (is Chrome A signed in to PixFray?)`);
         check(s.heardAt >= runStart && s.sentAt >= runStart, `bot last heard ${new Date(s.heardAt).toISOString()}, last sent ${new Date(s.sentAt).toISOString()}`);
         check(!(s.failedAt >= runStart), `a bot reply failed in this run: ${s.failedReason}`);
+        check(!(s.heldAt >= runStart), `the bot held a reply in this run: ${s.heldReason}`);
         return `bot: ${s.sent} sent, ${s.failed} failed in all`;
       }
       check(snap.streamelements, `admin answered ${snap.status || 'without streamelements'} (is Chrome A signed in to PixFray?)`);
