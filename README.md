@@ -80,6 +80,35 @@ takes about 5 minutes. The log and screenshots of the overlay and both chats go 
 VALIDATION_V2.md has the commands and the spec audit. `MINI_PORT` and `MINI_PERSIST` change the dev
 port and the local state folder.
 
+## Run your own copy
+PixFray is one Cloudflare Worker (Workers Free is enough) and one Twitch app. To host it for your channel:
+
+1. Fork the repo and run `npm install` (Node 22.18+).
+2. Edit `site.config.js`:
+   - `owner`: your Twitch login and numeric user id. Only this account opens `/admin/dev`.
+   - `builtinChannels` and `defaultChannel`: channels that are always on, and the one used when a URL
+     names none. Other streamers turn on their own channel on `/start/`.
+   - `workers` and `origins`: your Worker names and the https sites they answer on. Durable Object
+     data belongs to the Worker name, so don't rename a Worker that has data.
+   - `channelDomains`: a streamer's own domain that opens only their channel. Use `{}` for none.
+   - `bot`: the Twitch account of your PixFray chat bot, per site. Leave a site out to run it
+     without one; chat then comes in through StreamElements custom commands.
+3. Register a Twitch app as in TWITCH_SETUP.md, with `<origin>/auth/callback` as a redirect URL for
+   every origin and channel domain.
+4. Put the secrets in `.secrets.local.json` (ignored by git): `AUTH_SECRET` and `INTERNAL_SECRET`
+   (long random strings, for example `openssl rand -hex 32`), `TWITCH_CLIENT_ID`,
+   `TWITCH_CLIENT_SECRET`, and `DEV_TOOLS_TOKEN` for the test site.
+5. Run `cf auth login`, then `npx cf deploy --mode test --secrets-file .secrets.local.json`. Check
+   the test site, then deploy production with the same command without `--mode test`. The hosts in
+   `origins` and `channelDomains` must be zones on your Cloudflare account.
+6. Sign in on `/admin/` as the owner. Send streamers to `/start/`; docs/STREAMER_SETUP.md is their
+   checklist.
+
+Limits: the page HTML uses the word "nesszerra" as a placeholder that `src/ui.js` swaps for the
+current channel, so leave it in the HTML. `public/overlay.js` and `public/upload.js` fall back to
+nesszerra when the URL names no channel, so always pass `?channel=`. HANDOFF.md and the other
+records describe the original deployment.
+
 ## Cloudflare
 `cf auth login`, `npm run build`, `npm run deploy`.
 The live site is one Worker on Workers Free with two SQLite Durable Objects (ChannelRoom, AuthStore) and no paid products. Prod is `nesszerra-mini-chat`; the test site is `nesszerra-mini-chat-test` (`npm run deploy -- --mode test`).

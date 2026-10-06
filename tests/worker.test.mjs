@@ -13,6 +13,7 @@ function environment() {
     TWITCH_CLIENT_ID: 'test-app', TWITCH_CLIENT_SECRET: 'test-secret',
     AUTH: { idFromName: x => x, get: () => ({ async fetch(url, options) {
       const u = new URL(url), key = u.searchParams.get('key'), method = options.method;
+      if (u.pathname === '/list') return Response.json([...entries].filter(([k]) => k.startsWith(key)).map(([k, value]) => ({ key: k, value })));
       if (u.pathname === '/consume') { const value = entries.get(key) ?? null; entries.delete(key); return Response.json(value); }
       if (method === 'GET') return Response.json(entries.get(key) ?? null);
       if (method === 'DELETE') { entries.delete(key); return Response.json({ ok: true }); }
@@ -448,6 +449,43 @@ test('chat bot: only commands reach the room; its reply is sent as the bot, thre
   assert.equal(helix.length, 1);
   assert.equal(helix[0].url, 'https://api.twitch.tv/helix/chat/messages');
   assert.deepEqual(helix[0].body, { broadcaster_id: '1', sender_id: '99', message: 'PixFray: !ranks are at pixfray', reply_parent_message_id: 'chat-9' });
+});
+
+test('chat bot: a signed-up channel gets its verification, and the bot answers on its own channel', async (t) => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = environment(), waits = [];
+  f.env.CHAT_BOT = '1';
+  f.entries.set('channel:solo', { id: '42', login: 'solo', enabledAt: NOW });
+  f.entries.set('bot:twitch', { id: '42', login: 'solo' });
+  f.env.ROOMS = { idFromName: x => x, get: channel => ({ async fetch(url, options = {}) {
+    f.forwarded.push({ channel, url, body: JSON.parse(options.body) });
+    return Response.json({ ok: true, reply: 'solo has 1000 elo' });
+  } }) };
+  const post = async (body, type = 'notification') => {
+    const raw = JSON.stringify(body), timestamp = new Date(NOW).toISOString(), id = 'm-' + Math.random();
+    return worker.fetch(new Request('https://staging.pixfray.xyz/api/eventsub', { method: 'POST', headers: { 'Twitch-Eventsub-Message-Id': id, 'Twitch-Eventsub-Message-Timestamp': timestamp, 'Twitch-Eventsub-Message-Signature': await signEventsub(await eventsubSecret(f.env), id, timestamp, raw), 'Twitch-Eventsub-Message-Type': type, 'Twitch-Eventsub-Subscription-Type': 'channel.chat.message' }, body: raw }), f.env, { waitUntil: (p) => waits.push(p) });
+  };
+  const helix = [];
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    if (String(url).startsWith('https://id.twitch.tv')) return Response.json({ access_token: 'app-token-1', expires_in: 5000 });
+    helix.push({ url: String(url), body: JSON.parse(init.body) });
+    return Response.json({ data: [{ message_id: 'r1', is_sent: true }] });
+  });
+  const condition = { broadcaster_user_id: '42', user_id: '42' };
+  const verify = await post({ subscription: { id: 'sub-solo', status: 'webhook_callback_verification_pending', type: 'channel.chat.message', condition }, challenge: 'abc' }, 'webhook_callback_verification');
+  assert.equal(await verify.text(), 'abc');
+  assert.deepEqual(f.forwarded.map((x) => x.channel), ['nesszerra', 'miolafff', 'solo'], 'the signed-up room hears its verification');
+  f.forwarded.length = 0;
+  const line = (login, text) => ({ subscription: { id: 'sub-solo', status: 'enabled', type: 'channel.chat.message', condition }, event: { broadcaster_user_id: '42', broadcaster_user_login: login, chatter_user_id: '42', chatter_user_login: 'solo', chatter_user_name: 'solo', message_id: 'chat-42', message: { text } } });
+  assert.equal((await post(line('stranger', '!elo'))).status, 204);
+  assert.equal(f.forwarded.length, 0, 'a channel that never signed up is ignored');
+  assert.equal((await post(line('solo', '!elo'))).status, 204);
+  assert.equal(f.forwarded.length, 1);
+  assert.equal(f.forwarded[0].channel, 'solo');
+  assert.equal(f.forwarded[0].body.bot, true, 'the bot is also the broadcaster here');
+  assert.equal(f.forwarded[0].body.botId, '42');
+  await Promise.all(waits);
+  assert.deepEqual(helix.map((x) => x.body.sender_id), ['42']);
 });
 
 test('chat bot: Connect chat subscribes as the signed-in bot account, and asks for it first', async (t) => {

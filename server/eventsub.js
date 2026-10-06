@@ -1,6 +1,7 @@
 // Twitch EventSub over webhooks: the only chat source. Twitch POSTs channel.chat.message to /api/eventsub,
 // so no local process is needed and everything runs on Cloudflare (1 Worker request + 1 DO request per message).
 import { record, seal, unseal, randomToken } from './auth.js';
+import site from '../site.config.js';
 export const EVENTSUB_PATH='/api/eventsub';
 export const MAX_EVENTSUB_BYTES=64*1024;
 export const RECONNECT_URL='/auth/login?connect=1';
@@ -56,7 +57,9 @@ function slimEvent(ev){
 // POST /api/eventsub. No session, no same-origin check: the HMAC signature is the authentication.
 // A subscription whose user_id is not the broadcaster reads chat as the PixFray bot: only messages starting with '!' reach
 // the room, which answers commands like the StreamElements route does, and sendChat posts the reply as the bot.
-export async function handleEventsub(request,env,{channels,roomFetch,origin=()=>'',sendChat,now=Date.now()}){
+// channels: the built-in rooms. findChannel(broadcasterId) names a signed-up channel's room, isEnabled(login) says whether
+// a signed-up channel is on, and botUserId() is the signed-in PixFray bot (which can also be the broadcaster of its own channel).
+export async function handleEventsub(request,env,{channels,roomFetch,origin=()=>'',sendChat,findChannel=async()=>'',isEnabled=async()=>false,botUserId=async()=>'',now=Date.now()}){
   if(request.method!=='POST')return text('Use POST',405);
   const h=name=>request.headers.get('Twitch-Eventsub-'+name)||'';
   const id=h('Message-Id'),timestamp=h('Message-Timestamp'),signature=h('Message-Signature'),type=h('Message-Type'),subType=h('Subscription-Type');
@@ -73,7 +76,10 @@ export async function handleEventsub(request,env,{channels,roomFetch,origin=()=>
   // message stays a few hundred bytes. A room 4xx for a validly signed message is acknowledged (204) so Twitch does not
   // retry it into notification_failures_exceeded; only real room failures (5xx) answer 503 for a retry.
   const condition=body.subscription?.condition&&typeof body.subscription.condition==='object'?body.subscription.condition:{};
-  const botId=condition.user_id&&condition.user_id!==condition.broadcaster_user_id?String(condition.user_id).slice(0,100):'';
+  const reader=condition.user_id?String(condition.user_id).slice(0,100):'';
+  let botId=reader&&reader!==condition.broadcaster_user_id?reader:'';
+  // Verifications and revocations carry only the broadcaster id: the built-in rooms plus that broadcaster's signed-up room.
+  const rooms=async()=>{const own=await findChannel(String(condition.broadcaster_user_id||'')).catch(()=>'');return own&&!channels.includes(own)?[...channels,own]:channels;};
   const send=async(channel,extra={})=>{
     const r=await roomFetch(channel,'/eventsub'+(extra.bot?'?origin='+encodeURIComponent(origin(channel)):''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...message,...extra,event:slimEvent(body.event)})});
     if(r.status>=500)throw new Error('Room rejected EventSub message ('+r.status+')');
@@ -81,16 +87,17 @@ export async function handleEventsub(request,env,{channels,roomFetch,origin=()=>
   };
   if(type==='webhook_callback_verification'){
     if(typeof body.challenge!=='string'||!body.challenge||body.challenge.length>1000)return text('Missing challenge',400);
-    if(subType==='channel.chat.message')for(const channel of channels)await send(channel);
+    if(subType==='channel.chat.message')for(const channel of await rooms())await send(channel);
     return text(body.challenge,200);
   }
   if(type==='revocation'){
-    if(subType==='channel.chat.message')for(const channel of channels)await send(channel);   // rooms ignore ids they don't own
+    if(subType==='channel.chat.message')for(const channel of await rooms())await send(channel);   // rooms ignore ids they don't own
     return new Response(null,{status:204});
   }
   if(type==='notification'&&subType==='channel.chat.message'){
     const channel=String(body.event?.broadcaster_user_login||'').toLowerCase();
-    if(!channels.includes(channel))return new Response(null,{status:204});
+    if(!channels.includes(channel)&&!await isEnabled(channel).catch(()=>false))return new Response(null,{status:204});
+    if(!botId&&reader&&reader===await botUserId().catch(()=>''))botId=reader;
     if(!botId){await send(channel);return new Response(null,{status:204});}
     if(!String(body.event?.message?.text||'').trimStart().startsWith('!'))return new Response(null,{status:204});   // chat, not a command: no room request
     const r=await send(channel,{bot:true,botId});
@@ -147,10 +154,10 @@ const summary=s=>({subscriptionId:String(s.id),status:String(s.status||'pending'
 const callbackOrigin=s=>{try{return new URL(s.transport.callback).origin;}catch{return s.transport?.method||'another callback';}};
 const conflict=where=>fail('Chat is connected to '+where+'. Only one site can receive chat at a time: disconnect it there, or take it over here.',409,{connectedElsewhere:where});
 // Ensures exactly one enabled channel.chat.message v1 webhook for this callback; stale or duplicate ones are deleted.
-// userId is the account that reads chat: the broadcaster itself (nesszerra's original setup) or the PixFray bot.
+// userId is the account that reads chat: the broadcaster or the PixFray bot.
 export async function connectChat(env,{broadcasterId,userId=broadcasterId,channel='',origin,url,takeover=false}){
   if(localTestMode(env,url))return {subscriptionId:'local-'+randomToken().slice(0,16),status:'enabled',createdAt:Date.now()};
-  if(!broadcasterId)throw fail('Sign in as nesszerra with '+RECONNECT_URL+' before connecting chat',409,{reconnect:RECONNECT_URL});
+  if(!broadcasterId)throw fail('Sign in as '+site.owner.login+' with '+RECONNECT_URL+' before connecting chat',409,{reconnect:RECONNECT_URL});
   const asBot=userId!==broadcasterId, allowBot='/auth/login?channel='+channel+'&connect=bot';
   if(!/^https:\/\//.test(origin))throw fail('PUBLIC_ORIGIN must be https for Twitch webhooks',400);
   const callback=origin+EVENTSUB_PATH;

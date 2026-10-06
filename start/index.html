@@ -21,7 +21,7 @@
     </header>
 
     <figure class="hero-pick stage-figure">
-      <div class="stage"><iframe src="/overlay.html?channel=nesszerra&amp;arena=1&amp;demo=1&amp;size=64" title="PixFray overlay demo: fighters walk in and duel" loading="lazy" tabindex="-1"></iframe></div>
+      <div class="stage"><iframe title="PixFray overlay demo: fighters walk in and duel" loading="lazy" tabindex="-1"></iframe></div>
       <figcaption class="hint">The overlay as it looks on stream, with demo fighters. On your stream it's transparent, over your game.</figcaption>
     </figure>
 
@@ -42,7 +42,7 @@
     <ol class="step-grid">
       <li><strong>Add the overlay to OBS</strong> Make it a Browser Source at 1920×1080. The setup page gives you the link.<div class="step-mock" aria-hidden="true"><span>Browser Source · URL</span><span class="field">pixfray.xyz/<wbr>overlay.html?<wbr>channel=you</span><span>Width 1920 · Height 1080</span></div></li>
       <li><strong>Turn off the Duel module</strong> It's a built-in StreamElements module. With it off, only one bot answers duel commands.<div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">Duel module</span><span class="switch"></span></span><span class="row"><span class="mod">PixFray commands</span><span class="switch on"></span></span><span>One bot answers each duel</span></div></li>
-      <li><strong>Paste 7 commands into StreamElements</strong> Each reply is ready to copy: <code>!challenge</code>, <code>!fight</code>, <code>!decline</code>, <code>!rematch</code>, <code>!elo</code>, <code>!ranks</code> and <code>!fray</code>. You can rename them.<div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">!challenge</span><span class="btn-mock">Copy reply</span></span><span class="line"><b>kai</b> !challenge @rin</span><span class="line"><b>StreamElements</b> @kai challenges @rin! @rin, type !fight to fight.</span></div></li>
+      <li><strong>Paste 12 commands into StreamElements</strong> Each reply is ready to copy: duels (<code>!challenge</code>, <code>!fight</code>, <code>!decline</code>, <code>!rematch</code>), ranks (<code>!elo</code>, <code>!ranks</code>), help (<code>!fray</code>, <code>!look</code>) and coins and pets (<code>!checkin</code>, <code>!wallet</code>, <code>!pay</code>, <code>!pet</code>). You can rename them.<div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">!challenge</span><span class="btn-mock">Copy reply</span></span><span class="line"><b>kai</b> !challenge @rin</span><span class="line"><b>StreamElements</b> @kai challenges @rin! @rin, type !fight to fight.</span></div></li>
       <li class="optional"><strong>Let your moderators <span class="nowrap">help <span class="badge">Optional</span></span></strong> They can manage fighters, ranks and settings.<div class="step-mock" aria-hidden="true"><span class="row"><span class="mod">Your moderators can</span><span class="eg">Example</span></span><span class="row"><span>Pause duels</span><span class="switch on"></span></span><span class="row"><span>Reset health</span><span class="btn-mock">Reset</span></span></div></li>
     </ol>
     <figure class="story-stage" aria-hidden="true"><canvas id="story-scene"></canvas><figcaption id="story-cap">The overlay is one browser source, drawn over your game.</figcaption></figure>

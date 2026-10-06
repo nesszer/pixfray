@@ -1,4 +1,4 @@
-// Channel domains: a streamer's own domain that serves only their channel (chat.miolaf.xyz is miolafff's).
+// Channel domains serve only the channel configured for each domain.
 // CHANNEL_ORIGINS is JSON {channel: origin}. On such a domain the viewer and mod pages open that channel, and pages
 // for any other channel move to PUBLIC_ORIGIN (the main site). The API, the overlay and the assets answer on every
 // domain, so older OBS and StreamElements links keep working.

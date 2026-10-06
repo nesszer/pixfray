@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import site from '../site.config.js';
 import {
   applyProfile,
   chatStatus,
@@ -462,7 +463,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   requestChannel(request) {
-    return normalizeChannel(request.headers.get(CHANNEL_HEADER) || this.env.CHANNEL_NAME || "nesszerra");
+    return normalizeChannel(request.headers.get(CHANNEL_HEADER) || this.env.CHANNEL_NAME || site.defaultChannel);
   }
 
   readStoredState() {

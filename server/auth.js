@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import site from '../site.config.js';
 import { channelState, signUp } from './channels.js';
 import { authOrigin } from './hosts.js';
 export class AuthStore extends DurableObject {
@@ -68,9 +69,9 @@ export async function unseal(env,value){
   const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode(env.AUTH_SECRET)),{name:'AES-GCM'},false,['decrypt']);
   return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:Uint8Array.from(atob(value.iv),x=>x.charCodeAt(0))},key,Uint8Array.from(atob(value.data),x=>x.charCodeAt(0)))));
 }
-// connect=1 (nesszerra only): mod checks plus the chat-read scopes the EventSub channel.chat.message webhook needs.
-// Channels the site serves. nesszerra (the site owner) can use EventSub; every other channel uses StreamElements.
-export const CHANNELS=['nesszerra','miolafff'];
+// connect=1 (the default channel only): mod checks plus the chat-read scopes the EventSub channel.chat.message webhook needs.
+// Built-in channels. Only the default channel can use EventSub; every other channel uses StreamElements.
+export const CHANNELS=site.builtinChannels;
 export const CONNECT_SCOPES=['moderation:read','user:read:chat','user:bot','channel:bot'];
 // bot=1 (test site, CHAT_BOT): the BOT_LOGIN account lets the app read and send chat as it. Only its id is stored
 // (bot:twitch); the app token does the rest. connect=bot: a broadcaster allows the bot in their chat (channel:bot).
@@ -83,7 +84,7 @@ export async function session(request,env){
 export async function isOwner(env,user){
   if(!user)return false;
   if(env.OWNER_TWITCH_ID)return user.id===env.OWNER_TWITCH_ID;
-  const owner=await record(env,'owner:nesszerra');return owner?.id===user.id;
+  const owner=await record(env,'owner:'+site.owner.login);return owner?.id===user.id;
 }
 export function cookie(name,value,age){return name+'='+value+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age='+age;}
 export async function handleAuth(request,env){
@@ -107,11 +108,11 @@ export async function handleAuth(request,env){
       const mods=url.searchParams.get('mods')!=='0';
       pending={signup:true,mods,next:'/admin/'};scope=mods?'moderation:read':'';
     }else{
-      const channel=url.searchParams.get('channel')||'nesszerra';
+      const channel=url.searchParams.get('channel')||site.defaultChannel;
       // A turned-off channel still signs in, so its broadcaster can turn it back on.
       if(!await channelState(env,channel))return Response.json({error:'PixFray is not enabled for this channel'},{status:403});
       const connect=url.searchParams.get('connect')==='1', connectBot=env.CHAT_BOT==='1'&&url.searchParams.get('connect')==='bot', connectMods=connectBot||url.searchParams.get('connect')==='mods';
-      if(connect&&channel!=='nesszerra')return Response.json({error:'Chat for this channel comes through StreamElements; no Twitch connection needed'},{status:403});
+      if(connect&&channel!==site.defaultChannel)return Response.json({error:'Chat for this channel comes through StreamElements; no Twitch connection needed'},{status:403});
       const asked=url.searchParams.get('next'),next=connectMods?'/admin/':['/admin/','/admin/dev/'].includes(asked)?asked:'/';
       pending={channel,connect,...(connectMods?{connectMods:true}:{}),...(connectBot?{connectBot:true}:{}),next};scope=connect?CONNECT_SCOPES.join(' '):connectBot?'moderation:read channel:bot':connectMods?'moderation:read':'';
     }
@@ -137,17 +138,17 @@ export async function handleAuth(request,env){
   const user={id:identity.id,login:identity.login,displayName:identity.display_name};
   // Resolve the channel's current immutable ID from Twitch, never from a claimed form field.
   // A failed lookup only blocks connecting chat; viewers still sign in and the last stored owner record stays.
-  const ownerRes=await fetch('https://api.twitch.tv/helix/users?login=nesszerra',{headers}).catch(()=>null);
+  const ownerRes=await fetch('https://api.twitch.tv/helix/users?login='+site.owner.login,{headers}).catch(()=>null);
   const owner=ownerRes?.ok?(await ownerRes.json()).data?.[0]:null;
   if(owner){
     if(env.OWNER_TWITCH_ID&&env.OWNER_TWITCH_ID!==owner.id)return Response.json({error:'Owner configuration mismatch'},{status:403});
-    await record(env,'owner:nesszerra',{id:owner.id},Date.now()+90*86400000);
+    await record(env,'owner:'+site.owner.login,{id:owner.id},Date.now()+90*86400000);
   }else if(pending.connect)return Response.json({error:'Cannot resolve channel owner'},{status:502});
   if(pending.connect){
-    if(user.id!==owner.id)return Response.json({error:'Only nesszerra can connect broadcaster authorization'},{status:403});
+    if(user.id!==owner.id)return Response.json({error:'Only '+site.owner.login+' can connect broadcaster authorization'},{status:403});
     const missing=CONNECT_SCOPES.filter(x=>!validation.scopes?.includes(x));
     if(missing.length)return Response.json({error:'Twitch permissions were not granted: '+missing.join(', ')+'. Restart at /auth/login?connect=1.'},{status:403});
-    await keepBroadcaster(env,'nesszerra',await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,'nesszerra');
+    await keepBroadcaster(env,site.defaultChannel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,site.defaultChannel);
   }
   if(pending.bot){
     if(String(user.login).toLowerCase()!==String(env.BOT_LOGIN).toLowerCase())return Response.json({error:'Sign in as the bot account '+env.BOT_LOGIN+', not '+user.login},{status:403});

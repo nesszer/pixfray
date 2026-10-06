@@ -101,7 +101,7 @@ export function seCommandText(action, target) {
 
 const secs = ms => Math.max(1, Math.ceil(ms / 1000));
 const short = s => String(s || '').slice(0, 25);
-// The site link for a channel: every channel but nesszerra names itself.
+// Channel links name the channel so viewers land in the right room.
 // Always names the channel: the bare site asks which stream the viewer watches.
 const siteLink = (origin, channel, hash = '') => origin ? `${origin}/${channel ? '?channel=' + channel : ''}${hash}` : '';
 const gearUp = (origin, channel, lead = 'Gear up at') => { const link = siteLink(origin, channel); return link ? ` ${lead} ${link}` : ''; };
@@ -222,7 +222,7 @@ export function seReplyText({ result, state, actorId, action, target, names = {}
     }
     return `${me}: done.`;
   }
-  // Every channel but nesszerra has its own profiles, so the link must name the channel.
+  // Every channel has its own profiles, so the link must name it.
   const ch = state.channel;
   switch (reason) {
     case 'chat_offline': case 'duels_disabled': return 'The arena is closed right now. Come back soon!';

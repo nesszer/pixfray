@@ -1,10 +1,11 @@
 import { chatStatus } from './game.js';
+import site from '../site.config.js';
 import { CHANNELS } from './auth.js';
 import { channelState, overview, listRecords, setPaused, LOGIN } from './channels.js';
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from './streamelements.js';
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
-// nesszerra Twitch account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
+// configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
 //   GitHub (code editor + deploy flow): secret GITHUB_TOKEN, text GITHUB_REPO ("owner/name"),
 //     optional GITHUB_BASE_BRANCH (main) and GITHUB_WORKFLOW (deploy.yml).
 //   Cloudflare read-only API (request usage, versions): secret CF_API_TOKEN, text CF_ACCOUNT_ID.
@@ -13,7 +14,7 @@ import { SE_ACTIONS, DEFAULT_SE_NAMES } from './streamelements.js';
 const MAX_LOG_ROWS = 500;
 const VERSION = '0.2.0';
 const DAILY_REQUEST_LIMIT = 100000;
-const SCRIPTS = { production: 'nesszerra-mini-chat', test: 'nesszerra-mini-chat-test' };
+const SCRIPTS = site.workers;
 const MAX_FILE_BYTES = 512 * 1024;
 const BRANCH = /^(live-fix|hotfix)\/[a-z0-9][a-z0-9._-]{0,60}$/;
 const SHA = /^[a-f0-9]{40}$/;
@@ -38,8 +39,8 @@ export async function handleDeveloper(request, env, c) {
   let body = null;
   // Caught here because worker.js returns this promise without awaiting it inside its try block.
   if (method === 'POST') try { body = await c.bodyJson(request, op === 'code/save' ? MAX_FILE_BYTES * 2 + 4096 : 8000); } catch (e) { return fail(e.status || 400, e.message || 'Invalid request body', e.status === 413 ? 'body_too_large' : 'invalid_body'); }
-  // ?channel= picks which channel's room to read (logs, diagnostics); Worker errors always land in nesszerra's.
-  const asked = c.url.searchParams.get('channel') || '', channel = asked && await channelState(env, asked) ? asked : 'nesszerra';
+  // ?channel= picks which channel's room to read (logs, diagnostics); Worker errors land in the default channel.
+  const asked = c.url.searchParams.get('channel') || '', channel = asked && await channelState(env, asked) ? asked : site.defaultChannel;
   try { return await handler({ request, env, c, body, query: c.url.searchParams, room: (path, init) => c.roomFetch(channel, path, init) }); }
   catch (error) { c.waitUntil?.(logWorkerError(env, error, { path: c.path })); return fail(503, 'Service unavailable; check owner diagnostics', 'upstream_error'); }
 }
@@ -139,7 +140,7 @@ function logQuery(query) {
 async function settings({ body, c, room }) {
   const action = body.action;
   if (action === 'connectChat' || action === 'disconnectChat') {
-    try { return await c.chatAction('nesszerra', action, { takeover: body.takeover === true }); }
+    try { return await c.chatAction(site.defaultChannel, action, { takeover: body.takeover === true }); }
     catch (e) { if (e.status) return fail(e.status, e.message, 'chat_error', { ...(e.reconnect ? { reconnect: e.reconnect } : {}), ...(e.connectedElsewhere ? { connectedElsewhere: e.connectedElsewhere } : {}) }); throw e; }
   }
   if (action !== 'config' && action !== 'rollbackConfig') return fail(400, 'action must be config, rollbackConfig, connectChat or disconnectChat', 'invalid_action');
@@ -211,7 +212,7 @@ function withGithub(fn) {
   };
 }
 async function gh(env, g, path, init = {}) {
-  const r = await fetch('https://api.github.com/repos/' + g.repo + path, { ...init, headers: { Authorization: 'Bearer ' + env.GITHUB_TOKEN, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'nesszerra-mini-chat', ...(init.body ? { 'Content-Type': 'application/json' } : {}) } });
+  const r = await fetch('https://api.github.com/repos/' + g.repo + path, { ...init, headers: { Authorization: 'Bearer ' + env.GITHUB_TOKEN, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': site.workers.production, ...(init.body ? { 'Content-Type': 'application/json' } : {}) } });
   const data = r.status === 204 ? null : await r.json().catch(() => null);
   return { ok: r.ok, status: r.status, data };
 }
@@ -473,9 +474,9 @@ export function logRoomEvent(room, source, message, context = {}) {
 export async function logWorkerError(env, error, context = {}) {
   try {
     if (!env.INTERNAL_SECRET || !env.ROOMS) return;
-    await env.ROOMS.get(env.ROOMS.idFromName('nesszerra')).fetch('https://room/dev/log', {
+    await env.ROOMS.get(env.ROOMS.idFromName(site.defaultChannel)).fetch('https://room/dev/log', {
       method: 'POST',
-      headers: { 'X-Mini-Internal': env.INTERNAL_SECRET, 'X-Mini-Channel': 'nesszerra', 'Content-Type': 'application/json' },
+      headers: { 'X-Mini-Internal': env.INTERNAL_SECRET, 'X-Mini-Channel': site.defaultChannel, 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: error?.message || String(error), context }),
     });
   } catch {}

@@ -2,9 +2,10 @@
 // Uses GET/POST /api/admin/:channel (CONTRACTS.md section 2) and the read-only live socket for updates.
 import { api, errorText, h, $, setStatus, renderWho, signOut, seconds, timeAgo, dateTime, formatBytes, CHANNEL, withChannel, loginHref, applyChannel } from "./ui.js";
 import { skyBackdrop } from "./scrub.js";
+import site from "../site.config.js";
 skyBackdrop();
 applyChannel();
-if (CHANNEL !== "nesszerra") document.querySelector(".page-header .subtitle").textContent = "For the " + CHANNEL + " broadcaster. Changes apply to every OBS overlay right away.";
+if (CHANNEL !== site.defaultChannel) document.querySelector(".page-header .subtitle").textContent = "For the " + CHANNEL + " broadcaster. Changes apply to every OBS overlay right away.";
 
 const LIMITS = { maxCharacters: 24, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 // Editable config fields (CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
@@ -129,18 +130,18 @@ async function init() {
   if (!S.session.user) {
     if (S.session.configured === false) return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
     $("#who").replaceChildren();   // one sign-in button: the gate's
-    return gate(CHANNEL === "nesszerra" ? "Sign in with the nesszerra account or a nesszerra moderator account to open mod controls." : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]);
+    return gate(CHANNEL === site.defaultChannel ? "Sign in with the " + site.owner.login + " account or a " + site.owner.login + " moderator account to open mod controls." : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]);
   }
   const access = await api("/api/access/" + CHANNEL);
   S.access = access.ok ? access.data : null;
   if (!S.access?.canManage) {
     const why = S.access?.reason ? " (" + S.access.reason + ")" : access.ok ? "" : " (" + errorText(access) + ")";
-    return gate((CHANNEL === "nesszerra" ? "Only nesszerra and current channel moderators can use mod controls" : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) + why + ".", [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")]);
+    return gate((CHANNEL === site.defaultChannel ? "Only " + site.owner.login + " and current channel moderators can use mod controls" : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) + why + ".", [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")]);
   }
   $("#gate").hidden = true; $("#app").hidden = false;
   $("#dev-link").hidden = $("#dev-section").hidden = !S.access.owner;
-  $("#owner-chat").hidden = !S.access.owner || CHANNEL !== "nesszerra";
-  $("#chat-box").hidden = CHANNEL !== "nesszerra";   // other channels get chat through StreamElements only
+  $("#owner-chat").hidden = !S.access.owner || CHANNEL !== site.defaultChannel;
+  $("#chat-box").hidden = CHANNEL !== site.defaultChannel;   // other channels get chat through StreamElements only
   await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets()]);
   if (S.admin?.channelState !== "paused") connectLive();
   // Back from "Connect mod access" (/auth/login?connect=mods)
@@ -246,7 +247,7 @@ function renderAll() {
   collectNames();
   const a = S.admin, c = a.config, open = a.duels.filter((d) => OPEN.has(d.status));
   const chat = a.chatStatus || a.chat || {}, health = chatHealth();
-  $("#meta").textContent = "Signed in as " + (S.access.owner && CHANNEL === "nesszerra" || S.access.broadcaster ? "the broadcaster" : S.access.owner ? "the site owner" : "a moderator") + ".";
+  $("#meta").textContent = "Signed in as " + (S.access.owner && CHANNEL === site.defaultChannel || S.access.broadcaster ? "the broadcaster" : S.access.owner ? "the site owner" : "a moderator") + ".";
   const waiting = c.enabled && !health.ok;
   $("#summary-title").textContent = !c.enabled ? "Duels are paused by a moderator" : waiting ? health.title : "Duels are live";
   $("#summary-text").textContent = !c.enabled ? "Chat commands are ignored until duels are turned back on." :
@@ -272,7 +273,7 @@ function chatHealth() {
   const a = S.admin, c = a.chatStatus || a.chat || {}, se = a.streamelements;
   const fix = " Finish step 3, Add the chat commands to StreamElements, on the Stream setup tab.";
   if (!c.connected) return { ok: false, label: "Chat", value: "Not connected", note: "no chat source", title: "Waiting for chat",
-    text: CHANNEL === "nesszerra" ? "Duels start when chat is connected. Connect Twitch chat or set up StreamElements on the Stream setup tab." : "Duels start when chat commands reach PixFray." + fix };
+    text: CHANNEL === site.defaultChannel ? "Duels start when chat is connected. Connect Twitch chat or set up StreamElements on the Stream setup tab." : "Duels start when chat commands reach PixFray." + fix };
   if (c.source === "streamelements") {
     if (se && se.rejectedAt > (se.lastCommandAt || 0)) return { ok: false, label: "StreamElements", value: "Old key", note: "a command was refused " + timeAgo(se.rejectedAt),
       title: "StreamElements is sending an old key", text: "A command arrived " + timeAgo(se.rejectedAt) + " with a key that no longer works, so it was refused. Copy every response again from the Stream setup tab and paste it into StreamElements." };
@@ -571,7 +572,7 @@ async function chatAct(action, button, takeover = false) {
   if (r.status === 409 && r.data?.connectedElsewhere && !takeover
     && confirm("Chat is connected to " + r.data.connectedElsewhere + ". Only one site can receive chat at a time. Move chat to this site? The other site pauses.")) return chatAct(action, button, true);
   if (!r.ok) {
-    const fix = r.data?.reconnect ? (S.access.owner ? " Use Reconnect Twitch below." : " Ask nesszerra to reconnect Twitch.") : "";
+    const fix = r.data?.reconnect ? (S.access.owner ? " Use Reconnect Twitch below." : " Ask " + site.owner.login + " to reconnect Twitch.") : "";
     return setStatus($("#chat-status"), "That didn't work: " + errorText(r) + fix, "error");
   }
   verifying = action === "connectChat" && !r.data?.chatStatus?.connected;
@@ -704,7 +705,7 @@ function renderChecklist() {
 function modsDetail() {
   const a = S.admin, ready = !!a.modsReady && !a.modsLapsed, lapsed = !!a.modsLapsed;
   if (ready) return ["Twitch moderators of " + CHANNEL + " can sign in and use this page."];
-  const broadcaster = !!S.access?.broadcaster || (!!S.access?.owner && CHANNEL === "nesszerra");
+  const broadcaster = !!S.access?.broadcaster || (!!S.access?.owner && CHANNEL === site.defaultChannel);
   if (broadcaster) {
     const link = h("a", { href: "/auth/login?" + new URLSearchParams({ channel: CHANNEL, connect: "mods" }) }, lapsed ? "Reconnect mod access" : "Connect mod access");
     return [lapsed ? "Mod access expired, so your Twitch moderators can't sign in until you reconnect it. " : "Your Twitch moderators can't sign in yet. PixFray needs permission to read your moderator list. ", link];

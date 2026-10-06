@@ -1,3 +1,4 @@
+import site from '../site.config.js';
 import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, STAT_STEP } from "./upgrades.js";
 import { cleanBoost, TIERS } from "./pets.js";
 import { cleanCosmetics } from "./cosmetics.js";
@@ -142,9 +143,9 @@ function normalizeConfig(config) {
   return merged;
 }
 
-export function createInitialState(channel = "nesszerra") {
+export function createInitialState(channel = site.defaultChannel) {
   return {
-    channel: safeString(channel, 25).toLowerCase() || "nesszerra",
+    channel: safeString(channel, 25).toLowerCase() || site.defaultChannel,
     revision: 0,
     // Chat source: one Twitch EventSub webhook subscription (channel.chat.message). lastSeen = last notification.
     chat: { connected: false, lastSeen: 0, subscriptionId: "", status: "disconnected", createdAt: 0, revokedReason: "", checkedAt: 0, verifiedId: "" },
@@ -996,10 +997,10 @@ export function reduceGame(inputState, event, now = Date.now()) {
 }
 
 function normalizeState(input) {
-  const initial = createInitialState(input?.channel || "nesszerra");
+  const initial = createInitialState(input?.channel || site.defaultChannel);
   // Deep copy so the reducer never mutates its input.
   const state = { ...initial, ...(input && typeof input === "object" ? clone(input) : {}) };
-  state.channel = safeString(state.channel, 25).toLowerCase() || "nesszerra";
+  state.channel = safeString(state.channel, 25).toLowerCase() || site.defaultChannel;
   state.revision = Number.isInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
   state.chat = { ...initial.chat, ...(state.chat && typeof state.chat === "object" ? state.chat : {}) };
   delete state.relay;

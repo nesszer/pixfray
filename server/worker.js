@@ -1,11 +1,12 @@
 import { ChannelRoom } from './channel.js';
+import site from '../site.config.js';
 import { AuthStore,record,session,isOwner,configured,handleAuth,access,CHANNELS,touchBroadcaster,markModsConnected } from './auth.js';
 import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { handlePets } from './pets.js';
 import { EVENTSUB_PATH,BOT_LOGIN_URL,handleEventsub,connectChat,disconnectChat,sendChatMessages,twitchUserId } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
-import { channelState,isOn,offError,setPaused,publicChannels } from './channels.js';
+import { channelState,isOn,offError,setPaused,publicChannels,listRecords } from './channels.js';
 import { COSMETIC_KINDS,COSMETIC_FIELDS,MAX_BUILDS } from './cosmetics.js';
 import { siteOrigin,channelPageRedirect,isPage } from './hosts.js';
 export {ChannelRoom,AuthStore};
@@ -64,7 +65,7 @@ async function chatAction(env,url,channel,action,{takeover=false}={}){
   if(env.CHAT_BOT==='1'){
     const bot=await record(env,'bot:twitch');
     if(!bot?.id)throw Object.assign(new Error('Sign in the PixFray bot account first at '+BOT_LOGIN_URL),{status:409,reconnect:BOT_LOGIN_URL});
-    const broadcasterId=channel==='nesszerra'&&env.OWNER_TWITCH_ID||await twitchUserId(env,channel);
+    const broadcasterId=channel===site.defaultChannel&&env.OWNER_TWITCH_ID||await twitchUserId(env,channel);
     if(!broadcasterId)throw Object.assign(new Error('Twitch has no channel named '+channel),{status:404});
     const sub=await connectChat(env,{broadcasterId,userId:bot.id,channel,origin:env.PUBLIC_ORIGIN||url.origin,url,takeover});
     return room('/chat',{action:'connected',...sub});
@@ -99,7 +100,7 @@ async function devToken(request,env){
   const [a,b]=await Promise.all([hash(m[1]),hash(env.DEV_TOOLS_TOKEN)]);let diff=0;for(let i=0;i<a.length;i++)diff|=a[i]^b[i];
   return diff===0;
 }
-async function devUser(env){const id=env.OWNER_TWITCH_ID||(await record(env,'owner:nesszerra'))?.id||'';return id?{id,login:'nesszerra',displayName:'nesszerra (dev token)'}:null;}
+async function devUser(env){const id=env.OWNER_TWITCH_ID||(await record(env,'owner:'+site.owner.login))?.id||'';return id?{id,login:site.owner.login,displayName:site.owner.login+' (dev token)'}:null;}
 // Dev-token routes: save a profile for any account (test bots, an alt), or feed one chat line through the room as if
 // Twitch had delivered it. The room repeats the DEV_TOOLS_TOKEN check.
 async function handleDevtools(request,env,channel,action,data){
@@ -133,6 +134,9 @@ export default {async fetch(request,env,ctx){
     if(path===EVENTSUB_PATH){
       if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
       return await handleEventsub(request,env,{channels:CHANNELS,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),origin:channel=>siteOrigin(env,url,channel),
+        findChannel:async id=>id&&(await listRecords(env,'channel:')).find(x=>x.value?.id===id)?.value?.login||'',
+        isEnabled:async channel=>isOn(await channelState(env,channel)),
+        botUserId:async()=>env.CHAT_BOT==='1'?String((await record(env,'bot:twitch'))?.id||''):'',
         // The bot's reply goes out after Twitch has its 204.
         sendChat:args=>ctx?.waitUntil?.(sendChatMessages(env,args).then(rs=>{for(const r of rs)if(!r.sent)console.warn('bot reply dropped',r.reason);}))});
     }
@@ -225,7 +229,7 @@ export default {async fetch(request,env,ctx){
         const out=await r.json();if(!r.ok)return json(out,r.status);
         return json({ok:true,streamelements:seView(env,url,channel,out.streamelements)});
       }
-      if(data.action==='connectChat'&&env.CHAT_BOT!=='1'&&(channel!=='nesszerra'||env.SE_ONLY==='1'))return json({error:'This channel uses StreamElements for chat. Choose Use StreamElements.'},400);
+      if(data.action==='connectChat'&&env.CHAT_BOT!=='1'&&(channel!==site.defaultChannel||env.SE_ONLY==='1'))return json({error:'This channel uses StreamElements for chat. Choose Use StreamElements.'},400);
       if(data.action==='connectChat'||data.action==='disconnectChat'||data.action==='useStreamElements')return await chatAction(env,url,channel,data.action,{takeover:data.takeover===true});
       return internal(request,env,channel,'/admin',{...data,actorId:user.id,actorName:user.displayName||user.login});
     }

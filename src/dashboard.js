@@ -5,6 +5,7 @@ import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, addPet,
 import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.js";
 import { CHARACTER_GROUPS } from "./character-groups.js";
 import { skyBackdrop } from "./scrub.js";
+import site from "../site.config.js";
 skyBackdrop();
 applyChannel();
 
@@ -687,7 +688,7 @@ async function pickChannel() {
   const [session, list] = await Promise.all([api("/api/session"), api("/api/channels")]);
   // Signing in happens on a channel's page, so the picker shows only who is already signed in.
   if (session.ok && session.data?.user) renderWho($("#who"), session.data, signOut); else $("#who").replaceChildren();
-  const channels = list.ok && Array.isArray(list.data?.channels) ? list.data.channels : ["nesszerra", "miolafff"];
+  const channels = list.ok && Array.isArray(list.data?.channels) ? list.data.channels : site.builtinChannels;
   $("#channel-list").replaceChildren(...channels.map((c) => {
     const crew = h("span", { class: "channel-crew", "aria-hidden": "true" }), meta = h("span", { class: "channel-meta" });
     const link = h("a", { class: "channel", href: "/?channel=" + encodeURIComponent(c) },

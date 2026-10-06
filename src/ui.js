@@ -1,9 +1,12 @@
 // Shared helpers for the viewer dashboard and the admin page (Lane B). No framework.
-// ?channel=<login> picks the channel; nesszerra by default. The Worker rejects channels that are not enabled.
-// Without it the viewer page asks which stream the viewer watches (CHANNEL_PICKED false); the admin page uses nesszerra.
+// ?channel=<login> picks the channel; the configured default is used otherwise.
+// Without it the viewer page asks which stream the viewer watches (CHANNEL_PICKED false); the admin page uses the default.
+import site from "../site.config.js";
+// The pages' HTML names this channel; applyChannel swaps it for the current one.
+const TEMPLATE_CHANNEL = "nesszerra";
 const asked = (new URLSearchParams(location.search).get("channel") || "").toLowerCase();
 export const CHANNEL_PICKED = /^[a-z0-9_]{1,25}$/.test(asked);
-export const CHANNEL = CHANNEL_PICKED ? asked : "nesszerra";
+export const CHANNEL = CHANNEL_PICKED ? asked : site.defaultChannel;
 // A same-site link that keeps the current channel. Links always name it, since the bare viewer page is the picker.
 export const withChannel = (path) => path + (path.includes("?") ? "&" : "?") + "channel=" + CHANNEL;
 // Twitch sign-in that comes back to this channel (next is "/" or "/admin/").
@@ -11,16 +14,16 @@ export const loginHref = (next = "/") => "/auth/login?" + new URLSearchParams({ 
 // Phones scroll the header links sideways; the current page's link starts in view.
 { const nav = document.querySelector(".topbar nav"), cur = nav?.querySelector("[aria-current]");
   if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, cur.getBoundingClientRect().right - nav.getBoundingClientRect().right + 28); }
-// Put the channel name into the page: elements marked data-channel get "nesszerra" replaced, and links in nav keep the channel.
+// Put the channel name into the page: elements marked data-channel get the template token replaced, and links in nav keep the channel.
 export function applyChannel() {
   for (const a of document.querySelectorAll("a[data-keep-channel]")) a.setAttribute("href", withChannel(a.getAttribute("href")));
   for (const a of document.querySelectorAll("a[data-login]")) a.setAttribute("href", loginHref(a.dataset.login));
-  if (CHANNEL === "nesszerra") return;
-  document.title = document.title.replace(/nesszerra/g, CHANNEL);
+  if (CHANNEL === TEMPLATE_CHANNEL) return;
+  document.title = document.title.replaceAll(TEMPLATE_CHANNEL, CHANNEL);
   for (const el of document.querySelectorAll("[data-channel]")) {
     if (el.tagName === "INPUT") el.value = CHANNEL;
-    else if (el.tagName === "META") el.content = el.content.replace(/nesszerra/g, CHANNEL);
-    else el.textContent = el.textContent.replace(/nesszerra/g, CHANNEL);
+    else if (el.tagName === "META") el.content = el.content.replaceAll(TEMPLATE_CHANNEL, CHANNEL);
+    else el.textContent = el.textContent.replaceAll(TEMPLATE_CHANNEL, CHANNEL);
   }
 }
 export const DEFAULT_COLOR = "#a78bfa";

@@ -1,6 +1,7 @@
 // /start: what PixFray is, the Twitch sign-in that turns it on for a streamer's channel, and the setup steps.
 import { h, $ } from "./ui.js";
 import { scrub, skyBackdrop } from "./scrub.js";
+import site from "../site.config.js";
 
 const params = new URLSearchParams(location.search);
 const error = params.get("error") || "";
@@ -8,6 +9,7 @@ const error = params.get("error") || "";
 // The overlay lays fighters out in the pixels it gets. Narrow stages render it at least 640px wide (in the stage's own
 // shape: 16:9 wide, 4:5 on phones) and scale it down, so the nameplates keep their room and stay readable.
 const stage = $(".stage"), frame = stage.querySelector("iframe");
+frame.src = "/overlay.html?" + new URLSearchParams({ channel: site.defaultChannel, arena: "1", demo: "1", size: "64" });
 function fitStage() {
   const w = stage.clientWidth, hgt = stage.clientHeight, v = Math.max(w, 640);
   Object.assign(frame.style, { width: v + "px", height: Math.round(v * hgt / w) + "px", transform: "scale(" + w / v + ")", transformOrigin: "0 0" });
