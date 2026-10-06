@@ -57,6 +57,7 @@ try {
   run('unit tests', 'npm run -s test:unit');
   run('cf build', 'npx cf build');
   run('cf build (test)', 'npx cf build --mode test');
+  run('module versions', 'node tests/build-versions.mjs');
   run('upload (workerd)', 'node tests/upload-workerd.mjs');
   if (!external) {
     await start();   // first start creates the local AuthStore, then sessions are seeded with the server stopped
