@@ -4,11 +4,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import siteConfig from '../site.config.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRETS = path.join(ROOT, '.secrets.local.json');   // DEV_TOOLS_TOKEN, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
 const ALT_FILE = path.join(ROOT, '.devtools.local.json'); // alt account tokens from `login`; gitignored
-const BASE = (process.env.MINI_DEVTOOLS_BASE || 'https://staging.pixfray.xyz').replace(/\/$/, '');
+const BASE = (process.env.MINI_DEVTOOLS_BASE || siteConfig.origins.test).replace(/\/$/, '');
 const BOT_LETTERS = 'abcd';
 
 const argv = process.argv.slice(2);
@@ -21,7 +22,7 @@ for (let i = 0; i < argv.length; i++) {
   else flags[m[1]] = true;
 }
 const command = args.shift() || 'help';
-const CHANNEL = String(flags.channel || 'nesszerra').toLowerCase();
+const CHANNEL = String(flags.channel || siteConfig.defaultChannel).toLowerCase();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function fail(message) { console.error('devtools: ' + message); process.exit(1); }
@@ -30,7 +31,7 @@ function secrets() {
   const s = readJson(SECRETS) || {};
   return { ...s, DEV_TOOLS_TOKEN: process.env.DEV_TOOLS_TOKEN || s.DEV_TOOLS_TOKEN };
 }
-if (/^https:\/\/(chat\.miolaf|pixfray)\.xyz$/.test(BASE)) fail('refusing to run against production; devtools are test-site only');
+if ([siteConfig.origins.production, ...Object.keys(siteConfig.channelDomains.production || {}).map((host) => 'https://' + host)].includes(BASE.replace(/\/$/, ''))) fail('refusing to run against production; devtools are test-site only');
 
 // ---- test site API (dev token) ----
 async function site(pathname, { method = 'GET', body } = {}) {
@@ -226,7 +227,7 @@ async function realDuel() {
   console.log(`${target.username}: !fight\n  -> ${await say(target, '!fight', 'se')}`);
 }
 
-const usage = `Usage: node scripts/devtools.mjs <command> [--channel nesszerra]   (site: ${BASE})
+const usage = `Usage: node scripts/devtools.mjs <command> [--channel ${siteConfig.defaultChannel}]   (site: ${BASE})
 
 Bots on the test site
   seed [--bots 2..4]          save fighters for testbot_a… and put them in the arena

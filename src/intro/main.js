@@ -363,7 +363,7 @@ const CROWD_SPOT = [[-2.8, -1.0], [-1.9, -2.3], [0.2, -3.1], [1.9, -2.3], [2.8, 
 
 // tags
 const T = {
-  lookReply: makeTag('tag-line tag-log', '<span><b style="color:#c9a45c">you</b> !look</span><span><b style="color:#e7c27c">PixFray</b> @you, change your look here: pixfray.xyz/?channel=yourchannel#fighter</span>'),
+  lookReply: makeTag('tag-line tag-log', `<span><b style="color:#c9a45c">you</b> !look</span><span><b style="color:#e7c27c">PixFray</b> @you, change your look here: ${location.host}/?channel=yourchannel#fighter</span>`),
   challenge: makeTag('tag-line', '<b style="color:#c9a45c">challenger</b> !challenge @rival'),
   fight: makeTag('tag-line', '<b style="color:#7fa7d9">rival</b> !fight'),
   roll: makeTag('tag-roll', ''),

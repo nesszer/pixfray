@@ -4,7 +4,7 @@
 //   const { mountUpload } = await import('/upload.js');
 //   const handle = await mountUpload(root, { channel, usage, limits, items, refresh });
 //     root     Element to render into (its children are replaced).
-//     channel  Channel login, e.g. "nesszerra".
+//     channel  Channel login (required).
 //     usage    Optional {count, limit, bytes} from GET /api/admin/:channel (customUsage).
 //     limits   Optional limits object; the stricter of these and the built-in LIMITS is enforced.
 //     items    Optional custom catalog entries (GET /api/assets/:channel items) for the delete list.
@@ -71,7 +71,8 @@ async function readPngFiles(files) {
 
 export async function mountUpload(root, ctx = {}) {
   ensureStyles();
-  const channel = ctx.channel || 'nesszerra';
+  const channel = ctx.channel;
+  if (!channel) return null;
   const limits = { ...LIMITS };
   for (const k of ['maxFrames', 'frameSize', 'maxAtlasBytes', 'maxCharacters']) if (Number.isFinite(ctx.limits?.[k])) limits[k] = Math.min(limits[k], ctx.limits[k]);
   let usage = ctx.usage || null, items = Array.isArray(ctx.items) ? ctx.items : null;
@@ -296,7 +297,7 @@ export async function mountUpload(root, ctx = {}) {
 
 function setStatus(node, message, kind) { node.textContent = message || ''; node.className = 'status' + (kind ? ' ' + kind : ''); }
 
-// Standalone use: <div data-upload-root data-channel="nesszerra"></div><script type="module" src="/upload.js"></script>
+// Standalone use: <div data-upload-root data-channel="<login>"></div><script type="module" src="/upload.js"></script>
 if (typeof document !== 'undefined') {
-  for (const el of document.querySelectorAll('[data-upload-root]')) mountUpload(el, { channel: el.dataset.channel || 'nesszerra' });
+  for (const el of document.querySelectorAll('[data-upload-root]')) mountUpload(el, { channel: el.dataset.channel });
 }

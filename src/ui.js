@@ -2,8 +2,8 @@
 // ?channel=<login> picks the channel; the configured default is used otherwise.
 // Without it the viewer page asks which stream the viewer watches (CHANNEL_PICKED false); the admin page uses the default.
 import site from "../site.config.js";
-// The pages' HTML names this channel; applyChannel swaps it for the current one.
-const TEMPLATE_CHANNEL = "nesszerra";
+// The pages' HTML names the default channel (%SITE_CHANNEL%, vite.config.js); applyChannel swaps it for the current one.
+const TEMPLATE_CHANNEL = site.defaultChannel;
 const asked = (new URLSearchParams(location.search).get("channel") || "").toLowerCase();
 export const CHANNEL_PICKED = /^[a-z0-9_]{1,25}$/.test(asked);
 export const CHANNEL = CHANNEL_PICKED ? asked : site.defaultChannel;

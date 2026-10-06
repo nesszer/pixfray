@@ -9,8 +9,9 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import site from '../site.config.js';
 
-export const SCRIPTS = { production: 'nesszerra-mini-chat', test: 'nesszerra-mini-chat-test' };
+export const SCRIPTS = { production: site.workers.production, test: site.workers.test };
 export const REQUIRED_SECRETS = ['AUTH_SECRET', 'INTERNAL_SECRET'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

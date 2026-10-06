@@ -44,8 +44,11 @@ async function start() {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const params = new URLSearchParams(location.search);
-  const channel = (params.get('channel') || 'nesszerra').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 25) || 'nesszerra';
   const demo = params.get('demo') === '1';
+  // Without ?channel= (OBS links always have it) the overlay shows the site's default channel, which /api/channels names.
+  // The demo makes no API calls.
+  const channel = (params.get('channel') || '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 25)
+    || (demo ? '' : await fetch('/api/channels').then((r) => r.json()).then((j) => String(j.defaultChannel || '')).catch(() => '')) || 'demo';
   const arenaEnabled = params.get('arena') === '1';
   const arenaDemo = arenaEnabled && demo;
   const debug = params.get('debug') === '1';

@@ -1,6 +1,8 @@
 // Owner page (/admin/dev/, Lane E). Owner-only page over /api/dev/* (server/developer.js). No framework.
 const $ = (s) => document.querySelector(s);
 const S = { session: null, diag: null, config: null, configVersion: 0, fileSha: '', fileRef: '', progress: {} };
+// Owner, default channel and sites, from site.config.js through the page's <html data-site-*> attributes.
+const SITE = (({ siteOwner, siteChannel, siteOrigin, siteTestOrigin }) => ({ owner: siteOwner, channel: siteChannel, origin: siteOrigin, testOrigin: siteTestOrigin }))(document.documentElement.dataset);
 const LOGIN = '/auth/login?next=%2Fadmin%2Fdev%2F';   // come back here after signing in, not to the viewer page
 
 async function api(path, { method = 'GET', body } = {}) {
@@ -40,8 +42,8 @@ async function start() {
   if (s.data?.user) who.append(h('span', {}, 'Signed in as ' + s.data.user.displayName), h('button', { class: 'btn btn-small', type: 'button', onclick: signOut }, 'Sign out'));
   // signed out: the gate holds the one sign-in button
   if (!s.ok) return gate(errorText(s, 'The server is unreachable'), []);
-  if (!s.data.user) return gate('Sign in with the nesszerra Twitch account to open the owner page.', [h('a', { class: 'btn btn-primary', href: LOGIN }, 'Sign in with Twitch')]);
-  if (!s.data.owner) return gate('The owner page is limited to the nesszerra account. Moderators can use Mod controls.', [h('a', { class: 'btn', href: '/admin/' }, 'Open mod controls')]);
+  if (!s.data.user) return gate('Sign in with the ' + SITE.owner + ' Twitch account to open the owner page.', [h('a', { class: 'btn btn-primary', href: LOGIN }, 'Sign in with Twitch')]);
+  if (!s.data.owner) return gate('The owner page is limited to the ' + SITE.owner + ' account. Moderators can use Mod controls.', [h('a', { class: 'btn', href: '/admin/' }, 'Open mod controls')]);
   $('#gate').hidden = true; $('#app').hidden = false;
   if (!$('#branch').value) $('#branch').value = 'live-fix/' + new Date().toISOString().slice(0, 10);
   await Promise.all([loadDiagnostics(), loadConfig(), loadLogs(), loadChannels()]);
@@ -74,9 +76,9 @@ async function loadDiagnostics() {
   $('#s-sockets-note').textContent = `${room.players ?? 0} players, ${room.openDuels ?? 0} open duels`;
   const ver = d.worker?.deployedVersion;
   $('#meta').textContent = `Worker ${d.worker?.version || ''}` + (ver ? ` · version ${short(ver.id)}${ver.tag ? ' (' + ver.tag + ')' : ''}` : ' · version id unavailable') + ` · checked ${fmtTime(Date.now())}`;
-  const parts = [chatOn ? 'nesszerra chat is connected' : se ? 'nesszerra uses StreamElements, but no command has arrived yet; fix it on the Stream setup tab of Mod controls' : 'nesszerra chat is not connected, so duels are paused', room.errors ? `${room.errors} errors are logged` : 'no errors are logged'];
+  const parts = [chatOn ? SITE.channel + ' chat is connected' : se ? SITE.channel + ' uses StreamElements, but no command has arrived yet; fix it on the Stream setup tab of Mod controls' : SITE.channel + ' chat is not connected, so duels are paused', room.errors ? `${room.errors} errors are logged` : 'no errors are logged'];
   if (use.configured && Number.isFinite(use.requests)) parts.push(`${fmtNum(use.requests)} of 100,000 daily requests are used (${use.percent}%)`);
-  $('#summary-title').textContent = !chatOn ? 'Site is up; nesszerra chat offline' : room.errors ? `Site is up, with ${room.errors} logged errors` : 'Site is running normally';
+  $('#summary-title').textContent = !chatOn ? 'Site is up; ' + SITE.channel + ' chat offline' : room.errors ? `Site is up, with ${room.errors} logged errors` : 'Site is running normally';
   $('#summary-text').textContent = parts.join('; ') + '.';
   renderIntegrations(d.integrations || {});
 }
@@ -114,17 +116,17 @@ $('#deploy-test').addEventListener('click', (e) => busy(e.currentTarget, async (
 $('#promote').addEventListener('click', (e) => busy(e.currentTarget, async () => {
   const number = $('#pr-number').value ? Number($('#pr-number').value) : undefined, percentage = Number($('#percentage').value || 100);
   const what = number ? `merge #${number} and deploy main` : 'deploy main as it is';
-  if (!confirm(`Promote to pixfray.xyz: ${what}, ${percentage}% of traffic?`)) return;
+  if (!confirm(`Promote to ${new URL(SITE.origin).host}: ${what}, ${percentage}% of traffic?`)) return;
   released(await api('/api/dev/promote', { method: 'POST', body: { ...(number ? { number } : {}), percentage } }), 'Promote');
 }));
 $('#hotfix').addEventListener('click', (e) => busy(e.currentTarget, async () => {
   if (!branch().startsWith('hotfix/')) return status('#release-status', 'Set the branch to hotfix/<name> in the code editor first.', 'error');
-  if (!confirm(`Deploy ${branch()} straight to pixfray.xyz without the test site?`)) return;
+  if (!confirm(`Deploy ${branch()} straight to ${new URL(SITE.origin).host} without the test site?`)) return;
   released(await api('/api/dev/hotfix', { method: 'POST', body: { branch: branch() } }), 'Hotfix');
 }));
 $('#rollback').addEventListener('click', (e) => busy(e.currentTarget, async () => {
   const target = $('#rb-target').value, versionId = $('#rb-version').value;
-  if (!confirm(`Roll back ${target === 'production' ? 'pixfray.xyz' : 'staging.pixfray.xyz'} to ${versionId ? short(versionId) : 'the previous deployment'}?`)) return;
+  if (!confirm(`Roll back ${new URL(target === 'production' ? SITE.origin : SITE.testOrigin).host} to ${versionId ? short(versionId) : 'the previous deployment'}?`)) return;
   released(await api('/api/dev/rollback', { method: 'POST', body: { target, ...(versionId ? { versionId } : {}) } }), 'Rollback');
 }));
 $('#rb-target').addEventListener('change', fillVersions);

@@ -104,10 +104,13 @@ PixFray is one Cloudflare Worker (Workers Free is enough) and one Twitch app. To
 6. Sign in on `/admin/` as the owner. Send streamers to `/start/`; docs/STREAMER_SETUP.md is their
    checklist.
 
-Limits: the page HTML uses the word "nesszerra" as a placeholder that `src/ui.js` swaps for the
-current channel, so leave it in the HTML. `public/overlay.js` and `public/upload.js` fall back to
-nesszerra when the URL names no channel, so always pass `?channel=`. HANDOFF.md and the other
-records describe the original deployment.
+The pages need no edits: their HTML names the site through `%SITE_CHANNEL%`, `%SITE_OWNER%`,
+`%SITE_ORIGIN%`, `%SITE_HOST%` and `%SITE_TEST_ORIGIN%`, which `vite.config.js` fills in from `site.config.js`, and
+the scripts in `scripts/` read it too. An overlay link without `?channel=` shows `defaultChannel`.
+
+Limits: three static files in `public/` still name the original domains, so edit them for yours:
+`_headers` (keeps the test site out of search results), `robots.txt` and `sitemap.xml`. HANDOFF.md
+and the other records describe the original deployment.
 
 ## Cloudflare
 `cf auth login`, `npm run build`, `npm run deploy`.

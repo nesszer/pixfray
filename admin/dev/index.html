@@ -1,6 +1,6 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PixFray owner page — nesszerra</title>
+<html lang="en" data-site-owner="%SITE_OWNER%" data-site-channel="%SITE_CHANNEL%" data-site-origin="%SITE_ORIGIN%" data-site-test-origin="%SITE_TEST_ORIGIN%"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PixFray owner page — %SITE_OWNER%</title>
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#17110c">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -17,7 +17,7 @@
   <header class="page-header">
     <h1>Owner page</h1>
     <p class="subtitle">See which streamers signed up and how far each one got with setup, turn a channel off, and check that the site is healthy.</p>
-    <p class="meta" id="meta">Only the nesszerra Twitch account can open this page.</p>
+    <p class="meta" id="meta">Only the %SITE_OWNER% Twitch account can open this page.</p>
   </header>
 
   <!-- Shown until owner access is confirmed. -->
@@ -82,10 +82,10 @@
           <h2 id="summary-title">Loading site health…</h2>
           <p id="summary-text"></p>
           <div class="stat-strip">
-            <div class="stat"><div class="label">nesszerra chat</div><div class="value" id="s-chat">–</div><div class="delta" id="s-chat-note"></div></div>
+            <div class="stat"><div class="label">%SITE_CHANNEL% chat</div><div class="value" id="s-chat">–</div><div class="delta" id="s-chat-note"></div></div>
             <div class="stat"><div class="label">Worker requests today (of 100,000)</div><div class="value" id="s-requests">–</div><div class="delta" id="s-requests-note"></div></div>
             <div class="stat"><div class="label">Errors logged</div><div class="value" id="s-errors">–</div><div class="delta" id="s-errors-note"></div></div>
-            <div class="stat"><div class="label">nesszerra pages open</div><div class="value" id="s-sockets">–</div><div class="delta" id="s-sockets-note"></div></div>
+            <div class="stat"><div class="label">%SITE_CHANNEL% pages open</div><div class="value" id="s-sockets">–</div><div class="delta" id="s-sockets-note"></div></div>
           </div>
           <div class="toolbar"><button class="btn" id="refresh" type="button">Check again</button></div>
           <p class="caveat" id="health-caveat">Request counts come from Cloudflare analytics for the whole account (the Free limit is per account and resets at 00:00 UTC). They lag by a few minutes.</p>
@@ -95,7 +95,7 @@
           <h2>Error log, newest first</h2>
           <div class="toolbar">
             <label class="inline" for="log-channel">Channel</label>
-            <select id="log-channel" class="narrow"><option value="nesszerra">nesszerra</option><option value="miolafff">miolafff</option></select>
+            <select id="log-channel" class="narrow"><option value="%SITE_CHANNEL%">%SITE_CHANNEL%</option></select>
             <label class="inline" for="log-source">Source</label>
             <select id="log-source" class="narrow"><option value="">All</option><option value="room">Durable Object</option><option value="worker">Worker</option><option value="command">Chat commands</option><option value="warn">Warnings</option></select>
             <button class="btn" id="clear-logs" type="button">Clear log</button>
@@ -132,13 +132,13 @@
 
           <section class="section" id="sec-release">
             <h3>Release a fix: test first, then promote or roll back</h3>
-            <p class="muted">Each step starts the GitHub Actions deploy workflow. Nothing changes on pixfray.xyz until you promote or use a hotfix.</p>
+            <p class="muted">Each step starts the GitHub Actions deploy workflow. Nothing changes on the production site until you promote or use a hotfix.</p>
             <p class="callout warning" id="github-missing" hidden></p>
             <ol class="steps">
               <li><strong>Save to a branch</strong> in the code editor above. Branch names start with <code>live-fix/</code> or <code>hotfix/</code>.</li>
               <li><strong>Deploy to test.</strong>
                 <div class="toolbar"><button class="btn" id="deploy-test" type="button">Deploy branch to test</button><span class="hint">Uses the branch in the code editor.</span></div></li>
-              <li><strong>Check it in OBS</strong> with the test overlay: <a id="test-overlay" href="https://staging.pixfray.xyz/overlay.html?channel=nesszerra&amp;arena=1" target="_blank" rel="noopener">staging.pixfrayf.xyz overlay</a>.</li>
+              <li><strong>Check it in OBS</strong> with the test overlay: <a id="test-overlay" href="%SITE_TEST_ORIGIN%/overlay.html?channel=%SITE_CHANNEL%&amp;arena=1" target="_blank" rel="noopener">test site overlay</a>.</li>
               <li><strong>Promote to production.</strong> Squash-merges the pull request, then deploys the base branch.
                 <div class="controls compact">
                   <div><label for="pr-number">Pull request number</label><input id="pr-number" type="number" min="1" inputmode="numeric" placeholder="Leave empty to deploy main as it is"></div>
@@ -147,7 +147,7 @@
                 </div></li>
               <li><strong>Roll back</strong> if something breaks.
                 <div class="controls compact">
-                  <div><label for="rb-target">Site</label><select id="rb-target"><option value="production">pixfray.xyz (production)</option><option value="test">staging.pixfray.xyz (staging)</option></select></div>
+                  <div><label for="rb-target">Site</label><select id="rb-target"><option value="production">%SITE_ORIGIN% (production)</option><option value="test">%SITE_TEST_ORIGIN% (staging)</option></select></div>
                   <div><label for="rb-version">Version</label><select id="rb-version"><option value="">Previous deployment</option></select></div>
                   <div class="end"><button class="btn btn-danger" id="rollback" type="button">Roll back</button></div>
                 </div></li>
@@ -172,7 +172,7 @@
           </section>
 
           <section class="section" id="sec-settings">
-            <h3>nesszerra game settings as JSON</h3>
+            <h3>%SITE_CHANNEL% game settings as JSON</h3>
             <p class="muted">The same versioned settings as the Rules tab in Mod controls, edited as raw JSON. Running duels keep their old rules.</p>
             <label for="config">Settings (JSON) <span class="muted" id="config-version"></span></label>
             <textarea id="config" class="code" rows="14" spellcheck="false"></textarea>

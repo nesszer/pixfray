@@ -9,10 +9,11 @@ import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import site from '../site.config.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const CHANNEL = (process.env.LIVE_CHANNEL || 'nesszerra').toLowerCase();
-const ORIGIN = process.env.LIVE_ORIGIN || 'https://pixfray.xyz';
+const CHANNEL = (process.env.LIVE_CHANNEL || site.defaultChannel).toLowerCase();
+const ORIGIN = process.env.LIVE_ORIGIN || site.origins.production;
 const A_CDP = process.env.LIVE_A_CDP || 'http://127.0.0.1:9333';
 const B_CDP = process.env.LIVE_B_CDP || 'http://127.0.0.1:9334';
 const SECRETS = process.env.LIVE_SECRETS || path.join(root, '..', '..', 'work', 'mini-chat-secrets-prod.json');
