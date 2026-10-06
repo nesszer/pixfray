@@ -701,56 +701,28 @@ async function pickChannel() {
   channelSearch(channels);
   liveLanding();
 }
-// Typing filters the PixFray channels at once, then asks Twitch (through /api/channels/search) for any channel by that
-// name. A channel without PixFray links to its page, which says the streamer hasn't set it up yet.
+// A viewer's fighter belongs to the stream they watch, so the search only finds channels with PixFray on. Up to
+// SHOWN rows show before typing; the rest are a search away. A name with no match says its streamer hasn't set it up.
+const SHOWN = 8;
 function channelSearch(listed) {
-  const input = $("#channel-q"), status = $("#channel-status"), found = $("#channel-found"), results = $("#channel-results");
-  let timer = 0, ask = null, last = "";
+  const input = $("#channel-q"), status = $("#channel-status"), rows = [...$("#channel-list").children];
   const norm = (s) => s.trim().toLowerCase().replace(/^@/, "").replace(/^(https?:\/\/)?(www\.)?twitch\.tv\//, "").replace(/[/?#].*$/, "");
-  const row = (c) => {
-    const meta = [c.live ? "Live" + (c.game ? ": " + c.game : "") : "Offline", c.pixfray ? "" : "PixFray not set up yet"].filter(Boolean).join(" · ");
-    const link = h("a", { class: "channel" + (c.pixfray ? "" : " is-off"), href: "/?channel=" + encodeURIComponent(c.login) },
-      h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c.name.toLowerCase() === c.login ? c.name : c.login),
-        h("span", { class: "channel-meta" }, meta)),
-      h("span", { class: "channel-go" }, c.pixfray ? "Fight in " + c.login : "View"));
-    return h("li", { "data-login": c.login }, link);
-  };
-  const run = async (q) => {
-    ask?.abort(); ask = new AbortController();
-    const signal = ask.signal;
-    let r;
-    try { r = await fetch("/api/channels/search?q=" + encodeURIComponent(q), { signal, headers: { accept: "application/json" } }); }
-    catch { return; }
-    const data = await r.json().catch(() => null);
-    if (signal.aborted || norm(input.value) !== q) return;
-    if (!r.ok) { status.textContent = data?.error || "Twitch search is unavailable right now."; return; }
-    if (data?.search === false) return;
-    const rows = (Array.isArray(data?.channels) ? data.channels : []).filter((c) => !listed.includes(c.login));
-    results.replaceChildren(...rows.map(row));
-    found.hidden = !rows.length;
-    const shown = listed.filter((c) => c.includes(q)).length;
-    status.textContent = shown || rows.length ? "" : "No Twitch channel matches " + q + ".";
-  };
-  input.addEventListener("input", () => {
+  const filter = () => {
     const q = norm(input.value);
     let shown = 0;
-    for (const li of $("#channel-list").children) { const hit = !q || (li.dataset.login || "").includes(q); li.hidden = !hit; shown += hit ? 1 : 0; }
-    clearTimeout(timer); ask?.abort();
-    if (q === last) return;
-    last = q;
-    if (q.length < 2) { found.hidden = true; results.replaceChildren(); status.textContent = ""; return; }
-    status.textContent = shown ? "" : "Searching Twitch…";
-    timer = setTimeout(() => run(q), 300);
-  });
-  // Enter opens the one match, or the typed channel when the name is a valid Twitch login.
+    for (const li of rows) { const hit = q ? (li.dataset.login || "").includes(q) : shown < SHOWN; li.hidden = !hit; shown += hit ? 1 : 0; }
+    if (!q) status.replaceChildren(listed.length > SHOWN ? "Type a name to find the other " + (listed.length - SHOWN) + " channels." : "");
+    else if (shown) status.replaceChildren();
+    else status.replaceChildren(/^[a-z0-9_]{3,25}$/.test(q) ? q + " hasn't set up PixFray yet." : "No channel with PixFray matches that name.");
+  };
+  input.addEventListener("input", filter);
+  filter();
+  // Enter opens the exact match, or the only one left.
   $("#channel-search").addEventListener("submit", (e) => {
     e.preventDefault();
-    const q = norm(input.value);
-    const visible = [...document.querySelectorAll("#channel-list li:not([hidden]) a, #channel-results li a")];
-    const exact = visible.find((a) => a.closest("li").dataset.login === q);
-    const go = exact || (visible.length === 1 ? visible[0] : null);
-    if (go) location.href = go.href;
-    else if (/^[a-z0-9_]{3,25}$/.test(q)) location.href = "/?channel=" + encodeURIComponent(q);
+    const q = norm(input.value), visible = rows.filter((li) => !li.hidden);
+    const go = visible.find((li) => li.dataset.login === q) || (visible.length === 1 ? visible[0] : null);
+    if (go) location.href = go.querySelector("a").href;
   });
 }
 // On wide screens the picker's island is the intro's live arena, not a picture: each channel's top fighter

@@ -2,7 +2,6 @@
 // their channel lives in AuthStore:
 //   channel:<login> = { id, login, enabledAt, pausedAt?, pausedBy? }   kept ~20 years; paused keeps fighters and ranks
 import { record, CHANNELS } from './auth.js';
-import { helix } from './eventsub.js';
 
 export const MAX_CHANNELS = 200;
 export const CHANNEL_MS = 20 * 365 * 86400000;
@@ -49,36 +48,6 @@ export async function publicChannels(env) {
   const logins = [...CHANNELS, ...rows.sort((a, b) => (a.enabledAt || 0) - (b.enabledAt || 0)).map((c) => c.login)];
   channelList = { logins, at: Date.now() };
   return logins;
-}
-
-// Public: Twitch channels matching a typed name, so a viewer can find any stream, not only the ones listed. Each row
-// says whether PixFray is on there. Channels with PixFray on come first, then live ones. Answers are cached per
-// isolate for a minute, and each address gets 30 searches a minute, so typing can't burn the app's Helix budget.
-const searches = new Map(), searchers = new Map();
-const SEARCH_MS = 60000, SEARCHES_PER_MIN = 30;
-export const searchQuery = q => String(q || '').replace(/[\u0000-\u001f]/g, '').trim().toLowerCase().slice(0, 40);
-export async function searchChannels(env, q, ip = '') {
-  const query = searchQuery(q);
-  if (query.length < 2) return [];
-  const now = Date.now(), hit = searches.get(query);
-  if (hit && now - hit.at < SEARCH_MS) return hit.rows;
-  const seen = searchers.get(ip);
-  const used = seen && now - seen.at < 60000 ? seen : { at: now, n: 0 };
-  if (++used.n > SEARCHES_PER_MIN) throw fail(429, 'Too many searches, try again in a minute', 'busy');
-  if (searchers.size > 5000) searchers.clear();
-  searchers.set(ip, used);
-  const r = await helix(env, 'GET', '/search/channels?first=10&query=' + encodeURIComponent(query));
-  if (!r.ok) throw fail(502, 'Twitch search is unavailable right now', 'twitch');
-  const data = (await r.json()).data || [];
-  const rows = await Promise.all(data.filter((c) => LOGIN.test(c.broadcaster_login || '')).map(async (c, i) => {
-    const state = await channelState(env, c.broadcaster_login);
-    return { login: c.broadcaster_login, name: String(c.display_name || c.broadcaster_login).slice(0, 40), live: !!c.is_live, game: String(c.game_name || '').slice(0, 60), pixfray: isOn(state), i };
-  }));
-  rows.sort((a, b) => (b.pixfray - a.pixfray) || (b.live - a.live) || (a.i - b.i));
-  const out = rows.map(({ i, ...row }) => row);
-  if (searches.size > 500) searches.clear();
-  searches.set(query, { rows: out, at: now });
-  return out;
 }
 
 const saveChannel = (env, rec) => { forgetChannel(rec.login); return record(env, 'channel:' + rec.login, rec, Date.now() + CHANNEL_MS); };

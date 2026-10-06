@@ -115,15 +115,11 @@ try {
     assert.equal(await page.locator('#save-signin').isVisible(), false);
     await noOverflow(page, 'channel picker ' + s.name);
     await page.screenshot({ path: shots + '/viewer-picker-' + s.name + '.png', fullPage: true });
-    // the search filters the PixFray channels and lists any other Twitch channel by that name
-    await page.route('**/api/channels/search?*', (r) => json(r, { search: true, channels: [
-      { login: 'nesszerra', name: 'nesszerra', live: false, game: '', pixfray: true },
-      { login: 'some_streamer', name: 'Some_Streamer', live: true, game: 'Chess', pixfray: false }] }));
-    await page.fill('#channel-q', 'some');
-    await page.waitForSelector('#channel-results a');
-    assert.equal(await page.locator('#channel-list li:visible').count(), 0, 'PixFray rows filter as you type');
-    assert.deepEqual(await page.locator('#channel-results a').evaluateAll((a) => a.map((x) => x.getAttribute('href'))), ['/?channel=some_streamer'], 'listed channels are not repeated');
-    assert.match(await page.locator('#channel-results').textContent(), /Live: Chess · PixFray not set up yet/);
+    // the search only finds channels with PixFray on; any other name says its streamer hasn't set it up
+    await page.fill('#channel-q', 'some_streamer');
+    assert.equal(await page.locator('#channel-list li:visible').count(), 0, 'rows filter as you type');
+    assert.match(await page.locator('#channel-status').textContent(), /some_streamer hasn't set up PixFray yet/);
+    assert.equal(await page.locator('a[href*="some_streamer"]').count(), 0, 'no link to a channel without PixFray');
     await noOverflow(page, 'channel search ' + s.name);
     await page.screenshot({ path: shots + '/viewer-picker-search-' + s.name + '.png', fullPage: true });
     await page.fill('#channel-q', 'https://www.twitch.tv/miolafff');
@@ -134,6 +130,22 @@ try {
     await page.waitForSelector('#characters input[name=character]');
     assert.match(await page.locator('#hero-title').textContent(), /miolafff/);
     assert.equal(await page.locator('.brand').getAttribute('href'), '/?channel=miolafff', 'the brand link keeps the channel');
+    await context.close();
+  }
+  // 1c. With many channels signed up, eight rows show and the rest are a search away.
+  {
+    const { context, page } = await newPage(sizes[0]);
+    const many = ['nesszerra', 'miolafff', ...Array.from({ length: 10 }, (_, i) => 'streamer_' + i)];
+    await page.route('**/api/channels', (r) => json(r, { channels: many }));
+    await page.goto(base + '/');
+    await page.waitForSelector('#channel-list a');
+    assert.equal(await page.locator('#channel-list li:visible').count(), 8);
+    assert.match(await page.locator('#channel-status').textContent(), /find the other 4 channels/);
+    await page.fill('#channel-q', 'streamer_9');
+    assert.deepEqual(await page.locator('#channel-list li:visible a').evaluateAll((a) => a.map((x) => x.getAttribute('href'))), ['/?channel=streamer_9']);
+    assert.equal(await page.locator('#channel-status').textContent(), '');
+    await page.press('#channel-q', 'Enter');
+    await page.waitForURL(/channel=streamer_9/);
     await context.close();
   }
 
