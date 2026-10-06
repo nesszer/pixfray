@@ -65,6 +65,19 @@ function room(env = {}, { quick = false } = {}) {
 }
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
+test('export: every table a copy needs, BLOBs as base64', async () => {
+  const r = room();
+  await r.save('u1', 'alice');
+  r.ctx.storage.sql.exec("INSERT INTO custom_characters (id, meta, atlas, bytes, created_by, created_at) VALUES ('c-1', '{}', ?, 3, 'u1', 1)", new Uint8Array([1, 2, 255]));
+  const { status, body } = await r.call('/export');
+  assert.equal(status, 200);
+  assert.equal(body.game_state[0].channel, 'nesszerra');
+  assert.deepEqual(body.profiles.map((p) => p.username), ['alice']);
+  assert.deepEqual(body.custom_characters[0].atlas, { $b64: 'AQL/' });
+  for (const t of ['config_history', 'se_settings', 'builds', 'streams', 'custom_pets', 'owned_items']) assert.ok(Array.isArray(body[t]), t);
+  assert.equal((await r.call('/export', { secret: 'wrong' })).status, 403);
+});
+
 test('room rejects calls without the internal secret', async () => {
   const r = room();
   assert.equal((await r.call('/state', { secret: 'wrong-wrong-wrong-wrong' })).status, 403);

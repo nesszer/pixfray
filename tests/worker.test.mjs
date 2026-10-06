@@ -339,6 +339,20 @@ test('dev token (test site only): a missing binding, a wrong token or no token i
   assert.equal(f.forwarded.length, 0, 'nothing reached a room');
 });
 
+test('channel export (dev token only): room tables plus mod access, for a site of its own', async () => {
+  const f = environment();
+  assert.equal((await worker.fetch(req('/api/devtools/miolafff/export', 'GET', undefined, await signedIn(f, true)), f.env)).status, 404, 'an owner session alone cannot export');
+  f.env.DEV_TOOLS_TOKEN = DEV;
+  f.entries.set('broadcaster:miolafff', { sealed: 'x' });
+  f.entries.set('modsconnected:miolafff', { at: 5 });
+  const res = await worker.fetch(devReq('/api/devtools/miolafff/export'), f.env);
+  assert.equal(res.status, 200);
+  const out = await res.json();
+  assert.deepEqual({ channel: out.channel, tables: out.tables, auth: out.auth }, { channel: 'miolafff', tables: { path: '/export' }, auth: { broadcaster: { sealed: 'x' }, modsconnected: { at: 5 } } });
+  assert.deepEqual({ channel: f.forwarded.at(-1).channel, method: f.forwarded.at(-1).options.method }, { channel: 'miolafff', method: undefined });
+  assert.equal((await worker.fetch(devReq('/api/devtools/miolafff/export', {}), f.env)).status, 405);
+});
+
 test('dev token (test site only): the right token acts as the owner and can seed profiles and chat lines', async () => {
   const f = environment();
   f.entries.set('owner:nesszerra', { id: '1' });

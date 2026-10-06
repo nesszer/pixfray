@@ -155,10 +155,17 @@ export default {async fetch(request,env,ctx){
     if(!path.startsWith('/api/'))return channelPageRedirect(env,url)||await page(request,env,url);
     if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
     const s=dev?null:await session(request,env),user=dev?await devUser(env):s?.user||null,owner=await isOwner(env,user);
-    const devMatch=path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop)$/);
+    const devMatch=path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop|export)$/);
     if(path.startsWith('/api/devtools/')){
       if(!dev||!devMatch)return json({error:'Not found'},404);
       const st=await channelState(env,devMatch[1]);if(!isOn(st))return json(offError(st),403);
+      // A copy of the channel for a site of its own (branch miolaf-frozen imports it): room tables and mod access.
+      if(devMatch[2]==='export'){
+        if(request.method!=='GET')return json({error:'Use GET'},405);
+        const r=await roomFetch(null,env,devMatch[1],'/export');if(!r.ok)return json(await r.json(),r.status);
+        const [broadcaster,modsconnected]=await Promise.all([record(env,'broadcaster:'+devMatch[1]),record(env,'modsconnected:'+devMatch[1])]);
+        return json({channel:devMatch[1],at:Date.now(),tables:await r.json(),auth:{broadcaster,modsconnected}});
+      }
       if(request.method!=='POST')return json({error:'Use POST'},405);
       return await handleDevtools(request,env,devMatch[1],devMatch[2],await bodyJson(request,4000));
     }

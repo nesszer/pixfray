@@ -238,6 +238,14 @@ export class ChannelRoom extends DurableObject {
     const stored = this.readStoredState();
     if (stored && stored.channel !== channel) return json({ error: "channel binding mismatch" }, 409);
 
+    // Owner dev token only (server/worker.js /api/devtools/:channel/export): every row of the tables a copy needs. BLOBs as {$b64}.
+    if (path === "/export" && request.method === "GET") {
+      const b64 = (v) => (v instanceof ArrayBuffer || ArrayBuffer.isView(v) ? { $b64: btoa(Array.from(new Uint8Array(v.buffer ?? v, v.byteOffset ?? 0, v.byteLength), (c) => String.fromCharCode(c)).join("")) } : v);
+      const out = {};
+      for (const table of ["game_state", "profiles", "config_history", "se_settings", "custom_characters", "builds", "streams", "custom_pets", "owned_items"])
+        out[table] = this.ctx.storage.sql.exec(`SELECT * FROM ${table}`).toArray().map((row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, b64(v)])));
+      return json(out);
+    }
     if (path === "/state" && request.method === "GET") {
       const changed = this.advance(channel, { type: "tick" }, Date.now());
       if (changed.changed) {
