@@ -317,6 +317,16 @@ try {
   await looksPage.evaluate(lines => lines.forEach(line => window.__sendIrc(line)), [irc('cleo', '701', 'again'), irc('dan', '702', 'again!')]);
   await looksPage.waitForTimeout(2500);
   assert.deepEqual(lookReads, ['cleo,dan', 'cleo,dan'], 'a 429 is retried once as a batch; then hits and misses are cached');
+  // Cleo changes her fighter on the website: the server lists her and the stream shows the new look. Ten quiet minutes
+  // later the server drops her, and the stream keeps the new look instead of the one fetched at her first message.
+  const cleoNew = { userId: '701', username: 'cleo', displayName: 'Cleo Remade', avatar: 'neon', color: '#3355ff', defaultAbility: 'strike', hp: 100, elo: 1049, registered: true, lastSeen: Date.now() };
+  await looksPage.evaluate(snap => window.__sendArena(0, snap), { ...initial, type: 'snapshot', revision: 5, players: [cleoNew], duels: [], events: [] });
+  await looksPage.waitForFunction(() => window.__arenaDebug().players.some(p => p.label === 'Cleo Remade'));
+  await looksPage.evaluate(snap => window.__sendArena(0, snap), { ...initial, type: 'snapshot', revision: 6, players: [], duels: [], events: [] });
+  await looksPage.waitForFunction(() => window.__arenaDebug().revision === 6);
+  looks = await looksPage.evaluate(() => window.__arenaDebug().players);
+  const remade = looks.find(p => p.userId === '701');
+  assert.deepEqual([remade?.label, remade?.color, remade?.elo], ['Cleo Remade', '#3355ff', 1049], 'a viewer the server dropped keeps the look from its last snapshot');
   await looksPage.close();
 
   const demoPage = await context.newPage();

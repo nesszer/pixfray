@@ -327,6 +327,12 @@ async function start() {
   // Registered profiles (saved on the website) decide name, color and character. Unregistered chatters keep their chat look.
   // A saved look is cached 5 min and "no saved fighter" 1 min, since viewers often save mid-stream. Lookups are batched
   // every 2 s so a few OBS sources on one connection stay under the edge rate limit (20 requests per 10 s per IP).
+  const LOOK_FIELDS = ['avatar', 'color', 'hat', 'pet', 'petTier', 'defaultAbility', 'recolor', 'petColor', 'accessory', 'trail', 'winEffect', 'taunt', 'title', 'displayName', 'elo'];
+  function lookOf(profile, username) {
+    const look = { username, registered: true };
+    for (const field of LOOK_FIELDS) if (profile[field] !== undefined) look[field] = profile[field];
+    return look;
+  }
   function queueLook(login) {
     const hit = savedLooks.get(login);
     if (!arenaEnabled || arenaDemo || (hit && Date.now() - hit.at < (hit.look ? 300_000 : 60_000))) return;
@@ -407,6 +413,14 @@ async function start() {
     profilesById.clear();
     for (const profile of Array.isArray(snapshot.players) ? snapshot.players : []) {
       if (profile?.userId !== undefined && profile?.userId !== null) profilesById.set(String(profile.userId), profile);
+    }
+    // A registered profile in the snapshot is also the newest saved look for its login. The server drops a viewer from
+    // its list after 10 quiet minutes and the overlay then falls back to the saved look, which must not be one fetched
+    // before they changed their fighter on the website or played a duel.
+    const lookAt = Date.now();
+    for (const profile of profilesById.values()) {
+      const login = String(profile.username || '').toLowerCase().slice(0, 64);
+      if (profile.registered && login) savedLooks.set(login, { at: lookAt, look: lookOf(profile, login) });
     }
     arenaDuels = Array.isArray(snapshot.duels) ? snapshot.duels : [];
     if (arenaChat?.connected === true) arenaTransport = 'live';
@@ -757,7 +771,9 @@ async function start() {
       p.color = sanitizeColor(settings[username]?.color) || p.chatColor || p.color;
     }
     applyArenaProfile(p);
-    if (!p.arenaProfile?.registered) queueLook(username);
+    // A saved look older than 5 minutes is asked for again when its viewer chats, so a fighter changed on the website
+    // reaches the stream even if the overlay missed the snapshot. Viewers the server lists come from its snapshots.
+    if (!profilesById.get(p.userId)?.registered) queueLook(username);
     const ranked = Boolean(p.arenaProfile?.registered);
     p.lastSeen = now; p.messageId = message.id || ''; p.text = bubbles ? truncateText(message.text || '', 72) : ''; p.bubbleUntil = now + 4000;
     const command = parseCommand(message.text || '');
