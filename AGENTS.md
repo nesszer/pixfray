@@ -37,8 +37,9 @@ It is not wrangler: never `wrangler deploy` or `--env`.
 - **Every behavior change gets a unit test** in `tests/*.test.mjs` and a doc update: routes, rules and config in
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
 - **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.mjs`. Don't set `HEADLESS=1`.
-- **Design:** the site's own system is the tokens and classes in `public/dashboard.css`; follow it. Sub-pages may use
-  scroll-scrubbed baked stills (`src/scrub.js`), never a live full-page WebGL backdrop.
+- **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in
+  `public/dashboard.css` (tokens, classes, one gold accent, lock-on selection) and the patterns reviews keep catching.
+  Claude Code loads it here: @DESIGN.md
 
 ## Where things go
 
@@ -75,6 +76,7 @@ Each one has happened here. Check for it by name before calling work done.
 ## Docs index
 
 ```
+[Design]|DESIGN.md: reader per page, structure, copy, tokens, motion, overlay, responsive, primitives, avoid list, verify
 [PixFray docs]|root: ./docs
 |README.md: map of these docs
 |STREAMER_SETUP.md: sign in on /start, OBS overlay, add the PixFray bot, mods, viewer sprites, StreamElements channels, troubleshooting, turning PixFray or the bot off
