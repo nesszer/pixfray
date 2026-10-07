@@ -114,6 +114,6 @@ test('deploy workflow parses and exposes the inputs /api/dev dispatches', (t) =>
 test('CI workflow parses and never sees secrets', (t) => {
   const wf = loadYaml(t, '.github/workflows/ci.yml');
   if (!wf) return;
-  assert.ok(wf.jobs.test.steps.some((s) => s.run === 'npm run test:unit'));
+  assert.ok(wf.jobs.test.steps.some((s) => s.run === 'bun run test:unit'));
   assert.doesNotMatch(readFileSync('.github/workflows/ci.yml', 'utf8'), /secrets\./);
 });

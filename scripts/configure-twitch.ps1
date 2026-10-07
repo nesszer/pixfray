@@ -33,5 +33,5 @@ if (-not (Test-Path -LiteralPath $devVars)) {
 }
 $clientSecret = $null
 Write-Host "Saved the secrets to $secretPath. No secrets were printed."
-Write-Host "Deploy from the project using: npx cf deploy --mode test --secrets-file $secretPath"
-Write-Host "After testing: npx cf deploy --secrets-file $secretPath"
+Write-Host "Deploy from the project using: bunx cf deploy --mode test --secrets-file $secretPath"
+Write-Host "After testing: bunx cf deploy --secrets-file $secretPath"

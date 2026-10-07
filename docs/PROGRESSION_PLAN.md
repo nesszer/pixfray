@@ -77,7 +77,7 @@ the lines, and the checklist marks each command Working once it has been used.
 
 ## End-to-end testing (every stage)
 
-Unit tests and `npm run -s test:all` come first. Then each stage is checked for real, on the test
+Unit tests and `bun run test:all` come first. Then each stage is checked for real, on the test
 site first and on prod after the deploy.
 
 **OBS (local, OBS WebSocket 5 on port 4455)**
@@ -95,7 +95,7 @@ site first and on prod after the deploy.
   account, each in its own Chrome window (main on port 9333, alt on 9334). I never type your
   passwords.
 
-**Real chat (`npm run test:live`, extended)**
+**Real chat (`bun run test:live`, extended)**
 - **Both accounts:** they run `!checkin`, `!wallet`, `!give` (including every limit and refusal)
   and `!pet`. Each bot reply must appear in both chat windows and match the website and the OBS
   frame.

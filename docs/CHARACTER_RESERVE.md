@@ -17,7 +17,7 @@ scaling.
 To import one: copy the poses into a single-row atlas (bottom-centre aligned in a fixed cell, pixels
 unchanged), add the entry to `characters.json` (set `"combatFallback": "effects"` when there are no
 attack frames), copy the license file from the archive into `public/assets/`, and add a row to
-`docs/ASSET_LICENSES.md`. `npm run test:unit` (`tests/content.test.mjs`) then checks that every frame
+`docs/ASSET_LICENSES.md`. `bun run test:unit` (`tests/content.test.mjs`) then checks that every frame
 rectangle sits inside its image and that every character is listed in `docs/ASSET_LICENSES.md`.
 
 Frame columns: **walk** and **idle** are movement frames; **attack** and **ko** are combat frames.

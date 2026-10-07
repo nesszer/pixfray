@@ -89,7 +89,7 @@ for (const size of sizes) {
   assert.equal(await page.isDisabled('#save-file'), true);
   assert.deepEqual(await page.$$eval('#sec-code, #sec-release', (s) => s.map((x) => x.hidden)), [true, true]);
   assert.equal(await page.$eval('#local-release', (p) => p.hidden), false);
-  assert.match(await page.textContent('#local-release'), /npx cf deploy --mode test/);
+  assert.match(await page.textContent('#local-release'), /bunx cf deploy --mode test/);
   assert.equal(await page.textContent('#dev-tools-title'), 'Developer tools: raw settings and integrations');
   assert.match(await page.textContent('#s-requests-note'), /not configured/);
   assert.equal(await page.$eval('#dev-tools', (d) => d.open), false, 'developer tools start folded');

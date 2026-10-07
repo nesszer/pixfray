@@ -111,7 +111,7 @@
           <summary id="dev-tools-title">Developer tools: code editor, releases and raw settings</summary>
           <p class="muted">For fixing the site itself. The code editor and releases need GitHub access, and Worker versions need the Cloudflare API; Integrations at the bottom lists what is set up. Running channels don't need any of this.</p>
 
-          <p class="callout" id="local-release" hidden>Code changes and releases run from a local checkout with the <code>gh</code> and <code>cf</code> command-line tools: deploy to staging with <code>npx cf deploy --mode test</code>, check it, then deploy to production. The code editor and release buttons appear here only when GitHub is set up as in docs/LIVE_FIX.md.</p>
+          <p class="callout" id="local-release" hidden>Code changes and releases run from a local checkout with the <code>gh</code> and <code>cf</code> command-line tools: deploy to staging with <code>bunx cf deploy --mode test</code>, check it, then deploy to production. The code editor and release buttons appear here only when GitHub is set up as in docs/LIVE_FIX.md.</p>
 
           <section class="section" id="sec-code">
             <h3>Code editor: changes go to a branch, never straight to main</h3>

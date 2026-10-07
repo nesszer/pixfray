@@ -1,5 +1,5 @@
 // Lane B UI test: viewer dashboard ("/") and mod controls ("/admin/") at 1280px and 390px.
-// Signed-out runs against the real local server (`npx cf dev` / vite); signed-in states stub /api/* with page.route.
+// Signed-out runs against the real local server (`bunx cf dev` / vite); signed-in states stub /api/* with page.route.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5193 node tests/ui.mjs
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';

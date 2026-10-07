@@ -6,7 +6,7 @@
 // It refuses to run while the channel is live. The test duels change both accounts' Elo, wins and losses.
 // Duel replies must not give the result away: the leaderboard may change only after the overlay announced the winner.
 // The overlay shows no winner banner; on a PixFray bot channel the bot posts the result line, after the overlay.
-// Run: npm run test:live   (env: LIVE_CHANNEL, LIVE_ORIGIN, LIVE_A_CDP, LIVE_B_CDP, LIVE_SECRETS, LIVE_OUT, LIVE_BOT)
+// Run: bun run test:live   (env: LIVE_CHANNEL, LIVE_ORIGIN, LIVE_A_CDP, LIVE_B_CDP, LIVE_SECRETS, LIVE_OUT, LIVE_BOT)
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';

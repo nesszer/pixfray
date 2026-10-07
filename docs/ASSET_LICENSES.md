@@ -12,7 +12,7 @@ MIT) is separate from these asset licenses.
 The artwork of the 15 launch characters is unchanged. Only the atlas layout changed: each pose was copied
 into a single-row atlas, bottom-centre aligned in a fixed cell, so the frame rectangles in
 `public/assets/characters.json` line up. The 24 v3 characters are built the same way by
-`scripts/build-characters.mjs` (`npm run build:characters`), which also resizes where noted below: the pzUH
+`scripts/build-characters.mjs` (`bun run build:characters`), which also resizes where noted below: the pzUH
 art is scaled down to about 104 px tall (area average), pixel art is scaled up by a whole number with
 nearest-neighbour (no blur), and smooth art is scaled up 2x with bilinear filtering. CC0 permits modification.
 The script reads the original archives (listed below with their SHA-256 in the script), so the build is

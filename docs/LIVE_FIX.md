@@ -6,8 +6,8 @@ for the sign-up link and following each streamer's setup; the tools below are fo
 to undo it.
 
 **How releases work today (2026-10-06):** from a local checkout, with the `gh` and `cf`
-command-line tools. Deploy to staging with `npx cf deploy --mode test`, check
-https://staging.pixfray.xyz, then deploy to production with `npx cf deploy`. GitHub isn't set up
+command-line tools. Deploy to staging with `bunx cf deploy --mode test`, check
+https://staging.pixfray.xyz, then deploy to production with `bunx cf deploy`. GitHub isn't set up
 on the Worker, so the owner page hides the code editor and release steps and shows this flow
 instead. The rest of this file describes the in-browser flow for when `GITHUB_TOKEN` is set.
 
@@ -90,7 +90,7 @@ to `production` for a second confirmation. The jobs already use `environment: <t
 - `AUTH_SECRET`, `INTERNAL_SECRET` and the Twitch secrets must already be set on each Worker.
   `scripts/release.mjs` checks that the uploaded version has `AUTH_SECRET` and `INTERNAL_SECRET`,
   and refuses to move traffic if either is missing.
-- `.github/workflows/ci.yml` runs `npx cf build` without credentials. That hasn't been tried on a
+- `.github/workflows/ci.yml` runs `bunx cf build` without credentials. That hasn't been tried on a
   GitHub runner yet. If it fails, drop that step; the unit tests remain.
 
 ## Security limits
@@ -98,7 +98,7 @@ to `production` for a second confirmation. The jobs already use `environment: <t
 - The owner session effectively has push access to the repo. Anyone holding that session can
   change code on a branch and, with a promote, in production. Sign out on shared machines.
 - The editor refuses `.dev.vars*`, `.env*`, `.secrets*`, `*.dpapi`, `.github/`, `.git`, `node_modules`, `dist`, `.wrangler` and `.cloudflare`, and files over 512 KB.
-- Build files open read-only: `package.json`, `package-lock.json`, `.npmrc`, `site.config.js`,
+- Build files open read-only: `package.json`, `bun.lock`, `.npmrc`, `site.config.js`,
   `cloudflare.config.ts`, `vite.config.js` and `scripts/` run with the deploy workflow's Cloudflare token, so
   saving them returns 403 `build_file`. Change them from a local checkout.
 - Code on a `live-fix/` branch runs in CI while `CLOUDFLARE_API_TOKEN` is set on the release step.

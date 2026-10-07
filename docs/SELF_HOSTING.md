@@ -4,7 +4,7 @@ PixFray is one Cloudflare Worker (Workers Free is enough) and one Twitch app.
 
 ## 1. Get the code
 
-Fork the repo and run `npm install`.
+Fork the repo and run `bun install`.
 
 ## 2. Edit `site.config.js`
 
@@ -33,11 +33,11 @@ Put the deploy secrets in `~/.pixfray/secrets.json`, outside the repo folder:
 ## 5. Deploy
 
 ```bash
-npx cf auth login
+bunx cf auth login
 ```
 
 ```bash
-npx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json
+bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json
 ```
 
 Check the test site, then deploy production with the same command without `--mode test`. The hosts

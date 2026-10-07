@@ -381,7 +381,7 @@ test('code editor request validation happens before GitHub is called', async (t)
   const big = await call(f, '/api/dev/code/save', 'POST', { path: 'README.md', content: 'x'.repeat(600 * 1024), branch: 'live-fix/a' }, owner);
   assert.equal(big.status, 413);
   // Files the deploy workflow runs with its Cloudflare token can be read but not saved.
-  for (const path of ['package.json', 'package-lock.json', '.npmrc', 'site.config.js', 'cloudflare.config.ts', 'vite.config.js', 'scripts/release.mjs', 'scripts/lib/zip-read.mjs']) {
+  for (const path of ['package.json', 'package-lock.json', 'bun.lock', 'bunfig.toml', '.npmrc', 'site.config.js', 'cloudflare.config.ts', 'vite.config.js', 'scripts/release.mjs', 'scripts/lib/zip-read.mjs']) {
     assert.equal(validPath(path), true, path);
     const r = await call(f, '/api/dev/code/save', 'POST', { path, content: 'x', branch: 'live-fix/a' }, owner);
     assert.deepEqual([r.status, r.body.reason], [403, 'build_file'], path);

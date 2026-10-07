@@ -38,14 +38,15 @@ How duels are rolled, dollars and limits: [docs/DUELS.md](docs/DUELS.md).
 ## Run it locally
 
 ```bash
-npm install
+bun install
 ```
 
 ```bash
-npm run dev
+bun run dev
 ```
 
-Needs Node 22.18+ and a `.dev.vars` file first. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Needs [Bun](https://bun.sh) 1.4+, Node 22.18+ and a `.dev.vars` file first. See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Docs
 

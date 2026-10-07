@@ -2,10 +2,11 @@
 
 ## Run it locally
 
-Requires Node 22.18+.
+Requires [Bun](https://bun.sh) 1.4+ and Node 22.18+. Bun installs the packages and runs the
+scripts; the tools themselves (`cf`, Vite, Playwright, the tests) run on Node.
 
 ```bash
-npm install
+bun install
 ```
 
 Create `.dev.vars` in the repo folder with throwaway local values (never your deployed secrets):
@@ -17,7 +18,7 @@ printf 'AUTH_SECRET=%s\nINTERNAL_SECRET=%s\nTWITCH_CLIENT_ID=local-dev-client-id
 On Windows, `pwsh -NoProfile -File scripts/configure-twitch.ps1` writes it for you. Then:
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 - Open http://127.0.0.1:5173.
@@ -26,9 +27,9 @@ npm run dev
 
 ## Tests
 
-`npm run test:all` runs:
+`bun run test:all` runs:
 
-- the unit tests (`npm run test:unit` on its own),
+- the unit tests (`bun run test:unit` on its own),
 - both builds and the workerd upload test,
 - the browser tests,
 - a local end-to-end duel against a `cf dev` it starts on port 5199 with its own state folder.
@@ -38,7 +39,7 @@ and `MINI_PERSIST` change the dev port and the local state folder.
 
 ### Live test
 
-`npm run test:live` plays real duels through Twitch chat on a live deployment.
+`bun run test:live` plays real duels through Twitch chat on a live deployment.
 
 - It needs two Chromes with remote debugging, each signed in to Twitch and PixFray (`LIVE_A_CDP`,
   `LIVE_B_CDP`).

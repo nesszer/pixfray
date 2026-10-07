@@ -73,7 +73,7 @@ export function api(env, fetchImpl = fetch) {
 
 function uploadVersion(opts) {
   const args = ['cf', 'workers', 'versions', 'create', ...(opts.target === 'test' ? ['--mode', 'test'] : []), '--tag', opts.tag, '--message', opts.message || 'deploy ' + opts.tag];
-  const r = spawnSync('npx', args, { stdio: 'inherit', shell: process.platform === 'win32' });
+  const r = spawnSync('bunx', args, { stdio: 'inherit', shell: process.platform === 'win32' });
   if (r.status !== 0) throw new Error('cf workers versions create failed (exit ' + r.status + ')');
 }
 

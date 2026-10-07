@@ -1,6 +1,6 @@
 // Runs every check in order and stops at the first failure: unit tests, both cf builds, the workerd upload test,
 // then a local `cf dev` (own port, own state folder, seeded test sessions) for the browser and end-to-end tests.
-// Usage: npm run test:all          (MINI_PORT=5199 by default; set MINI_BASE_URL to reuse a running, seeded server
+// Usage: bun run test:all          (MINI_PORT=5199 by default; set MINI_BASE_URL to reuse a running, seeded server
 //                                   that was started with MINI_LOCAL_TEST=1, and MINI_AUTH_SECRET to its AUTH_SECRET)
 // Nothing here deploys or talks to Twitch or a deployed site. The local `cf dev` runs with MINI_LOCAL_TEST=1, so
 // Connect chat records a local subscription, and e2e-local.mjs signs EventSub webhooks with the AUTH_SECRET from
@@ -34,8 +34,8 @@ function run(name, cmd, env = {}) {
 }
 let server = null;
 async function start() {
-  console.log('\n=== start: npx cf dev on ' + base + ' (state ' + persist + ')');
-  server = spawn('npx cf dev', { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MINI_PORT: port, MINI_PERSIST: persist, MINI_LOCAL_TEST: '1' } });
+  console.log('\n=== start: bunx cf dev on ' + base + ' (state ' + persist + ')');
+  server = spawn('bunx cf dev', { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MINI_PORT: port, MINI_PERSIST: persist, MINI_LOCAL_TEST: '1' } });
   server.stdout.on('data', () => {}); server.stderr.on('data', () => {});
   for (let i = 0; i < 120; i++) {
     try { if ((await fetch(base + '/api/health')).ok) return; } catch {}
@@ -54,9 +54,9 @@ function summary() {
 }
 process.on('exit', stop);
 try {
-  run('unit tests', 'npm run -s test:unit');
-  run('cf build', 'npx cf build');
-  run('cf build (test)', 'npx cf build --mode test');
+  run('unit tests', 'bun run test:unit');
+  run('cf build', 'bunx cf build');
+  run('cf build (test)', 'bunx cf build --mode test');
   run('module versions', 'node tests/build-versions.mjs');
   run('upload (workerd)', 'node tests/upload-workerd.mjs');
   if (!external) {

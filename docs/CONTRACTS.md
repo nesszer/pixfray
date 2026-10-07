@@ -471,15 +471,15 @@ Use SQLite DOs only, and nothing outside Cloudflare Free.
 ## 9. Tests and build
 
 ```
-npm run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.mjs"
-npx cf build               # production build ("Build complete"; ignore the Docker error)
-npx cf build --mode test
-npx cf dev                 # local only; reads .dev.vars. Never deploy from a lane.
-npm run test:all           # everything below, in order (scripts/test-all.mjs)
+bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.mjs"
+bunx cf build              # production build ("Build complete"; ignore the Docker error)
+bunx cf build --mode test
+bunx cf dev                # local only; reads .dev.vars. Never deploy from a lane.
+bun run test:all           # everything below, in order (scripts/test-all.mjs)
 ```
 
 - `MINI_PORT` (default 5173) and `MINI_PERSIST` (a local state folder) are read by `vite.config.js`, so
-  `MINI_PORT=5199 MINI_PERSIST=.cloudflare/e2e-state npx cf dev` runs beside another dev server.
+  `MINI_PORT=5199 MINI_PERSIST=.cloudflare/e2e-state bunx cf dev` runs beside another dev server.
 - `tests/seed-local.mjs` writes test-only sessions (owner 900001 nesszerra, alice_e2e, bob_e2e,
   carol_e2e) into that local AuthStore while no server holds it.
 - Browser tests take `MINI_BASE_URL`; `tests/e2e-local.mjs` sends signed EventSub webhooks to the
