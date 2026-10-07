@@ -25,7 +25,10 @@
   Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'
   X-Frame-Options: DENY
 
+# no-transform keeps Cloudflare from adding its Web Analytics beacon, which OVERLAY_CSP blocks (a console error in OBS
+# and in the /start demo on every load). max-age=0 and must-revalidate are the assets default, so a new build still loads.
 # The OBS overlay stays out of search results. The test site's pages and robots.txt say noindex from the Worker (server/worker.js).
 /overlay*
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' wss://irc-ws.chat.twitch.tv
   X-Robots-Tag: noindex, nofollow
+  Cache-Control: public, max-age=0, must-revalidate, no-transform

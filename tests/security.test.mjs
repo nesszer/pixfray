@@ -75,6 +75,7 @@ test('public/_headers repeats the Worker policies for pages assets serve without
   }
   for (const path of ['/', '/admin/*', '/start/*', '/play/*']) assert.equal(rules[path]['content-security-policy'], PAGE_CSP, path);
   assert.equal(rules['/overlay*']['content-security-policy'], OVERLAY_CSP);
+  assert.match(rules['/overlay*']['cache-control'], /(^|, )no-transform(,|$)/, 'Cloudflare must not inject its analytics beacon into the overlay');
   assert.equal(rules['/assets/build/*']['cache-control'], 'public, max-age=31536000, immutable', 'hashed bundles are cached for a year');
   assert.equal(rules['/*']['strict-transport-security'], HSTS);
 });
