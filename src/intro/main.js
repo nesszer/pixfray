@@ -120,8 +120,13 @@ try {
   throw new Error('PixFray intro: WebGL2 is not available; showing the text only.');
 }
 
-const DPR = Math.min(devicePixelRatio || 1, small ? 1.5 : 2);
-renderer.setPixelRatio(DPR);
+// render size: the screen's pixel ratio, but never more than a 1440p screen's worth of pixels, and a step lower each time
+// frames run slow (a big or high-DPI screen, a weaker GPU), so the camera keeps gliding instead of stepping
+const DPR = Math.min(devicePixelRatio || 1, small ? 1.5 : 2), PIXEL_BUDGET = 2560 * 1440;
+const QUALITY = [{ ao: true, s: 1 }, { ao: false, s: 1 }, { ao: false, s: 0.8 }, { ao: false, s: 0.65 }, { ao: false, s: 0.5 }];
+let quality = 0;
+const pixelRatio = () => Math.min(DPR, Math.sqrt(PIXEL_BUDGET / (innerWidth * innerHeight))) * QUALITY[quality].s;
+renderer.setPixelRatio(pixelRatio());
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -477,7 +482,8 @@ const timer = new THREE.Timer();
 let now = 0;
 
 function resize() {
-  const w = innerWidth, h = innerHeight;
+  const w = innerWidth, h = innerHeight, pr = pixelRatio();
+  renderer.setPixelRatio(pr); composer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
   composer.setSize(w, h);
   bloom.resolution.set(w / 2, h / 2);
@@ -485,8 +491,8 @@ function resize() {
   camera.fov = w / h < 0.8 ? 50 : w / h < 1.2 ? 44 : 36;
   camera.updateProjectionMatrix();
   film.uniforms.uAspect.value = w / h;
-  film.uniforms.uRes.value.set(w * DPR, h * DPR);
-  embers.material.uniforms.uPx.value = DPR * h / 900;
+  film.uniforms.uRes.value.set(w * pr, h * pr);
+  embers.material.uniforms.uPx.value = pr * h / 900;
   measure();
   targetC = scrollC();
 }
@@ -744,8 +750,17 @@ const COL_STONE_A = new THREE.Color().setRGB(0.25, 0.27, 0.31, THREE.SRGBColorSp
 const COL_RUNE = new THREE.Color().setRGB(1.0, 0.5, 0.14, THREE.SRGBColorSpace);
 const COL_STONE_B = new THREE.Color().setRGB(0.19, 0.2, 0.24, THREE.SRGBColorSpace);
 
-let running = true;
-function loop(ts) { timer.update(ts); if (running) frame(); requestAnimationFrame(loop); }
+// once the opening has played, 40 frames with a median over 22 ms (under ~45 fps) drop one quality step
+let running = true, lastTs = 0, frameMs = [];
+function govern(ts) {
+  const d = ts - lastTs; lastTs = ts;
+  if (quality === QUALITY.length - 1 || now - bornAt < 3 || d > 250) return;   // gaps from a hidden tab don't count
+  frameMs.push(d);
+  if (frameMs.length < 40) return;
+  const median = frameMs.sort((a, b) => a - b)[20]; frameMs = [];
+  if (median > 22) { quality++; if (gtao) gtao.enabled = QUALITY[quality].ao; resize(); }
+}
+function loop(ts) { timer.update(ts); if (running) { frame(); govern(ts); } requestAnimationFrame(loop); }
 document.addEventListener('visibilitychange', () => { running = !document.hidden; });
 
 // first frame, then hide the loader; restore the sound choice on the first click anywhere
@@ -753,5 +768,5 @@ try { if (localStorage.getItem('pixfray-intro-sound') === '1') addEventListener(
 timer.update(); frame();
 finishLoading();
 requestAnimationFrame(loop);
-window.__intro = { get C() { return C; }, setC(x) { targetC = C = x; } };
+window.__intro = { get C() { return C; }, setC(x) { targetC = C = x; }, get quality() { return { step: quality, pixelRatio: renderer.getPixelRatio() }; } };
 if (import.meta.env.DEV) Object.assign(window.__intro, { scene, composer, gtao, bloom, film, island, hero, hoard, chest, frame3d, islets, clouds, embers, sky });
