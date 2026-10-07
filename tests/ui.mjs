@@ -121,11 +121,21 @@ try {
     assert.equal(await page.locator('#save-signin').isVisible(), false);
     await noOverflow(page, 'channel picker ' + s.name);
     await page.screenshot({ path: shots + '/viewer-picker-' + s.name + '.png', fullPage: true });
-    // the search only finds channels with PixFray on; any other name says its streamer hasn't set it up
+    // the search only finds channels with PixFray on; any other name gets this site's /start/ link to send its streamer
     await page.fill('#channel-q', 'some_streamer');
     assert.equal(await page.locator('#channel-list li:visible').count(), 0, 'rows filter as you type');
-    assert.match(await page.locator('#channel-status').textContent(), /some_streamer hasn't set up PixFray yet/);
+    const host = new URL(base).host;
+    assert.ok((await page.locator('#channel-status').textContent()).startsWith(`some_streamer isn't on ${host} yet. Send them this link to set it up: ${host}/start`));
+    assert.equal(await page.locator('#channel-status a').getAttribute('href'), '/start/');
+    assert.match(await page.locator('#channel-status .invite-note').textContent(), /run their own copy of PixFray have it on their own site/);
     assert.equal(await page.locator('a[href*="some_streamer"]').count(), 0, 'no link to a channel without PixFray');
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+    await page.click('#channel-status button:has-text("Copy invite link")');
+    await page.waitForFunction(() => document.querySelector('#channel-status button').textContent === 'Copied');
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), base + '/start/');
+    await page.fill('#channel-q', 'some streamer!');
+    assert.equal(await page.locator('#channel-status').textContent(), 'No channel with PixFray matches that name.');
+    await page.fill('#channel-q', 'some_streamer');
     await noOverflow(page, 'channel search ' + s.name);
     await page.screenshot({ path: shots + '/viewer-picker-search-' + s.name + '.png', fullPage: true });
     await page.fill('#channel-q', 'https://www.twitch.tv/miolafff');
@@ -159,6 +169,20 @@ try {
     assert.equal(await page.locator('#channel-status').textContent(), '');
     await page.press('#channel-q', 'Enter');
     await page.waitForURL(/channel=streamer_9/);
+    await context.close();
+  }
+  // 1d. A full site doesn't invite: the search points at running your own copy.
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    await page.route('**/api/picker', async (r) => json(r, { ...await (await r.fetch()).json(), full: true }));
+    await page.goto(base + '/play/');
+    await page.waitForSelector('#channel-list a');
+    await page.fill('#channel-q', 'some_streamer');
+    assert.match(await page.locator('#channel-status').textContent(), /isn't on .* yet\. This site is full right now; they can run their own copy\./);
+    assert.equal(await page.locator('#channel-status a').getAttribute('href'), '/start/#source');
+    assert.equal(await page.locator('#channel-status button').count(), 0, 'no invite link to a full site');
+    await noOverflow(page, 'channel search full ' + s.name);
+    await page.locator('.landing-inner').screenshot({ path: shots + '/viewer-picker-full-' + s.name + '.png' });
     await context.close();
   }
 

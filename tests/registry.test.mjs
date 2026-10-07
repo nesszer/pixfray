@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../server/worker.js';
 import { AuthStore, digest, record } from '../server/auth.js';
-import { forgetChannel, MAX_CHANNELS } from '../server/channels.js';
+import { forgetChannel, isFull, MAX_CHANNELS } from '../server/channels.js';
 import { OFF_TEXT } from '../server/streamelements.js';
 
 const ORIGIN = 'https://chat.miolaf.xyz';
@@ -212,6 +212,7 @@ test(`the registry is capped at ${MAX_CHANNELS} channels that are on`, async (t)
   assert.equal(full.headers.get('Location'), '/start/?error=full');
   assert.equal(full.headers.get('Set-Cookie').includes('mini_session'), false);
   assert.equal(await record(env, 'channel:newstreamer'), null);
+  assert.equal(await isFull(env), true, 'the /play/ search stops inviting (picker full)');
 });
 
 test('turning a channel off keeps its admin page; overlay feed, viewer page and commands say it is off', async (t) => {

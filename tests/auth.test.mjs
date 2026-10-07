@@ -117,6 +117,7 @@ test('/api/picker lists every channel with its top three ranked fighters in one 
   assert.deepEqual(ness.catalog, [{ id: 'up-1', url: '/api/assets/nesszerra/up-1' }], 'only the uploads its top fighters wear');
   assert.deepEqual(mio.top, [], 'unranked fighters are left out');
   assert.equal('catalog' in mio, false);
+  assert.equal(data.full, false, 'room for more channels');
 });
 test('a viewer cannot grant themselves mod or developer permissions', async () => {
   const f = environment(), cookie = await signedIn(f);

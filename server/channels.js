@@ -54,6 +54,8 @@ export async function publicChannels(env) {
 
 const saveChannel = (env, rec) => { forgetChannel(rec.login); return record(env, 'channel:' + rec.login, rec, Date.now() + CHANNEL_MS); };
 const enabledCount = rows => rows.filter(r => !r.value.pausedAt).length;
+// No room for another channel that is on: sign-up says 'full', and the /play/ search stops inviting streamers here.
+export const isFull = async (env) => enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS;
 const fail = (status, error, reason) => Object.assign(new Error(error), { status, reason });
 
 // The streamer check for a new sign-up, from the signed-in Helix user: why it needs the owner's approval, [] when it
@@ -81,7 +83,7 @@ export async function signUp(env, user, check = async () => []) {
   if (existing?.id && existing.id !== user.id) throw fail(403, 'This channel name was set up by another Twitch account', 'taken');
   if (existing?.review) throw fail(403, 'This channel is waiting for the site owner to approve it', 'review');
   if (existing) return login;
-  if (enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'PixFray is full right now', 'full');
+  if (await isFull(env)) throw fail(403, 'PixFray is full right now', 'full');
   const reasons = await check();
   if (reasons.length) {
     const now = Date.now();
@@ -108,7 +110,7 @@ export async function setPaused(env, login, paused, by = 'owner') {
   const rec = await record(env, 'channel:' + login);
   if (!rec) throw fail(404, login + ' is not set up', 'not_found');
   if (!paused && rec.pausedBy === 'owner' && by !== 'owner') throw fail(403, 'The site owner turned PixFray off for this channel', 'owner_off');
-  if (!paused && rec.pausedAt && enabledCount(await listRecords(env, 'channel:')) >= MAX_CHANNELS) throw fail(403, 'PixFray is full right now', 'full');
+  if (!paused && rec.pausedAt && await isFull(env)) throw fail(403, 'PixFray is full right now', 'full');
   // turning it on approves a channel waiting for review
   const { pausedAt, pausedBy, review, ...rest } = rec;
   const next = paused ? { ...rest, pausedAt: pausedAt || Date.now(), pausedBy: pausedBy === 'owner' ? 'owner' : by, ...(review ? { review } : {}) } : rest;

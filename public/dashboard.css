@@ -1688,6 +1688,8 @@ input[type="file"]::file-selector-button:hover { border-color: var(--trim); back
 .channel-search + .channel-list { margin-top: var(--space-4); }
 #channel-status { margin: var(--space-3) 0 0; }
 #channel-status:empty { display: none; }
+#channel-status .btn { margin-left: var(--space-1); vertical-align: baseline; }
+#channel-status .invite-note { display: block; margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-2); }
 .landing .channel-list li[hidden] { display: none; }
 /* a search that filters every row out hides the empty panel */
 .landing .channel-list:not(:has(li:not([hidden]))) { display: none; }

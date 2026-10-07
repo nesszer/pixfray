@@ -716,13 +716,26 @@ async function pickChannel() {
     channelRanks(c, link, crew, meta, top, new Map([...builtin, ...catalog].map((e) => [e.id, e])));
     return h("li", { "data-login": c }, link);
   }));
-  channelSearch(channels);
+  channelSearch(channels, list.ok && list.data?.full === true);
   liveLanding();
 }
 // A viewer's fighter belongs to the stream they watch, so the search only finds channels with PixFray on. Up to
-// SHOWN rows show before typing; the rest are a search away. A name with no match says its streamer hasn't set it up.
+// SHOWN rows show before typing; the rest are a search away. A name with no match gets an invite to this site (notHere).
 const SHOWN = 8;
-function channelSearch(listed) {
+// A Twitch name that isn't on this site: the viewer can send its streamer this site's /start/ link (a forked copy invites
+// to its own site, not ours). When this site is full it points at running their own copy instead. Other copies
+// can't be seen from here, so the note says a streamer may already have PixFray on a site of their own.
+function notHere(q, full) {
+  const host = location.host, lead = h("strong", {}, q + " isn't on " + host + " yet.");
+  const note = h("span", { class: "invite-note" }, "Streamers who run their own copy of PixFray have it on their own site.");
+  if (full) return [lead, " This site is full right now; they can ", h("a", { href: "/start/#source" }, "run their own copy"), ".", note];
+  const link = location.origin + "/start/";
+  const copy = h("button", { type: "button", class: "btn btn-small", onclick: async () => {
+    try { await navigator.clipboard.writeText(link); copy.textContent = "Copied"; } catch { copy.textContent = "Copy the link by hand"; }
+  } }, "Copy invite link");
+  return [lead, " Send them this link to set it up: ", h("a", { href: "/start/" }, host + "/start"), " ", copy, note];
+}
+function channelSearch(listed, full = false) {
   const input = $("#channel-q"), status = $("#channel-status"), rows = [...$("#channel-list").children];
   const norm = (s) => s.trim().toLowerCase().replace(/^@/, "").replace(/^(https?:\/\/)?(www\.)?twitch\.tv\//, "").replace(/[/?#].*$/, "");
   const filter = () => {
@@ -731,7 +744,7 @@ function channelSearch(listed) {
     for (const li of rows) { const hit = q ? (li.dataset.login || "").includes(q) : shown < SHOWN; li.hidden = !hit; shown += hit ? 1 : 0; }
     if (!q) status.replaceChildren(listed.length > SHOWN ? "Type a name to find the other " + (listed.length - SHOWN) + " channels." : "");
     else if (shown) status.replaceChildren();
-    else status.replaceChildren(/^[a-z0-9_]{3,25}$/.test(q) ? q + " hasn't set up PixFray yet." : "No channel with PixFray matches that name.");
+    else status.replaceChildren(...(/^[a-z0-9_]{3,25}$/.test(q) ? notHere(q, full) : ["No channel with PixFray matches that name."]));
   };
   input.addEventListener("input", filter);
   filter();

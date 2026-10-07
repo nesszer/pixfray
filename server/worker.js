@@ -7,7 +7,7 @@ import { handlePets } from './pets.js';
 import { handleSprites } from './sprites.js';
 import { EVENTSUB_PATH,BOT_LOGIN_URL,handleEventsub,connectChat,disconnectChat,sendChatMessages,twitchUserId } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
-import { channelState,isOn,offError,setPaused,publicChannels,listRecords } from './channels.js';
+import { channelState,isOn,offError,setPaused,publicChannels,listRecords,isFull } from './channels.js';
 import { COSMETIC_KINDS,COSMETIC_FIELDS,MAX_BUILDS } from './cosmetics.js';
 import { siteOrigin,channelPageRedirect,isPage } from './hosts.js';
 import { secure,PAGE_CSP,API_CSP } from './security.js';
@@ -162,11 +162,12 @@ async function handleDevtools(request,env,channel,action,data){
 }
 async function staticCatalog(env,url){const r=await env.ASSETS.fetch(new Request(url.origin+'/assets/characters.json'));return r.ok?await r.json():[];}
 // The /play/ channel picker in one request: each listed channel with its top three ranked fighters (and the uploaded
-// looks they wear, which only that channel's catalog has), plus the built-in catalog once. Kept a minute per isolate.
+// looks they wear, which only that channel's catalog has), plus the built-in catalog once, and whether this site is full
+// (the search then can't invite a streamer here). Kept a minute per isolate.
 let pickerCache=null;
 async function picker(request,env,url){
   if(pickerCache&&Date.now()-pickerCache.at<60000)return pickerCache.data;
-  const [logins,catalog]=await Promise.all([publicChannels(env),staticCatalog(env,url)]),builtin=new Set(catalog.map(e=>e.id));
+  const [logins,catalog,full]=await Promise.all([publicChannels(env),staticCatalog(env,url),isFull(env)]),builtin=new Set(catalog.map(e=>e.id));
   const channels=await Promise.all(logins.map(async login=>{
     try{
       const r=await internal(request,env,login,'/leaderboard'),board=r.ok?await r.json():[];
@@ -176,7 +177,7 @@ async function picker(request,env,url){
       return {login,top,...(looks.length?{catalog:looks}:{})};
     }catch{return {login,top:[]};}
   }));
-  pickerCache={data:{channels,catalog},at:Date.now()};
+  pickerCache={data:{channels,catalog,full},at:Date.now()};
   return pickerCache.data;
 }
 // Every response leaves through secure() (server/security.js): HSTS on https, and a locked-down CSP on /api and /auth.
