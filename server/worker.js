@@ -4,6 +4,7 @@ import { AuthStore,record,session,isOwner,configured,handleAuth,access,CHANNELS,
 import { handleDeveloper,logWorkerError } from './developer.js';
 import { handleUploads } from './uploads.js';
 import { handlePets } from './pets.js';
+import { handleSprites } from './sprites.js';
 import { EVENTSUB_PATH,BOT_LOGIN_URL,handleEventsub,connectChat,disconnectChat,sendChatMessages,twitchUserId } from './eventsub.js';
 import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } from './streamelements.js';
 import { channelState,isOn,offError,setPaused,publicChannels,listRecords } from './channels.js';
@@ -14,8 +15,8 @@ import { writeLimit } from './ratelimit.js';
 export {ChannelRoom,AuthStore};
 // A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
 // page's state and profile saves are refused.
-const OPEN_WHEN_PAUSED=['access','admin','leaderboard','catalog','assets','pets'];
-const WRITE_ROUTES=['profile','shop','assets','pets','admin'];
+const OPEN_WHEN_PAUSED=['access','admin','leaderboard','catalog','assets','pets','sprites'];
+const WRITE_ROUTES=['profile','shop','assets','pets','admin','sprite','sprites'];
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
 // Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.js (the room checks the ids and prices).
 const SHOP_KINDS=['pet','hat','slot',...COSMETIC_KINDS];
@@ -232,7 +233,7 @@ async function handle(request,env,ctx){
     if(path==='/api/channels')return json({channels:await publicChannels(env),defaultChannel:site.defaultChannel});
     if(path==='/api/picker')return json(await picker(request,env,url));
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,dev,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
-    const match=path.match(/^\/api\/(state|live|profile|leaderboard|looks|catalog|access|admin|assets|pets|shop)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
+    const match=path.match(/^\/api\/(state|live|profile|leaderboard|looks|catalog|access|admin|assets|pets|shop|sprite|sprites)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
     if(!match)return json({error:'Not found'},404);
     const [,route,channel,id]=match;
     const state=await channelState(env,channel);
@@ -247,6 +248,9 @@ async function handle(request,env,ctx){
     if(route==='assets')return await handleUploads(request,env,{user,owner,channel,id:id||'',url,bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
     // Pets (server/pets.js): the public catalog and images; mods upload and delete their own.
     if(route==='pets')return await handlePets(request,env,{user,id:id||'',bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
+    // Viewer sprites (server/sprites.js): a viewer sends one made from their own image (optionally redrawn by Workers AI),
+    // mods approve or reject it.
+    if(route==='sprite'||route==='sprites')return await handleSprites(request,env,{user,id:id||'',bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)},route==='sprite');
     // Shop: the public list with this channel's prices (GET), and a signed-in viewer buying with PixFray dollars (POST).
     if(route==='shop'){
       if(request.method==='GET'&&!id)return internal(request,env,channel,'/shop');
@@ -265,7 +269,10 @@ async function handle(request,env,ctx){
       // stats/hat are optional; the room checks them against the saved wins (server/upgrades.js).
       if(stats!==undefined&&(!stats||typeof stats!=='object'||Array.isArray(stats))||hat!==undefined&&typeof hat!=='string'||pet!==undefined&&(typeof pet!=='string'||pet.length>64))return json({error:'Invalid profile fields'},400);
       const dynamicRes=await internal(request,env,channel,'/catalog');const dynamic=dynamicRes.ok?await dynamicRes.json():[];
-      if(![...await staticCatalog(env,url),...dynamic].some(x=>x.id===avatar))return json({error:'Unknown character'},400);
+      const character=[...await staticCatalog(env,url),...dynamic].find(x=>x.id===avatar);
+      if(!character)return json({error:'Unknown character'},400);
+      // An approved viewer sprite belongs to the viewer who made it.
+      if(character.owner&&character.owner!==user.id)return json({error:'That sprite belongs to another viewer'},403);
       return internal(request,env,channel,'/profile',{userId:user.id,username:user.login,displayName:user.displayName,avatar,color,defaultAbility,stats,hat,pet,...loadout.fields});
     }
     if(route==='admin'){

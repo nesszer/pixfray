@@ -100,6 +100,25 @@
             <p class="muted small" id="char-empty" hidden>No characters match.</p>
             <button class="btn btn-small more-chars" id="more-chars" type="button" aria-controls="characters" aria-expanded="false" hidden>Show all characters</button>
           </fieldset>
+          <fieldset id="sprite-maker" hidden>
+            <legend>Your own sprite <span class="muted small" id="sprite-note"></span></legend>
+            <p class="muted small">Turn any picture into a pixel fighter. A mod checks it first; once approved, only you can wear it.</p>
+            <div class="sprite-current" id="sprite-current" hidden></div>
+            <div class="sprite-maker">
+              <div class="sprite-preview"><canvas id="sprite-canvas" width="128" height="128" role="img" aria-label="Sprite preview"></canvas><p class="muted small" id="sprite-size"></p></div>
+              <div class="sprite-fields">
+                <div><label for="sprite-file">Picture</label><input id="sprite-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></div>
+                <div><label for="sprite-name">Name</label><input id="sprite-name" type="text" maxlength="24" autocomplete="off" spellcheck="false"></div>
+                <label class="check small"><input type="checkbox" id="sprite-bg" checked> Remove the background</label>
+                <div class="toolbar">
+                  <button class="btn btn-small" id="sprite-ai" type="button" hidden disabled>Redraw with AI</button>
+                  <button class="btn btn-small" id="sprite-plain" type="button" hidden>Use my picture</button>
+                  <button class="btn btn-small" id="sprite-send" type="button" disabled>Send for review</button>
+                </div>
+              </div>
+            </div>
+            <p class="status" id="sprite-status" role="status"></p>
+          </fieldset>
           <fieldset>
             <legend>Nameplate color</legend>
             <div class="swatches" id="swatches">

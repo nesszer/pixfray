@@ -4,12 +4,10 @@
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 import { enforceCsp } from './csp-helper.mjs';
+import { chromeOptions } from './chrome.mjs';
 
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
-const browser = await chromium.launch({
-  channel: 'chrome',
-  headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */,
-});
+const browser = await chromium.launch(chromeOptions());
 const errors = [];
 const apiReads = [];
 try {

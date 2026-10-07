@@ -4,6 +4,7 @@
 // the dev server runs with MINI_LOCAL_TEST=1, so Connect chat records a local subscription without calling Helix.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5199 MINI_AUTH_SECRET=<the dev server's AUTH_SECRET> node tests/e2e-local.mjs
 // (normally run by scripts/test-all.mjs, which reads AUTH_SECRET from .dev.vars and never prints it)
+import { chromeOptions } from './chrome.mjs';
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
@@ -67,7 +68,7 @@ async function command(user, text) {
 const presence = (user, text = 'hi') => say(user, text);
 
 const errors = [];
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--disable-features=LocalNetworkAccessChecks'] /* WebGL on the GPU, not software, with no window */ });
+const browser = await chromium.launch(chromeOptions(['--disable-features=LocalNetworkAccessChecks']));
 // enforceCsp (csp-helper.mjs) serves the overlay through a Playwright route, which Chrome treats as a public page, so its
 // Local Network Access check would block the socket to 127.0.0.1. The deployed overlay is same-origin and never hits it.
 try {

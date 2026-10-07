@@ -2,6 +2,7 @@
 // Signed-out runs against the real local server; owner states stub /api/session and /api/dev/* with page.route,
 // unless MINI_OWNER_COOKIE (a local test session id) is set, which adds one unstubbed owner run.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5195 node tests/dev-ui.mjs   (screenshots go to the OS temp dir)
+import { chromeOptions } from './chrome.mjs';
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +11,7 @@ import path from 'node:path';
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
 const shots = path.join(os.tmpdir(), 'mini-chat-dev-shots');
 fs.mkdirSync(shots, { recursive: true });
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
+const browser = await chromium.launch(chromeOptions());
 const sizes = [{ name: '1280', width: 1280, height: 900 }, { name: '390', width: 390, height: 844 }];
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
 const owner = { id: '900001', login: 'nesszerra', displayName: 'nesszerra' };

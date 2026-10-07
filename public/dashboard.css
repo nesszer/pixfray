@@ -1691,3 +1691,17 @@ input[type="file"]::file-selector-button:hover { border-color: var(--trim); back
 .landing .channel-list li[hidden] { display: none; }
 /* a search that filters every row out hides the empty panel */
 .landing .channel-list:not(:has(li:not([hidden]))) { display: none; }
+
+/* a viewer's own sprite (/play/) and the mods' review list (/admin/): pixel art drawn at whole-pixel scale */
+.check { display: flex; align-items: center; gap: var(--space-2); font-weight: 400; margin: 0; }
+.sprite-maker { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.sprite-fields { display: grid; gap: var(--space-3); }
+.sprite-fields input[type="file"] { padding: var(--space-1); }
+.sprite-preview canvas, img.sprite-thumb { display: block; width: 128px; height: 128px; image-rendering: pixelated; object-fit: contain; object-position: 50% 100%;
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.sprite-preview p { margin: var(--space-1) 0 0; }
+.sprite-current { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-4); }
+.sprite-current img.sprite-thumb { width: 64px; height: 64px; }
+.sprite-current p { margin: 0; flex: 1 1 200px; }
+table.data img.sprite-thumb { width: 64px; height: 64px; }
+@media (max-width: 480px) { .sprite-maker { grid-template-columns: 1fr; } }

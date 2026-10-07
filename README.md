@@ -4,7 +4,7 @@
 
 Pixel fighters for Twitch chat. Every viewer who chats gets a small character on your stream.
 Viewers challenge each other in chat, and the duel plays out on the overlay, with Elo ranks, hats
-and pets.
+and pets. Viewers can also turn any picture into their own sprite, which a mod approves.
 
 Free and open source (MIT). Runs on one Cloudflare Worker on the free plan.
 

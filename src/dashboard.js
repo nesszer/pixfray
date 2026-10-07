@@ -5,6 +5,7 @@ import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, addPet,
 import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.js";
 import { CHARACTER_GROUPS } from "./character-groups.js";
 import { skyBackdrop } from "./scrub.js";
+import { initSpriteMaker } from "./sprite-maker.js";
 import site from "../site.config.js";
 skyBackdrop();
 applyChannel();
@@ -52,9 +53,9 @@ function render3d(d = state.d) {
 onLooksReady($("#preview3d"), () => render3d());
 // the intro's lock-on readout: name, then cubes and place in the roster
 function readout(entry) {
-  const i = state.catalog.indexOf(entry);
+  const i = pickable().indexOf(entry);
   $("#readout-name").textContent = entry.label || entry.id;
-  $("#readout-sub").textContent = i >= 0 ? "Character " + (i + 1) + " of " + state.catalog.length : "";
+  $("#readout-sub").textContent = i >= 0 ? "Character " + (i + 1) + " of " + pickable().length : "";
 }
 // Picker tiles get voxel thumbnails too (src/voxthumb.js); until it loads, or without WebGL, they show flat sprites.
 const voxJobs = new Map();
@@ -374,22 +375,24 @@ function renderUpgrades() {
 
 // Characters: search by name, filter by group; unfiltered, the list starts with 12 (plus the picked one).
 const groupsOf = (entry) => entry.custom ? ["custom"] : CHARACTER_GROUPS.filter((g) => g.ids.includes(entry.id)).map((g) => g.id);
+// A viewer's approved sprite (server/sprites.js) is only for them; state.catalog keeps everyone's for the ranks.
+const pickable = () => state.catalog.filter((e) => !e.owner || e.owner === state.session?.user?.id);
 function renderCharacters() {
-  const box = $("#characters");
-  if (!state.catalog.length) { box.replaceChildren(h("p", { class: "muted small" }, "No characters are available right now. Reload to try again.")); return; }
-  $("#char-count").textContent = "(" + state.catalog.length + " available)";
-  const groups = [{ id: "all", label: "All" }, ...CHARACTER_GROUPS.filter((g) => state.catalog.some((e) => groupsOf(e).includes(g.id))),
-    ...(state.catalog.some((e) => e.custom) ? [{ id: "custom", label: "Channel originals" }] : [])];
+  const box = $("#characters"), list = pickable();
+  if (!list.length) { box.replaceChildren(h("p", { class: "muted small" }, "No characters are available right now. Reload to try again.")); return; }
+  $("#char-count").textContent = "(" + list.length + " available)";
+  const groups = [{ id: "all", label: "All" }, ...CHARACTER_GROUPS.filter((g) => list.some((e) => groupsOf(e).includes(g.id))),
+    ...(list.some((e) => e.custom) ? [{ id: "custom", label: "Channel originals" }] : [])];
   $("#char-groups").replaceChildren(...groups.map((g) => h("button", { type: "button", class: "btn btn-small", "data-group": g.id, "aria-pressed": String(g.id === state.filter.group),
     onclick: () => { state.filter.group = g.id; filterCharacters(); } }, g.label)));
-  box.replaceChildren(...state.catalog.map((entry) => {
+  box.replaceChildren(...list.map((entry) => {
     const id = "char-" + entry.id;
     const input = h("input", { type: "radio", name: "character", id, value: entry.id });
     input.addEventListener("change", () => { state.d.avatar = entry.id; renderPreview(); renderSave(); });
     const canvas = h("canvas", { class: "sprite", width: 64, height: 64, "aria-hidden": "true" }), v = voxCanvas();
     vox(v, () => composeLook(entry));
     const option = h("div", { class: "char-option", "data-groups": groupsOf(entry).join(" "), "data-name": (entry.label || entry.id).toLowerCase() + " " + entry.id }, input,
-      h("label", { for: id }, h("span", { class: "thumb" }, v, canvas), h("span", {}, entry.label || entry.id), entry.custom ? h("span", { class: "tag" }, "Channel original") : null));
+      h("label", { for: id }, h("span", { class: "thumb" }, v, canvas), h("span", {}, entry.label || entry.id), entry.owner ? h("span", { class: "tag" }, "Your sprite") : entry.custom ? h("span", { class: "tag" }, "Channel original") : null));
     let hover = false;
     option.addEventListener("pointerenter", () => { hover = true; });
     option.addEventListener("pointerleave", () => { hover = false; });
@@ -409,7 +412,7 @@ function filterCharacters() {
   }
   for (const b of $("#char-groups").children) b.setAttribute("aria-pressed", String(b.dataset.group === g));
   $("#char-empty").hidden = shown > 0;
-  $("#more-chars").hidden = filtered || state.catalog.length <= 12;
+  $("#more-chars").hidden = filtered || $("#characters").children.length <= 12;
   if (filtered) $("#characters").classList.remove("collapsed"); else showAllChars($("#more-chars").getAttribute("aria-expanded") === "true");
 }
 $("#char-search").addEventListener("input", (e) => { state.filter.q = e.target.value; filterCharacters(); });
@@ -417,7 +420,7 @@ function showAllChars(all) {
   const btn = $("#more-chars");
   $("#characters").classList.toggle("collapsed", !all);
   btn.setAttribute("aria-expanded", String(all));
-  btn.textContent = all ? "Show fewer characters" : "Show all " + state.catalog.length + " characters";
+  btn.textContent = all ? "Show fewer characters" : "Show all " + $("#characters").children.length + " characters";
 }
 $("#more-chars").addEventListener("click", () => showAllChars($("#characters").classList.contains("collapsed")));
 
@@ -684,6 +687,15 @@ async function init() {
   applyProfile(state.profile);
   renderAll(); welcome();
   loadLeaderboard();
+  if (signedIn() && !state.off) initSpriteMaker({ onChange: reloadCharacters });
+}
+// The viewer removed their approved sprite: the server put fighters wearing it back on the default character.
+async function reloadCharacters() {
+  const [catalog, profile] = await Promise.all([api("/api/catalog/" + CHANNEL), api("/api/profile/" + CHANNEL)]);
+  if (catalog.ok && Array.isArray(catalog.data) && catalog.data.length) state.catalog = catalog.data;
+  if (profile.ok) state.profile = profile.data;
+  applyProfile(state.profile);
+  renderCharacters(); renderAll();
 }
 // /play/ (the viewer page with no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
 async function pickChannel() {

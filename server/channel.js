@@ -19,6 +19,7 @@ import { accountCreatedAt } from "./accounts.js";
 import { EVENTSUB_DEDUPE_MS, claimMessage, releaseMessage } from "./dedupe.js";
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
+import { ensureSpriteSchema, handleRoomSprites, spriteCatalog } from "./sprites.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
 import { MAX_BOT_COMMANDS, MAX_COMMAND_REPLY, MAX_COUNTER, COMMAND_COOLDOWN_MS, COMMAND_USER_COOLDOWN_MS, commandName, counterName, commandReplyText, replyCounters, renderCommandReply, replyWorstCase, fitChatLine, MAX_CHAT_LINE } from "./botcommands.js";
 import { SE_ACTIONS, SE_READ_ACTIONS, DEFAULT_SE_NAMES, SE_SUBSCRIPTION_ID, seCommandText, seReplyText, seTopText, seEloText, seHelpText, seLookText, seCheckinText, seWalletText, seGiveText, sePetText, seAmount, seTarget, seReminderText, seExpiredText, seResultText, seKeyHash, botNames } from "./streamelements.js";
@@ -205,6 +206,8 @@ export class ChannelRoom extends DurableObject {
     // v2.8: the active pet, plus bought items and uploaded pets (server/pets.js). PROFILE_COLUMNS reads custom_pets.
     if (!profileColumns.includes("pet")) sql.exec("ALTER TABLE profiles ADD COLUMN pet TEXT NOT NULL DEFAULT ''");
     ensurePetSchema(sql);
+    // v3.1: sprites viewers made from their own images, waiting for a mod or approved (server/sprites.js).
+    ensureSpriteSchema(sql);
     // v2.9: cosmetics worn (server/cosmetics.js) and the active build slot. Each slot's loadout is a JSON row in builds;
     // the profile columns always hold the active one. Bought build slots are owned_items rows of kind "slot".
     for (const column of ["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"]) if (!profileColumns.includes(column)) sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`);
@@ -269,7 +272,7 @@ export class ChannelRoom extends DurableObject {
     if (path === "/export" && request.method === "GET") {
       const b64 = (v) => (v instanceof ArrayBuffer || ArrayBuffer.isView(v) ? { $b64: btoa(Array.from(new Uint8Array(v.buffer ?? v, v.byteOffset ?? 0, v.byteLength), (c) => String.fromCharCode(c)).join("")) } : v);
       const out = {};
-      for (const table of ["game_state", "profiles", "config_history", "se_settings", "custom_characters", "builds", "streams", "custom_pets", "owned_items"])
+      for (const table of ["game_state", "profiles", "config_history", "se_settings", "custom_characters", "builds", "streams", "custom_pets", "owned_items", "viewer_sprites"])
         out[table] = this.ctx.storage.sql.exec(`SELECT * FROM ${table}`).toArray().map((row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, b64(v)])));
       return json(out);
     }
@@ -282,6 +285,20 @@ export class ChannelRoom extends DurableObject {
       return json(this.publicState(changed.state));
     }
 
+    // The catalog is the mods' uploads plus approved viewer sprites (each with the `owner` who alone may wear it).
+    if (path === "/catalog" && request.method === "GET") {
+      const custom = await (await handleRoomAssets(this, request, { path, channel, url })).json();
+      return json([...custom, ...spriteCatalog(this.ctx.storage.sql, channel)]);
+    }
+    if (path === "/sprites" || path.startsWith("/sprites/") || path.startsWith("/asset/v-")) {
+      let changed = null;
+      const response = await handleRoomSprites(this, request, { path, url, channel, hooks: {
+        approved: (row, previous) => { changed = this.wearSprite(channel, row, previous) || changed; },
+        removed: (id) => { changed = this.dropSprite(channel, id) || changed; },
+      } });
+      if (changed) this.broadcast(changed);
+      return response;
+    }
     if (path === "/catalog" || path === "/asset" || path.startsWith("/asset/")) return handleRoomAssets(this, request, { path, channel, url });
     if (path.startsWith("/dev/")) return handleRoomDeveloper(this, request, { path, channel, url });
     if (path === "/pets" || path.startsWith("/pets/")) {
@@ -676,6 +693,31 @@ export class ChannelRoom extends DurableObject {
       const saved = { ...(active || profile), build, bonus: existing?.bonus || 0, checkins: existing?.checkins || 0, streak: existing?.streak || 0, dollars: existing?.dollars || 0 };
       return { ok: true, profile: saved, state: result.state };
     });
+  }
+
+  // An approved viewer sprite goes on its uploader's saved fighter, and replaces their previous sprite in every build
+  // slot. Returns the new game state when the overlay needs it, else null.
+  wearSprite(channel, row, previous) {
+    const sql = this.ctx.storage.sql;
+    if (previous) sql.exec("UPDATE builds SET data = json_set(data, '$.avatar', ?) WHERE user_id = ? AND json_extract(data, '$.avatar') = ?", row.id, row.userId, previous);
+    const existing = this.getProfile(row.userId, this.readState(channel).config);
+    if (!existing) return null;
+    const saved = this.saveProfile(channel, row.userId, { username: existing.username, displayName: existing.displayName, color: existing.color, defaultAbility: existing.defaultAbility, avatar: row.id });
+    return saved.ok ? saved.state : null;
+  }
+
+  // A removed viewer sprite: fighters wearing it, saved or on stage, go back to the default character.
+  dropSprite(channel, id) {
+    const sql = this.ctx.storage.sql;
+    sql.exec("UPDATE profiles SET avatar = 'player' WHERE avatar = ?", id);
+    sql.exec("UPDATE builds SET data = json_set(data, '$.avatar', 'player') WHERE json_extract(data, '$.avatar') = ?", id);
+    const state = this.readState(channel);
+    let hit = false;
+    for (const p of state.players) if (p.avatar === id) { p.avatar = "player"; hit = true; }
+    if (!hit) return null;
+    state.revision += 1;
+    this.writeState(state);
+    return state;
   }
 
   getProfile(userId, config) {

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
 import { createHmac } from 'node:crypto';
 import { digest } from '../server/auth.js';
+import { makePng } from './upload-helpers.mjs';
 import { eventsubSecret, signEventsub, localTestMode, sendChatMessage, sendChatMessages, botDropText } from '../server/eventsub.js';
 
 function environment() {
@@ -36,6 +37,7 @@ async function signedIn(f, owner = false) {
   f.entries.set('session:' + await digest(cookie), { user });
   return 'mini_session=' + cookie;
 }
+const b64png = (w, h) => Buffer.from(makePng(w, h)).toString('base64');
 function req(path, method = 'GET', data, cookie, extra = {}) {
   const headers = { ...(cookie ? { Cookie: cookie } : {}), ...(method !== 'GET' ? { Origin: 'https://chat.miolaf.xyz', 'Content-Type': 'application/json' } : {}), ...extra };
   return new Request('https://chat.miolaf.xyz' + path, { method, headers, ...(data !== undefined ? { body: typeof data === 'string' ? data : JSON.stringify(data) } : {}) });
@@ -603,4 +605,46 @@ test('check-in test mode: only on the site channel', async () => {
   assert.equal(res.status, 403);
   assert.match((await res.json()).error, /only for nesszerra's channel/);
   assert.equal(f.forwarded.some((x) => x.path === '/checkin-test'), false);
+});
+
+test('viewer sprites: only the owner may wear one; sends need sign-in, reviews need a mod, AI redraw refunds on failure', async () => {
+  const f = environment(), cookie = await signedIn(f);
+  const rooms = f.env.ROOMS.get;
+  f.env.ROOMS = { idFromName: x => x, get: channel => ({ async fetch(url, options = {}) {
+    const path = new URL(url).pathname;
+    if (path === '/catalog') return Response.json([{ id: 'v-mine-aaaaaa', owner: '2' }, { id: 'v-theirs-bbbbbb', owner: '9' }]);
+    if (path === '/sprites/ai') { f.forwarded.push({ path, body: JSON.parse(options.body) }); return Response.json({ ok: true, left: 2 }); }
+    return rooms(channel).fetch(url, options);
+  } }) };
+  const save = (avatar) => worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar, color: '#aabbcc', defaultAbility: 'heal' }, cookie), f.env);
+  assert.equal((await save('v-mine-aaaaaa')).status, 200);
+  const theirs = await save('v-theirs-bbbbbb');
+  assert.deepEqual([theirs.status, (await theirs.json()).error], [403, 'That sprite belongs to another viewer']);
+
+  assert.equal((await worker.fetch(req('/api/sprite/nesszerra'), f.env)).status, 401);
+  const status = await (await worker.fetch(req('/api/sprite/nesszerra', 'GET', undefined, cookie), f.env)).json();
+  assert.deepEqual(status.ai, { available: false, left: 0 });
+  // The room gets the session's identity, never one from the body.
+  const png = 'data:image/png;base64,' + Buffer.from(makePng(32, 48)).toString('base64');
+  const sent = await worker.fetch(req('/api/sprite/nesszerra', 'POST', { label: 'Cat', image: png, userId: '1' }, cookie), f.env);
+  assert.equal(sent.status, 200);
+  assert.deepEqual((({ userId, username, label }) => ({ userId, username, label }))(f.forwarded.at(-1).body), { userId: '2', username: 'viewer', label: 'Cat' });
+  assert.equal((await worker.fetch(req('/api/sprite/nesszerra', 'POST', { label: 'Cat', image: b64png(200, 20) }, cookie), f.env)).status, 400);
+  // Mods only: the review list and actions.
+  assert.equal((await worker.fetch(req('/api/sprites/nesszerra', 'GET', undefined, cookie), f.env)).status, 403);
+  assert.equal((await worker.fetch(req('/api/sprites/nesszerra/v-mine-aaaaaa', 'POST', { action: 'approve' }, cookie), f.env)).status, 403);
+
+  // AI redraw: off without the binding; with it, a failed model call gives the redraw back.
+  assert.equal((await worker.fetch(req('/api/sprite/nesszerra/redraw', 'POST', { image: b64png(64, 64) }, cookie), f.env)).status, 503);
+  let input = null;
+  f.env.AI = { async run(model, { multipart }) { input = { model, type: multipart.contentType }; return { image: 'QUJD' }; } };
+  const drawn = await worker.fetch(req('/api/sprite/nesszerra/redraw', 'POST', { image: b64png(64, 64) }, cookie), f.env);
+  assert.deepEqual(await drawn.json(), { ok: true, image: 'QUJD', left: 2 });
+  assert.equal(input.model, '@cf/black-forest-labs/flux-2-klein-4b');
+  assert.match(input.type, /^multipart\/form-data/);
+  assert.equal((await worker.fetch(req('/api/sprite/nesszerra/redraw', 'POST', { image: b64png(512, 64) }, cookie), f.env)).status, 400);
+  f.env.AI = { async run() { throw new Error('capacity'); } };
+  const failed = await worker.fetch(req('/api/sprite/nesszerra/redraw', 'POST', { image: b64png(64, 64) }, cookie), f.env);
+  assert.equal(failed.status, 502);
+  assert.deepEqual(f.forwarded.filter(x => x.path === '/sprites/ai').map(x => x.body.op), ['take', 'take', 'refund']);
 });

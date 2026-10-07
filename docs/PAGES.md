@@ -5,11 +5,11 @@
 | Page | What it is |
 |---|---|
 | `/` | What PixFray is, with a duel playing. A returning viewer gets a "Back to <channel>" button. |
-| `/?channel=<login>` | That channel's fighter page. |
+| `/?channel=<login>` | That channel's fighter page. A signed-in viewer can turn a picture into their own sprite under **Your own sprite** (an optional AI redraw first). It joins their character list once a mod approves it. |
 | `/play/` | Picks the channel. |
 | `/intro/` | Redirects to `/`. |
 | `/start/` | Streamer sign-up. |
-| `/admin/?channel=<login>` | The mod controls. A signed-in streamer who opens `/admin/` lands on their own channel. |
+| `/admin/?channel=<login>` | The mod controls. A signed-in streamer who opens `/admin/` lands on their own channel. Viewer sprites waiting for review are at the top of the Characters tab. |
 
 Signing in or out comes back to the same page, channel and tab.
 

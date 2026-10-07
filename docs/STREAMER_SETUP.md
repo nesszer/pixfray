@@ -75,7 +75,8 @@ message**, so new viewers learn how to join. PixFray never posts on its own.
 **Let your moderators help** is Done when the moderator-list permission is stored. If you skipped
 it, click **Connect mod access** and approve the permission while signed in to Twitch as yourself.
 
-Moderators can rename commands, tick the Duel module, use Clear arena and change the balance. Only you
+Moderators can rename commands, tick the Duel module, use Clear arena, change the balance and review
+viewer sprites. Only you
 (or the site owner) can click **New key**, **Reset all ranks**, **Turn PixFray off** or move chat from
 another site.
 
@@ -85,6 +86,14 @@ A moderator, or the site owner looking at your channel, is told that you have to
 Mod access can lapse: the stored permission is dropped after 90 days without use, and using
 the mod controls keeps it alive. A lapsed step shows an "Expired" badge and the button reads
 **Reconnect mod access**. Until you click it, your moderators can't sign in to your mod controls.
+
+## 6. Review viewer sprites
+
+Viewers can turn any picture into a pixel sprite on your fighter page. Nothing reaches the stream
+until you or a moderator approves it under **Viewer sprites waiting for review** on the
+Characters tab. Approving puts the viewer in their sprite; **Turn down** drops the picture; an
+approved sprite can be removed later. Each viewer can send 6 a day; the AI redraw is limited to
+3 per viewer and 60 per channel a day.
 
 ## If something doesn't work
 

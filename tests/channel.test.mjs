@@ -74,7 +74,7 @@ test('export: every table a copy needs, BLOBs as base64', async () => {
   assert.equal(body.game_state[0].channel, 'nesszerra');
   assert.deepEqual(body.profiles.map((p) => p.username), ['alice']);
   assert.deepEqual(body.custom_characters[0].atlas, { $b64: 'AQL/' });
-  for (const t of ['config_history', 'se_settings', 'builds', 'streams', 'custom_pets', 'owned_items']) assert.ok(Array.isArray(body[t]), t);
+  for (const t of ['config_history', 'se_settings', 'builds', 'streams', 'custom_pets', 'owned_items', 'viewer_sprites']) assert.ok(Array.isArray(body[t]), t);
   assert.equal((await r.call('/export', { secret: 'wrong' })).status, 403);
 });
 
@@ -1406,4 +1406,93 @@ test('!checkin test mode: answers while offline with what a check-in would give,
   t.mock.method(Date, 'now', () => now + 15 * 60_000 + 1);
   assert.equal(await say('u1', 'alice'), 'Check-ins open while nesszerra is live. See you next stream!');
   assert.equal((await r.call('/admin')).body.checkinTest, null);
+});
+
+test('viewer sprites: send, mod approves, worn and in the catalog with its owner; reject, replace, remove, limits', async () => {
+  const r = room();
+  await r.save('u1', 'alice');
+  const send = (userId, label, extra = {}) => r.call('/sprites', { method: 'POST', body: { userId, username: userId === 'u1' ? 'alice' : 'bob', displayName: userId === 'u1' ? 'Alice' : 'Bob', label, image: b64(makePng(64, 96)), ...extra } });
+  const review = (id, action) => r.call('/sprites/review', { method: 'POST', body: { id, action, actorId: 'mod1', actorName: 'Mod' } });
+  const raw = (path) => r.fetch(new Request('https://room' + path, { headers: { 'X-Mini-Internal': SECRET, 'X-Mini-Channel': 'nesszerra' } }));
+  const catalog = async () => (await r.call('/catalog')).body;
+
+  const first = await send('u1', 'My Cat!', { ai: true });
+  assert.equal(first.status, 201);
+  const id1 = first.body.pending.id;
+  assert.match(id1, /^v-my-cat-[0-9a-f]{6}$/);
+  assert.deepEqual([first.body.pending.status, first.body.pending.ai, first.body.pending.width, first.body.pending.height], ['pending', true, 64, 96]);
+  let mine = (await r.call('/sprites/mine?userId=u1')).body;
+  assert.deepEqual([mine.pending.id, mine.live, mine.rejected, mine.submitsLeft, mine.aiLeft], [id1, null, null, 5, 3]);
+  assert.equal((await raw('/sprites/png/pending?userId=u1')).headers.get('content-type'), 'image/png');
+  // Waiting sprites are not public.
+  assert.deepEqual(await catalog(), []);
+  assert.equal((await raw('/asset/' + id1)).status, 404);
+  assert.equal((await r.call('/sprites/list')).body.pending.length, 1);
+  assert.equal((await review(id1, 'remove')).status, 409);
+
+  // Approve: on the saved fighter and the overlay's player, in the catalog for its owner only, the PNG public.
+  const ws = r.live();
+  assert.deepEqual((await review(id1, 'approve')).body, { ok: true, id: id1, status: 'live' });
+  assert.equal((await r.call('/profile?userId=u1')).body.avatar, id1);
+  assert.equal(r.readState('nesszerra').players.find((p) => p.userId === 'u1').avatar, id1);
+  assert.ok(ws.sent.length > 0);
+  const entry = (await catalog())[0];
+  assert.deepEqual([entry.id, entry.owner, entry.mode, entry.url, entry.frames, entry.license], [id1, 'u1', 'single', '/api/assets/nesszerra/' + id1, [{ x: 0, y: 0, w: 64, h: 96 }], 'Uploaded by Alice']);
+  const asset = await raw('/asset/' + id1);
+  assert.deepEqual([asset.status, asset.headers.get('content-type')], [200, 'image/png']);
+  assert.equal((await review(id1, 'approve')).status, 409);
+
+  // A second approved sprite replaces the first everywhere, build slots included.
+  r.ctx.storage.sql.exec("INSERT INTO builds (user_id, slot, data) VALUES ('u1', 1, ?)", JSON.stringify({ avatar: id1, color: '#123456' }));
+  const id2 = (await send('u1', 'Dog')).body.pending.id;
+  await review(id2, 'approve');
+  assert.deepEqual((await catalog()).map((e) => e.id), [id2]);
+  assert.equal((await raw('/asset/' + id1)).status, 404);
+  assert.equal((await r.call('/profile?userId=u1')).body.avatar, id2);
+  assert.equal(JSON.parse(r.ctx.storage.sql.exec("SELECT data FROM builds WHERE user_id = 'u1' AND slot = 1").toArray()[0].data).avatar, id2);
+
+  // Reject: the image is dropped and the viewer sees it; a new send clears the rejection.
+  const id3 = (await send('u1', 'Frog')).body.pending.id;
+  assert.equal((await review(id3, 'reject')).body.status, 'rejected');
+  assert.equal((await raw('/sprites/png/' + id3)).status, 404);
+  mine = (await r.call('/sprites/mine?userId=u1')).body;
+  assert.deepEqual([mine.rejected.id, mine.pending, mine.live.id, mine.live.url], [id3, null, id2, '/api/assets/nesszerra/' + id2]);
+  // A viewer with no fighter yet: approval only adds it to the catalog.
+  const idb = (await send('u2', 'Bob Sprite')).body.pending.id;
+  await review(idb, 'approve');
+  assert.equal((await r.call('/profile?userId=u2')).body, null);
+  assert.deepEqual((await catalog()).map((e) => [e.id, e.owner]), [[id2, 'u1'], [idb, 'u2']]);
+
+  // Remove: fighters wearing it go back to the default character.
+  assert.equal((await review(id2, 'remove')).body.status, 'removed');
+  assert.equal((await r.call('/profile?userId=u1')).body.avatar, 'player');
+  assert.equal(r.readState('nesszerra').players.find((p) => p.userId === 'u1').avatar, 'player');
+  assert.equal(JSON.parse(r.ctx.storage.sql.exec("SELECT data FROM builds WHERE user_id = 'u1' AND slot = 1").toArray()[0].data).avatar, 'player');
+
+  // Withdraw a waiting one; the daily send limit counts withdrawn and rejected sends too.
+  await send('u1', 'Owl');
+  assert.equal((await r.call('/sprites/mine?kind=pending&userId=u1', { method: 'DELETE' })).body.ok, true);
+  assert.equal((await r.call('/sprites/mine?kind=pending&userId=u1', { method: 'DELETE' })).status, 404);
+  await send('u1', 'Bat');
+  await send('u1', 'Elk');
+  const over = await send('u1', 'Rat');
+  assert.deepEqual([over.status, over.body.reason], [429, 'daily_limit']);
+  assert.equal((await send('u1', 'x'.repeat(25))).body.reason, 'invalid_label');
+  assert.equal((await send('u2', 'Big', { image: b64(makePng(129, 64)) })).body.reason, 'image_dimensions');
+  assert.equal((await send('u2', 'Jpeg', { image: b64(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0])) })).body.reason, 'not_png');
+});
+
+test('viewer sprites: AI redraws per viewer and per channel each day, refunded when the model fails', async () => {
+  const r = room();
+  const take = (userId) => r.call('/sprites/ai', { method: 'POST', body: { userId, op: 'take' } });
+  assert.deepEqual((await take('u1')).body, { ok: true, left: 2 });
+  await take('u1'); await take('u1');
+  const over = await take('u1');
+  assert.deepEqual([over.status, over.body.reason], [429, 'ai_daily_limit']);
+  await r.call('/sprites/ai', { method: 'POST', body: { userId: 'u1', op: 'refund' } });
+  assert.equal((await take('u1')).body.left, 0);
+  // The channel cap: other viewers' redraws count toward it.
+  r.ctx.storage.sql.exec("INSERT INTO sprite_usage (user_id, day, ai) VALUES ('many', ?, 57)", new Date().toISOString().slice(0, 10));
+  assert.equal((await take('u2')).body.reason, 'ai_channel_limit');
+  assert.equal((await r.call('/sprites/mine?userId=u2')).body.aiLeft, 0);
 });

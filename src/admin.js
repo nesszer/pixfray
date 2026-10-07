@@ -167,7 +167,7 @@ async function init() {
   $("#dev-link").hidden = $("#dev-section").hidden = !S.access.owner;
   $("#owner-chat").hidden = !S.access.owner || CHANNEL !== site.defaultChannel;
   $("#chat-box").hidden = CHANNEL !== site.defaultChannel;   // other channels get chat through StreamElements only
-  await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets()]);
+  await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets(), loadSprites()]);
   if (S.admin?.channelState !== "paused") connectLive();
   // Back from "Connect mod access" (/auth/login?connect=mods)
   const mods = new URLSearchParams(location.search).get("mods");
@@ -505,6 +505,34 @@ async function loadCustom() {
 // Uploaded pets join the shop at their tier's price (server/pets.js). Built-in pets are drawn in code and can't be removed.
 const TIER_LABELS = { common: "Common", uncommon: "Uncommon", rare: "Rare", epic: "Epic", legendary: "Legendary" };
 const boostLabel = (b) => b?.power && b.power === b.guard && b.power === b.luck ? "+" + b.power + " to all stats" : ["power", "guard", "luck"].filter((k) => b?.[k]).map((k) => "+" + b[k] + " " + k).join(", ");
+// Viewer sprites (server/sprites.js): approve or turn down what viewers sent; remove approved ones.
+async function loadSprites() {
+  const r = await api("/api/sprites/" + CHANNEL), pendingBox = $("#sprite-pending"), liveBox = $("#sprite-live");
+  if (!r.ok) { pendingBox.replaceChildren(h("p", { class: "muted small" }, "Couldn't list viewer sprites: " + errorText(r))); liveBox.replaceChildren(); return; }
+  const { pending = [], live = [] } = r.data;
+  $("#sprite-count").textContent = "(" + pending.length + ")";
+  $("#tab-characters").textContent = pending.length ? "Characters (" + pending.length + ")" : "Characters";
+  const thumb = (x) => h("img", { class: "sprite-thumb", src: "/api/sprites/" + CHANNEL + "/" + x.id, alt: x.label, width: 64, height: 64, loading: "lazy" });
+  const who = (x) => h("td", {}, x.displayName, h("br"), h("span", { class: "muted small" }, x.username));
+  const act = (x, action, text, cls = "btn btn-small") => h("button", { type: "button", class: cls, onclick: (e) => reviewSprite(x, action, e.currentTarget) }, text);
+  pendingBox.replaceChildren(!pending.length ? h("p", { class: "muted small" }, "Nothing waiting.") : h("div", { class: "table-wrap" }, h("table", { class: "data" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Sprite"), h("th", {}, "Name"), h("th", {}, "Viewer"), h("th", {}, "Made with"), h("th", {}, "Sent"), h("th", {}, h("span", { class: "sr-only" }, "Actions")))),
+    h("tbody", {}, pending.map((x) => h("tr", {}, h("td", {}, thumb(x)), h("td", {}, x.label), who(x), h("td", {}, x.ai ? "AI redraw" : "Pixel filter"), h("td", {}, dateTime(x.createdAt)),
+      h("td", {}, h("div", { class: "toolbar" }, act(x, "approve", "Approve"), act(x, "reject", "Turn down", "btn btn-small btn-danger")))))))));
+  liveBox.replaceChildren(!live.length ? h("p", { class: "muted small" }, "None yet.") : h("div", { class: "table-wrap" }, h("table", { class: "data" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Sprite"), h("th", {}, "Name"), h("th", {}, "Viewer"), h("th", {}, "Approved by"), h("th", {}, "Approved"), h("th", {}, h("span", { class: "sr-only" }, "Actions")))),
+    h("tbody", {}, live.map((x) => h("tr", {}, h("td", {}, thumb(x)), h("td", {}, x.label), who(x), h("td", {}, x.reviewedBy), h("td", {}, dateTime(x.reviewedAt)),
+      h("td", {}, act(x, "remove", "Remove", "btn btn-small btn-danger"))))))));
+}
+async function reviewSprite(x, action, button) {
+  if (action === "remove" && !confirm("Remove " + x.label + "? " + x.displayName + " goes back to the default character if they wear it.")) return;
+  button.disabled = true;
+  const r = await api("/api/sprites/" + CHANNEL + "/" + x.id, { method: "POST", body: { action } });
+  button.disabled = false;
+  const done = { approve: x.label + " approved and put on " + x.displayName + "'s fighter.", reject: x.label + " turned down.", remove: x.label + " removed." }[action];
+  setStatus($("#sprite-review-status"), r.ok ? done : "Couldn't " + (action === "reject" ? "turn it down" : action) + ": " + errorText(r) + ".", r.ok ? "ok" : "error");
+  loadSprites();
+}
 async function loadPets() {
   const r = await api("/api/pets/" + CHANNEL), box = $("#pet-custom-list");
   if (!r.ok) { box.replaceChildren(h("p", { class: "muted small" }, "Couldn't list pets: " + errorText(r))); return; }

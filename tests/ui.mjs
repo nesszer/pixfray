@@ -1,15 +1,17 @@
 // Lane B UI test: viewer dashboard ("/") and mod controls ("/admin/") at 1280px and 390px.
 // Signed-out runs against the real local server (`bunx cf dev` / vite); signed-in states stub /api/* with page.route.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5193 node tests/ui.mjs
+import { chromeOptions } from './chrome.mjs';
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 import { enforceCsp } from './csp-helper.mjs';
+import { makePng } from './upload-helpers.mjs';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
 const shots = fileURLToPath(new URL('../screenshots', import.meta.url));
 fs.mkdirSync(shots, { recursive: true });
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
+const browser = await chromium.launch(chromeOptions());
 const errors = [];
 const sizes = [{ name: '1280', width: 1280, height: 900 }, { name: '390', width: 390, height: 844 }];
 const now = Date.now();
@@ -324,6 +326,59 @@ try {
     await context.close();
   }
 
+  // 3c. Your own sprite: a picture becomes a pixel sprite, the AI redraw replaces it, and it goes to the mods.
+  //     Only the viewer's own approved sprite is in their character list.
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    const ball = (w, h) => makePng(w, h, { pixel: (x, y) => (x - w / 2) ** 2 + (y - h / 2) ** 2 < (h / 3) ** 2 ? (Math.abs(y - h / 2) < h / 20 ? [30, 40, 220, 255] : [220, 30, 30, 255]) : [250, 250, 248, 255] });
+    const spritePng = makePng(48, 64, { pixel: (x, y) => (x > 8 && x < 40 && y > 4) ? [220, 120, 30, 255] : [0, 0, 0, 0] });
+    let sent = null, redraws = 0;
+    const status = () => ({ live: { id: 'v-mine-aaaaaa', label: 'Mine', url: '/api/assets/nesszerra/v-mine-aaaaaa', status: 'live' }, pending: sent ? { id: 'v-my-cat-cccccc', label: sent.label, status: 'pending', createdAt: now } : null,
+      rejected: null, submitsLeft: sent ? 5 : 6, aiLeft: 3 - redraws, ai: { available: true, left: 3 - redraws }, limits: { maxSide: 128, maxLabel: 24 } });
+    await page.route('**/api/session', (r) => json(r, { user, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+    await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
+    await page.route('**/api/leaderboard/nesszerra*', (r) => json(r, board));
+    await page.route('**/api/profile/nesszerra', (r) => json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now, bonus: 0, checkins: 0, streak: 0, dollars: 0 }));
+    await page.route('**/api/catalog/nesszerra', async (r) => {
+      const real = await (await r.fetch()).json(), mine = (id, owner, label) => ({ id, label, url: '/api/assets/nesszerra/' + id, frames: [{ x: 0, y: 0, w: 48, h: 64 }], fps: 8, anchor: { x: 0.5, y: 1 }, mode: 'single', combatFallback: 'effects', animations: {}, custom: true, owner });
+      return json(r, [...real, mine('v-mine-aaaaaa', user.id, 'Mine'), mine('v-other-bbbbbb', '5005', 'Not mine')]);
+    });
+    await page.route(/\/api\/(assets\/nesszerra\/v-|sprite\/nesszerra\/pending)/, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: spritePng }));
+    await page.route('**/api/sprite/nesszerra/redraw', (r) => { redraws++; return json(r, { ok: true, image: Buffer.from(ball(256, 256)).toString('base64'), left: 3 - redraws }); });
+    await page.route('**/api/sprite/nesszerra', (r) => {
+      if (r.request().method() === 'POST') { sent = r.request().postDataJSON(); return json(r, { ok: true, pending: status().pending }, 201); }
+      return json(r, status());
+    });
+    await page.goto(base + '/?channel=nesszerra');
+    await page.waitForSelector('#sprite-maker:not([hidden])');
+    assert.equal(await page.locator('#char-v-mine-aaaaaa').count(), 1, 'the viewer\'s own sprite is in their list');
+    assert.equal(await page.locator('#char-v-other-bbbbbb').count(), 0, 'another viewer\'s sprite is not');
+    assert.match(await page.locator('label[for=char-v-mine-aaaaaa]').textContent(), /Your sprite/);
+    assert.match(await page.locator('#sprite-current').textContent(), /Mine is approved/);
+    assert.equal(await page.locator('#sprite-send').isDisabled(), true);
+    await page.locator('#sprite-file').setInputFiles({ name: 'my_cat.png', mimeType: 'image/png', buffer: ball(300, 200) });
+    await page.waitForFunction(() => !document.querySelector('#sprite-send').disabled);
+    assert.equal(await page.locator('#sprite-name').inputValue(), 'my cat');
+    assert.match(await page.locator('#sprite-size').textContent(), /^\d+ x 116 px$/);
+    const painted = () => page.locator('#sprite-canvas').evaluate((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return n; });
+    assert.ok(await painted() > 1000, 'the preview shows the sprite');
+    await page.locator('#sprite-ai').click();
+    await page.waitForFunction(() => document.querySelector('#sprite-status').textContent.startsWith('Redrawn'));
+    assert.equal(await page.locator('#sprite-plain').isVisible(), true);
+    assert.equal(await page.locator('#sprite-ai').textContent(), 'Redraw again');
+    assert.match(await page.locator('#sprite-note').textContent(), /2 AI redraws/);
+    await noOverflow(page, 'viewer sprite maker ' + s.name);
+    await page.locator('#sprite-maker').scrollIntoViewIfNeeded();
+    await page.locator('#sprite-maker').screenshot({ path: shots + '/viewer-sprite-maker-' + s.name + '.png' });
+    await page.locator('#sprite-send').click();
+    await page.waitForFunction(() => document.querySelector('#sprite-current').textContent.includes('waiting for a mod'));
+    assert.match(await page.locator('#sprite-status').textContent(), /^Sent/);
+    assert.deepEqual([sent.label, sent.ai, sent.image.startsWith('iVBORw0KGgo')], ['my cat', true, true]);
+    assert.match(await page.locator('#sprite-current').textContent(), /my cat is waiting for a mod/);
+    assert.equal(await page.locator('#sprite-send').isDisabled(), true, 'the form clears after sending');
+    await context.close();
+  }
+
   // 4. Signed in but not a moderator -> admin gate.
   {
     const { context, page } = await newPage(sizes[1]);
@@ -372,6 +427,9 @@ try {
     await page.route('**/api/access/nesszerra', (r) => json(r, { owner: role === 'owner', moderator: role === 'mod', canManage: true }));
     await page.route('**/api/leaderboard/nesszerra*', (r) => json(r, board));
     await page.route('**/api/assets/nesszerra', (r) => json(r, { items: [{ id: 'c-mascot', label: 'Mascot', frames: [{ x: 0, y: 0, w: 128, h: 128 }, { x: 128, y: 0, w: 128, h: 128 }], animations: { attack: [{ x: 256, y: 0, w: 128, h: 128 }] }, bytes: 48213, createdBy: mod.id, createdAt: now - 7200000 }], usage: { count: 1, limit: 24, bytes: 48213 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 24 } }));
+    const spriteRow = (id, label, extra) => ({ id, userId: '3003', username: 'top_dog', displayName: 'top_dog', label, bytes: 900, width: 48, height: 64, createdAt: now - 600000, reviewedBy: '', reviewedAt: 0, ...extra });
+    await page.route('**/api/sprites/nesszerra', (r) => json(r, { pending: [spriteRow('v-dog-aaaaaa', 'Dog', { status: 'pending', ai: true })], live: [spriteRow('v-cat-bbbbbb', 'Cat', { status: 'live', ai: false, reviewedBy: 'Mod_Two', reviewedAt: now - 3600000 })] }));
+    await page.route('**/api/sprites/nesszerra/*', (r) => r.fulfill({ status: 200, contentType: 'image/png', body: makePng(48, 64, { pixel: (x, y) => (x > 8 && x < 40 && y > 4) ? [120, 200, 60, 255] : [0, 0, 0, 0] }) }));
     await page.route('**/api/admin/nesszerra', async (r) => {
       if (r.request().method() === 'GET') return json(r, { ...snapshot(), chatStatus, history: history(), customUsage: { count: 1, limit: 24, bytes: 48213 }, access: { owner: role === 'owner', moderator: role === 'mod', canManage: true } });
       const body = r.request().postDataJSON(); posts.push(body);
@@ -455,6 +513,9 @@ try {
         assert.equal(count(/custom character slots used/g), 1, 'slot usage appears once on the Characters tab');
         assert.ok(count(/PNG only/g) <= 1 && count(/characters per channel/g) <= 1, 'upload limits appear once');
         assert.ok(count(/1.5 MB|1.50 MB/g) <= 1, 'the atlas size limit appears once');
+        assert.match(text, /Viewer sprites waiting for review \(1\)/);
+        assert.equal(await page.locator('#sprite-pending tbody tr').count(), 1);
+        assert.match(await page.locator('#tab-characters').textContent(), /Characters \(1\)/);
       }
       if (tab === 'rules') {
         assert.equal(await page.locator('#config-fields .config-group:visible').count(), 5, 'only the groups that apply show');

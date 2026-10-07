@@ -50,6 +50,8 @@ return {
       // When configured, the PixFray bot reads and answers chat as BOT_LOGIN (signed in once at /auth/login?bot=1).
       // BOT_DEBUG: on test, the bot also plays (sparring partner, !fray spar, !fray e2e; server/channel.js botDebug).
       ...(bot ? { CHAT_BOT: bindings.text('1'), BOT_LOGIN: bindings.text(bot), ...(testing ? { BOT_DEBUG: bindings.text('1') } : {}) } : {}),
+      // Workers AI for the optional sprite redraw (server/sprites.js); a local server goes without it.
+      ...(localTest || process.argv.includes('dev') ? {} : { AI: bindings.ai() }),
       ...(localTest ? { MINI_LOCAL_TEST: bindings.text('1') } : {})
     }
   })
