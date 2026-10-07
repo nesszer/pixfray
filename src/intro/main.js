@@ -88,13 +88,26 @@ function scrollC() {
   return 5;
 }
 let activeChapter = -1, activeCopy = -1;
+// a chapter's scene is framed when the middle of its section is mid-screen; a plain #link would stop at the section's top,
+// a fifth of a chapter short. The camera eases there on its own, so the page itself jumps.
+function centerChapter(sec) {
+  const b = bounds[sections.indexOf(sec)];
+  if (b) scrollTo({ top: sec === sections[0] ? 0 : b.top + b.h / 2 - innerHeight / 2, behavior: 'instant' });
+}
+railItems.forEach((li) => li.querySelector('a').addEventListener('click', (e) => {
+  const sec = document.querySelector(e.currentTarget.hash);
+  if (!sec || document.body.classList.contains('no-motion')) return;
+  e.preventDefault(); history.pushState(null, '', e.currentTarget.hash); centerChapter(sec);
+}));
+// Back and Forward between chapters: the browser scrolls to the section's top, so centre it again once it has
+addEventListener('popstate', () => {
+  const sec = sections.find((s) => location.hash === '#' + s.id);
+  if (sec && !document.body.classList.contains('no-motion')) requestAnimationFrame(() => centerChapter(sec));
+});
 // the copy is fixed in place while its chapter is on, so a keyboard user tabbing into another chapter's link scrolls that chapter in
 document.addEventListener('focusin', (e) => {
   const sec = e.target.closest?.('.chapter');
-  if (sec && !sec.classList.contains('is-on') && !document.body.classList.contains('no-motion')) {
-    const b = bounds[sections.indexOf(sec)];
-    if (b) scrollTo({ top: b.top + b.h / 2 - innerHeight / 2, behavior: 'instant' });
-  }
+  if (sec && !sec.classList.contains('is-on') && !document.body.classList.contains('no-motion')) centerChapter(sec);
 });
 // the rail follows the nearest chapter; the copy shows only near a chapter's centre, so text never sits on a scene change
 function setChapter(c) {
@@ -478,7 +491,8 @@ addEventListener('click', (e) => {
 addEventListener('keydown', (e) => { if (e.key === 'j' && !e.target.closest('input, textarea')) { jumpAt = now; sound.jump(); } });
 
 // ---------- state ----------
-let C = 0, targetC = 0;
+let C = 0, targetC = 0, vC = 0;
+const CAM_W = 6.4;
 const ROLLS = [{ at: 0.22, v: 5, by: 'a', text: 'Challenger hits for 34' }, { at: 0.5, v: 3, by: 'b', text: 'Rival misses' }, { at: 0.78, v: 6, by: 'a', text: 'Challenger crits for 50' }];
 let lastRoll = -1, rollAt = -10;
 const timer = new THREE.Timer();
@@ -528,9 +542,15 @@ let lastGold = -1, lastFrame = -1;
 function frame() {
   const dt = Math.min(0.05, timer.getDelta()), t = (now = timer.getElapsed());
   glide(dt);
-  if (reduced) C = Math.round(targetC);
-  else C += (targetC - C) * (1 - Math.exp(-dt * 3.2));
-  if (Math.abs(targetC - C) < 1e-4) C = targetC;
+  // the camera follows the scroll on a critically damped spring: it speeds up and slows down smoothly, so a key press, a rail
+  // link, a scrollbar drag or a touch fling doesn't jerk it from still to full speed in one frame. Same lag as a plain ease
+  // while scrolling (2 / CAM_W s), and solved exactly, so a slow frame can't make it overshoot.
+  if (reduced) { C = Math.round(targetC); vC = 0; } else {
+    const x = C - targetC, k = vC + CAM_W * x, e = Math.exp(-CAM_W * dt);
+    C = targetC + (x + k * dt) * e; vC = (vC - CAM_W * k * dt) * e;
+    if (C < 0 || C > 5) { C = Math.max(0, Math.min(5, C)); vC = 0; }
+  }
+  if (Math.abs(targetC - C) < 1e-4 && Math.abs(vC) < 1e-3) { C = targetC; vC = 0; }
   setChapter(C);   // the copy follows the camera, so it changes when the scene does, not the moment the scroll crosses a line
   const portrait = innerWidth / innerHeight < 0.9;
 
@@ -786,8 +806,11 @@ try { if (localStorage.getItem('pixfray-intro-sound') === '1') addEventListener(
   for (const o of culled) o.frustumCulled = true;
   for (const o of empty) o.count = 0;
 }
+// a link to a chapter (/#ladder) opens on that chapter, framed, instead of flying there from the start
+const linked = sections.find((sec) => location.hash === '#' + sec.id);
+if (linked) { centerChapter(linked); C = targetC = scrollC(); }
 timer.update(); frame();
 finishLoading();
 requestAnimationFrame(loop);
-window.__intro = { get C() { return C; }, setC(x) { targetC = C = x; }, get quality() { return { step: quality, pixelRatio: renderer.getPixelRatio() }; } };
+window.__intro = { get C() { return C; }, setC(x) { targetC = C = x; vC = 0; }, get quality() { return { step: quality, pixelRatio: renderer.getPixelRatio() }; } };
 if (import.meta.env.DEV) Object.assign(window.__intro, { scene, composer, gtao, bloom, film, island, hero, hoard, chest, frame3d, islets, clouds, embers, sky });
