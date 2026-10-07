@@ -166,7 +166,6 @@ async function init() {
   $("#gate").hidden = true; $("#app").hidden = false;
   $("#dev-link").hidden = $("#dev-section").hidden = !S.access.owner;
   $("#owner-chat").hidden = !S.access.owner || CHANNEL !== site.defaultChannel;
-  $("#chat-box").hidden = CHANNEL !== site.defaultChannel;   // other channels get chat through StreamElements only
   await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets(), loadSprites()]);
   if (S.admin?.channelState !== "paused") connectLive();
   // Back from "Connect mod access" (/auth/login?connect=mods)
@@ -175,6 +174,12 @@ async function init() {
   if (MODS[mods]) {
     setStatus($("#check-status"), MODS[mods], mods === "connected" ? "ok" : "error");
     const url = new URL(location.href); url.searchParams.delete("mods"); history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
+  // Back from "Add the PixFray bot" (/auth/login?connect=bot) or sign-up with channel:bot: connect chat through the bot now.
+  if (new URLSearchParams(location.search).get("bot") === "allowed") {
+    const url = new URL(location.href); url.searchParams.delete("bot"); history.replaceState(null, "", url.pathname + url.search + url.hash);
+    const c = S.admin?.chatStatus || {};
+    if (S.admin?.chatBot?.login && !(c.connected && c.source === "twitch")) await chatAct("connectChat", $("#connect-chat"), false, $("#bot-status"));
   }
   mountUploads();
 }
@@ -513,7 +518,8 @@ async function loadSprites() {
   $("#sprite-count").textContent = "(" + pending.length + ")";
   $("#tab-characters").textContent = pending.length ? "Characters (" + pending.length + ")" : "Characters";
   const thumb = (x) => h("img", { class: "sprite-thumb", src: "/api/sprites/" + CHANNEL + "/" + x.id, alt: x.label, width: 64, height: 64, loading: "lazy" });
-  const who = (x) => h("td", {}, x.displayName, h("br"), h("span", { class: "muted small" }, x.username));
+  // the login only when it isn't just the display name in other letter case
+  const who = (x) => h("td", {}, x.displayName || x.username, ...(x.displayName && x.username && x.displayName.toLowerCase() !== x.username.toLowerCase() ? [h("br"), h("span", { class: "muted small" }, x.username)] : []));
   const act = (x, action, text, cls = "btn btn-small") => h("button", { type: "button", class: cls, onclick: (e) => reviewSprite(x, action, e.currentTarget) }, text);
   pendingBox.replaceChildren(!pending.length ? h("p", { class: "muted small" }, "Nothing waiting.") : h("div", { class: "table-wrap" }, h("table", { class: "data" },
     h("thead", {}, h("tr", {}, h("th", {}, "Sprite"), h("th", {}, "Name"), h("th", {}, "Viewer"), h("th", {}, "Made with"), h("th", {}, "Sent"), h("th", {}, h("span", { class: "sr-only" }, "Actions")))),
@@ -610,6 +616,7 @@ function renderChat() {
   if (c.lastNotificationAt) parts.push("Last chat message " + timeAgo(c.lastNotificationAt) + ".");
   if (c.lastRevocationReason) parts.push("Last revocation: " + (CHAT_STATUS[c.lastRevocationReason] || c.lastRevocationReason) + ".");
   const bot = S.admin.chatBot;
+  $("#chat-box").hidden = CHANNEL !== site.defaultChannel && !bot;   // without the bot, other channels get chat through StreamElements only
   if (bot) parts.push(bot.login ? `The PixFray bot (${bot.login}) reads chat and answers commands; StreamElements stays quiet while it's connected. Type /mod ${bot.login} in your chat so it can answer more than one command a second.` : "Sign in the PixFray bot account at /auth/login?bot=1, then click Connect chat.");
   if (bot?.login && bot.debug) parts.push(`Debug: challenge @${bot.login} and it fights back, !fray spar makes it challenge you, and !fray e2e (you or a mod) plays every command once and posts which passed.`);
   if (S.admin.seOnly) parts.push("This site takes chat from StreamElements only; the first StreamElements command connects it.");
@@ -742,20 +749,53 @@ $("#rotate-se").addEventListener("click", (e) => {
 
 // ---------- setup checklist ----------
 // Each step has a live state from /api/admin; the Live tab points at the first unfinished one.
+// Sites with the PixFray bot (chatBot) ask for the bot instead of the StreamElements steps; a channel that still takes
+// chat from StreamElements keeps those steps and gets the bot as an optional switch.
 const DUEL_ACTIONS = ["challenge", "accept", "decline"];
 function setupSteps() {
   const a = S.admin, se = a.streamelements, seen = se?.seen || {}, c = a.chatStatus || {};
   const twitch = c.connected && c.source === "twitch";   // Twitch chat directly: the StreamElements steps don't apply
+  const viaSe = c.connected && c.source === "streamelements", seSteps = !a.chatBot || viaSe;
   return [
     { id: "check-overlay", done: a.overlays > 0, next: "open the overlay in OBS" },
-    { id: "check-duel", done: twitch || !!se?.duelModuleOff, next: "turn off the StreamElements Duel module" },
-    { id: "check-commands", done: twitch || (!!se && DUEL_ACTIONS.every((x) => seen[x])), next: "test the commands in chat" },
+    ...(a.chatBot ? [{ id: "check-bot", done: twitch, optional: viaSe, next: "add the PixFray bot to your chat" }] : []),
+    ...(seSteps ? [
+      { id: "check-duel", done: twitch || !!se?.duelModuleOff, next: "turn off the StreamElements Duel module" },
+      { id: "check-commands", done: twitch || (!!se && DUEL_ACTIONS.every((x) => seen[x])), next: "test the commands in chat" },
+    ] : []),
     { id: "check-mods", done: !!a.modsReady && !a.modsLapsed, optional: true },
   ];
+}
+const broadcasterHere = () => !!S.access?.broadcaster || (!!S.access?.owner && CHANNEL === site.defaultChannel);
+// The bot step: the broadcaster allows the bot on Twitch (connect=bot) and comes back connected; a mod or the site owner
+// can connect it only once the broadcaster allowed it or made the bot a moderator.
+function renderBotStep(done) {
+  const a = S.admin, bot = a.chatBot, c = a.chatStatus || {}, login = bot?.login || "";
+  const detail = $("#check-bot [data-detail]"), actions = $("#bot-actions");
+  if (!login) {
+    detail.textContent = "The PixFray bot account isn't signed in on this site yet. " + (S.access?.owner ? "Sign it in, then come back and add it." : "Ask " + site.owner.login + " to sign it in.");
+    actions.replaceChildren(...(S.access?.owner ? [h("a", { class: "btn", href: "/auth/login?bot=1" }, "Sign in the bot account")] : []));
+    return;
+  }
+  const heard = a.botStatus?.heardAt ? " It last answered a command " + timeAgo(a.botStatus.heardAt) + "." : " Type !fray in your chat to test it.";
+  if (done) {
+    detail.textContent = "The PixFray bot (" + login + ") reads your chat and answers the duel commands." + heard + " Type /mod " + login + " in your chat so it can answer more than one command a second.";
+    actions.replaceChildren();
+    return;
+  }
+  const se = c.connected && c.source === "streamelements" ? " Your chat comes through StreamElements now; the bot takes over and StreamElements stops answering PixFray commands." : "";
+  if (broadcasterHere()) {
+    detail.textContent = "The bot (" + login + ") reads your chat and answers !challenge, !fight and the other commands. Twitch asks you to allow it, then chat connects here." + se;
+    actions.replaceChildren(h("a", { class: "btn", "data-step-action": "", href: "/auth/login?" + new URLSearchParams({ channel: CHANNEL, connect: "bot" }) }, "Add the PixFray bot"));
+  } else {
+    detail.textContent = "Ask " + CHANNEL + " to open this page and click Add the PixFray bot, or to type /mod " + login + " in their chat. Then Connect chat works for you too." + se;
+    actions.replaceChildren(h("button", { class: "btn", type: "button", "data-step-action": "", onclick: (e) => chatAct("connectChat", e.currentTarget, false, $("#bot-status")) }, "Connect chat"));
+  }
 }
 function renderChecklist() {
   const a = S.admin, se = a.streamelements, c = a.chatStatus || {}, twitch = c.connected && c.source === "twitch";
   const steps = setupSteps(), required = steps.filter((s) => !s.optional), done = required.filter((s) => s.done).length;
+  for (const li of document.querySelectorAll("#checklist > li")) li.hidden = !steps.some((s) => s.id === li.id);
   for (const s of steps) {
     const li = $("#" + s.id), badge = li.querySelector("[data-badge]");
     badge.textContent = s.done ? "Done" : s.optional ? "Optional" : "To do";
@@ -774,10 +814,15 @@ function renderChecklist() {
     detail("check-commands", (se.commands.length - missing.length) + " of " + se.commands.length + " commands have reached PixFray." +
       (missing.length ? " Not used yet: " + missing.map((x) => x.name).join(", ") + ". Type each one in your chat; any reply from the bot counts." : ""));
   }
+  if (a.chatBot) renderBotStep(twitch);
   $("#check-mods [data-detail]").replaceChildren(...modsDetail());
   if (a.modsLapsed && !a.modsReady) { const b = $("#check-mods [data-badge]"); b.textContent = "Expired"; b.className = "badge warning"; }
   $("#check-title").textContent = done === required.length ? "Stream setup is done" : "Stream setup: " + done + " of " + required.length + " steps done";
   const next = required.find((s) => !s.done), pointer = $("#setup-next");
+  // one primary button: the bot step's while it's the next step, otherwise Copy link
+  const stepAction = $("#bot-actions [data-step-action]"), botNext = !!stepAction && next?.id === "check-bot";
+  stepAction?.classList.toggle("btn-primary", botNext);
+  $("#copy").classList.toggle("btn-primary", !botNext);
   pointer.hidden = !next;
   if (next) pointer.replaceChildren("Stream setup: " + done + " of " + required.length + " steps done. Next: ", h("a", { href: "#chat", onclick: (e) => { e.preventDefault(); goToStep(next.id); } }, next.next), ".");
 }
@@ -785,8 +830,7 @@ function renderChecklist() {
 function modsDetail() {
   const a = S.admin, ready = !!a.modsReady && !a.modsLapsed, lapsed = !!a.modsLapsed;
   if (ready) return ["Twitch moderators of " + CHANNEL + " can sign in and use this page."];
-  const broadcaster = !!S.access?.broadcaster || (!!S.access?.owner && CHANNEL === site.defaultChannel);
-  if (broadcaster) {
+  if (broadcasterHere()) {
     const link = h("a", { href: "/auth/login?" + new URLSearchParams({ channel: CHANNEL, connect: "mods" }) }, lapsed ? "Reconnect mod access" : "Connect mod access");
     return [lapsed ? "Mod access expired, so your Twitch moderators can't sign in until you reconnect it. " : "Your Twitch moderators can't sign in yet. PixFray needs permission to read your moderator list. ", link];
   }

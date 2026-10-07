@@ -178,7 +178,7 @@
     <div role="tabpanel" id="panel-chat" aria-labelledby="tab-chat" tabindex="0" hidden>
       <section class="section" id="setup-check" aria-labelledby="check-title">
         <h2 id="check-title">Stream setup</h2>
-        <p class="muted small" id="check-intro">Do these in order. Each step turns Done by itself within 10 seconds of working, so keep this tab open while you set things up. The last step is optional.</p>
+        <p class="muted small" id="check-intro">Do these in order. Each step turns Done by itself within 10 seconds of working, so keep this tab open while you set things up. Steps marked Optional can wait.</p>
         <p class="status" id="check-status" role="status"></p>
         <ol class="checklist setup-steps" id="checklist">
           <li id="check-overlay" tabindex="-1"><span class="badge" data-badge>…</span><div>
@@ -202,6 +202,12 @@
                 </div>
               </details>
             </div>
+          </div></li>
+          <li id="check-bot" tabindex="-1" hidden><span class="badge" data-badge>…</span><div>
+            <h3>Add the PixFray bot to your chat</h3>
+            <p class="small muted" data-detail></p>
+            <div class="toolbar" id="bot-actions"></div>
+            <p class="status" id="bot-status" role="status"></p>
           </div></li>
           <li id="check-duel" tabindex="-1"><span class="badge" data-badge>…</span><div>
             <h3>Turn off the StreamElements Duel module</h3>

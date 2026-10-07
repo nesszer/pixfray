@@ -4,6 +4,9 @@ import { scrub, skyBackdrop } from "./scrub.js";
 import site from "../site.config.js";
 
 const params = new URLSearchParams(location.search);
+// Sites with a PixFray chat bot (site.config.js bot) set chat up with it; the others keep the StreamElements steps.
+const BOT = Boolean(site.bot?.[location.origin === site.origins.test ? "test" : "production"]);
+for (const n of document.querySelectorAll("[data-chat]")) if (n.dataset.chat === (BOT ? "bot" : "se")) n.hidden = false; else n.remove();
 const error = params.get("error") || "";
 
 // The overlay lays fighters out in the pixels it gets. Narrow stages render it at least 640px wide (in the stage's own
@@ -26,7 +29,8 @@ frame.addEventListener("load", () => { const r = stage.getBoundingClientRect(); 
 
 const PROBLEMS = {
   full: "PixFray is full right now. Try again in a few days, or run your own copy from the code on GitHub.",
-  denied: "You cancelled the Twitch permission. You can set up without it: only you can open your mod controls until you connect it from the Stream setup page.",
+  denied: BOT ? "You cancelled the Twitch permissions. You can set up without them and allow them later from the Stream setup page. Until then only you can open your mod controls, and the bot stays out of your chat."
+    : "You cancelled the Twitch permission. You can set up without it: only you can open your mod controls until you connect it from the Stream setup page.",
   failed: "Twitch sign-in didn't finish. Try again.",
   review: "Your channel is waiting for the site owner's approval. PixFray turns on at once for Twitch accounts at least 30 days old that have streamed before (a saved past broadcast, or Affiliate or Partner). Sign in here again later to check.",
   taken: "This channel name was set up by a different Twitch account (an earlier owner of the name). Open an issue on GitHub and the site owner can move it to you.",
@@ -44,13 +48,13 @@ function show(title, text, actions = [], problem = "") {
   box.hidden = !problem;
   box.className = "callout small" + (problem ? " warning" : "");
 }
-const signIn = (mods = true) => h("a", { class: mods ? "btn btn-primary" : "btn", href: "/auth/login?" + new URLSearchParams({ signup: "1", ...(mods ? {} : { mods: "0" }) }) }, mods ? "Sign in with Twitch" : "Set up without mod access");
+const signIn = (mods = true) => h("a", { class: mods ? "btn btn-primary" : "btn", href: "/auth/login?" + new URLSearchParams({ signup: "1", ...(mods ? {} : { mods: "0" }) }) }, mods ? "Sign in with Twitch" : BOT ? "Set up without these permissions" : "Set up without mod access");
 
 // Anyone can sign up: the Twitch account that signs in gets PixFray on its own channel. The server sends people back
 // here with ?error=<reason> when sign-up doesn't finish.
 function init() {
   show("Sign in with the Twitch account you stream on",
-    "PixFray turns on for that channel, then the Stream setup page opens. Twitch asks you to allow reading your moderator list.",
+    "PixFray turns on for that channel, then the Stream setup page opens. Twitch asks you to allow reading your moderator list" + (BOT ? " and the PixFray bot in your chat." : "."),
     error === "denied" ? [signIn(), signIn(false)] : [signIn()], PROBLEMS[error] || "");
   if (error) history.replaceState(null, "", location.pathname);
 }
@@ -59,7 +63,7 @@ init();
 // The setup steps scroll past a scene that shows each one: the overlay framed as an OBS source, a bot reply in chat,
 // !challenge and !fight starting a duel, then the ranking pillars. The middle of the window picks the step.
 const steps = [...document.querySelectorAll(".story .step-grid > li")], cap = $("#story-cap");
-const CAPS = ["The overlay is one browser source, drawn over your game.", "With the Duel module off, PixFray's bot is the only one that answers.",
+const CAPS = ["The overlay is one browser source, drawn over your game.", BOT ? "The PixFray bot answers duel commands in your chat." : "With the Duel module off, PixFray's bot is the only one that answers.",
   "!challenge and !fight start the duel on stream.", "Every win climbs the ranks your mods look after."];
 const KEYS = [2, 7, 12, 17].map((f) => f / 19);   // 20 frames, 5 per step; each step settles on its middle frame
 let active = -1;

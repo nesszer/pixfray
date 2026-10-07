@@ -114,6 +114,23 @@ test('a renamed Twitch name: the new holder of the login gets no say over the ol
   assert.equal(auth.ctx.storage.alarm, first);
 });
 
+test('sign-up on a bot site also asks for channel:bot and comes back with bot=allowed only when it was granted', async (t) => {
+  const { env } = environment();
+  env.CHAT_BOT = '1'; env.BOT_LOGIN = 'pixfray';
+  const { r, state } = await login(env, 'signup=1');
+  assert.equal(new URL(r.headers.get('Location')).searchParams.get('scope'), 'moderation:read channel:bot');
+  twitch(t, STREAMER, ['moderation:read', 'channel:bot']);
+  assert.equal((await callback(env, state)).headers.get('Location'), '/admin/?channel=newstreamer&signed_in=1&bot=allowed#chat');
+  t.mock.restoreAll();
+  // Twitch handed back moderation:read alone: no bot flag, the page shows the Add the PixFray bot step
+  const again = await login(env, 'signup=1');
+  twitch(t, STREAMER, ['moderation:read']);
+  assert.equal((await callback(env, again.state)).headers.get('Location'), '/admin/?channel=newstreamer&signed_in=1#chat');
+  t.mock.restoreAll();
+  const bare = await login(env, 'signup=1&mods=0');
+  assert.equal(new URL(bare.r.headers.get('Location')).searchParams.get('scope'), '', 'mods=0 asks for neither');
+});
+
 test('sign-up without mod access (mods=0) asks for no scope and stores no broadcaster token', async (t) => {
   const { env } = environment();
   const { r, state } = await login(env, 'signup=1&mods=0');

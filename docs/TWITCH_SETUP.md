@@ -24,15 +24,15 @@ The webhook secret is derived from `AUTH_SECRET`, so there is no extra secret to
 With `bot` set for a site in `site.config.js`, chat is read and answered by that bot account instead:
 
 1. Sign the bot account in at `/auth/login?bot=1` (`user:read:chat`, `user:write:chat`, `user:bot`). Only the account named in `bot` is accepted.
-2. Each broadcaster allows the bot at `/auth/login?channel=<channel>&connect=bot` (scope `channel:bot`), or makes it a moderator, then clicks **Connect chat** on `/admin/`.
+2. Each broadcaster allows the bot when signing up on `/start/` (the sign-up asks for `moderation:read channel:bot`), or later with **Add the PixFray bot** on `/admin/` (`/auth/login?channel=<channel>&connect=bot`). Both come back with `bot=allowed`, and the admin page then runs Connect chat by itself. A broadcaster who makes the bot a moderator instead lets any mod click **Connect chat**.
 3. Typing `/mod <bot>` in chat lets the bot answer more than one command a second.
 
 In bot mode the subscription reads as the bot, so the owner's `connect=1` sign-in above isn't the chat connection.
 
 ## Other channels
 
-Other channels join by signing in on `/start/` ([STREAMER_SETUP.md](STREAMER_SETUP.md)). Their sign-in asks only for
-`moderation:read`, so the channel's mods can use its mod controls; they use StreamElements for chat,
-so they need no chat scopes. No viewer needs chat access permissions to customize a profile. Ranked duels require a saved Twitch-linked profile.
+Other channels join by signing in on `/start/` ([STREAMER_SETUP.md](STREAMER_SETUP.md)). Their sign-in asks for
+`moderation:read`, so the channel's mods can use its mod controls, and on a site with a bot also `channel:bot`.
+Without a bot they use StreamElements for chat, so they need no chat scopes. No viewer needs chat access permissions to customize a profile. Ranked duels require a saved Twitch-linked profile.
 
 The code/deployment dashboard additionally needs a repo-scoped GitHub integration and GitHub Actions deployment secrets. These prerequisites are shown as unconfigured until provided; they do not silently grant moderators deployment access.

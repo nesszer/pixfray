@@ -755,6 +755,11 @@ try {
     await page.goto(base + '/admin/');
     await page.click('#tab-chat');
     await page.waitForSelector('#bot-commands:not([hidden])');
+    // a bot site: the bot step replaces the StreamElements steps, Done while the bot reads chat
+    assert.equal(await page.locator('#check-bot [data-badge]').textContent(), 'Done');
+    assert.match(await page.locator('#check-bot [data-detail]').textContent(), /^The PixFray bot \(pixfray\) reads your chat and answers the duel commands\. It last answered a command \d+ (s|min) ago\. Type \/mod pixfray/);
+    for (const id of ['#check-duel', '#check-commands']) assert.equal(await page.locator(id).isHidden(), true, id + ' hidden on a bot site');
+    assert.equal(await page.locator('#check-title').textContent(), 'Stream setup is done');
     assert.deepEqual(await page.locator('#bot-commands-table tbody td:first-child').allTextContents(), ['!nt', '!tablet']);
     // the bot's health: a drop newer than the last sent reply is a warning
     assert.match(await page.locator('#bot-health').textContent(), /^Bot: last command \d+ (s|min) ago \(alice !fray\), last reply sent \d+ (s|min) ago\. 41 sent, 1 dropped\. The last reply was dropped \d+ (s|min) ago: the same line twice within 30 s \(msg_duplicate\)\. Type !fray debug/);
@@ -830,6 +835,66 @@ try {
       await context.close();
     }
   }
+  // 7c. The bot step for a signed-up channel: the broadcaster gets Add the PixFray bot (the one primary button while it's
+  // next), coming back with bot=allowed connects chat by itself, and a mod is told to ask the broadcaster.
+  {
+    const newstreamer = { id: '5505', login: 'newstreamer', displayName: 'NewStreamer' }, ch = 'newstreamer';
+    const cases = [
+      { name: 'broadcaster', session: newstreamer, access: { owner: false, broadcaster: true, moderator: false, canManage: true }, query: '' },
+      { name: 'broadcaster back with bot=allowed', session: newstreamer, access: { owner: false, broadcaster: true, moderator: false, canManage: true }, query: '&bot=allowed' },
+      { name: 'moderator', session: mod, access: { owner: false, moderator: true, canManage: true }, query: '' },
+    ];
+    for (const c of cases) for (const s of sizes) {
+      const { context, page } = await newPage(s);
+      const posts = [];
+      let chatStatus = { connected: false, status: 'disconnected', subscriptionId: '', createdAt: 0 };
+      await page.route('**/api/session', (r) => json(r, { user: c.session, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+      await page.route('**/api/access/' + ch, (r) => json(r, c.access));
+      await page.route('**/api/leaderboard/' + ch + '*', (r) => json(r, []));
+      await page.route('**/api/assets/' + ch, (r) => json(r, { items: [], usage: { count: 0, limit: 8, bytes: 0 }, limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 } }));
+      await page.route('**/api/admin/' + ch, (r) => {
+        if (r.request().method() === 'POST') {
+          posts.push(r.request().postDataJSON());
+          chatStatus = { connected: true, source: 'twitch', status: 'enabled', subscriptionId: 'sub-bot', createdAt: now };
+          return json(r, { ok: true, chatStatus });
+        }
+        return json(r, { type: 'snapshot', channel: ch, revision: 1, paused: false, chat: { connected: chatStatus.connected, lastSeen: 0, status: chatStatus.status }, config, configVersion: 1, round: 1, players: [], duels: [], events: [],
+          chatStatus, history: [{ version: 1, config, actorId: 'system', at: now, note: '' }], customUsage: { count: 0, limit: 8, bytes: 0 },
+          streamelements: { key: 'k'.repeat(48), names: {}, origin: base, lastCommandAt: 0, rejectedAt: 0, seen: {}, duelModuleOff: false, timerText: 'x', commands: [] },
+          overlays: 1, modsReady: true, channelState: 'on', chatBot: { login: 'pixfray', debug: false }, botCommands: { commands: [], counters: [], max: 50 }, botStatus: null, access: c.access });
+      });
+      await page.goto(base + '/admin/?channel=' + ch + c.query + '#chat');
+      await page.waitForSelector('#app:not([hidden])');
+      await page.waitForFunction(() => document.querySelector('#check-bot [data-detail]').textContent.length > 0);
+      for (const id of ['#check-duel', '#check-commands']) assert.equal(await page.locator(id).isHidden(), true, c.name + ': ' + id + ' hidden');
+      assert.equal(await page.locator('#chat-box').isHidden(), false, c.name + ': the chat connection shows on a signed-up channel');
+      if (c.query) {
+        await page.waitForFunction(() => document.querySelector('#check-bot [data-badge]').textContent === 'Done');
+        assert.deepEqual(posts, [{ action: 'connectChat' }], 'bot=allowed connects chat once');
+        assert.equal(new URL(page.url()).searchParams.get('bot'), null, 'the flag leaves the address');
+        assert.match(await page.locator('#bot-status').textContent(), /Chat connected/);
+        assert.equal(await page.locator('#check-title').textContent(), 'Stream setup is done');
+        assert.equal(await page.locator('#copy').getAttribute('class'), 'btn btn-primary', 'Copy link is primary again');
+      } else if (c.access.broadcaster) {
+        assert.equal(await page.locator('#check-bot [data-badge]').textContent(), 'To do');
+        assert.equal(await page.locator('#check-title').textContent(), 'Stream setup: 1 of 2 steps done');
+        const add = page.locator('#bot-actions a');
+        assert.equal(await add.textContent(), 'Add the PixFray bot');
+        assert.equal(await add.getAttribute('href'), '/auth/login?channel=newstreamer&connect=bot');
+        assert.equal(await page.locator('#panel-chat .btn-primary').count(), 1, 'one primary button');
+        assert.equal(await add.getAttribute('class'), 'btn btn-primary');
+        assert.match(await page.locator('#setup-next').textContent(), /Next: add the PixFray bot to your chat\./);
+        await noOverflow(page, 'bot step ' + s.name);
+        await page.locator('#check-bot').screenshot({ path: shots + '/admin-bot-step-' + s.name + '.png' });
+      } else {
+        assert.match(await page.locator('#check-bot [data-detail]').textContent(), /^Ask newstreamer to open this page and click Add the PixFray bot, or to type \/mod pixfray/);
+        await page.click('#bot-actions button');
+        await page.waitForFunction(() => document.querySelector('#check-bot [data-badge]').textContent === 'Done');
+        assert.deepEqual(posts, [{ action: 'connectChat' }]);
+      }
+      await context.close();
+    }
+  }
   // 8. /start: open sign-up, and each reason Twitch sign-in can send someone back, at 1280/390.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
@@ -891,7 +956,7 @@ try {
     assert.equal(await page.locator('#check-mods a').getAttribute('href'), '/auth/login?channel=newstreamer&connect=mods');
     assert.equal(await page.locator('#chat-box').isHidden(), true, 'Twitch chat connection is for nesszerra only');
     assert.equal(await page.locator('#troubleshoot').isVisible(), true);
-    assert.deepEqual(await page.locator('#checklist > li h3').allTextContents(), ['Add the overlay to OBS', 'Turn off the StreamElements Duel module', 'Add the chat commands to StreamElements', 'Let your moderators help']);
+    assert.deepEqual(await page.locator('#checklist > li:not([hidden]) h3').allTextContents(), ['Add the overlay to OBS', 'Turn off the StreamElements Duel module', 'Add the chat commands to StreamElements', 'Let your moderators help']);
     assert.equal(await page.locator('#summary-title').textContent(), 'Waiting for chat');
     assert.match(await page.locator('#stats').textContent(), /Duels\s*Waiting\s*for chat/);
     assert.equal(await page.locator('#channel-power').isVisible(), true);

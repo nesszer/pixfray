@@ -132,9 +132,9 @@ export async function handleAuth(request,env){
       pending={bot:true,channel:site.defaultChannel,next:'/admin/'};scope=BOT_SCOPES.join(' ');
     }else if(url.searchParams.get('signup')==='1'){
       // Sign-up from /start turns on the signed-in account's own channel. moderation:read lets its mods open the
-      // admin page (mods=0 skips it).
+      // admin page; on bot sites channel:bot lets the PixFray bot read and answer its chat. mods=0 asks for neither.
       const mods=url.searchParams.get('mods')!=='0';
-      pending={signup:true,mods,next:'/admin/'};scope=mods?'moderation:read':'';
+      pending={signup:true,mods,next:'/admin/'};scope=mods?(env.CHAT_BOT==='1'?'moderation:read channel:bot':'moderation:read'):'';
     }else{
       // No ?channel (the bare /admin/ page): sign in only; the Worker then opens the account's own channel (worker.js ownAdmin).
       const asked=safeNext(url.searchParams.get('next')||'/'),askedUrl=new URL(asked,'https://next.invalid');
@@ -187,7 +187,7 @@ export async function handleAuth(request,env){
     if(missing.length)return Response.json({error:'Twitch permissions were not granted: '+missing.join(', ')+'. Restart at /auth/login?bot=1.'},{status:403});
     await record(env,'bot:twitch',{id:user.id,login:user.login,at:Date.now()},Date.now()+20*365*86400000);
   }
-  const modScope=validation.scopes?.includes('moderation:read');
+  const modScope=validation.scopes?.includes('moderation:read'), botScope=env.CHAT_BOT==='1'&&validation.scopes?.includes('channel:bot');
   if(pending.signup){
     const helix=async p=>{const r=await fetch('https://api.twitch.tv/helix'+p,{headers});if(!r.ok)throw new Error('helix '+r.status);return r.json();};
     try{pending.channel=await signUp(env,user,()=>reviewReasons(identity,helix));}
@@ -205,7 +205,8 @@ export async function handleAuth(request,env){
   for(const k of ['signed_in','mods','bot'])to.searchParams.delete(k);
   if(pending.channel&&['/','/admin/'].includes(to.pathname)&&!to.searchParams.get('channel'))to.searchParams.set('channel',pending.channel);
   to.searchParams.set('signed_in','1');
-  if(pending.connectBot)to.searchParams.set('bot','allowed');else if(pending.connectMods)to.searchParams.set('mods','connected');
+  // bot=allowed: the admin page connects chat through the PixFray bot as soon as it opens
+  if(pending.connectBot||pending.signup&&botScope)to.searchParams.set('bot','allowed');else if(pending.connectMods)to.searchParams.set('mods','connected');
   if(pending.bot)to.searchParams.set('bot','connected');
   if(pending.signup||pending.connectMods)to.hash='chat';
   const response=new Response(null,{status:303,headers:{Location:to.pathname+to.search+to.hash}});
