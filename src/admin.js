@@ -139,7 +139,7 @@ async function gateProof() {
 }
 async function init() {
   // a slow or rate-limited check shouldn't leave the gate blank: offer sign-in while it finishes
-  const slow = setTimeout(() => gate("Still checking your access. If you aren't signed in yet, sign in with Twitch.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]), 1500);
+  const slow = setTimeout(() => gate("Still checking your access. If you aren't signed in yet, sign in with Twitch.", [h("a", { class: "btn btn-primary", href: loginHref(), "data-login": "" }, "Sign in with Twitch")]), 1500);
   const session = await api("/api/session");
   clearTimeout(slow);
   S.session = session.ok ? session.data : null;
@@ -149,19 +149,15 @@ async function init() {
     if (S.session.configured === false) return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
     $("#who").replaceChildren();   // one sign-in button: the gate's
     // a word joiner keeps "?channel=" on one line on phones
-    if (BARE) return gate("Sign in with Twitch to open mod controls. Streamers land on their own channel. Moderators: open the mod link your streamer shares; it ends in ?\u2060channel= and their name.", [h("a", { class: "btn btn-primary", href: "/auth/login?next=%2Fadmin%2F" }, "Sign in with Twitch"), startLink()]);
-    return gate(CHANNEL === site.defaultChannel ? "Sign in with the " + site.owner.login + " account or a " + site.owner.login + " moderator account to open mod controls." : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]);
+    if (BARE) return gate("Sign in with Twitch to open mod controls. Streamers land on their own channel. Moderators: open the mod link your streamer shares; it ends in ?\u2060channel= and their name.", [h("a", { class: "btn btn-primary", href: loginHref(), "data-login": "" }, "Sign in with Twitch"), startLink()]);
+    return gate(CHANNEL === site.defaultChannel ? "Sign in with the " + site.owner.login + " account or a " + site.owner.login + " moderator account to open mod controls." : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.", [h("a", { class: "btn btn-primary", href: loginHref(), "data-login": "" }, "Sign in with Twitch")]);
   }
+  // A signed-in streamer never sees the bare page: the Worker sends them to their own channel's controls (worker.js ownAdmin).
   const login = S.session.user.login;
-  if (BARE && login !== CHANNEL) {
-    // Signed in on the bare page: a streamer with PixFray on goes to their own channel's controls.
-    const own = await api("/api/access/" + encodeURIComponent(login));
-    if (own.ok && own.data.canManage) return location.replace("/admin/?channel=" + login + location.hash);
-  }
   const access = await api("/api/access/" + CHANNEL);
   S.access = access.ok ? access.data : null;
-  if (!S.access?.canManage && BARE) return gate("PixFray isn't on for " + login + " yet. Set it up on /start. Moderators: open the mod link your streamer shares.", [startLink(true), h("a", { class: "btn", href: "/" }, "Pick a channel")]);
-  if (access.data?.off === "not_enabled") return gate("PixFray isn't set up on " + CHANNEL + " yet. The " + CHANNEL + " account can turn it on in about 10 minutes.", [h("a", { class: "btn btn-primary", href: "/start/" }, "Set up PixFray"), h("a", { class: "btn", href: "/" }, "Pick a channel")]);
+  if (!S.access?.canManage && BARE) return gate("PixFray isn't on for " + login + " yet. Set it up on /start. Moderators: open the mod link your streamer shares.", [startLink(true), h("a", { class: "btn", href: "/play/" }, "Pick a channel")]);
+  if (access.data?.off === "not_enabled") return gate("PixFray isn't set up on " + CHANNEL + " yet. The " + CHANNEL + " account can turn it on in about 10 minutes.", [h("a", { class: "btn btn-primary", href: "/start/" }, "Set up PixFray"), h("a", { class: "btn", href: "/play/" }, "Pick a channel")]);
   if (!S.access?.canManage) {
     const why = !access.ok ? "Twitch couldn't confirm moderators right now. Try again in a minute." : GATE_REASONS[S.access?.reason]?.() || "";
     return gate((CHANNEL === site.defaultChannel ? "Only " + site.owner.login + " and current channel moderators can use mod controls" : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) + "." + (why ? " " + why : ""), [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")]);

@@ -2,9 +2,9 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>PixFray: Twitch chat duels on your stream</title>
 <meta name="description" content="PixFray turns Twitch chatters into pixel fighters that duel on stream. Free and open source, added to OBS as one browser source.">
-<link rel="canonical" href="%SITE_ORIGIN%/intro/">
+<link rel="canonical" href="%SITE_ORIGIN%/">
 <meta name="theme-color" content="#0d0906">
-<meta property="og:type" content="website"><meta property="og:site_name" content="PixFray"><meta property="og:url" content="%SITE_ORIGIN%/intro/">
+<meta property="og:type" content="website"><meta property="og:site_name" content="PixFray"><meta property="og:url" content="%SITE_ORIGIN%/">
 <meta property="og:title" content="PixFray: Twitch chat duels on your stream">
 <meta property="og:description" content="Chatters pick a pixel fighter once, then duel each other with !challenge and !fight. Wins move a live ladder.">
 <meta property="og:image" content="%SITE_ORIGIN%/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
@@ -28,14 +28,14 @@
 <div class="edge-fade top" aria-hidden="true"></div>
 <div class="edge-fade bottom" aria-hidden="true"></div>
 <header class="hud hud-top">
-  <a class="mark" href="/intro/" aria-label="PixFray, back to the top">
+  <a class="mark" href="/" aria-label="PixFray, back to the top">
     <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>
     <span>PixFray</span>
   </a>
   <nav class="hud-nav" aria-label="Site">
-    <a href="/intro/" aria-current="page">See a duel</a>
+    <a href="/" aria-current="page">See a duel</a>
     <a href="/start/">For streamers</a>
-    <a class="btn btn-primary" href="/">Pick your fighter</a>
+    <a class="btn btn-primary" href="/play/" data-pick>Pick your fighter</a>
   </nav>
 </header>
 
@@ -60,7 +60,7 @@
     <div class="copy">
       <h1 id="h-top" data-type>Your Twitch chat, in the ring.</h1>
       <p class="lead">PixFray turns chatters into pixel fighters that duel on your stream. It is free, open source and runs as one OBS browser source.</p>
-      <p class="actions"><a class="btn btn-primary" href="/">Pick your fighter</a><a class="link" href="/start/">Set up your channel</a></p>
+      <p class="actions" id="hero-actions"><a class="btn btn-primary" href="/play/" data-pick>Pick your fighter</a><a class="link" href="/start/">Set up your channel</a></p>
     </div>
   </section>
 
@@ -115,17 +115,18 @@
     <div class="copy">
       <h2 id="h-stream" data-type>One browser source. Nothing to install.</h2>
       <p>Add one link to OBS at 1920×1080. Chat arrives through StreamElements commands, so nothing runs on your PC.</p>
-      <p class="actions" id="start-cta"><a class="btn btn-primary" href="/start/">Set up your channel</a><a class="link" href="/">Pick your fighter</a></p>
+      <p class="actions" id="start-cta"><a class="btn btn-primary" href="/start/">Set up your channel</a><a class="link" href="/play/" data-pick>Pick your fighter</a></p>
       <p class="fine">Mods get a balance editor. Turning PixFray off keeps every fighter and rank. Open source under MIT; CC0 characters by Kenney, pzUH and Sogomn; runs on Cloudflare Workers.</p>
     </div>
   </section>
 </main>
 <footer class="site-foot"><div class="site-foot-inner">
-  <a class="foot-brand" href="/intro/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
-  <nav aria-label="More"><a href="/intro/" aria-current="page">See a duel</a><a href="/">Pick a channel</a><a href="/start/">For streamers</a></nav>
+  <a class="foot-brand" href="/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
+  <nav aria-label="More"><a href="/" aria-current="page">See a duel</a><a href="/play/">Pick a channel</a><a href="/start/">For streamers</a></nav>
   <p>Duels for Twitch chat. Your fighter is saved per channel, and signing in shares only your public Twitch name.</p>
 </div></footer>
 
 <noscript><p class="nojs">The 3D arena needs JavaScript. Everything it explains is in the text above.</p></noscript>
+<script type="module" src="/src/intro/back.js"></script>
 <script type="module" src="/src/intro/main.js"></script>
 </body></html>

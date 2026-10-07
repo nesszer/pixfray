@@ -107,13 +107,21 @@ export async function isOwner(env,user){
   if(env.OWNER_TWITCH_ID)return user.id===env.OWNER_TWITCH_ID;
   const owner=await record(env,'owner:'+site.owner.login);return owner?.id===user.id;
 }
+// Where sign-in returns: a page on this site (the one the sign-in started on, with its ?channel= and #tab), never
+// another site, /auth/ or /api/.
+export function safeNext(v){
+  if(typeof v!=='string'||v.length>500||!/^\/(?![\/\\])/.test(v)||/[\u0000-\u001f\\]/.test(v))return '/';
+  const u=new URL(v,'https://next.invalid');
+  return u.origin==='https://next.invalid'&&!/^\/(auth|api)(\/|$)/.test(u.pathname)?u.pathname+u.search+u.hash:'/';
+}
 export function cookie(name,value,age){return name+'='+value+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age='+age;}
 export async function handleAuth(request,env){
   const url=new URL(request.url), path=url.pathname;
   if(path==='/auth/logout'){
     if(request.method!=='POST')return new Response('Use POST',{status:405});
     const raw=request.headers.get('Cookie')?.match(/mini_session=([a-f0-9]{64})/)?.[1];if(raw)await record(env,'session:'+await digest(raw),null);
-    return new Response(null,{status:303,headers:{Location:'/', 'Set-Cookie':cookie('mini_session','',0)}});
+    // the page reloads itself, so signing out stays on the same page and channel
+    return Response.json({ok:true},{headers:{'Set-Cookie':cookie('mini_session','',0)}});
   }
   if(!configured(env))return Response.json({error:'Twitch app is not configured yet. Add the app client ID and secret to the Worker.'},{status:503});
   const callback=authOrigin(env,url)+'/auth/callback';
@@ -121,20 +129,21 @@ export async function handleAuth(request,env){
     let pending, scope='';
     if(url.searchParams.get('bot')==='1'){
       if(env.CHAT_BOT!=='1'||!env.BOT_LOGIN)return Response.json({error:'This site has no PixFray chat bot'},{status:403});
-      pending={bot:true,next:'/'};scope=BOT_SCOPES.join(' ');
+      pending={bot:true,channel:site.defaultChannel,next:'/admin/'};scope=BOT_SCOPES.join(' ');
     }else if(url.searchParams.get('signup')==='1'){
       // Sign-up from /start turns on the signed-in account's own channel. moderation:read lets its mods open the
       // admin page (mods=0 skips it).
       const mods=url.searchParams.get('mods')!=='0';
       pending={signup:true,mods,next:'/admin/'};scope=mods?'moderation:read':'';
     }else{
-      // No ?channel (the bare /admin/ page): sign in only; the page then picks the account's own channel.
-      const bare=!url.searchParams.get('channel')&&url.searchParams.get('next')==='/admin/',channel=url.searchParams.get('channel')||site.defaultChannel;
+      // No ?channel (the bare /admin/ page): sign in only; the Worker then opens the account's own channel (worker.js ownAdmin).
+      const asked=safeNext(url.searchParams.get('next')||'/'),askedUrl=new URL(asked,'https://next.invalid');
+      const bare=!url.searchParams.get('channel')&&askedUrl.pathname==='/admin/'&&!askedUrl.searchParams.get('channel'),channel=url.searchParams.get('channel')||site.defaultChannel;
       // A turned-off channel still signs in, so its broadcaster can turn it back on.
       if(!await channelState(env,channel))return Response.json({error:'PixFray is not enabled for this channel'},{status:403});
       const connect=url.searchParams.get('connect')==='1', connectBot=env.CHAT_BOT==='1'&&url.searchParams.get('connect')==='bot', connectMods=connectBot||url.searchParams.get('connect')==='mods';
       if(connect&&channel!==site.defaultChannel)return Response.json({error:'Chat for this channel comes through StreamElements; no Twitch connection needed'},{status:403});
-      const asked=url.searchParams.get('next'),next=connectMods?'/admin/':['/admin/','/admin/dev/'].includes(asked)?asked:'/';
+      const next=connectMods?'/admin/':asked;
       pending={...(bare&&!connect&&!connectMods?{}:{channel}),connect,...(connectMods?{connectMods:true}:{}),...(connectBot?{connectBot:true}:{}),next};scope=connect?CONNECT_SCOPES.join(' '):connectBot?'moderation:read channel:bot':connectMods?'moderation:read':'';
     }
     const nonce=await sealState(env,pending);
@@ -191,8 +200,15 @@ export async function handleAuth(request,env){
     await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);
   }
   const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);
-  const back=(['/admin/','/admin/dev/'].includes(pending.next)?pending.next:'/')+'?'+(pending.channel?'channel='+pending.channel+'&':'')+'signed_in=1'+(pending.connectBot?'&bot=allowed':pending.connectMods?'&mods=connected':'')+(pending.bot?'&bot=connected':'')+(pending.signup||pending.connectMods?'#chat':'');
-  const response=new Response(null,{status:303,headers:{Location:back}});
+  // Back to the page the sign-in started on; the viewer and mod pages get the channel when the address lacks it.
+  const to=new URL(safeNext(pending.next||'/'),url.origin);
+  for(const k of ['signed_in','mods','bot'])to.searchParams.delete(k);
+  if(pending.channel&&['/','/admin/'].includes(to.pathname)&&!to.searchParams.get('channel'))to.searchParams.set('channel',pending.channel);
+  to.searchParams.set('signed_in','1');
+  if(pending.connectBot)to.searchParams.set('bot','allowed');else if(pending.connectMods)to.searchParams.set('mods','connected');
+  if(pending.bot)to.searchParams.set('bot','connected');
+  if(pending.signup||pending.connectMods)to.hash='chat';
+  const response=new Response(null,{status:303,headers:{Location:to.pathname+to.search+to.hash}});
   response.headers.append('Set-Cookie',cookie('mini_session',key,21600));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
 }
 // Back to /start with the reason sign-up didn't finish (full, denied, failed).

@@ -106,12 +106,13 @@ try {
     await context.close();
   }
 
-  // 1b. The bare site asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
+  // 1b. /play/ asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    await page.goto(base + '/');
+    await page.goto(base + '/play/');
     await page.waitForSelector('#channel-list a');
     assert.equal(await page.locator('h1:visible').textContent(), 'Which stream are you watching?');
+    assert.equal(await page.locator('.topbar .nav-cta').getAttribute('href'), '/play/', 'the picker is the current page, not a channel');
     const links = await page.locator('#channel-list a').evaluateAll((a) => a.map((x) => x.getAttribute('href')));
     assert.deepEqual(links.slice(0, 2), ['/?channel=nesszerra', '/?channel=miolafff'], 'built-in channels first');
     assert.equal(await page.locator('#fighter').isHidden(), true, 'no fighter form until a channel is picked');
@@ -132,7 +133,14 @@ try {
     await page.locator('#channel-list a', { hasText: 'miolafff' }).click();
     await page.waitForSelector('#characters input[name=character]');
     assert.match(await page.locator('#hero-title').textContent(), /miolafff/);
-    assert.equal(await page.locator('.brand').getAttribute('href'), '/?channel=miolafff', 'the brand link keeps the channel');
+    assert.equal(await page.locator('.topbar .nav-cta').getAttribute('href'), '/?channel=miolafff', '"Pick your fighter" keeps the channel');
+    assert.equal(await page.locator('.brand').getAttribute('href'), '/', 'the brand goes home (the intro)');
+    // the home page is the intro, and it offers the way back to the channel picked last
+    await page.goto(base + '/');
+    assert.equal(await page.locator('h1').first().textContent(), 'Your Twitch chat, in the ring.');
+    await page.waitForFunction(() => document.querySelector('#hero-actions .btn')?.textContent === 'Back to miolafff');
+    assert.equal(await page.locator('#hero-actions .btn').getAttribute('href'), '/?channel=miolafff');
+    assert.equal(await page.locator('#hero-actions a[href="/play/"]').textContent(), 'Pick another channel');
     await context.close();
   }
   // 1c. With many channels signed up, eight rows show and the rest are a search away.
@@ -140,7 +148,7 @@ try {
     const { context, page } = await newPage(sizes[0]);
     const many = ['nesszerra', 'miolafff', ...Array.from({ length: 10 }, (_, i) => 'streamer_' + i)];
     await page.route('**/api/picker', async (r) => { const real = await (await r.fetch()).json(); return json(r, { ...real, channels: many.map((login) => real.channels.find((c) => c.login === login) || { login, top: [] }) }); });
-    await page.goto(base + '/');
+    await page.goto(base + '/play/');
     await page.waitForSelector('#channel-list a');
     assert.equal(await page.locator('#channel-list li:visible').count(), 8);
     assert.match(await page.locator('#channel-status').textContent(), /find the other 4 channels/);
@@ -907,11 +915,14 @@ try {
     await noOverflow(page, 'start ' + size.name);
     await context.close();
   }
-  // /intro/: the loader finishes (WebGL or the text-only fallback), the headline shows and nothing overflows while scrolling.
+  // The intro (the home page; /intro/ moves there): the loader finishes (WebGL or the text-only fallback), the headline
+  // shows and nothing overflows while scrolling. A first visit offers the picker.
   for (const size of sizes) {
     const { context, page } = await newPage({ width: size.width, height: size.height });
     await page.route('**/api/leaderboard/**', (r) => json(r, board));
     await page.goto(base + '/intro/');
+    assert.equal(new URL(page.url()).pathname, '/', 'the old /intro/ address moves to the home page');
+    assert.equal(await page.locator('#hero-actions .btn').getAttribute('href'), '/play/');
     await page.waitForFunction(() => document.querySelector('#loader')?.classList.contains('is-done'), null, { timeout: 30000 });
     assert.ok(await page.locator('h1').isVisible(), `intro ${size.name}: headline hidden`);
     for (const y of [0, 0.5, 1]) {

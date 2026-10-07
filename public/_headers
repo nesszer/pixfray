@@ -11,7 +11,7 @@
 
 # Pages with sign-in and mod actions can't be framed by other sites (clickjacking). The overlay stays frameable for OBS
 # and for the demo on /start. The pages in runWorkerFirst now pass through the Worker, which sets these itself
-# (server/worker.js page()); these rules cover them when assets answer directly, and /intro/ which never reaches the Worker.
+# (server/worker.js page()); these rules cover them if assets ever answer directly. The home page (/) serves the intro.
 /
   Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'
   X-Frame-Options: DENY
@@ -21,7 +21,7 @@
 /start/*
   Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'
   X-Frame-Options: DENY
-/intro/*
+/play/*
   Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'
   X-Frame-Options: DENY
 

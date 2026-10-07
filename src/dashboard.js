@@ -651,7 +651,7 @@ function showOff(off) {
   note.hidden = false;
   if (off === "paused") { note.textContent = "PixFray is off on " + CHANNEL + "'s channel right now. Saved fighters and ranks are kept for when it's back."; return; }
   note.replaceChildren("PixFray isn't set up on " + CHANNEL + "'s channel yet. Fights happen in their chat, so " + CHANNEL + " turns it on first, on ",
-    h("a", { href: "/start/" }, "/start"), ". Until then, ", h("a", { href: "/" }, "pick another channel"), ".");
+    h("a", { href: "/start/" }, "/start"), ". Until then, ", h("a", { href: "/play/" }, "pick another channel"), ".");
   for (const el of [form, $(".fighter-card"), $(".hero-pick .tabs")]) el.hidden = true;
   $("#panel-ranks").hidden = false;
 }
@@ -670,6 +670,8 @@ async function init() {
   state.session = session.ok ? session.data : null;
   if (catalog.ok && Array.isArray(catalog.data) && catalog.data.length) state.catalog = catalog.data;   // else the static list stays
   state.config = live.ok ? live.data?.config : null;
+  // the intro's main button offers this channel next time (src/intro/back.js)
+  if (live.ok) try { localStorage.setItem("pixfray:channel", CHANNEL); } catch {}
   const hash = location.hash.slice(1);
   showTab(tabOf(hash) || "fighter", { hash: tabOf(hash) ? hash : "fighter", scroll: Boolean(tabOf(hash)) && hash !== "fighter" });
   if (live.status === 403 && live.data?.off) { state.off = live.data.off; showOff(live.data.off); }
@@ -683,9 +685,10 @@ async function init() {
   renderAll(); welcome();
   loadLeaderboard();
 }
-// The bare site (no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
+// /play/ (the viewer page with no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
 async function pickChannel() {
   document.title = "PixFray: pick your stream";
+  for (const a of document.querySelectorAll(".topbar .nav-cta, .topbar .brand")) a.setAttribute("href", a.classList.contains("brand") ? "/" : "/play/");
   for (const el of [$("#fighter"), $("body > .page")]) if (el) el.hidden = true;
   $("#pick").hidden = false;
   const [session, list] = await Promise.all([api("/api/session"), api("/api/picker")]);

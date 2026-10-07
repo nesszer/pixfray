@@ -1,12 +1,12 @@
 // Security headers: the Worker adds them to every response it returns (server/worker.js), and public/_headers repeats
-// the same policies for the pages assets serve without the Worker (/intro/, /overlay.html); tests/security.test.mjs keeps both in step.
+// the same policies for the files assets serve without the Worker (/overlay.html); tests/security.test.mjs keeps both in step.
 // No inline script runs anywhere (every page loads <script type="module" src>), so script-src is 'self' (pages add Cloudflare's analytics beacon): no hashes,
 // no 'unsafe-inline', no 'wasm-unsafe-eval' (three.js uses WebGL only). Inline JSON-LD would not be executed, so it needs nothing.
 export const HSTS = 'max-age=31536000; includeSubDomains';
 // style-src keeps 'unsafe-inline': overlay.html has an inline <style>, and intro/main.js writes style="--i:n" attributes.
 // img/media blob: and data: cover canvas textures and Vite-inlined assets; connect 'self' covers fetch and the same-origin WebSocket.
 const BASE = ["style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:", "media-src 'self' data: blob:", "object-src 'none'", "base-uri 'self'"];
-// Pages (/, /admin, /start, /intro): no framing by other sites. The start page frames /overlay.html, which is same-origin.
+// Pages (/ with the intro or a fighter page, /play, /admin, /start): no framing by other sites. The start page frames /overlay.html, which is same-origin.
 // Cloudflare's edge adds its Web Analytics beacon to every page; pages allow its script and report URL, the overlay doesn't
 // (OBS sources would only count as visits).
 export const PAGE_CSP = ["default-src 'self'", "script-src 'self' https://static.cloudflareinsights.com", ...BASE, "connect-src 'self' https://cloudflareinsights.com", "frame-ancestors 'none'"].join('; ');

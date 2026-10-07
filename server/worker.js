@@ -79,17 +79,36 @@ async function chatAction(env,url,channel,action,{takeover=false}={}){
 }
 // Pages pass through the Worker (run_worker_first), and public/_headers doesn't reach responses a Worker returns,
 // so the page headers are set here: no framing by other sites (clickjacking), and the staging and test sites stay out of search.
+// The home page (/) is the intro; with ?channel= it is that channel's fighter page. /play/ is the channel picker (the
+// viewer page without a channel), and /intro/ was the intro's old address.
 async function page(request,env,url){
-  const r=await env.ASSETS.fetch(request);
-  if(!isPage(url.pathname))return r;
+  const path=url.pathname,channel=url.searchParams.get('channel');
+  if(/^\/intro(\/(index\.html)?)?$/.test(path))return Response.redirect(url.origin+'/'+url.search,301);
+  if(path==='/play')return Response.redirect(url.origin+'/play/'+url.search,301);
+  if(path==='/play/'&&channel)return Response.redirect(url.origin+'/'+url.search,302);
+  if(path==='/admin/'&&!channel){const own=await ownAdmin(request,env,url);if(own)return Response.redirect(own,302);}
+  const doc=path==='/'&&!channel?'/intro/':path==='/play/'?'/':'';
+  const r=await env.ASSETS.fetch(doc?new Request(url.origin+doc,request):request);
+  if(!isPage(path))return r;
   const out=new Response(r.body,r);
   out.headers.set('Content-Security-Policy',PAGE_CSP);out.headers.set('X-Frame-Options','DENY');
   out.headers.set('X-Content-Type-Options','nosniff');out.headers.set('Referrer-Policy','strict-origin-when-cross-origin');
   if(/^(staging|test)\./.test(url.hostname))out.headers.set('X-Robots-Tag','noindex, nofollow');
   return out;
 }
+// The bare mod page (/admin/ without ?channel=) for a signed-in streamer: their own channel's controls. Decided here,
+// so the page doesn't load once to find out and then jump. Anyone else gets the page's sign-in or set-up message.
+async function ownAdmin(request,env,url){
+  if(!env.AUTH_SECRET||!env.INTERNAL_SECRET)return null;
+  try{
+    const user=(await session(request,env))?.user;if(!user?.login)return null;
+    const st=await channelState(env,user.login);if(!isOn(st)&&st!=='paused')return null;
+    if(!(await access(env,user,user.login)).canManage)return null;
+    const to=new URL(url);to.searchParams.set('channel',user.login);return to.href;
+  }catch{return null;}
+}
 // robots.txt and sitemap.xml follow the host: the production site lists its public pages, and the test site stays out of search.
-const PUBLIC_PAGES=['/','/start/','/intro/'];
+const PUBLIC_PAGES=['/','/play/','/start/'];
 function seoFile(url,path){
   const text=(body,type)=>new Response(body,{headers:{'Content-Type':type+'; charset=utf-8','Cache-Control':'public, max-age=3600'}});
   const main=url.origin===site.origins.production;

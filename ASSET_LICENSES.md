@@ -196,7 +196,7 @@ or fonts.
 ## Scene backdrops
 
 - Files: `public/assets/scene/*.webp`, including the scroll frames in `public/assets/scene/seq/`
-- Rendered for this project: stills of the site's own `/intro/` 3D scene (`src/intro/`), with fades
+- Rendered for this project: stills of the site's own 3D intro scene on the home page (`src/intro/`), with fades
   and crops added afterwards. Fighters that appear in them are the CC0 characters listed above.
   No third-party artwork beyond those; same license as the code.
 

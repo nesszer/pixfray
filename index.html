@@ -15,8 +15,8 @@
 <link rel="stylesheet" href="/dashboard.css" data-design></head>
 <body>
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/" data-keep-channel><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
-  <nav aria-label="Pages"><a href="/intro/">See a duel</a><a href="/start/">For streamers</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mods</a><a class="nav-cta" href="/" data-keep-channel aria-current="page">Pick your fighter</a></nav>
+  <a class="brand" href="/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
+  <nav aria-label="Pages"><a href="/">See a duel</a><a href="/start/">For streamers</a><a href="/admin/" id="admin-link" data-keep-channel hidden>Mods</a><a class="nav-cta" href="/" data-keep-channel aria-current="page">Pick your fighter</a></nav>
   <div class="who" id="who"><span class="muted">Checking sign-in…</span></div>
 </div></header>
 
@@ -31,7 +31,7 @@
     <ul class="channel-list" id="channel-list"><li class="muted">Loading channels…</li></ul>
     <p class="small muted" id="channel-status" role="status"></p>
     <p class="caveat">Fights happen in a streamer's chat, so a channel needs its streamer to set PixFray up first. Streamers can do that in about 10 minutes on <a href="/start/">/start</a>.</p>
-    <p class="landing-links"><a href="/intro/">See how a duel plays out</a><a href="/start/">Set up PixFray on your channel</a></p>
+    <p class="landing-links"><a href="/">See how a duel plays out</a><a href="/start/">Set up PixFray on your channel</a></p>
   </div>
 </main>
 
@@ -60,7 +60,7 @@
       <a class="points-link" id="points-link" href="#upgrades" hidden></a>
       <div class="toolbar">
         <button class="btn btn-primary" id="save" type="submit" form="profile-form" hidden>Save profile</button>
-        <a class="btn btn-primary" id="save-signin" href="/auth/login" data-login="/">Sign in with Twitch to save</a>
+        <a class="btn btn-primary" id="save-signin" href="/auth/login" data-login>Sign in with Twitch to save</a>
       </div>
       <p class="hint signin-hint" id="signin-hint" hidden>Shares only your public Twitch name. Ranked duels need a saved fighter.</p>
       <p class="status" id="save-status" role="status"></p>
@@ -233,8 +233,8 @@
   <p class="caveat">Character art by <a href="https://kenney.nl" rel="noopener">Kenney</a>, <a href="https://opengameart.org/users/pzuh" rel="noopener">pzUH</a> and <a href="https://opengameart.org/users/sogomn" rel="noopener">Sogomn</a> (all CC0). Headings use <a href="https://github.com/undercasetype/Fraunces" rel="noopener">Fraunces</a> (SIL Open Font License). Signing in shares only your public Twitch name. PixFray never posts in chat as you.</p>
 </div>
 <footer class="site-foot"><div class="site-foot-inner">
-  <a class="foot-brand" href="/intro/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
-  <nav aria-label="More"><a href="/intro/">See a duel</a><a href="/">Pick a channel</a><a href="/start/">For streamers</a></nav>
+  <a class="foot-brand" href="/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
+  <nav aria-label="More"><a href="/">See a duel</a><a href="/play/">Pick a channel</a><a href="/start/">For streamers</a></nav>
   <p>Duels for Twitch chat. Your fighter is saved per channel, and signing in shares only your public Twitch name.</p>
 </div></footer>
 <script type="module" src="/src/dashboard.js"></script>

@@ -9,15 +9,23 @@ export const CHANNEL_PICKED = /^[a-z0-9_]{1,25}$/.test(asked);
 export const CHANNEL = CHANNEL_PICKED ? asked : site.defaultChannel;
 // A same-site link that keeps the current channel. Links always name it, since the bare viewer page is the picker.
 export const withChannel = (path) => path + (path.includes("?") ? "&" : "?") + "channel=" + CHANNEL;
-// Twitch sign-in that comes back to this channel (next is "/" or "/admin/").
-export const loginHref = (next = "/") => "/auth/login?" + new URLSearchParams({ channel: CHANNEL, next });
+// This page's address without the one-time flags sign-in adds: where signing in or out comes back to.
+export function here() {
+  const u = new URL(location.href);
+  for (const k of ["signed_in", "mods", "bot"]) u.searchParams.delete(k);
+  return u.pathname + u.search + u.hash;
+}
+// Twitch sign-in that comes back to this page, its channel and its tab.
+export const loginHref = (next = here()) => "/auth/login?" + new URLSearchParams({ ...(CHANNEL_PICKED ? { channel: CHANNEL } : {}), next });
+// Sign-in links (data-login) take the tab that is open when they're clicked, not the one open when they were drawn.
+document.addEventListener("click", (e) => { const a = e.target.closest?.("a[data-login]"); if (a) a.href = loginHref(); }, true);
 // Phones scroll the header links sideways; the current page's link starts in view.
 { const nav = document.querySelector(".topbar nav"), cur = nav?.querySelector("[aria-current]");
   if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, cur.getBoundingClientRect().right - nav.getBoundingClientRect().right + 28); }
 // Put the channel name into the page: elements marked data-channel get the template token replaced, and links in nav keep the channel.
 export function applyChannel() {
   for (const a of document.querySelectorAll("a[data-keep-channel]")) a.setAttribute("href", withChannel(a.getAttribute("href")));
-  for (const a of document.querySelectorAll("a[data-login]")) a.setAttribute("href", loginHref(a.dataset.login));
+  for (const a of document.querySelectorAll("a[data-login]")) a.setAttribute("href", loginHref());
   if (CHANNEL === TEMPLATE_CHANNEL) return;
   document.title = document.title.replaceAll(TEMPLATE_CHANNEL, CHANNEL);
   for (const el of document.querySelectorAll("[data-channel]")) {
@@ -93,12 +101,14 @@ export function renderWho(container, session, onSignOut) {
   } else if (session && session.configured === false) {
     container.append(h("span", {}, "Twitch sign-in isn't set up on this server yet"));
   } else {
-    container.append(h("a", { class: "btn", href: loginHref(location.pathname.startsWith("/admin") ? "/admin/" : "/") }, "Sign in with Twitch"));
+    container.append(h("a", { class: "btn", href: loginHref(), "data-login": "" }, "Sign in with Twitch"));
   }
 }
+// Signing out stays on this page and channel (minus the sign-in flags).
 export async function signOut() {
   await api("/auth/logout", { method: "POST" });
-  location.reload();
+  const to = here();
+  if (to === location.pathname + location.search + location.hash) location.reload(); else location.replace(to);
 }
 
 // ---------- sprite previews ----------

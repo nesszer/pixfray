@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
-import { digest, seal, unseal, openState, CONNECT_SCOPES } from '../server/auth.js';
+import { digest, seal, unseal, openState, safeNext, CONNECT_SCOPES } from '../server/auth.js';
 
 function environment() {
   const entries = new Map(), forwarded = [];
@@ -186,4 +186,66 @@ test('viewers can still sign in when Twitch fails to look up the channel owner',
   const r = await worker.fetch(new Request('https://chat.miolaf.xyz/auth/callback?code=c&state=' + state, { headers: { Cookie: 'mini_oauth=' + state } }), f.env);
   assert.equal(r.status, 303);
   assert.match(r.headers.get('Set-Cookie'), /mini_session=/);
+});
+
+// Signs in through /auth/login?<query> as a viewer and returns where the callback sends the browser.
+async function signInFrom(t, f, query) {
+  const login = await worker.fetch(req('/auth/login?' + query), f.env);
+  const state = new URL(login.headers.get('Location')).searchParams.get('state');
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = String(url);
+    if (u.endsWith('/oauth2/token')) return Response.json({ access_token: 'user-token', refresh_token: 'r' });
+    if (u.endsWith('/oauth2/validate')) return Response.json({ client_id: 'test-app', user_id: '2', scopes: [] });
+    return Response.json({ data: [{ id: u.includes('login=nesszerra') ? '1' : '2', login: u.includes('login=nesszerra') ? 'nesszerra' : 'viewer', display_name: 'Viewer' }] });
+  });
+  const r = await worker.fetch(new Request('https://chat.miolaf.xyz/auth/callback?code=c&state=' + state, { headers: { Cookie: 'mini_oauth=' + state } }), f.env);
+  t.mock.restoreAll();
+  assert.equal(r.status, 303);
+  return r.headers.get('Location');
+}
+test('sign-in comes back to the page, channel and tab it started on, never to another site', async (t) => {
+  const f = environment(), from = (next, channel) => signInFrom(t, f, new URLSearchParams({ ...(channel ? { channel } : {}), next }));
+  assert.equal(await from('/?channel=miolafff#looks', 'miolafff'), '/?channel=miolafff&signed_in=1#looks');
+  assert.equal(await from('/admin/?channel=miolafff#settings', 'miolafff'), '/admin/?channel=miolafff&signed_in=1#settings');
+  assert.equal(await from('/play/'), '/play/?signed_in=1', 'the picker stays the picker');
+  assert.equal(await from('/start/'), '/start/?signed_in=1');
+  assert.equal(await from('/admin/'), '/admin/?signed_in=1', 'the bare mod page: the Worker picks the channel next');
+  assert.equal(await from('/admin/?channel=miolafff&mods=connected&signed_in=1', 'miolafff'), '/admin/?channel=miolafff&signed_in=1', 'old one-time flags are dropped');
+  assert.equal(await signInFrom(t, f, 'channel=miolafff&next=/'), '/?channel=miolafff&signed_in=1', 'older links that name the channel still land on it');
+  assert.equal(await from('//evil.example/x'), '/?channel=nesszerra&signed_in=1');
+  for (const bad of ['//evil.example', '/\\evil.example', 'https://evil.example/', '/auth/logout', '/api/session', '/x\n', 'x', '', null]) assert.equal(safeNext(bad), '/', String(bad));
+  assert.equal(safeNext('/start/?a=1#b'), '/start/?a=1#b');
+});
+test('sign-out clears the session and leaves the page where it is (the page reloads itself)', async () => {
+  const f = environment(), cookie = await signedIn(f);
+  const r = await worker.fetch(req('/auth/logout', 'POST', {}, cookie, 'https://chat.miolaf.xyz'), f.env);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true });
+  assert.match(r.headers.get('Set-Cookie'), /mini_session=;.*Max-Age=0/);
+  assert.equal(f.entries.has('session:' + await digest('1'.repeat(64))), false);
+});
+test('pages: / is the intro, /?channel= the fighter page, /play/ the picker, and /intro/ moves to /', async () => {
+  const f = environment(); f.env.ASSETS = { fetch: async (r) => new Response('asset ' + new URL(r.url).pathname) };
+  const get = (path) => worker.fetch(req(path), f.env), body = async (path) => (await get(path)).text();
+  const moved = async (path, status) => { const r = await get(path); assert.equal(r.status, status, path); return r.headers.get('Location'); };
+  assert.equal(await body('/'), 'asset /intro/');
+  assert.equal(await body('/?signed_in=1'), 'asset /intro/');
+  assert.equal(await body('/?channel=miolafff'), 'asset /');
+  assert.equal(await body('/play/'), 'asset /');
+  assert.equal((await get('/')).headers.get('X-Frame-Options'), 'DENY', 'the intro gets the page headers too');
+  assert.equal(await moved('/play', 301), 'https://chat.miolaf.xyz/play/');
+  assert.equal(await moved('/play/?channel=miolafff', 302), 'https://chat.miolaf.xyz/?channel=miolafff');
+  for (const old of ['/intro', '/intro/', '/intro/index.html']) assert.equal(await moved(old, 301), 'https://chat.miolaf.xyz/');
+  assert.equal(await moved('/intro/?ref=x', 301), 'https://chat.miolaf.xyz/?ref=x');
+});
+test('a streamer opening the bare mod page goes straight to their own channel; others get the page', async () => {
+  const f = environment(); f.env.ASSETS = { fetch: async (r) => new Response('asset ' + new URL(r.url).pathname) };
+  const owner = await signedIn(f, true);
+  const r = await worker.fetch(req('/admin/?signed_in=1', 'GET', undefined, owner), f.env);
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.get('Location'), 'https://chat.miolaf.xyz/admin/?signed_in=1&channel=nesszerra');
+  assert.equal((await worker.fetch(req('/admin/?channel=miolafff', 'GET', undefined, owner), f.env)).status, 200, 'a named channel stays');
+  const viewer = environment(); viewer.env.ASSETS = f.env.ASSETS;
+  assert.equal(await (await worker.fetch(req('/admin/', 'GET', undefined, await signedIn(viewer)), viewer.env)).text(), 'asset /admin/', 'no channel of their own: the page explains');
+  assert.equal(await (await worker.fetch(req('/admin/'), viewer.env)).text(), 'asset /admin/', 'signed out: the page offers sign-in');
 });

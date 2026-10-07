@@ -73,7 +73,7 @@ test('public/_headers repeats the Worker policies for pages assets serve without
     if (!/^\s/.test(line)) { at = line.trim(); rules[at] = {}; continue; }
     const i = line.indexOf(':'); rules[at][line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
   }
-  for (const path of ['/', '/admin/*', '/start/*', '/intro/*']) assert.equal(rules[path]['content-security-policy'], PAGE_CSP, path);
+  for (const path of ['/', '/admin/*', '/start/*', '/play/*']) assert.equal(rules[path]['content-security-policy'], PAGE_CSP, path);
   assert.equal(rules['/overlay*']['content-security-policy'], OVERLAY_CSP);
   assert.equal(rules['/assets/build/*']['cache-control'], 'public, max-age=31536000, immutable', 'hashed bundles are cached for a year');
   assert.equal(rules['/*']['strict-transport-security'], HSTS);
