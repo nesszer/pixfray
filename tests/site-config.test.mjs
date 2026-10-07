@@ -11,7 +11,7 @@ test('site config keeps the deployment defaults and built-in channel identity', 
     workers: { production: 'nesszerra-mini-chat', test: 'nesszerra-mini-chat-test' },
     origins: { production: 'https://pixfray.xyz', test: 'https://staging.pixfray.xyz' },
     channelDomains: { production: {}, test: {} },
-    bot: { production: 'pixfray', test: 'nesszers' },
+    bot: { production: 'pixfray', test: 'pixfray' },
   });
   assert.strictEqual(CHANNELS, site.builtinChannels);
 });

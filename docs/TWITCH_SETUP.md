@@ -29,6 +29,8 @@ With `bot` set for a site in `site.config.js`, chat is read and answered by that
 
 In bot mode the subscription reads as the bot, so the owner's `connect=1` sign-in above isn't the chat connection.
 
+Both sites use `pixfray` as the bot, so the one-site-at-a-time rule above applies: a channel connected on the live site can't also be connected on the test site. Test the bot on staging with a channel that isn't connected on pixfray.xyz.
+
 ## Other channels
 
 Other channels join by signing in on `/start/` ([STREAMER_SETUP.md](STREAMER_SETUP.md)). Their sign-in asks for
