@@ -62,7 +62,7 @@ everything else is revalidated.
 | GET | `/api/access/:channel` | optional | none | `{owner, broadcaster, moderator, canManage, reason}` | 403 for a channel that isn't set up |
 | GET | `/api/state/:channel` | none | none | Snapshot (section 3) | 403, 405 |
 | GET | `/api/leaderboard/:channel` | none | none | Up to 100 `Profile` rows without `dollars` (`?private=1`, canManage only, keeps them; the mod page uses it), ordered by elo desc, then wins desc, then username (quick-duel results still on stream are not shown yet; see Game rules) | 403 |
-| GET | `/api/looks/:channel?u=login1,login2` | none | at most 20 logins | `{login:{avatar, color, hat, pet, petTier, recolor, petColor, accessory, trail, winEffect, taunt, title, displayName, elo}}` for viewers with a saved fighter only. The overlay uses it for chat-only viewers, batched every 2 s; a saved look is cached 5 min and asked for again when its viewer next chats after that, "no saved fighter" is cached 1 min, and a failed lookup (such as a 429) is retried after 10 s, not cached. Every registered profile in a live snapshot replaces that viewer's cached look, so a fighter changed on the website or a new Elo stays on stream after the server drops the viewer from its active list (10 quiet minutes). | 403 |
+| GET | `/api/looks/:channel?u=login1,login2` | none | at most 20 logins | `{login:{avatar, color, hat, pet, petTier, recolor, petColor, accessory, trail, winEffect, taunt, title, displayName, elo}}` for viewers with a saved fighter only. The overlay uses it for chat-only viewers, batched every 2 s; a saved look is cached 5 min and asked for again when its viewer next chats after that, "no saved fighter" is cached 1 min, and a failed lookup (such as a 429) is retried after 10 s, not cached. Every registered profile in a live snapshot replaces that viewer's cached look, so a fighter changed on the website or a new Elo stays on stream after the server drops the viewer from its active list (10 quiet minutes). Changes to viewers off that list arrive as a looks push (section 3), and every minute the overlay asks again for everyone on stage the server doesn't list. | 403 |
 | GET | `/api/se/:channel/:action?k=..&id=..&u=..&d=..&t=..&m=..` | the channel's StreamElements key `k` | `action` is `challenge`, `accept`, `decline`, `rematch` (challenges the sender's last finished-duel opponent), `top` (default name `!ranks`), `elo`, `help` (default name `!fray`), `look` (default name `!look`: a link to the Fighter tab, "pick your fighter" or "change your look"; also while duels are paused), `checkin` (once per stream while the channel is live; see Game rules), `wallet`, `pet` (default name `!pet`, also while duels are paused) or `give` (default name `!pay`, because StreamElements' built-in `!givepoints` already answers to `!give`; the amount comes as `a=`; see Game rules). The first command with the right key makes StreamElements the chat source (and deletes a Twitch EventSub subscription), unless a mod used Disconnect chat. Each action's last arrival is recorded (at most once a minute) for the admin badges; New key clears them. The Worker checks the request before any Durable Object call ("StreamElements route checks" below). | always 200 `text/plain`: the one-line chat reply for the bot to post (empty for a repeated message id) | 405 not GET, 404 path doesn't match or a well-formed key on a channel that isn't set up, 429 from the edge rate limit, 503 `INTERNAL_SECRET` missing |
 | GET | `/api/catalog/:channel` | none | none | `[...static characters.json, ...custom entries]` (section 5) | 403 |
 | GET | `/api/profile/:channel` | cookie | none | `Profile & {owned:{pets:[id], hats:[id], recolor:[id], petcolor:[id], accessory:[id], trail:[id], effect:[id], taunt:[id], title:[id], slots:n}, builds:[Loadout\|null]}` or `null`. `slots` is 1 free plus the bought ones; `builds[i]` is slot i's saved loadout (`avatar, color, defaultAbility, stats, hat, pet` and the 7 cosmetic fields), `null` if never saved; the active slot is always the profile itself | 401 |
@@ -196,6 +196,20 @@ Deduplicate events by `id`. All `ms` times are server clock. `public/arena-clien
 `event.respawnAt`, `player.respawnAt` and `chat.lastSeen` by `serverNow − Date.now()` before the overlay
 sees them, so a streaming PC whose clock is off still plays fresh events (the overlay drops events
 older than 10 s).
+
+Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.js`):
+
+```
+Looks = {type:"looks", looks:{[login]: Look|null}, reset?:true}
+Look  = the /api/looks fields, with hidden duel results masked the same way
+```
+
+It goes out once per turn of the event loop after any write to a saved fighter (website save, duel result, approved or
+removed sprite, rank reset, deleted profile) for viewers who are **not** in `players`; snapshots already carry those.
+`null` means the saved fighter was deleted, and the overlay puts that viewer back to their chat name and color.
+`reset:true` (all ranks reset) means every cached look is stale. A looks push has no revision and no events. On top of
+it, the overlay asks `/api/looks` again once a minute for everyone on stage the server doesn't list, so a missed push
+fixes itself.
 
 Event types and their fields:
 

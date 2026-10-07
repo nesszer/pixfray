@@ -5,17 +5,18 @@ import { createArenaClient } from '../public/arena-client.js';
 
 function harness() {
   globalThis.location = { protocol: 'https:', host: 'test.example' };
-  const sockets = [], events = [], snapshots = [];
+  const sockets = [], events = [], snapshots = [], looks = [];
   function FakeSocket() { this.close = () => {}; sockets.push(this); }
   const client = createArenaClient({
     channel: 'nesszerra',
     onSnapshot: (s) => snapshots.push(s),
     onEvent: (e) => events.push(e),
+    onLooks: (m) => looks.push(m),
     fetchImpl: () => new Promise(() => {}),
     WebSocketImpl: FakeSocket,
   });
   const send = (payload) => sockets.at(-1).onmessage({ data: JSON.stringify(payload) });
-  return { client, events, snapshots, send };
+  return { client, events, snapshots, looks, send };
 }
 
 test('arena client: a local clock 11 s ahead of the server still sees events as fresh', () => {
@@ -31,6 +32,18 @@ test('arena client: a local clock 11 s ahead of the server still sees events as 
   assert.ok(Math.abs(Date.now() + 3000 - s.players[0].respawnAt) < 200);
   assert.equal(s.players[1].respawnAt, 0, 'zero stays zero');
   assert.ok(Math.abs(Date.now() - 1000 - s.chat.lastSeen) < 200);
+  h.client.disconnect();
+});
+
+test('arena client: a looks push goes to onLooks, not to events, and leaves the revision alone', () => {
+  const h = harness();
+  h.send({ type: 'snapshot', revision: 7, players: [], events: [] });
+  h.send({ type: 'looks', looks: { cleo: null }, reset: true });
+  h.send({ type: 'looks' });   // no looks map: dropped
+  assert.deepEqual(h.looks, [{ type: 'looks', looks: { cleo: null }, reset: true }]);
+  assert.equal(h.events.length, 0);
+  h.send({ type: 'event', revision: 7, event: { id: '8', type: 'challenge_created', at: Date.now() } });
+  assert.equal(h.events.length, 1, 'an event at the same revision still plays');
   h.client.disconnect();
 });
 

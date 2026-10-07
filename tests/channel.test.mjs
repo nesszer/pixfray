@@ -334,6 +334,31 @@ test('rank reset reaches stored profiles; removePlayer deletes the profile', asy
   assert.equal((await r.call('/admin', { method: 'POST', body: { action: 'resetAll' } })).status, 403);
 });
 
+test('looks push: profile writes for viewers off the active list reach open overlays', async () => {
+  const r = room();
+  await r.save('u1', 'alice');
+  await r.save('u2', 'bob');
+  r.ctx.storage.sql.exec('UPDATE profiles SET elo = 1300 WHERE user_id = ?', 'u1');
+  const quiet = r.readState('nesszerra');
+  quiet.players = quiet.players.filter((p) => p.userId !== 'u1');   // alice went quiet; bob is still on the list
+  r.writeState(quiet);
+  const live = r.live();
+  const looks = () => live.sent.filter((m) => m.type === 'looks');
+  await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'resetRank', payload: { userId: 'u1' } } });
+  await sleep(5);
+  assert.deepEqual(looks().map((m) => [Object.keys(m.looks), m.looks.alice.elo, m.looks.alice.color]), [[['alice'], 1000, '#123456']]);
+  await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'resetRank', payload: { userId: 'u2' } } });
+  await sleep(5);
+  assert.equal(looks().length, 1, 'bob is on the active list, so the snapshot carries him');
+  await r.call('/admin', { method: 'POST', body: { actorId: 'mod1', action: 'resetAllRanks' } });
+  await sleep(5);
+  assert.equal(looks().at(-1).reset, true);
+  r.deleteProfile('u1');
+  await sleep(5);
+  assert.deepEqual(looks().at(-1).looks, { alice: null });
+  assert.ok(live.sent.every((m) => m.type !== 'looks' || !('revision' in m)), 'a looks message is not a snapshot');
+});
+
 test('catalog, assets and dev routes answer inside the room; uploads validate', async () => {
   const r = room();
   assert.deepEqual((await r.call('/catalog')).body, []);

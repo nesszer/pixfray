@@ -129,6 +129,11 @@ function boardOrder(a, b) {
   return b.elo - a.elo || b.wins - a.wins || (x < y ? -1 : x > y ? 1 : 0);
 }
 
+// What an overlay draws for a viewer with a saved fighter: /looks and the "looks" push send the same fields.
+function savedLook(p) {
+  return { avatar: p.avatar, color: p.color, hat: p.hat || "", pet: p.pet || "", petTier: p.petTier || "", ...cleanCosmetics(p), displayName: p.displayName, elo: p.elo };
+}
+
 function normalizeProfileRow(row, config) {
   if (!row) return null;
   return {
@@ -351,7 +356,7 @@ export class ChannelRoom extends DurableObject {
       const rows = this.ctx.storage.sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`, ...logins).toArray();
       for (const row of rows) {
         const p = shownProfile(normalizeProfileRow(row, config), hidden);
-        out[p.username.toLowerCase()] = { avatar: p.avatar, color: p.color, hat: p.hat || "", pet: p.pet || "", petTier: p.petTier || "", ...cleanCosmetics(p), displayName: p.displayName, elo: p.elo };
+        out[p.username.toLowerCase()] = savedLook(p);
       }
       return json(out);
     }
@@ -579,6 +584,7 @@ export class ChannelRoom extends DurableObject {
       if (result.resetAllRanks) this.resetAllRanks(result.state.config.initialElo);
       for (const userId of result.rankResetIds || []) {
         this.ctx.storage.sql.exec("UPDATE profiles SET elo = ?, wins = 0, losses = 0 WHERE user_id = ?", result.state.config.initialElo, userId);
+        this.lookChanged(userId);
       }
       for (const userId of result.deletedProfileIds || []) this.deleteProfile(userId);
       if (result.result?.reason === "config_updated") {
@@ -709,6 +715,7 @@ export class ChannelRoom extends DurableObject {
   // A removed viewer sprite: fighters wearing it, saved or on stage, go back to the default character.
   dropSprite(channel, id) {
     const sql = this.ctx.storage.sql;
+    for (const row of sql.exec("SELECT user_id FROM profiles WHERE avatar = ?", id).toArray()) this.lookChanged(row.user_id);
     sql.exec("UPDATE profiles SET avatar = 'player' WHERE avatar = ?", id);
     sql.exec("UPDATE builds SET data = json_set(data, '$.avatar', 'player') WHERE json_extract(data, '$.avatar') = ?", id);
     const state = this.readState(channel);
@@ -774,9 +781,12 @@ export class ChannelRoom extends DurableObject {
       const worn = cleanCosmetics(profile);
       this.ctx.storage.sql.exec(`UPDATE profiles SET ${Object.values(COSMETIC_COLUMNS).map((c) => c + " = ?").join(", ")} WHERE user_id = ?`, ...Object.keys(COSMETIC_COLUMNS).map((f) => worn[f]), profile.userId);
     }
+    this.lookChanged(profile.userId);
   }
 
   deleteProfile(userId) {
+    const login = this.ctx.storage.sql.exec("SELECT username FROM profiles WHERE user_id = ?", userId).toArray()[0]?.username;
+    if (login) this.lookGone(login);
     this.ctx.storage.sql.exec("DELETE FROM profiles WHERE user_id = ?", userId);
     this.ctx.storage.sql.exec("DELETE FROM owned_items WHERE user_id = ?", userId);
     this.ctx.storage.sql.exec("DELETE FROM builds WHERE user_id = ?", userId);
@@ -784,6 +794,47 @@ export class ChannelRoom extends DurableObject {
 
   resetAllRanks(initialElo) {
     this.ctx.storage.sql.exec("UPDATE profiles SET elo = ?, wins = 0, losses = 0", initialElo);
+    this.looksReset = true;
+    this.flushLooksSoon();
+  }
+
+  // ---------- look sync ----------
+  // Every write to a saved fighter (website save, duel result, approved or removed sprite, rank reset, delete) is pushed
+  // to open overlays as one {type:"looks"} message per turn of the event loop. It carries only viewers the active list
+  // doesn't: snapshots already carry those, and a pushed look (masked while a duel result is hidden) must not overwrite
+  // them. looks maps login -> look, or null for a deleted fighter; reset: every saved look is stale (all ranks reset).
+  lookChanged(userId) {
+    (this.dirtyLooks ||= new Set()).add(String(userId));
+    this.flushLooksSoon();
+  }
+  lookGone(login) {
+    (this.goneLooks ||= new Set()).add(String(login).toLowerCase());
+    this.flushLooksSoon();
+  }
+  flushLooksSoon() {
+    if (!this.lookFlush) this.lookFlush = setTimeout(() => { this.lookFlush = 0; this.flushLooks(); }, 0);
+  }
+  flushLooks() {
+    const ids = [...(this.dirtyLooks || [])], gone = [...(this.goneLooks || [])], reset = this.looksReset === true;
+    this.dirtyLooks = new Set(); this.goneLooks = new Set(); this.looksReset = false;
+    if (!ids.length && !gone.length && !reset) return;
+    const sockets = this.ctx.getWebSockets("live");
+    const channel = sockets.map((ws) => { try { return ws.deserializeAttachment()?.channel; } catch { return ""; } }).find(Boolean);
+    if (!channel) return;
+    const state = this.readState(channel), hidden = hiddenResults(state, Date.now()), looks = {};
+    const listed = new Set(state.players.map((p) => p.userId)), wanted = ids.filter((id) => !listed.has(id));
+    for (const login of gone) looks[login] = null;
+    for (let i = 0; i < wanted.length; i += 50) {
+      const part = wanted.slice(i, i + 50);
+      const rows = this.ctx.storage.sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id IN (${part.map(() => "?").join(",")})`, ...part).toArray();
+      for (const row of rows) { const p = shownProfile(normalizeProfileRow(row, state.config), hidden); if (p) looks[p.username.toLowerCase()] = savedLook(p); }
+    }
+    if (!reset && !Object.keys(looks).length) return;
+    const message = JSON.stringify({ type: "looks", looks, ...(reset ? { reset: true } : {}) });
+    for (const ws of sockets) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      try { ws.send(message); } catch {}
+    }
   }
 
   leaderboard(channel) {

@@ -22,6 +22,7 @@ export function createArenaClient({
   role = '',   // 'overlay' lets the admin page count open OBS overlays
   onSnapshot = () => {},
   onEvent = () => {},
+  onLooks = () => {},   // {type:'looks'} pushes: saved fighters changed for viewers the snapshot doesn't list
   onStatus = () => {},
   // A socket that goes silent (no message for this long) may be half open: the network dropped but no close event came,
   // so the overlay would freeze on its last picture. The server sends no pings, so the client asks /api/state instead and
@@ -177,6 +178,10 @@ export function createArenaClient({
     try { payload = JSON.parse(data); } catch { return; }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
 
+    if (payload.type === 'looks') {   // not a snapshot or an event: it carries no revision
+      if (payload.looks && typeof payload.looks === 'object') onLooks(payload);
+      return;
+    }
     const hasSnapshotFields = ['players', 'duels', 'chat', 'config', 'events', 'snapshot', 'state']
       .some(key => Object.prototype.hasOwnProperty.call(payload, key));
     if (payload.type === 'event' || payload.event || (!hasSnapshotFields && payload.type && payload.type !== 'snapshot')) {

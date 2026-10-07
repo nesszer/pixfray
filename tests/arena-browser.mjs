@@ -327,6 +327,23 @@ try {
   looks = await looksPage.evaluate(() => window.__arenaDebug().players);
   const remade = looks.find(p => p.userId === '701');
   assert.deepEqual([remade?.label, remade?.color, remade?.elo], ['Cleo Remade', '#3355ff', 1049], 'a viewer the server dropped keeps the look from its last snapshot');
+  // Writes to a viewer the server doesn't list arrive as a looks push: a rank reset, then a deleted fighter (null) that
+  // sends her back to her chat look. reset (all ranks reset) asks again for everyone on stage.
+  const pushed = await looksPage.evaluate(async (look) => {
+    const seen = () => window.__arenaDebug().players.find(p => p.userId === '701');
+    window.__sendArena(0, { type: 'looks', looks: { cleo: look } });
+    await new Promise(r => setTimeout(r, 100));
+    const reset = seen();
+    window.__sendArena(0, { type: 'looks', looks: { cleo: null } });
+    await new Promise(r => setTimeout(r, 100));
+    const gone = seen();
+    return [reset.label, reset.elo, gone.label, gone.color, gone.elo, window.__arenaDebug().revision];
+  }, { avatar: 'neon', color: '#3355ff', displayName: 'Cleo Remade', elo: 1000 });
+  assert.deepEqual(pushed, ['Cleo Remade', 1000, 'cleo', '#ff0000', undefined, 6], 'pushed looks apply at once and leave the revision alone');
+  const readsBefore = lookReads.length;
+  await looksPage.evaluate(() => window.__sendArena(0, { type: 'looks', looks: {}, reset: true }));
+  await looksPage.waitForFunction(() => window.__arenaDebug().players.some(p => p.label === 'Cleo Saved'), null, { timeout: 5000 });
+  assert.deepEqual(lookReads.slice(readsBefore), ['cleo,dan'], 'a reset refetches everyone on stage in one batch');
   await looksPage.close();
 
   const demoPage = await context.newPage();

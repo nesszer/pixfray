@@ -351,7 +351,7 @@ async function start() {
         const look = data && typeof data[login] === 'object' ? data[login] : null;
         savedLooks.set(login, { at: Date.now(), look: look ? { ...look, username: login, registered: true } : null });
       }
-      for (const p of players.values()) if (batch.includes(p.key)) applyArenaProfile(p);
+      for (const p of players.values()) if (batch.includes(p.key)) wearLook(p);
     } catch {
       // A failed lookup (a 429 from the rate limit blocks for 10 s) says nothing about the viewer: keep their current
       // look and ask again, rather than caching them as having no saved fighter.
@@ -359,6 +359,36 @@ async function start() {
       retryMs = 10_000;
     }
     lookTimer = lookQueue.size ? setTimeout(fetchLooks, retryMs) : 0;
+  }
+  // A viewer whose saved fighter was deleted goes back to their chat name and color.
+  function wearLook(p) {
+    const had = p.arenaProfile?.registered;
+    applyArenaProfile(p);
+    if (had && !p.arenaProfile?.registered) { p.label = p.chatLabel || p.label; p.color = sanitizeColor(settings[p.key]?.color) || p.chatColor || p.color; }
+  }
+  // The server pushes {type:"looks"} when a saved fighter changes for a viewer it doesn't list (rank reset, removed
+  // sprite, deleted profile; null means deleted). reset: every cached look is stale. Viewers it lists come from snapshots.
+  function acceptLooks(message) {
+    const at = Date.now();
+    if (message.reset) for (const hit of savedLooks.values()) hit.at = 0;
+    const listed = new Set([...profilesById.values()].filter(pr => pr.registered).map(pr => String(pr.username || '').toLowerCase()));
+    for (const [raw, look] of Object.entries(message.looks)) {
+      const login = String(raw).toLowerCase().slice(0, 64);
+      if (!login || listed.has(login)) continue;
+      savedLooks.set(login, { at, look: look && typeof look === 'object' ? { ...look, username: login, registered: true } : null });
+      const p = players.get(login);
+      if (p) wearLook(p);
+    }
+    if (message.reset) refreshLooks();
+  }
+  // Safety net for a missed push or a dropped socket: once a minute, ask again for everyone on stage the server doesn't list.
+  function refreshLooks() {
+    for (const p of players.values()) {
+      if (profilesById.get(p.userId)?.registered) continue;
+      const hit = savedLooks.get(p.key);
+      if (hit) hit.at = 0;
+      queueLook(p.key);
+    }
   }
   // Uploaded pets are PNGs served by /api/pets/<channel>/<id>; built-in pets are drawn in code (public/pets.js).
   const petImages = new Map();
@@ -1385,6 +1415,7 @@ async function start() {
       role: 'overlay',
       onSnapshot: acceptArenaSnapshot,
       onEvent: queueArenaEvent,
+      onLooks: acceptLooks,
       onStatus(event) {
         arenaTransport = event.state || 'offline';
         if (event.chat) arenaChat = event.chat;
@@ -1393,6 +1424,7 @@ async function start() {
     });
   }
   if (arenaEnabled) startArena();
+  if (arenaEnabled && !arenaDemo) setInterval(refreshLooks, 60_000);
   let chat;
   if (demo) {
     const names = ['Ness', 'Sunny', 'Mochi', 'Cloud', 'Pixel', 'Bean', 'Luna', 'Sprout'];
