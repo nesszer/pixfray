@@ -41,7 +41,7 @@ export async function handleDeveloper(request, env, c) {
   const handler = route[method === 'HEAD' ? 'GET' : method];
   if (!handler) return fail(405, 'Use ' + Object.keys(route).join(' or '), 'method_not_allowed', { op });
   let body = null;
-  // Caught here because worker.js returns this promise without awaiting it inside its try block.
+  // Caught here so a bad body gets its own reason rather than the generic upstream error.
   if (method === 'POST') try { body = await c.bodyJson(request, op === 'code/save' ? MAX_FILE_BYTES * 2 + 4096 : 8000); } catch (e) { return fail(e.status || 400, e.message || 'Invalid request body', e.status === 413 ? 'body_too_large' : 'invalid_body'); }
   if (c.dev && productionChange(op, body)) return fail(403, 'Production deploys need the owner signed in with Twitch, not the dev token', 'owner_session_required');
   // ?channel= picks which channel's room to read (logs, diagnostics); Worker errors land in the default channel.

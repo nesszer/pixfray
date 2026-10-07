@@ -160,7 +160,7 @@ async function handleDevtools(request,env,channel,action,data){
   return json({error:'Not found'},404);
 }
 async function staticCatalog(env,url){const r=await env.ASSETS.fetch(new Request(url.origin+'/assets/characters.json'));return r.ok?await r.json():[];}
-// The bare site's channel picker in one request: each listed channel with its top three ranked fighters (and the uploaded
+// The /play/ channel picker in one request: each listed channel with its top three ranked fighters (and the uploaded
 // looks they wear, which only that channel's catalog has), plus the built-in catalog once. Kept a minute per isolate.
 let pickerCache=null;
 async function picker(request,env,url){
@@ -228,7 +228,7 @@ async function handle(request,env,ctx){
       return await handleDevtools(request,env,devMatch[1],devMatch[2],await bodyJson(request,4000));
     }
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
-    // The bare site asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
+    // /play/ asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
     if(path==='/api/channels')return json({channels:await publicChannels(env),defaultChannel:site.defaultChannel});
     if(path==='/api/picker')return json(await picker(request,env,url));
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,dev,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
@@ -326,6 +326,6 @@ async function handle(request,env,ctx){
     return internal(request,env,channel,'/'+route);
   }catch(error){
     if(!error.status)ctx?.waitUntil?.(logWorkerError(env,error,{path}));
-    return json({error:error.status?error.message:'Service unavailable; check owner diagnostics',...(error.reconnect?{reconnect:error.reconnect}:{}),...(error.connectedElsewhere?{connectedElsewhere:error.connectedElsewhere}:{})},error.status||503);
+    return json({error:error.status?error.message:'Service unavailable; check owner diagnostics',...(error.status&&error.reason?{reason:error.reason}:{}),...(error.reconnect?{reconnect:error.reconnect}:{}),...(error.connectedElsewhere?{connectedElsewhere:error.connectedElsewhere}:{})},error.status||503);
   }
 }

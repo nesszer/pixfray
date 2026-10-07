@@ -864,6 +864,8 @@ test('a pair gets 5 rated duels a day; later ones are just for fun', () => {
   const done = w.state.events.filter((e) => e.type === 'duel_completed').at(-1);
   assert.equal(done.unrated, 'pair_cap');
   assert.equal(w.state.pairPlays.length, 5, 'unrated duels are not counted');
+  const reset = structuredClone(w.state);
+  assert.equal(reduceGame(reset, { type: 'admin', actorId: 'mod', action: 'resetAllRanks' }, w.now).state.pairPlays.length, 0, 'reset all ranks starts the pair counts over');
   w.register('cara');
   assert.equal(w.duel(w.fight('alice', 'cara')).unrated, undefined, 'other pairs are still rated');
   w.advance(120_000);

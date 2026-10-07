@@ -115,7 +115,7 @@
 
           <section class="section" id="sec-code">
             <h3>Code editor: changes go to a branch, never straight to main</h3>
-            <p class="muted">Loads from the branch if it exists, otherwise from main. Secrets, CI files and build output can't be opened here.</p>
+            <p class="muted">Loads from the branch if it exists, otherwise from main. Secrets, CI files and build output can't be opened here. Build files (package.json, configs, scripts/) open read-only.</p>
             <div class="controls">
               <div><label for="branch">Branch</label><input id="branch" autocomplete="off" spellcheck="false" placeholder="live-fix/overlay-text"></div>
               <div><label for="path">File</label><input id="path" list="files" autocomplete="off" spellcheck="false" placeholder="public/overlay.js"><datalist id="files"></datalist></div>
@@ -132,7 +132,7 @@
 
           <section class="section" id="sec-release">
             <h3>Release a fix: test first, then promote or roll back</h3>
-            <p class="muted">Each step starts the GitHub Actions deploy workflow. Nothing changes on the production site until you promote or use a hotfix.</p>
+            <p class="muted">Each step starts the GitHub Actions deploy workflow. Nothing changes on the production site until you promote or use a hotfix. Promote, hotfix and production rollback need you signed in with Twitch.</p>
             <p class="callout warning" id="github-missing" hidden></p>
             <ol class="steps">
               <li><strong>Save to a branch</strong> in the code editor above. Branch names start with <code>live-fix/</code> or <code>hotfix/</code>.</li>

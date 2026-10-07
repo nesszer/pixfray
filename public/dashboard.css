@@ -492,7 +492,7 @@ legend { font: 650 var(--text-md)/1.3 var(--font-display); color: var(--text); }
 .preview-bar { background: var(--surface); }
 .has-3d .stage-canvas { height: 128px; }
 
-/* bare /: a full-height scene with the arena island on the right and the channel rows on the left */
+/* /play/: a full-height scene with the arena island on the right and the channel rows on the left */
 .landing { position: relative; display: grid; align-items: center; min-height: calc(100vh - 56px); min-height: calc(100svh - 56px);
   background: var(--bg) url("/assets/scene/landing.webp") right center / cover no-repeat; border-bottom: 1px solid var(--border); }
 body:has(.landing:not([hidden]))::before { display: none; }
@@ -567,7 +567,7 @@ body:has(.landing:not([hidden]))::before { display: none; }
 .btn-primary:disabled, .btn-primary[aria-disabled="true"] { color: var(--text-2); background: var(--raised); border-color: var(--border-strong); }
 .signin-hint { font-size: var(--text-xs); color: var(--text-3); margin: 0; }
 
-/* bare /: the channel rows sit straight on the scene; each shows the channel's top fighters and who leads */
+/* /play/: the channel rows sit straight on the scene; each shows the channel's top fighters and who leads */
 .channel { align-items: center; background: none; padding: var(--space-4) var(--space-2); }
 .channel:hover, .channel:focus-visible { background: rgb(42 32 19 / 0.7); }
 .channel-crew { display: flex; flex: none; width: 96px; height: 48px; }
@@ -614,7 +614,7 @@ body:has(.landing:not([hidden]))::before { display: none; }
 .gate-list li::before { top: 0.75em; width: 10px; height: 0; border: 0; border-top: 2px solid var(--trim); border-radius: 0; }
 @media (max-width: 760px) { .gate { margin: var(--space-5) 0 var(--space-6); } }
 
-/* bare /: every row has the same avatar slot; the open spot is a dimmed fighter */
+/* /play/: every row has the same avatar slot; the open spot is a dimmed fighter */
 .channel-crew { width: 96px; justify-content: flex-start; }
 .channel-crew:empty { width: 96px; }
 .channel-crew canvas.is-open { opacity: 0.45; }
@@ -1681,7 +1681,7 @@ input[type="file"]::file-selector-button:hover { border-color: var(--trim); back
 .admin-page #panel-live > .moderation > h2:first-child { font-size: var(--text-lg); padding-bottom: var(--space-2); margin-bottom: var(--space-3); }
 .config-bar.dirty .config-clean { display: none; }
 
-/* ---------- round 35: find the stream you watch on the bare / ---------- */
+/* ---------- round 35: find the stream you watch on /play/ ---------- */
 .channel-search { display: grid; gap: var(--space-2); margin-top: var(--space-6); }
 .channel-search label { font-size: var(--text-sm); font-weight: 650; color: var(--text-2); }
 .channel-search input { min-height: 44px; background: rgb(18 14 9 / 0.85); }

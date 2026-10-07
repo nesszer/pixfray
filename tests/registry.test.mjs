@@ -245,7 +245,9 @@ test("owner Channels box: list, turn a channel off and on; the owner's off stick
   // the streamer can't undo the owner's off
   const refused = await worker.fetch(req('/api/admin/live1', 'POST', { action: 'resumeChannel' }, streamer), env);
   assert.equal(refused.status, 403);
-  assert.match((await refused.json()).error, /site owner turned PixFray off/);
+  const refusedBody = await refused.json();
+  assert.match(refusedBody.error, /site owner turned PixFray off/);
+  assert.equal(refusedBody.reason, 'owner_off');
   assert.equal((await post({ action: 'resume', login: 'live1' })).channels[0].pausedAt, 0);
   assert.equal((await worker.fetch(req('/api/state/live1'), env)).status, 200);
   assert.equal((await post({ action: 'invite', login: 'someone' })).reason, 'unknown_action');

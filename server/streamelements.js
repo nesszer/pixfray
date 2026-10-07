@@ -117,7 +117,7 @@ export function seCommandText(action, target) {
 const secs = ms => Math.max(1, Math.ceil(ms / 1000));
 const short = s => String(s || '').slice(0, 25);
 // Channel links name the channel so viewers land in the right room.
-// Always names the channel: the bare site asks which stream the viewer watches.
+// Always names the channel: /play/ asks which stream the viewer watches.
 const siteLink = (origin, channel, hash = '') => origin ? `${origin}/${channel ? '?channel=' + channel : ''}${hash}` : '';
 const gearUp = (origin, channel, lead = 'Gear up at') => { const link = siteLink(origin, channel); return link ? ` ${lead} ${link}` : ''; };
 const noFighter = (who, self, origin, channel) => self ? `@${who}, you have no fighter in the arena yet!${gearUp(origin, channel)}` : `@${who} has no fighter in the arena yet!${gearUp(origin, channel, 'Send them to')}`;

@@ -42,7 +42,7 @@ export async function listRecords(env, prefix) {
   return r.json();
 }
 
-// Public: the logins a viewer can pick on the bare site (built-in channels first, then by sign-up). Cached a minute.
+// Public: the logins a viewer can pick on the /play/ picker (built-in channels first, then by sign-up). Cached a minute.
 let channelList = null;
 export async function publicChannels(env) {
   if (channelList && Date.now() - channelList.at < HIT_MS) return channelList.logins;

@@ -67,10 +67,10 @@ Neither file holds StreamElements keys or Twitch tokens. A paused channel can st
 | `GITHUB_WORKFLOW` | var, optional | Same as above | Defaults to `deploy.yml` |
 | `CF_API_TOKEN` | secret | Request usage, version list | **Read-only** token: Account Analytics Read, Workers Scripts Read |
 | `CF_ACCOUNT_ID` | var | Same as above | 32-hex Cloudflare account id |
-| `CF_VERSION_METADATA` | `version_metadata` binding, optional | Showing which version served the page | None |
+| `CF_VERSION_METADATA` | `version_metadata` binding, declared in `cloudflare.config.ts` | Showing which version served the page | None |
 
-These bindings aren't declared in `cloudflare.config.ts` yet. That file belongs to the Core lane;
-see "Open items" below.
+The other variables and secrets stay out of `cloudflare.config.ts` on purpose, because a declared secret
+is required on every deploy. Set them with `cf` or the Cloudflare dashboard.
 
 ### GitHub Actions secrets (repo settings, never in the Worker)
 
@@ -98,12 +98,17 @@ to `production` for a second confirmation. The jobs already use `environment: <t
 - The owner session effectively has push access to the repo. Anyone holding that session can
   change code on a branch and, with a promote, in production. Sign out on shared machines.
 - The editor refuses `.dev.vars*`, `.env*`, `.secrets*`, `*.dpapi`, `.github/`, `.git`, `node_modules`, `dist`, `.wrangler` and `.cloudflare`, and files over 512 KB.
+- Build files open read-only: `package.json`, `package-lock.json`, `.npmrc`, `site.config.js`,
+  `cloudflare.config.ts`, `vite.config.js` and `scripts/` run with the deploy workflow's Cloudflare token, so
+  saving them returns 403 `build_file`. Change them from a local checkout.
 - Code on a `live-fix/` branch runs in CI while `CLOUDFLARE_API_TOKEN` is set on the release step.
   A malicious branch could use that token, so the token is scoped to Workers Scripts Edit only.
 - Workflow inputs reach shell steps only through `env`, never through `${{ }}` inside `run:`. The
   workflow also checks that the commit is on the branch it names.
 - Mutating `/api/dev/*` requests must be same-origin, and every route returns `403` to anyone but
-  the owner.
+  the owner. The one exception is the test site's `DEV_TOOLS_TOKEN` (docs/DEVTOOLS.md): it skips the
+  same-origin check and counts as the owner, but promote, hotfix and rollback to production return 403
+  `owner_session_required`. Production deploys need the owner signed in with Twitch.
 
 ## Unverified
 
@@ -112,8 +117,7 @@ follow the public docs. They were tested only against local fakes (`tests/dev-ap
 `tests/dev-release.test.mjs`), not against the live services. Expect to adjust field names on
 the first real run.
 
-## Open items for other lanes
+## Open items
 
-- `cloudflare.config.ts`: declare the optional bindings above.
-- `server/worker.js`: use `return await handleDeveloper(...)` so errors thrown inside reach its
-  `catch`. `developer.js` already catches its own errors.
+None. `server/worker.js` awaits `handleDeveloper(...)`, and the optional settings above stay undeclared
+by design.

@@ -1,6 +1,11 @@
 # Plan: check-ins, Mini Chat dollars, pets and builds
 
-Status: agreed with the owner on 2026-10-04. Stage 1 (check-ins, streaks, 20/8 caps) and
+Status (2026-10-07): done; this file is the original plan, kept for history. Current prices and rules
+are in `server/game.js` (`DEFAULT_CONFIG`) and CONTRACTS.md: shop prices were cut to a third on
+2026-10-06, the give command is `!pay` on StreamElements and `!give` on channels with the PixFray bot, and
+unrated duels (see Risks) pay nothing.
+
+Agreed with the owner on 2026-10-04. Stage 1 (check-ins, streaks, 20/8 caps) and
 Stage 2 (dollars, `!wallet`, `!pay`, mod gifts), Stage 3 (pets, the shop, `!pet`, uploaded pets) and Stage 4 (builds,
 cosmetics, the tabbed viewer page) are built; all four have run in production since 2026-10-05. Every number below is a default that
 mods can tune in the balance editor (versioned, undoable). All data is per channel, like fighters
@@ -107,7 +112,9 @@ site first and on prod after the deploy.
   +44% damage against an unupgraded one. Check win rates after stage 1 and tune it from the
   balance editor.
 - **Alt accounts:** `!give` lets alts feed a main account. The 5-duel and $100 limits slow this
-  down; they don't stop it.
+  down; they don't stop it. Since 2026-10-07 the same pair gets 5 ranked duels per rolling 24 hours
+  (`PAIR_RATED_PER_DAY`) and a Twitch account under 7 days old (`NEW_ACCOUNT_MS`) duels unrated; an unrated
+  duel moves no Elo, wins, losses or dollars.
 - **Setup work:** each StreamElements channel has to add 4 new commands.
 - **Twitch live check:** it uses the app token and is cached for 60 s. If Twitch is down,
   `!checkin` says "try again", rather than awarding or refusing the point.

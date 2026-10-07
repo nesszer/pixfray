@@ -12,6 +12,9 @@ stream on. PixFray turns on for that channel only; nobody can turn it on for som
 
 - Up to 200 channels can be on. If PixFray is full, /start says so; you can also run your own copy
   from the code on GitHub.
+- PixFray turns on at once if your Twitch account is at least 30 days old and you are Affiliate or
+  Partner or have a saved past broadcast. Otherwise, or if Twitch can't be asked about past
+  broadcasts, the sign-up waits for the site owner's approval; sign in on /start later to check.
 - Twitch asks to let PixFray read your moderator list
   (`moderation:read`), so your mods can open your mod controls too. PixFray never posts in chat as
   you and never changes your channel.
@@ -20,14 +23,15 @@ stream on. PixFray turns on for that channel only; nobody can turn it on for som
 - If Twitch signs you in as the wrong account, PixFray turns on for that account instead. Log out
   of twitch.tv, sign in again as your streaming account, and ask the owner to turn the other one off.
 
-After sign-in you land on the Stream setup tab of your mod controls.
+After sign-in you land on the Stream setup tab of your mod controls. Later, opening `/admin/` while
+signed in takes you straight to your channel, and signing in or out keeps you on the same page.
 
 ## 2. Add the overlay to OBS
 
 Under "Add the overlay to OBS", click **Copy link**. In OBS add a Browser Source, paste the whole
 link and set 1920 × 1080 at 30 FPS. Turn off "Shutdown source when not visible".
 
-The checklist row **Overlay open in OBS** turns to Done within 10 seconds of the source loading.
+The step **Add the overlay to OBS** turns to Done within 10 seconds of the source loading.
 
 ## 3. Turn off the StreamElements Duel module
 
@@ -48,7 +52,7 @@ new command:
 - Reply: click **Copy reply** in that row and paste the whole line. The table shows only where the
   reply points (`/api/se/<you>/challenge?k=…`), so the page is safe to show on stream; the key is
   only in what Copy reply puts on the clipboard.
-- Advanced settings: set the user and global cooldowns to 0.
+- Advanced settings: set the user and global cooldowns to 0, then click Activate command.
 
 Add commands in the StreamElements dashboard, not with `!command add` in chat: the reply contains
 your channel's key, and chat would show it to everyone. If the key leaks, click **New key** and
@@ -68,6 +72,10 @@ message**, so new viewers learn how to join. PixFray never posts on its own.
 
 **Let your moderators help** is Done when the moderator-list permission is stored. If you skipped
 it, click **Connect mod access** and approve the permission while signed in to Twitch as yourself.
+
+Moderators can rename commands, tick the Duel module, use Clear arena and change the balance. Only you
+(or the site owner) can click **New key**, **Reset all ranks**, **Turn PixFray off** or move chat from
+another site.
 
 The step reads differently depending on who looks at it. You, the broadcaster, get the button.
 A moderator, or the site owner looking at your channel, is told that you have to connect it.
@@ -91,6 +99,7 @@ The same answers are under "If something doesn't work" at the bottom of Stream s
 
 At the bottom of the Stream setup tab, **Turn PixFray off** stops the overlay, the chat commands
 and the viewer page on your channel. Fighters, ranks and settings are kept, and **Turn PixFray
-back on** picks up where you left off. Other servers notice the change within about a minute. An
+back on** picks up where you left off. If the site owner turned your channel off, only the owner can
+turn it back on. Other servers notice the change within about a minute. An
 overlay that was already open keeps showing chatters until OBS reloads it; a stopped overlay checks
 again every 5 minutes, so turning PixFray back on needs no OBS refresh.

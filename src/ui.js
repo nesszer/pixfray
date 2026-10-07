@@ -7,7 +7,7 @@ const TEMPLATE_CHANNEL = site.defaultChannel;
 const asked = (new URLSearchParams(location.search).get("channel") || "").toLowerCase();
 export const CHANNEL_PICKED = /^[a-z0-9_]{1,25}$/.test(asked);
 export const CHANNEL = CHANNEL_PICKED ? asked : site.defaultChannel;
-// A same-site link that keeps the current channel. Links always name it, since the bare viewer page is the picker.
+// A same-site link that keeps the current channel. Links always name it, since the viewer page without one is the /play/ picker.
 export const withChannel = (path) => path + (path.includes("?") ? "&" : "?") + "channel=" + CHANNEL;
 // This page's address without the one-time flags sign-in adds: where signing in or out comes back to.
 export function here() {

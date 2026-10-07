@@ -9,8 +9,12 @@ scripted duels, and an alt account that types in real Twitch chat. Production ha
   (`cloudflare.config.ts`). The production Worker has no such binding, so no token can match there.
   `tests/worker.test.mjs` checks both configs.
 - A request with `Authorization: Bearer <token>` acts as the owner for `/api/dev/*` and
-  `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live|shop)`. A wrong or short
+  `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live|shop|export)`. A wrong or short
   token gets 401; an owner session without the token gets 404 from `/api/devtools`.
+- The token can't change production: promote, hotfix and rollback to production return 403
+  `owner_session_required`; only the owner signed in with Twitch can run them. It also can't save build
+  files (`package.json`, `package-lock.json`, `.npmrc`, `site.config.js`, `cloudflare.config.ts`,
+  `vite.config.js`, `scripts/`): `code/save` returns 403 `build_file`, reading them still works.
 - The token lives in `~/.pixfray/secrets.json` (outside the repo) next to the Twitch app credentials, so the
   normal test deploy uploads it:
   `npx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json`.
@@ -46,8 +50,11 @@ node scripts/devtools.mjs clean
 - `live on` makes `!checkin` see a live stream with a new stream id, so each `live on` is the next
   stream for streaks (`--stream <id>` reuses one). `!pay` needs it too. `live off` answers "not live", and `live real`
   goes back to asking Twitch. Only the test Worker reads this, because only it has the token.
-- `buy <bot> pet|hat <id>` spends the bot's dollars like the viewer page's Buy button (`gift` them
-  first); `equip <bot> <pet|none>` brings a pet the bot owns and keeps its character, color and hat.
+- `buy <bot> <pet|hat|recolor|petcolor|accessory|trail|effect|taunt|title> <id>` (or `buy <bot> slot`)
+  spends the bot's dollars like the viewer page's Buy button (`gift` them first). `equip <bot> <pet|none|->`
+  brings a pet the bot owns (`-` keeps the current one) and takes `field=id` pairs for cosmetics it owns
+  (`recolor`, `petColor`, `accessory`, `trail`, `winEffect`, `taunt`, `title`, `build`). It keeps the
+  character, color and hat.
 
 ## Alt account in real chat
 

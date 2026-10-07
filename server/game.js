@@ -798,6 +798,8 @@ function applyAdmin(state, event, now) {
       p.losses = 0;
       dirtyProfileIds.push(p.userId);
     }
+    // a fresh start for everyone, so the daily pair counts start over too
+    state.pairPlays = [];
     addEvent(state, "all_ranks_reset", now, { actorId });
     return { ok: true, reason: "all_ranks_reset", dirtyProfileIds, resetAllRanks: true, deletedProfileIds };
   }

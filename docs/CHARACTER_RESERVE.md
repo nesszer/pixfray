@@ -1,10 +1,11 @@
 # Character reserve
 
-26 free characters, vetted on 2026-10-01 and ready to import later. None of them are bundled yet.
+26 free characters, vetted on 2026-10-01 and ready to import later. None of them are bundled yet
+(checked 2026-10-07: `public/assets/characters.json` has 56 characters, none from this table).
 
 24 other characters, taken from this list and from the OpenGameArt packs by pzUH, were imported on
 2026-10-02 with `scripts/build-characters.mjs` (see `ASSET_LICENSES.md`). Their rows were removed from the
-table below. Three more (Pixel Platformer tiles 9-12 and 24-26) were imported on 2026-10-02 in v4.
+table below. Five more Pixel Platformer characters were imported on 2026-10-02 in v4.
 
 How each row was vetted: the official archive was downloaded from the Kenney asset page, the
 license file inside the archive was read, and the listed sprite files were opened to confirm they

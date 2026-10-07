@@ -1,5 +1,18 @@
 # PixFray
 
+```text
+██████╗ ██╗██╗  ██╗███████╗██████╗  █████╗ ██╗   ██╗
+██╔══██╗██║╚██╗██╔╝██╔════╝██╔══██╗██╔══██╗╚██╗ ██╔╝
+██████╔╝██║ ╚███╔╝ █████╗  ██████╔╝███████║ ╚████╔╝
+██╔═══╝ ██║ ██╔██╗ ██╔══╝  ██╔══██╗██╔══██║  ╚██╔╝
+██║     ██║██╔╝ ██╗██║     ██║  ██║██║  ██║   ██║
+╚═╝     ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
+
+    [o_o]   !challenge @rival    [>_<]
+    /|_|\  ------------------->  /|_|\
+     / \         !fight          / \
+```
+
 PixFray puts a small pixel character on your Twitch stream for each viewer who chats. Viewers pick
 and dress their fighter on the website, challenge each other in chat, and the duels play out on the
 stream overlay, with Elo ranks, upgrades, hats and pets. It is free and open source (MIT), and runs
@@ -13,7 +26,9 @@ You need OBS (or another streaming app with a browser source) and a StreamElemen
 chat commands run as StreamElements custom commands. Nightbot and Fossabot can't run them.
 
 1. Open https://pixfray.xyz/start/ and sign in with the Twitch account you stream on. That turns
-   PixFray on for your channel only.
+   PixFray on for your channel only. It turns on at once for an account that is at least 30 days old
+   and is Affiliate or Partner or has a saved past broadcast; any other sign-up waits for the site
+   owner's approval.
 2. Follow the **Stream setup** checklist on the mod controls page it opens: add the overlay to OBS,
    turn off the StreamElements Duel module, paste the chat commands into StreamElements, and
    optionally let your moderators help.
@@ -36,10 +51,25 @@ can turn PixFray off at any time without losing fighters or ranks.
   hold back the new numbers until the replay has played (plus the channel's stream delay), so chat
   doesn't spoil the stream.
 - Each win earns an upgrade point (power, guard, luck) and unlocks hats. `!checkin`, once per live
-  stream, adds a point too, with streak bonuses. Duels pay PixFray dollars ($5 a win, $3 a loss):
-  `!wallet` shows them, `!pay @name 10` passes them on while the stream is live, and `!pet` shows
-  a fighter's pet. `!fray` explains how to join, and `!look` links to your fighter on the site.
+  stream, adds a point too, with streak bonuses. Ranked duels pay saved fighters PixFray dollars ($5 a
+  win, $3 a loss): `!wallet` shows them, `!pay @name 10` passes them on (`!give` on channels with the
+  PixFray chat bot; after 5 finished duels, at most $100 per stream, only while the stream is live), and
+  `!pet` shows a fighter's pet. `!fray` explains how to join, and `!look` links to your fighter on the site.
+- The same two fighters get 5 ranked duels per rolling 24 hours; after that they still fight, unrated.
+  A Twitch account under 7 days old also duels unrated. An unrated duel moves no Elo, wins, losses or
+  dollars, and the reply starts "Just for fun". If Twitch can't say how old an account is, the duel is
+  ranked.
 - Mods tune every number in the balance editor on the mod controls page (versioned and undoable).
+  Only the broadcaster (or the site owner) can reset all ranks, make a new StreamElements key, turn
+  PixFray off or move chat from another site.
+
+## Pages
+
+- `/`: what PixFray is, with a duel playing. A returning viewer gets a "Back to <channel>" button.
+- `/?channel=<login>`: that channel's fighter page. `/play/` picks the channel; `/intro/` redirects to `/`.
+- `/start/`: streamer sign-up. `/admin/?channel=<login>`: the mod controls; a signed-in streamer who
+  opens `/admin/` lands on their own channel.
+- Signing in or out comes back to the same page, channel and tab.
 
 Overlay link options: `channel`, `size=24..96` (clamped; default 60), `cap=1..100` (whole numbers; anything
 else means no limit of its own; with `arena=1` the lower of this and the channel's on-stream limit applies),
@@ -115,7 +145,12 @@ refuses to post while the channel (`LIVE_CHANNEL`) is live, and changes both acc
 - [docs/STREAMER_SETUP.md](docs/STREAMER_SETUP.md): the streamer checklist.
 - [TWITCH_SETUP.md](TWITCH_SETUP.md): the Twitch app and the owner's EventSub chat connection.
 - [docs/DEVTOOLS.md](docs/DEVTOOLS.md) and [docs/LIVE_FIX.md](docs/LIVE_FIX.md): the owner page's
-  tools.
+  tools. The test site's dev token can't deploy to production or save build files.
+
+Limits: each signed-in user can make 30 changes a minute (more gets 429). Dollars show only to mods and
+the owner, and the public `/health` says only ok. Pages send HSTS and a Content-Security-Policy that
+allows Cloudflare's analytics beacon; the overlay's allows only the Twitch chat socket. Adding a script
+or embed means changing `server/security.js`.
 
 The overlay joins chat over anonymous read-only Twitch IRC to show who is chatting
 ([public/chat.js](public/chat.js)); Twitch may change anonymous access. Duels and ranks go through
