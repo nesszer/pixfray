@@ -327,6 +327,13 @@ try {
     demoApiReads.push(route.request().method() + ' ' + new URL(route.request().url()).pathname);
     await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
   });
+  // The stage canvas never draws with ctx.filter: a filter pass over the whole 1920x1080 canvas hitched the stream on hits.
+  await demoPage.addInitScript(() => {
+    window.__stageFilters = [];
+    const set = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'filter').set;
+    Object.defineProperty(CanvasRenderingContext2D.prototype, 'filter', { set(v) { if (this.canvas.isConnected && v !== 'none') window.__stageFilters.push(v); set.call(this, v); },
+      get: Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'filter').get });
+  });
   await demoPage.goto(base + '/overlay.html?arena=1&demo=1&debug=1');
   await demoPage.waitForFunction(() => document.querySelector('#arena-mode')?.textContent.includes('not saved'));
   await demoPage.waitForFunction(() => window.__arenaDebug?.().duels.some((duel) => Object.values(duel.hp || {}).some((hp) => hp < 100)));
@@ -338,7 +345,10 @@ try {
   // Landed blows flash and throw sparks; the knockout pushes the view in.
   assert.equal((await demoPage.evaluate(() => window.__arenaDebug())).fx, 'on');
   await demoPage.waitForFunction(() => window.__arenaDebug().sparks > 0 && window.__arenaDebug().glows > 0, null, { timeout: 15000 });
+  // A crit or the knockout shakes the struck fighter only, never the whole stage.
+  await demoPage.waitForFunction(() => window.__arenaDebug().players.filter(p => p.shake).length === 1, null, { timeout: 45000 });
   await demoPage.waitForFunction(() => window.__arenaDebug().push, null, { timeout: 45000 });
+  assert.deepEqual(await demoPage.evaluate(() => window.__stageFilters), [], 'hit flashes are baked into cached frames, not ctx.filter');
   await demoPage.waitForFunction(() => window.__arenaDebug?.().results.some(r => /wins/.test(r.text)), null, { timeout: 45000 });
   assert.ok(!(await demoPage.evaluate(() => window.__arenaDebug().banners)).some(b => /wins/.test(b)), 'the demo shows no winner banner');
   assert.ok((await demoPage.evaluate(() => window.__arenaDebug().players)).some(p => p.bubble), 'the winner says its taunt in a bubble');
@@ -361,7 +371,7 @@ try {
   assert.deepEqual((await flatPage.evaluate(() => window.__arenaDebug().players)).filter(p => p.bubble), [], 'no bubbles with bubbles=0');
   assert.deepEqual(errors, []);
   await context.close();
-  console.log('PASS: authoritative profiles, health snapshots, event deduplication, stale revisions, reconnect, transparent drawing, local-only demo duel, hit effects, fx=off and bubbles=0.');
+  console.log('PASS: authoritative profiles, health snapshots, event deduplication, stale revisions, reconnect, transparent drawing, local-only demo duel, hit effects, fighter-only shake, no stage filter, fx=off and bubbles=0.');
 } finally {
   await browser.close();
 }

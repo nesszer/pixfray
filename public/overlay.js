@@ -160,7 +160,6 @@ async function start() {
   const FLOOR = 32;          // room under the feet for the nameplate
   const banners = [];        // the "Sudden death!" banner above a duel that goes to sudden death
   const results = [];        // every winner the overlay showed (debug and e2e)
-  let shake = null;          // screen shake after a heavy blow or a knockout
   let push = null;           // knockout push-in: the view zooms toward the knockout for a moment
   const PUSH = .18, PUSH_IN = 250, PUSH_HOLD = 1600, PUSH_OUT = 700;
   const glows = [];          // light flashes where blows land
@@ -504,12 +503,21 @@ async function start() {
         born: now, life: 320 + Math.random() * 260 });
     }
     if (sparks.length > 240) sparks.splice(0, sparks.length - 240);
-    if (power >= 2 && !(shake && now < shake.until)) shake = { start: now, until: now + 220, mag: 4 };
+    if (power >= 2 && !(target.shake && now < target.shake.until)) target.shake = { start: now, until: now + 220, mag: 4 };
   }
-  // The knockout: a hard shake, and the view pushes in on the fallen fighter, holds, and eases back.
+  // The knockout: the fallen fighter shakes hard, and the view pushes in on it, holds, and eases back.
   function knockout(p, at) {
-    shake = { start: at, until: at + 450, mag: 9 };
-    if (fxOn && p) push = { x: p.x, y: height - FLOOR - p.lane, start: at };
+    if (!fxOn || !p) return;
+    p.shake = { start: at, until: at + 450, mag: 9 };
+    push = { x: p.x, y: height - FLOOR - p.lane, start: at };
+  }
+  // Only the struck fighter shakes, side to side on a smooth curve that dies out. Shaking the whole stage by a random
+  // offset each frame moved every nameplate and bubble over a still game, and on stream that read as the overlay lagging.
+  function shakeOffset(p, clock) {
+    const k = p.shake;
+    if (!k || clock >= k.until) return 0;
+    const t = clock - k.start;
+    return t < 0 ? 0 : k.mag * (1 - t / (k.until - k.start)) * Math.sin(t / 70 * Math.PI * 2);
   }
   function pushZoom(clock) {
     if (!push) return 1;
@@ -1109,10 +1117,6 @@ async function start() {
     const clock = Date.now();
     ctx.clearRect(0, 0, width, height);
     ctx.save();
-    if (shake && clock < shake.until) {
-      const m = shake.mag * (shake.until - clock) / (shake.until - shake.start);
-      ctx.translate((Math.random() - .5) * 2 * m, (Math.random() - .5) * 2 * m);
-    }
     const zoom = pushZoom(clock);
     if (zoom !== 1) { ctx.translate(push.x, push.y); ctx.scale(zoom, zoom); ctx.translate(-push.x, -push.y); }
     if (clock - lastCleanup > 1000) {
@@ -1189,6 +1193,7 @@ async function start() {
       if (anim?.kind === 'attack' && progress > 0) offset = Math.sin(progress * Math.PI) * s * (anim.heavy ? .45 : .3) * p.direction;
       if (anim?.kind === 'hit' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * (anim.heavy ? .3 : .16) * p.direction;
       if (anim?.kind === 'dodge' && progress > 0) offset = -Math.sin(progress * Math.PI) * s * .4 * p.direction;
+      offset += shakeOffset(p, clock);
       // The pet trots behind its fighter, facing the same way; it is drawn first so the fighter stays in front.
       if (p.pet) {
         drawPet(ctx, petArt(p.pet), p.x - p.direction * s * .55, y, s * .42, { facing: p.direction, t: clock + p.phase, moving, tier: p.petTier, tint: recolorFilter(p.petColor) || 'none' });
@@ -1212,11 +1217,11 @@ async function start() {
         // Sources face right; mirror left walking.
         ctx.scale(p.direction / squash, squash);
         const look = { headHint: sprite.head, t: clock + p.phase, moving };
-        // The recolor tints the body only (a cached tinted frame); the brief hit flash covers everything. A cape
-        // hangs behind the body.
-        ctx.filter = flash || 'none';
+        // The recolor and the brief hit flash tint the body only, from a cached tinted frame: ctx.filter on the stage
+        // costs a filter pass over the whole 1920x1080 canvas, felt on stream as a hitch on every hit. A cape hangs
+        // behind the body.
         if (p.accessory) drawAccessory(ctx, p.accessory, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, { ...look, layer: 'back' });
-        const body = recoloredFrame(sprite.image, frame, p.recolor);
+        const body = recoloredFrame(sprite.image, frame, p.recolor, flash);
         if (body) ctx.drawImage(body, 0, 0, body.width, body.height, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
         else ctx.drawImage(sprite.image, frame.x, frame.y, frame.w, frame.h, -drawWidth / 2, -drawHeight, drawWidth, drawHeight);
         if (p.hat) drawHat(ctx, p.hat, sprite.image, frame, -drawWidth / 2, -drawHeight, drawWidth, drawHeight, sprite.head);
@@ -1401,7 +1406,7 @@ async function start() {
       replays: [...replays.values()],
       players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, nameColor: nameColor(p.color), avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
         x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '',
-        grow: Math.round((p.grow || 1) * 100) / 100, die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '',
+        grow: Math.round((p.grow || 1) * 100) / 100, shake: !!(p.shake && Date.now() < p.shake.until), die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '',
         bubble: p.text && Date.now() < p.bubbleUntil ? p.text : '' })),
       announce, cap, build: firstBuild, staleBuild, fx: fxOn ? 'on' : 'off', glows: glows.length, sparks: sparks.length, push: !!push,
       announcement: liveAnnouncements().map(a => a.text).join(' | '),

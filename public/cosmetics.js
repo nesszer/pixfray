@@ -28,15 +28,16 @@ const RECOLORS = {
   negative: 'invert(1) hue-rotate(180deg)',
 };
 export const recolorFilter = (id) => RECOLORS[id] || '';
-// One sprite frame with a recolor baked in, cached per image, frame and recolor. Drawing with ctx.filter set costs
-// a filter pass over the whole stage canvas per fighter: a crowd of 50 recolored fighters ran at about 1 fps.
+// One sprite frame with a recolor (and an optional extra filter, the overlay's hit flash) baked in, cached per image,
+// frame and filter. Drawing with ctx.filter set costs a filter pass over the whole stage canvas per fighter: a crowd of
+// 50 recolored fighters ran at about 1 fps.
 const tintedFrames = new WeakMap();
-export function recoloredFrame(image, frame, id) {
-  const filter = recolorFilter(id);
+export function recoloredFrame(image, frame, id, extra = '') {
+  const filter = [recolorFilter(id), extra].filter(Boolean).join(' ');
   if (!filter) return null;
   let byKey = tintedFrames.get(image);
   if (!byKey) tintedFrames.set(image, byKey = new Map());
-  const key = id + '|' + frame.x + ',' + frame.y + ',' + frame.w + ',' + frame.h;
+  const key = filter + '|' + frame.x + ',' + frame.y + ',' + frame.w + ',' + frame.h;
   if (!byKey.has(key)) {
     const w = Math.max(1, Math.round(frame.w)), h = Math.max(1, Math.round(frame.h));
     const canvas = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });

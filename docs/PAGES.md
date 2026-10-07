@@ -26,7 +26,7 @@ The overlay link is `/overlay.html?channel=<login>` plus any of these:
 | `announce=off\|top\|bottom` | Where the duel banner shows. `off`, the default, shows none. The channel setting in the mod controls overrides it. |
 | `sound=1` | Quiet synthesized duel sounds. |
 | `bubbles=0` | No speech bubbles (chat messages or win taunts). Duels still show. |
-| `fx=off` | No hit glow, sparks or knockout push-in. |
+| `fx=off` | No hit glow, sparks, shake or knockout push-in. A crit or knockout shakes only the struck fighter, never the whole overlay. |
 | `demo=1` | A preview with fake chatters. |
 | `debug=1` | Debug readout. |
 
