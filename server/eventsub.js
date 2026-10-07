@@ -45,13 +45,15 @@ async function readRaw(request,limit){
   return concat(...chunks);
 }
 
+// A lead moderator wears only lead_moderator (no moderator badge), so it has to count on its own.
+const MOD_BADGES=new Set(['broadcaster','moderator','lead_moderator']);
 const str=(v,n)=>typeof v==='string'?v.slice(0,n):'';
 function slimEvent(ev){
   if(!ev||typeof ev!=='object')return null;
   // caps sit above every valid length, so the room's own validation still decides
   return {broadcaster_user_id:str(ev.broadcaster_user_id,100),broadcaster_user_login:str(ev.broadcaster_user_login,64),chatter_user_id:str(ev.chatter_user_id,100),chatter_user_login:str(ev.chatter_user_login,64),
     chatter_user_name:str(ev.chatter_user_name,100),color:str(ev.color,16),message_id:str(ev.message_id,100),message:{text:str(ev.message?.text,512)},
-    mod:Array.isArray(ev.badges)&&ev.badges.some(b=>b&&(b.set_id==='broadcaster'||b.set_id==='moderator'))};
+    mod:Array.isArray(ev.badges)&&ev.badges.some(b=>b&&MOD_BADGES.has(b.set_id))};
 }
 
 // POST /api/eventsub. No session, no same-origin check: the HMAC signature is the authentication.

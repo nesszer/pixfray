@@ -198,6 +198,17 @@ test('eventsub: an emote-heavy message (~30 KB) is forwarded as a few hundred by
   assert.equal((await eventsub(f, chatBody())).status, 204);
 });
 
+test('eventsub: broadcaster, moderator and lead moderator badges mark the chatter as a mod; others do not', async (t) => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = environment();
+  for (const [badges, mod] of [[['lead_moderator', 'founder'], true], [['moderator'], true], [['broadcaster'], true], [['vip', 'subscriber'], false], [[], false]]) {
+    const body = chatBody();
+    body.event.badges = badges.map((set_id) => ({ set_id, id: '1', info: '' }));
+    assert.equal((await eventsub(f, body)).status, 204);
+    assert.equal(f.forwarded.at(-1).body.event.mod, mod, badges.join(',') || 'no badges');
+  }
+});
+
 // ---------- Connect chat (Helix lifecycle) ----------
 function helixMock(t, { subscriptions = [], create = 202 } = {}) {
   const calls = [];
