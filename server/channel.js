@@ -571,7 +571,7 @@ export class ChannelRoom extends DurableObject {
     });
   }
 
-  // Config history keeps every version so mods can review and roll back (see CONTRACTS.md).
+  // Config history keeps every version so mods can review and roll back (see docs/CONTRACTS.md).
   seedConfigHistory(state) {
     const [{ n }] = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM config_history").toArray();
     if (!n) this.recordConfigVersion(state.configVersion, state.config, "system", "initial", Date.now());

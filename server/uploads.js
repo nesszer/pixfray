@@ -1,5 +1,5 @@
 // Custom characters (/api/assets/:channel[/:id] and the room's /catalog). Owned by Lane D.
-// worker.js and channel.js only call the exports below; keep the signatures (see CONTRACTS.md, "Lane modules").
+// worker.js and channel.js only call the exports below; keep the signatures (see docs/CONTRACTS.md, "Lane modules").
 //
 // POST /api/assets/:channel (canManage, same origin), JSON body, at most UPLOAD_BODY_LIMIT bytes:
 //   { label:"1-32 chars", mode:"single"|"frames", fps:1-30, atlas:"<base64 PNG, data: prefix allowed>",

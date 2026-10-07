@@ -1,4 +1,4 @@
-// Overlay arena client against stubbed sockets: contract-shaped snapshots and events (CONTRACTS.md section 3),
+// Overlay arena client against stubbed sockets: contract-shaped snapshots and events (docs/CONTRACTS.md section 3),
 // event dedupe, stale revisions, reconnect, transparent drawing and the local-only demo duel.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5199 node tests/arena-browser.mjs
 import { chromium } from '@playwright/test';

@@ -1,5 +1,5 @@
 // Mod controls ("/admin/"): broadcaster and moderators only (GET /api/access/:channel -> canManage).
-// Uses GET/POST /api/admin/:channel (CONTRACTS.md section 2) and the read-only live socket for updates.
+// Uses GET/POST /api/admin/:channel (docs/CONTRACTS.md section 2) and the read-only live socket for updates.
 import { api, errorText, h, $, setStatus, renderWho, signOut, seconds, timeAgo, dateTime, formatBytes, CHANNEL, CHANNEL_PICKED, withChannel, loginHref, applyChannel } from "./ui.js";
 import { skyBackdrop } from "./scrub.js";
 import site from "../site.config.js";
@@ -16,7 +16,7 @@ const named = () => { if (BARE) { document.querySelector(".page-header h1").text
 const startLink = (primary) => h("a", { class: primary ? "btn btn-primary" : "btn", href: "/start/" }, "Set up PixFray for your channel");
 
 const LIMITS = { maxCharacters: 24, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
-// Editable config fields (CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
+// Editable config fields (docs/CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
 const GROUPS = [
   { title: "Health and duels", fields: [
     { key: "maxHp", label: "Max health", unit: "HP", min: 1, max: 1000 },

@@ -342,7 +342,7 @@ Frame = {x, y, w, h}   // pixel rectangle in the atlas at `url`
 Fallbacks: `idle` and `walk` fall back to `frames`. `combatFallback:"effects"` marks a custom upload
 without attack frames; `mode:"single"` (one PNG) is animated by the engine with bob and squash. If `attack` or `ko` is missing, the overlay
 plays an effect (flash, shake, fade) over `idle`. Static characters live in
-`public/assets/characters.json`; every asset must be listed in `ASSET_LICENSES.md`.
+`public/assets/characters.json`; every asset must be listed in `docs/ASSET_LICENSES.md`.
 
 Custom characters:
 - Ids match `^c-[a-z0-9-]{1,40}$`. `url` is `/api/assets/<channel>/<id>`.
@@ -439,7 +439,7 @@ subset of fields. Versioning works like this:
 |---|---|---|
 | A (backend core) | `server/worker.js`, `server/channel.js`, `server/auth.js`, `server/game.js`, `server/eventsub.js`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
 | B (UI) | `index.html`, `admin/index.html`, `src/`, `public/*.js`, the `vite.config.js` inputs | Sections 2, 3, 5, 7 |
-| D (uploads) | `server/uploads.js`, `public/assets/characters.json`, assets, `ASSET_LICENSES.md` | Section 5 and the signatures below |
+| D (uploads) | `server/uploads.js`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
 | E (developer) | `server/developer.js`, `admin/dev/index.html` | The signatures below |
 
 Keep these signatures; worker.js and channel.js call them.

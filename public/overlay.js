@@ -75,7 +75,7 @@ export function readableColor(hex, minContrast = NAME_MIN_CONTRAST) {
 export const overlayVersionFromUrl = (url) => { try { return (new URL(url).searchParams.get('v') || '').match(/^[0-9a-f]{6,64}$/i)?.[0] || ''; } catch { return ''; } };
 export const overlayVersionFromHtml = (html) => String(html || '').match(/overlay\.js\?v=([0-9a-f]{6,64})/i)?.[1] || '';
 
-// Arena events (CONTRACTS.md section 3) older than this are history from the first snapshot, not news.
+// Arena events (docs/CONTRACTS.md section 3) older than this are history from the first snapshot, not news.
 const EVENT_FRESH_MS = 10_000;
 const OPEN = new Set(['pending', 'active']);
 const CANCEL_TEXT = {
@@ -546,7 +546,7 @@ async function start() {
       osc.connect(gain); osc.start(t); osc.stop(t + dur + .02);
     } catch { /* No audio is fine. */ }
   }
-  // A quick-duel roll (CONTRACTS.md section 3, events with a die): the die pops above the fighter who rolled,
+  // A quick-duel roll (docs/CONTRACTS.md section 3, events with a die): the die pops above the fighter who rolled,
   // then the outcome plays. A counter is the defender answering a bad roll, so the die belongs to its target.
   const ROLL_REVEAL_MS = 450, IMPACT_MS = 200;
   function playRoll(event, replay) {

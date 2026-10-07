@@ -1,6 +1,6 @@
 // Viewer dashboard ("/"): an on-stream preview above four tabs. Fighter (builds, character, colors, upgrades),
 // Shop (hats and cosmetics), Pets (pets and pet colors) and Ranks (leaderboard and duel rules).
-// Talks only to the routes in CONTRACTS.md section 2.
+// Talks only to the routes in docs/CONTRACTS.md section 2.
 import { api, errorText, h, $, setStatus, renderWho, signOut, addSprite, addPet, addStage, addCosmeticSample, composeLook, onLooksReady, whenImage, seconds, CHANNEL, CHANNEL_PICKED, DEFAULT_COLOR, applyChannel } from "./ui.js";
 import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.js";
 import { CHARACTER_GROUPS } from "./character-groups.js";

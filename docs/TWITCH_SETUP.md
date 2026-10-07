@@ -31,7 +31,7 @@ In bot mode the subscription reads as the bot, so the owner's `connect=1` sign-i
 
 ## Other channels
 
-Other channels join by signing in on `/start/` (docs/STREAMER_SETUP.md). Their sign-in asks only for
+Other channels join by signing in on `/start/` ([STREAMER_SETUP.md](STREAMER_SETUP.md)). Their sign-in asks only for
 `moderation:read`, so the channel's mods can use its mod controls; they use StreamElements for chat,
 so they need no chat scopes. No viewer needs chat access permissions to customize a profile. Ranked duels require a saved Twitch-linked profile.
 

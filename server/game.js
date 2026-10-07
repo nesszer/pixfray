@@ -805,7 +805,7 @@ function applyAdmin(state, event, now) {
   }
 
   if (action === "resetAll") {
-    // CONTRACTS.md: clears players, duels and rematch locks; stored profiles and ranks stay.
+    // docs/CONTRACTS.md: clears players, duels and rematch locks; stored profiles and ranks stay.
     for (const duel of openDuels(state)) cancelDuel(state, duel, now, "moderator_reset");
     state.players = [];
     state.rematchLocks = [];
@@ -1058,7 +1058,7 @@ export function defaultConfig() {
   return clone(DEFAULT_CONFIG);
 }
 
-// Admin and diagnostics view of the chat source (see CONTRACTS.md, chatStatus).
+// Admin and diagnostics view of the chat source (see docs/CONTRACTS.md, chatStatus).
 export function chatStatus(state) {
   const chat = state.chat || {};
   return {

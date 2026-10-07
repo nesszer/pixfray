@@ -8,7 +8,7 @@ import { readPng } from '../server/uploads.js';
 const root = new URL('../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, root));
 const catalog = JSON.parse(read('public/assets/characters.json').toString('utf8'));
-const licenses = read('ASSET_LICENSES.md').toString('utf8');
+const licenses = read('docs/ASSET_LICENSES.md').toString('utf8');
 const rect = (f) => f && [f.x, f.y, f.w, f.h].every(Number.isInteger) && f.w > 0 && f.h > 0 && f.x >= 0 && f.y >= 0;
 
 test('the roster has 15 launch characters plus the v3 additions, with unique ids', () => {

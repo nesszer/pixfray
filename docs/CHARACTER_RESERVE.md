@@ -4,7 +4,7 @@
 (checked 2026-10-07: `public/assets/characters.json` has 56 characters, none from this table).
 
 24 other characters, taken from this list and from the OpenGameArt packs by pzUH, were imported on
-2026-10-02 with `scripts/build-characters.mjs` (see `ASSET_LICENSES.md`). Their rows were removed from the
+2026-10-02 with `scripts/build-characters.mjs` (see `docs/ASSET_LICENSES.md`). Their rows were removed from the
 table below. Five more Pixel Platformer characters were imported on 2026-10-02 in v4.
 
 How each row was vetted: the official archive was downloaded from the Kenney asset page, the
@@ -17,8 +17,8 @@ scaling.
 To import one: copy the poses into a single-row atlas (bottom-centre aligned in a fixed cell, pixels
 unchanged), add the entry to `characters.json` (set `"combatFallback": "effects"` when there are no
 attack frames), copy the license file from the archive into `public/assets/`, and add a row to
-`ASSET_LICENSES.md`. `npm run test:unit` (`tests/content.test.mjs`) then checks that every frame
-rectangle sits inside its image and that every character is listed in `ASSET_LICENSES.md`.
+`docs/ASSET_LICENSES.md`. `npm run test:unit` (`tests/content.test.mjs`) then checks that every frame
+rectangle sits inside its image and that every character is listed in `docs/ASSET_LICENSES.md`.
 
 Frame columns: **walk** and **idle** are movement frames; **attack** and **ko** are combat frames.
 "effects" means the overlay uses flash, shake and fade instead of drawn frames.

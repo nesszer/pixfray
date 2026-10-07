@@ -45,6 +45,8 @@ The table in **Add the chat commands to StreamElements** lists 12 commands: `!ch
 `!rematch`, `!checkin`, `!wallet`, `!pay`, `!pet`, `!elo`, `!ranks`, `!fray` and `!look`. You can rename them first and click **Save names**.
 Keep `!pay` off `!give`: StreamElements' built-in `!givepoints` already answers to `!give`.
 
+The commands run as StreamElements custom commands; Nightbot and Fossabot can't run them.
+
 For each row, in StreamElements go to Chat bot, then Commands, then Custom commands, and click Add
 new command:
 

@@ -4,7 +4,7 @@ import { CHANNELS } from './auth.js';
 import { channelState, overview, listRecords, setPaused, LOGIN } from './channels.js';
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from './streamelements.js';
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
-// keep the signatures (see CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
+// keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
 //   GitHub (code editor + deploy flow): secret GITHUB_TOKEN, text GITHUB_REPO ("owner/name"),
 //     optional GITHUB_BASE_BRANCH (main) and GITHUB_WORKFLOW (deploy.yml).
@@ -140,7 +140,7 @@ function logQuery(query) {
   return out.toString();
 }
 
-// Live settings editor: a thin passthrough to the room's versioned config (CONTRACTS.md section 7),
+// Live settings editor: a thin passthrough to the room's versioned config (docs/CONTRACTS.md section 7),
 // plus the chat source lifecycle (connectChat / disconnectChat, handled by the Worker's EventSub helpers).
 async function settings({ body, c, room }) {
   const action = body.action;
