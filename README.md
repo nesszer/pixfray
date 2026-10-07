@@ -41,8 +41,10 @@ can turn PixFray off at any time without losing fighters or ranks.
   a fighter's pet. `!fray` explains how to join, and `!look` links to your fighter on the site.
 - Mods tune every number in the balance editor on the mod controls page (versioned and undoable).
 
-Overlay link options: `channel`, `size=32..96`, `cap=1..100`, `arena=1` (duels), `announce=top|bottom`,
-`sound=1` (quiet synthesized duel sounds), `bubbles=0` (no speech bubbles: chat messages
+Overlay link options: `channel`, `size=24..96` (clamped; default 60), `cap=1..100` (whole numbers; anything
+else means no limit of its own; with `arena=1` the lower of this and the channel's on-stream limit applies),
+`arena=1` (duels), `announce=off|top|bottom` (`off`, the default, shows no duel banner; the channel setting in
+the mod controls overrides it), `sound=1` (quiet synthesized duel sounds), `bubbles=0` (no speech bubbles: chat messages
 or win taunts; duels still show), `fx=off` (no hit glow, sparks or knockout push-in), `demo=1` (a preview with fake
 chatters), `debug=1`.
 

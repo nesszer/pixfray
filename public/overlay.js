@@ -21,6 +21,60 @@ export function parseCommand(text) {
   return /^[a-z0-9_-]{1,64}$/i.test(match[2] || '') ? { type, value: match[2].toLowerCase() } : null;
 }
 
+// ?cap= in the link: whole numbers 1..100; anything else (missing, 0, negative, text) means no limit of its own (100).
+export function parseCap(value, fallback = 100) {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 1 ? Math.min(100, n) : fallback;
+}
+// The limit in force: the lower of the link's ?cap= and the channel setting (maxOnStream, set by mods). Either can only tighten.
+export function effectiveCap(urlCap, serverMax) {
+  const server = Number.isInteger(serverMax) ? Math.max(1, Math.min(100, serverMax)) : 100;
+  return Math.min(parseCap(urlCap), server);
+}
+
+// Text cuts by whole characters (grapheme clusters), never through an emoji, a flag or a ZWJ family; Array.from
+// (code points) is the fallback where Intl.Segmenter is missing. Zalgo is limited to 2 combining marks per character.
+const segmenter = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+const graphemesOf = (text) => (segmenter ? Array.from(segmenter.segment(text), (part) => part.segment) : Array.from(text));
+export function stripExtraMarks(text) { return String(text ?? '').replace(/(\p{M}{2})\p{M}+/gu, '$1'); }
+// At most `max` characters including the ellipsis, which is added only when something was cut.
+export function truncateText(text, max, ellipsis = '') {
+  const clean = stripExtraMarks(text), parts = graphemesOf(clean);
+  if (parts.length <= max) return clean;
+  return parts.slice(0, Math.max(0, max - Array.from(ellipsis).length)).join('') + ellipsis;
+}
+export const clipName = (text) => truncateText(text, 24, '…');   // nameplates
+
+// Nameplate colors: Twitch chat colors can be near black (#0000ff, #8a2be2 ...). Below 4.5:1 against the dark stream
+// backdrop the lightness goes up (hue and saturation stay) until the name reads, like Twitch's own dark mode.
+const NAME_BACKDROP_LUM = 0.0053, NAME_MIN_CONTRAST = 4.5;
+const channelLum = (c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+const lumOf = ([r, g, b]) => 0.2126 * channelLum(r) + 0.7152 * channelLum(g) + 0.0722 * channelLum(b);
+const contrastOnDark = (rgb) => (lumOf(rgb) + 0.05) / (NAME_BACKDROP_LUM + 0.05);
+function hslToRgb(h, s, l) {
+  const a = s * Math.min(l, 1 - l), f = (n) => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+  return [f(0), f(8), f(4)].map((v) => Math.round(v * 255));
+}
+export function readableColor(hex, minContrast = NAME_MIN_CONTRAST) {
+  const color = sanitizeColor(hex);
+  if (!color) return hex;
+  const rgb = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+  if (contrastOnDark(rgb) >= minContrast) return color;
+  const [r, g, b] = rgb.map((v) => v / 255), max = Math.max(r, g, b), min = Math.min(r, g, b), l0 = (max + min) / 2, d = max - min;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l0 - 1));
+  const h = d === 0 ? 0 : 60 * (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4);
+  let lo = l0, hi = 1;
+  for (let i = 0; i < 16; i++) { const mid = (lo + hi) / 2; if (contrastOnDark(hslToRgb(h, s, mid)) >= minContrast) hi = mid; else lo = mid; }
+  let out = hslToRgb(h, s, hi);
+  for (let l = hi; contrastOnDark(out) < minContrast && l < 1; l += 0.004) out = hslToRgb(h, s, l);
+  return '#' + out.map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+// The overlay's own code version: vite.config.js (versionPublicModules) writes ?v=<hash of public/*.js> on the overlay's
+// script URL in the built overlay.html, so the hash changes only when overlay code changes, not on every deploy.
+export const overlayVersionFromUrl = (url) => { try { return (new URL(url).searchParams.get('v') || '').match(/^[0-9a-f]{6,64}$/i)?.[0] || ''; } catch { return ''; } };
+export const overlayVersionFromHtml = (html) => String(html || '').match(/overlay\.js\?v=([0-9a-f]{6,64})/i)?.[1] || '';
+
 // Arena events (CONTRACTS.md section 3) older than this are history from the first snapshot, not news.
 const EVENT_FRESH_MS = 10_000;
 const OPEN = new Set(['pending', 'active']);
@@ -66,15 +120,19 @@ async function start() {
     }
     setTimeout(() => location.reload(), 300_000); return;
   }
-  // Most characters on screen. The channel setting (mod controls) arrives with every snapshot and wins over ?cap=.
-  let cap = Math.max(1, Math.min(100, Number(params.get('cap')) || 100));
+  // Most characters on screen: the lower of ?cap= and the channel setting (mod controls), which arrives with every snapshot.
+  const urlCap = parseCap(params.get('cap'));
+  let cap = urlCap;
   const size = Math.max(24, Math.min(96, Number(params.get('size')) || 60));
   // Duel announcement banner: off, top or bottom. The channel setting (mod controls) arrives with every snapshot and wins;
   // the ?announce= link parameter only covers the demo and the moment before the first snapshot.
   const ANNOUNCE = ['off', 'top', 'bottom'];
   let announce = ANNOUNCE.includes(params.get('announce')) ? params.get('announce') : 'off';
-  // A new deploy changes the snapshot's build id; the overlay reloads itself between duels so OBS never needs a manual refresh.
-  let firstBuild = '', staleBuild = false;
+  // A new deploy changes the snapshot's build id. Most deploys leave the overlay's code alone, so the id only triggers a
+  // cheap check: the overlay page is fetched again and its ?v= code hash compared with the one this script was loaded with.
+  // Only changed overlay code reloads the page (between duels), so OBS never needs a manual refresh.
+  const ownVersion = overlayVersionFromUrl(import.meta.url);   // empty on the dev server, which never reloads
+  let firstBuild = '', lastBuild = '', staleBuild = false, buildChanged = false, versionCheckAt = 0, versionChecking = false;
   const sound = params.get('sound') === '1';   // quiet duel sounds, off unless asked for
   const bubbles = params.get('bubbles') !== '0';   // bubbles=0 hides every speech bubble: chat messages and win taunts
   const fxOn = params.get('fx') !== 'off';         // fx=off: no hit glow, sparks or knockout push-in
@@ -225,7 +283,7 @@ async function start() {
   function hop(p, amount) { p.vy = -amount; }
   const nameOf = id => {
     const profile = profilesById.get(String(id));
-    return String(profile?.displayName || profile?.username || 'Player').slice(0, 24);
+    return clipName(profile?.displayName || profile?.username || 'Player');
   };
   function openDuels() { return [...replays.values(), ...arenaDuels.filter(duel => OPEN.has(duel?.status) && !replays.has(duel.id))]; }
   const inReplay = p => [...replays.values()].some(d => String(d.a) === p.userId || String(d.b) === p.userId);
@@ -236,11 +294,28 @@ async function start() {
     for (const p of players.values()) if (p.userId === String(userId)) return p;
     return null;
   }
+  // Over the cap the stage keeps the most recent chatters and never touches a fighter: anyone in a duel (open or replayed)
+  // stays until it is over. A profile sent off stage is remembered with its server lastSeen, so the next snapshot doesn't
+  // bring it straight back (only fresher activity makes it eligible again, and only for a free place).
+  const isFighter = p => inReplay(p) || duelFor(p) !== null;
+  const droppedAt = new Map();   // userId -> the profile's server lastSeen when it left the stage
+  const lastSeenOf = userId => Number(profilesById.get(String(userId))?.lastSeen) || 0;
+  function dropPlayer(p) {
+    players.delete(p.key);
+    if (p.userId) droppedAt.set(p.userId, lastSeenOf(p.userId));
+    if (droppedAt.size > 2000) droppedAt.delete(droppedAt.keys().next().value);
+  }
+  // A real chat join makes room by sending off the least recently active non-fighter; false if everyone on stage is fighting.
+  function makeRoom() {
+    if (players.size < cap) return true;
+    let oldest = null;
+    for (const q of players.values()) if (!isFighter(q) && (!oldest || q.lastSeen < oldest.lastSeen)) oldest = q;
+    if (!oldest) return false;
+    dropPlayer(oldest);
+    return true;
+  }
   function spawn(key, init) {
-    if (players.size >= cap) {
-      const oldest = [...players.values()].reduce((a, b) => a.lastSeen < b.lastSeen ? a : b);
-      players.delete(oldest.key);
-    }
+    if (!makeRoom()) return null;
     const saved = settings[key] && typeof settings[key] === 'object' ? settings[key] : {};
     const p = { key, userId: '', label: key, chatLabel: key, x: size / 2 + Math.random() * Math.max(0, width - size),
       speed: 14 + Math.random() * 20, direction: Math.random() < 0.5 ? -1 : 1, lane: Math.random() * 28, y: 0, vy: 0,
@@ -297,7 +372,7 @@ async function start() {
     p.pet = ''; p.petTier = '';
     p.recolor = p.petColor = p.accessory = p.trail = p.winEffect = p.taunt = p.title = '';
     if (!profile) return;
-    if (profile.displayName || profile.username) p.label = String(profile.displayName || profile.username).slice(0, 24);
+    if (profile.displayName || profile.username) p.label = clipName(profile.displayName || profile.username);
     if (!profile.registered) return;
     p.color = sanitizeColor(profile.color) || p.chatColor || p.color;
     const avatar = typeof profile.avatar === 'string' ? profile.avatar.toLowerCase() : '';
@@ -316,15 +391,16 @@ async function start() {
     arenaChat = snapshot.chat && typeof snapshot.chat === 'object' ? snapshot.chat : null;
     if (snapshot.config && typeof snapshot.config === 'object') arenaConfig = snapshot.config;
     if (ANNOUNCE.includes(arenaConfig.announce)) announce = arenaConfig.announce;
-    if (Number.isInteger(arenaConfig.maxOnStream) && arenaConfig.maxOnStream !== cap) {
-      cap = Math.max(1, Math.min(100, arenaConfig.maxOnStream));
-      // A lower limit sends the longest-quiet chatters off first; fighters in a duel replay stay.
-      const quiet = [...players.values()].filter(p => !inReplay(p)).sort((a, b) => a.lastSeen - b.lastSeen);
-      while (players.size > cap && quiet.length) players.delete(quiet.shift().key);
+    const wanted = effectiveCap(urlCap, arenaConfig.maxOnStream);   // the lower of the link's ?cap= and the channel setting
+    if (wanted !== cap) {
+      cap = wanted;
+      // A lower limit sends the longest-quiet chatters off first; fighters (open duel or replay) stay.
+      const quiet = [...players.values()].filter(p => !isFighter(p)).sort((a, b) => a.lastSeen - b.lastSeen);
+      while (players.size > cap && quiet.length) dropPlayer(quiet.shift());
     }
     if (typeof snapshot.build === 'string' && snapshot.build) {
-      if (!firstBuild) firstBuild = snapshot.build;
-      else if (snapshot.build !== firstBuild) staleBuild = true;
+      if (!firstBuild) firstBuild = lastBuild = snapshot.build;
+      else if (snapshot.build !== lastBuild) { lastBuild = snapshot.build; if (ownVersion) buildChanged = true; }
     }
     arenaPaused = snapshot.paused === true;
     arenaRevision = Number.isFinite(Number(metadata.revision)) ? Number(metadata.revision)
@@ -338,12 +414,29 @@ async function start() {
     // Every overlay shows the same arena: the server's player list (fed by Twitch EventSub) spawns characters even
     // when this overlay's own chat connection is down, and players the server dropped leave the stage.
     for (const [key, p] of players) if (p.fromArena && !profilesById.has(p.userId)) players.delete(key);
+    // The stage fills with the most recently active profiles while there is room. A snapshot never sends anyone off
+    // (that happens when a new chatter joins, see spawn), so with more active players than the cap nothing churns.
+    // The server's lastSeen is turned into "ms ago" relative to its newest profile, so it orders against local chat times.
+    let newest = 0;
+    for (const profile of profilesById.values()) newest = Math.max(newest, Number(profile.lastSeen) || 0);
+    const activity = profile => Date.now() - Math.max(0, newest - (Number(profile.lastSeen) || 0));
+    const candidates = [];
     for (const [userId, profile] of profilesById) {
-      if (findPlayer(userId)) continue;
+      const here = findPlayer(userId);
+      if (here) { here.lastSeen = Math.max(here.lastSeen, activity(profile)); continue; }
       const key = String(profile.username || 'id:' + userId).toLowerCase().slice(0, 64);
       const existing = players.get(key);
       if (existing) { existing.userId = userId; continue; }
-      spawn(key, { userId, fromArena: true, label: String(profile.displayName || key).slice(0, 24), chatLabel: String(profile.displayName || key).slice(0, 24) });
+      const seen = Number(profile.lastSeen) || 0;
+      if (droppedAt.has(userId) && seen <= droppedAt.get(userId)) continue;   // sent off earlier and no more active since
+      candidates.push({ userId, profile, key, seen });
+    }
+    candidates.sort((a, b) => b.seen - a.seen);
+    for (const { userId, profile, key } of candidates) {
+      if (players.size >= cap) break;
+      droppedAt.delete(userId);
+      const label = clipName(profile.displayName || key);
+      spawn(key, { userId, fromArena: true, label, chatLabel: label, lastSeen: activity(profile) });
     }
     const now = Date.now();
     for (const p of players.values()) {
@@ -356,7 +449,21 @@ async function start() {
     for (const id of meetPoints.keys()) if (!replays.has(id) && !arenaDuels.some(duel => duel.id === id && duel.status === 'active')) meetPoints.delete(id);
     updateStatus();
   }
+  // The overlay page as the server serves it now: its script tag names the current code hash. At most one check
+  // every 30 s while the build id keeps changing (a rollout can serve two versions side by side); a failed fetch retries.
+  async function checkOverlayVersion() {
+    versionChecking = true; versionCheckAt = Date.now();
+    try {
+      const response = await fetch(location.pathname + location.search, { cache: 'no-store', headers: { accept: 'text/html' } });
+      if (!response.ok) throw new Error('Overlay page HTTP ' + response.status);
+      const latest = overlayVersionFromHtml(await response.text());
+      buildChanged = false;
+      if (latest && latest !== ownVersion) staleBuild = true;
+    } catch { /* keep buildChanged: the next tick asks again */ }
+    versionChecking = false;
+  }
   setInterval(() => {
+    if (buildChanged && !versionChecking && Date.now() - versionCheckAt >= 30_000) void checkOverlayVersion();
     if (!staleBuild || replays.size) return;
     // At most one reload a minute, in case a rollout serves two versions side by side.
     try {
@@ -371,7 +478,7 @@ async function start() {
     if (!text) return;
     const i = announcements.findIndex(a => a.key === key);
     if (i >= 0) announcements.splice(i, 1);
-    announcements.push({ key, text: String(text).slice(0, 100), color, until: Date.now() + 5500 });
+    announcements.push({ key, text: truncateText(text, 100), color, until: Date.now() + 5500 });
     if (announcements.length > 3) announcements.shift();
   }
   const liveAnnouncements = () => announcements.filter(a => Date.now() < a.until);
@@ -492,6 +599,9 @@ async function start() {
   const FINISHER_GAP_MS = 1300;
   const DUEL_WALK_MS = 2000;   // longest walk to the meet point; far-apart fighters walk faster
   const duelQueues = new Map();
+  // The fighter's knockout is queued but not played yet (a finishing blow or the result of a duel still in the queue).
+  const pendingKnockout = p => [...duelQueues.values()].some(q => q.items.some(({ event: e }) =>
+    (e.type === 'duel_action' && e.finisher && String(e.targetId) === p.userId) || (e.type === 'duel_completed' && String(e.loserId) === p.userId)));
   function queueArenaEvent(event) {
     const id = event?.duelId;
     if (!id) return handleArenaEvent(event);
@@ -528,7 +638,7 @@ async function start() {
           replays.set(event.duelId, { id: event.duelId, a: String(event.a), b: String(event.b), status: 'active', hp: { ...(event.hp || {}) }, rules: { maxHp: Number(arenaConfig?.maxHp) || 100 } });
           const fa = findPlayer(String(event.a)), fb = findPlayer(String(event.b));
           if (fa && fb && !meetPoints.has(event.duelId)) {
-            const meet = { x: freeMeetX((fa.x + fb.x) / 2, duelGap()), aLeft: fa.x <= fb.x };
+            const meet = { ...placeMeet((fa.x + fb.x) / 2), aLeft: fa.x <= fb.x };
             const far = Math.max(Math.abs(fa.x - meet.x), Math.abs(fb.x - meet.x));
             meet.speed = Math.max(110, far / (DUEL_WALK_MS / 1000));
             meet.walkMs = Math.min(DUEL_WALK_MS, far / meet.speed * 1000);
@@ -572,7 +682,11 @@ async function start() {
         // The winner's win effect and taunt (preset lines only; no taunt bubble with bubbles=0).
         if (winner?.winEffect) winner.winFx = { id: winner.winEffect, start: now, seed: (now % 997) + 1 };
         if (bubbles && winner && TAUNTS[winner.taunt]) { winner.text = TAUNTS[winner.taunt]; winner.messageId = ''; winner.bubbleUntil = now + 4500; }
-        const rw = event.ratings?.[event.winnerId], rl = event.ratings?.[event.loserId];
+        // An unrated duel (event.unrated: "new_account" or "pair_cap") moves no Elo, so it shows "Just for fun" over the
+        // winner instead of "+0 Elo", and the result line leaves the Elo out.
+        const unrated = Boolean(event.unrated);
+        const rw = unrated ? null : event.ratings?.[event.winnerId], rl = unrated ? null : event.ratings?.[event.loserId];
+        if (unrated) floatText(winner, 'Just for fun', '#e2e8f0', 2200);
         if (Number.isFinite(rw?.delta)) floatText(winner, signed(rw.delta) + ' Elo', '#4ade80', 2200);
         if (Number.isFinite(rl?.delta)) floatText(loser, signed(rl.delta) + ' Elo', '#fb7185', 2200);
         const text = (event.decision === 'hp' ? 'Time! ' : '') + nameOf(event.winnerId) + ' wins' + (event.decision === 'hp' ? ' on HP' : '') +
@@ -588,7 +702,10 @@ async function start() {
         break;
       case 'player_respawned': {
         const p = findPlayer(event.userId);
-        if (p && p.koHoldUntil > now) setTimeout(() => handleArenaEvent({ ...event, at: undefined }), p.koHoldUntil - now + 20);   // stand up after the replayed KO
+        // The server times the respawn from the settled duel, but the overlay's replay of it runs longer. While the
+        // fighter is in a replay (or the knockout is still queued) the event waits; the KO hold then stands them up.
+        if (p && (inReplay(p) || pendingKnockout(p)) && (event.tries || 0) < 400) setTimeout(() => handleArenaEvent({ ...event, at: undefined, tries: (event.tries || 0) + 1 }), 250);
+        else if (p && p.koHoldUntil > now) setTimeout(() => handleArenaEvent({ ...event, at: undefined }), p.koHoldUntil - now + 20);   // stand up after the replayed KO
         else if (p) { p.koUntil = 0; p.anim = { kind: 'respawn', start: now, until: now + 700 }; burst(p, '#bfdbfe', 10, true); }
         break;
       }
@@ -618,9 +735,14 @@ async function start() {
     if (!username || CHAT_BOTS.has(username)) return;
     const now = Date.now();
     let p = players.get(username) || (message.userId ? findPlayer(message.userId) : null);
-    if (!p) p = spawn(username, { label: String(message.displayName || username).slice(0, 24), chatLabel: String(message.displayName || username).slice(0, 24) });
+    if (!p) {   // a real join: over the cap this sends the least recently active non-fighter off; no room if all are fighting
+      const label = clipName(message.displayName || username);
+      p = spawn(username, { label, chatLabel: label });
+      if (p) droppedAt.delete(String(message.userId ?? ''));
+    }
+    if (!p) return;
     if (message.userId !== undefined && message.userId !== null) p.userId = String(message.userId);
-    if (message.displayName) p.chatLabel = String(message.displayName).slice(0, 24);
+    if (message.displayName) p.chatLabel = clipName(message.displayName);
     if (sanitizeColor(message.color)) p.chatColor = sanitizeColor(message.color);
     if (!p.arenaProfile) {
       p.label = p.chatLabel || p.label;
@@ -629,7 +751,7 @@ async function start() {
     applyArenaProfile(p);
     if (!p.arenaProfile?.registered) queueLook(username);
     const ranked = Boolean(p.arenaProfile?.registered);
-    p.lastSeen = now; p.messageId = message.id || ''; p.text = bubbles ? String(message.text || '').slice(0, 72) : ''; p.bubbleUntil = now + 4000;
+    p.lastSeen = now; p.messageId = message.id || ''; p.text = bubbles ? truncateText(message.text || '', 72) : ''; p.bubbleUntil = now + 4000;
     const command = parseCommand(message.text || '');
     if (command?.type === 'jump') {
       if (now - p.lastJump >= 3000) { hop(p, 300); p.lastJump = now; }
@@ -662,7 +784,7 @@ async function start() {
     ctx.fillStyle = '#ffffff'; ctx.fillRect(x + p.direction * 3 - 5, y - 42, 3, 4); ctx.fillRect(x + p.direction * 3 + 2, y - 42, 3, 4);
   }
   function drawHealthBar(p, x, y, health, s) {
-    const barWidth = Math.max(72, Math.min(116, s * 0.9));
+    const barWidth = barWidthOf(s);
     const left = x - barWidth / 2;
     const top = y - s - 20;
     const ratio = Math.max(0, Math.min(1, health.current / health.max));
@@ -868,8 +990,22 @@ async function start() {
     if (moving) return { frame: pick(a.walk || sprite.frames) };
     return { frame: pick(a.idle || sprite.frames) };
   }
-  // Distance between the two fighters of a duel: room for two grown fighters and their nameplates.
+  // Distance between the two fighters of a duel when there is room: two grown fighters and their nameplates.
+  // With several duels at once placeMeet shrinks it (down to duelGapMin) so the health bars never collide.
   const duelGap = () => Math.max(size * 2, 190);
+  const duelGapMin = () => Math.min(duelGap(), Math.max(96, size * DUEL_GROW));
+  const barBase = s => Math.max(72, Math.min(116, s * 0.9));   // the hp bar; its "100/100" text (16px bold) is narrower than the minimum
+  // Bars shrink (to 64 px at the least) only when neighbouring duels are packed so close that full bars would touch:
+  // the clear space between two neighbouring meeting points' inner fighters, or inside one duel, bounds the width.
+  function barWidthOf(s) {
+    const base = barBase(s), xs = [...meetPoints.values()].sort((p, q) => p.x - q.x);
+    let room = Infinity;
+    for (let i = 0; i < xs.length; i++) {
+      room = Math.min(room, xs[i].gap - 8);
+      if (i) room = Math.min(room, xs[i].x - xs[i - 1].x - (xs[i].gap + xs[i - 1].gap) / 2 - 8);
+    }
+    return Math.max(64, Math.min(base, room));
+  }
   // Hit stop: a fighter's animation clock pauses while a blow lands, then the animation carries on where it stopped.
   function animClock(p, clock) {
     if (!p.stopUntil || clock < p.stopStart) return clock;
@@ -878,26 +1014,52 @@ async function start() {
     p.stopUntil = 0;
     return clock;
   }
-  // Several duels can run at once: keep each duel's meeting point a full slot away from the others so
-  // health bars and nameplates never overlap. Searches outward from the midpoint, nearest free spot wins.
-  function freeMeetX(mid, gap) {
-    const slot = gap * 2 + size, lo = gap, hi = Math.max(gap, width - gap);
-    const taken = [...meetPoints.values()].map(m => m.x);
-    const clamp = x => Math.max(lo, Math.min(hi, x));
-    let best = clamp(mid), bestClearance = -1;
-    for (let step = 0; step <= Math.ceil(width / slot) * 2; step++) {
-      const x = clamp(mid + (step % 2 ? 1 : -1) * Math.ceil(step / 2) * slot / 2);
-      const clearance = taken.length ? Math.min(...taken.map(t => Math.abs(t - x))) : Infinity;
-      if (clearance >= slot) return x;
-      if (clearance > bestClearance) { best = x; bestClearance = clearance; }
+  // Several duels can run at once, so each gets its own meeting point with its own gap. Two neighbouring duels need
+  // their inner fighters' hp bars (and dice) clear of each other. At full gap that is a comfortable slot (two gaps and a
+  // fighter, as always); when the spot runs out the gap shrinks a little at a time, down to duelGapMin, which also
+  // tightens the slot to just bar width plus a margin. Searches outward from the midpoint, nearest free spot wins.
+  function placeMeet(mid) {
+    const full = duelGap(), least = duelGapMin(), clearBars = barBase(size * DUEL_GROW) + 16;
+    const taken = [...meetPoints.values()];
+    let best = { x: mid, gap: least };
+    for (let gap = full; ; gap = Math.max(least, gap - 8)) {
+      const comfort = full > least ? (gap - least) / (full - least) * (full + size - clearBars) : 0;
+      const lo = gap, hi = Math.max(gap, width - gap), clamp = x => Math.max(lo, Math.min(hi, x));
+      const slack = x => taken.length ? Math.min(...taken.map(t => Math.abs(t.x - x) - ((t.gap + gap) / 2 + clearBars + comfort))) : Infinity;
+      let bestSlack = -Infinity;
+      for (let k = 0; k <= Math.ceil(width / 12) + 1; k++) {
+        for (const x of k ? [clamp(mid + k * 12), clamp(mid - k * 12)] : [clamp(mid)]) {
+          const s = slack(x);
+          if (s >= 0) return { x, gap };
+          if (s > bestSlack) { bestSlack = s; best = { x, gap }; }
+        }
+      }
+      if (gap === least) break;
     }
-    return best;
+    // No free spot even at the smallest gap, because duels placed earlier left only fragments. Pack every meeting
+    // point at the smallest gap, in order along the stage, spread as far apart as the stage allows (existing duels
+    // walk a little to their new spot). Past that the health bars shrink (barWidthOf), never overlap.
+    const items = [...meetPoints.values()].map(m => ({ m, x: m.x })), fresh = { m: null, x: best.x };
+    items.push(fresh);
+    items.sort((p, q) => p.x - q.x);
+    const lo = least, hi = Math.max(least, width - least), step = items.length > 1 ? Math.min(least + clearBars, (hi - lo) / (items.length - 1)) : 0;
+    let prev = -Infinity, next = Infinity;
+    for (const it of items) { it.x = Math.max(lo, it.x, prev + step); prev = it.x; }
+    for (let i = items.length - 1; i >= 0; i--) { items[i].x = Math.min(hi, items[i].x, next - step); next = items[i].x; }
+    for (const it of items) if (it.m) { it.m.x = it.x; it.m.gap = least; it.m.speed = Math.max(it.m.speed || 110, 180); }
+    return { x: fresh.x, gap: least };
   }
   // Nameplates and chat bubbles are laid out after every fighter has moved, so none of them overlap or leave the screen.
   // Nameplates: fighters in a duel first, then the most recent chatters; one that would cover a placed nameplate is
   // skipped this frame (it shows again once the walkers separate). Bubbles: the oldest keeps its spot, newer ones stack
   // up to three high above it, clear of duel health bars.
   const LABEL_ROW = 20, TITLE_ROW = 16, BUBBLE_H = 25;
+  const nameColors = new Map();   // chat color -> readable nameplate color (readableColor lifts dark ones), computed once per color
+  const nameColor = color => {
+    let out = nameColors.get(color);
+    if (out === undefined) { if (nameColors.size > 500) nameColors.clear(); out = readableColor(color); nameColors.set(color, out); }
+    return out;
+  };
   const overlaps = (a, b) => a.lo < b.hi && a.hi > b.lo && a.top < b.bottom && a.bottom > b.top;
   function drawLabels(labels, bubbles, bars) {
     ctx.save();
@@ -957,11 +1119,11 @@ async function start() {
       for (const [key, p] of players) if (!p.fromArena && clock - p.lastSeen > 600000) players.delete(key);
       lastCleanup = clock; updateStatus();
     }
-    const gap = duelGap(), labels = [], bubbles = [], bars = [], wins = [];
+    const labels = [], bubbles = [], bars = [], wins = [];
     trail.draw(ctx, clock);   // behind every fighter
     // Ground taken by running duels: where the two fighters stand, plus room for their nameplates (fixed 20px
     // text, often wider than the sprite). labelWidth is measured when the nameplate is drawn (last frame).
-    const duelZones = openDuels().filter(d => meetPoints.has(d.id)).map(d => ({ x: meetPoints.get(d.id).x,
+    const duelZones = openDuels().filter(d => meetPoints.has(d.id)).map(d => ({ x: meetPoints.get(d.id).x, gap: meetPoints.get(d.id).gap,
       label: Math.max(findPlayer(String(d.a))?.labelWidth || 0, findPlayer(String(d.b))?.labelWidth || 0) }));
     for (const p of players.values()) {
       const duel = duelFor(p);
@@ -973,11 +1135,11 @@ async function start() {
         let meet = meetPoints.get(duel.id);
         if (!meet) {
           const a = findPlayer(duel.a) || p, b = findPlayer(duel.b) || opponent;
-          meet = { x: freeMeetX((a.x + b.x) / 2, gap), aLeft: a.x <= b.x };
+          meet = { ...placeMeet((a.x + b.x) / 2), aLeft: a.x <= b.x };
           meetPoints.set(duel.id, meet);
         }
         const isA = String(duel.a) === p.userId;
-        const target = meet.x + ((isA === meet.aLeft) ? -gap / 2 : gap / 2);
+        const target = meet.x + ((isA === meet.aLeft) ? -meet.gap / 2 : meet.gap / 2);
         const diff = target - p.x;
         if (Math.abs(diff) > 2) { p.x += Math.sign(diff) * Math.min(Math.abs(diff), (meet.speed || 110) * dt); moving = true; p.direction = Math.sign(diff); }
         else p.direction = opponent.x >= p.x ? 1 : -1;
@@ -1000,7 +1162,7 @@ async function start() {
       if (duel?.status !== 'active' && !ko) {
         // A bystander who walks into a duel turns back; one already inside walks out the nearer open side.
         const zone = duelZones.map(z => {
-          const half = gap / 2 + Math.max(size * DUEL_GROW / 2 + size / 2, (z.label + (p.labelWidth || 0)) / 2 + 12);
+          const half = z.gap / 2 + Math.max(size * DUEL_GROW / 2 + size / 2, (z.label + (p.labelWidth || 0)) / 2 + 12);
           return { lo: z.x - half, hi: z.x + half };
         }).find(z => p.x > z.lo && p.x < z.hi);
         if (zone && (zone.lo >= left || zone.hi <= right)) {
@@ -1069,7 +1231,7 @@ async function start() {
       const health = healthOf(p, duel);
       if (health) {
         drawHealthBar(p, p.x, y, health, s);
-        const half = Math.max(72, Math.min(116, s * 0.9)) / 2 + 4;   // the bar and its "hp/max" text: bubbles stay clear
+        const half = barWidthOf(s) / 2 + 4;   // the bar and its "hp/max" text: bubbles stay clear
         bars.push({ lo: p.x - half, hi: p.x + half, top: y - s - 40, bottom: y - s - 8 });
       }
       ctx.font = 'bold 20px system-ui, sans-serif';
@@ -1078,12 +1240,13 @@ async function start() {
         ? p.label + ' · ' + Math.round(Number(shownElo))
         : p.label;
       p.labelWidth = ctx.measureText(rankedLabel).width;
-      labels.push({ text: rankedLabel, color: p.color, x: p.x, y: y + 23, w: p.labelWidth, rank: duel ? Infinity : p.lastSeen, title: p.arenaProfile?.registered ? TITLES[p.title] || '' : '' });
+      labels.push({ text: rankedLabel, color: nameColor(p.color), x: p.x, y: y + 23, w: p.labelWidth, rank: duel ? Infinity : p.lastSeen, title: p.arenaProfile?.registered ? TITLES[p.title] || '' : '' });
       if (p.winFx && clock - p.winFx.start < WIN_EFFECT_MS) wins.push({ fx: p.winFx, x: p.x, y, s });
       else p.winFx = null;
       if (p.text && clock < p.bubbleUntil && !health) {
         ctx.font = 'bold 14px system-ui, sans-serif';
-        const text = p.text.length > 38 ? p.text.slice(0, 37) + '…' : p.text;
+        if (p.shortFor !== p.text) { p.shortFor = p.text; p.short = truncateText(p.text, 38, '…'); }   // cut once per message, by whole characters
+        const text = p.short;
         bubbles.push({ text, x: p.x, top: y - s - 33, w: Math.min(width, ctx.measureText(text).width + 16), until: p.bubbleUntil });
       }
     }
@@ -1236,13 +1399,15 @@ async function start() {
       profiles: profilesById.size,
       duels: arenaDuels,
       replays: [...replays.values()],
-      players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
+      players: [...players.values()].map(p => ({ userId: p.userId, label: p.label, color: p.color, nameColor: nameColor(p.color), avatar: p.renderAvatar, elo: p.arenaProfile?.elo, shownElo: replayRatings(p.userId)?.before ?? p.arenaProfile?.elo,
         x: Math.round(p.x), ko: p.koUntil > Date.now(), anim: p.anim && Date.now() < p.anim.until ? p.anim.kind : '',
         grow: Math.round((p.grow || 1) * 100) / 100, die: p.die && Date.now() < p.die.until ? p.die.value : 0, float: p.floatText && Date.now() < p.floatText.until ? p.floatText.text : '',
         bubble: p.text && Date.now() < p.bubbleUntil ? p.text : '' })),
       announce, cap, build: firstBuild, staleBuild, fx: fxOn ? 'on' : 'off', glows: glows.length, sparks: sparks.length, push: !!push,
       announcement: liveAnnouncements().map(a => a.text).join(' | '),
       meets: [...meetPoints.values()].map(m => Math.round(m.x)),
+      gaps: [...meetPoints.values()].map(m => Math.round(m.gap)),
+      ownVersion, buildChanged,
       banners: banners.filter(b => Date.now() < b.until).map(b => b.text),
       results: results.map(r => ({ ...r })),
     });

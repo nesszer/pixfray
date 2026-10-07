@@ -16,6 +16,7 @@ import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js"
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.js";
 import { accountCreatedAt } from "./accounts.js";
+import { EVENTSUB_DEDUPE_MS, claimMessage, releaseMessage } from "./dedupe.js";
 import { cleanStats, emptyStats, knownHat, validStats, hatUnlocked, upgradeRules, pointsFor, MAX_POINTS, HATS } from "./upgrades.js";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
 import { COSMETIC_KINDS, COSMETIC_FIELDS, cleanCosmetics, cosmeticItem, cosmeticPrice, cosmeticCatalog, slotPrice, buildOf, MAX_BUILDS } from "./cosmetics.js";
@@ -76,7 +77,6 @@ function chatLines(parts, sep, max) {
   return out;
 }
 const MAX_LOOKS = 20;                  // logins per /looks call
-const EVENTSUB_DEDUPE_MS = 10 * 60_000;     // Twitch retries a message with the same Message-Id
 const MAX_EVENTSUB_IDS = 5_000;
 // Chat bots never walk into the arena or duel.
 const CHAT_BOTS = new Set(["streamelements", "nightbot", "moobot", "fossabot", "streamlabs", "wizebot", "sery_bot", "soundalerts", "kofistreambot", "botrixoficial", "pixfray"]);
@@ -841,10 +841,17 @@ export class ChannelRoom extends DurableObject {
       this.seenMessages.delete(key);
     }
     const kind = String(msg.messageType || "");
+    // Commands (and every bot message, which the Worker only sends for commands) are deduped durably in SQLite, so a
+    // redelivery after a restart or to another isolate is ignored too; other lines only in memory (server/dedupe.js).
+    const durable = kind === "notification" && (msg.bot === true || /^\s*!/.test(String(msg.event?.message?.text || "")));
     if (kind !== "webhook_callback_verification") {
-      if (this.seenMessages.has(id)) return json({ ok: true, duplicate: true });
+      if (durable ? !claimMessage(this.ctx.storage.sql, id, now) : this.seenMessages.has(id)) return json({ ok: true, duplicate: true });
       this.seenMessages.set(id, now);
     }
+    try { return await this.handleEventsub(channel, msg, origin, kind, now); } catch (error) { if (durable) releaseMessage(this.ctx.storage.sql, id); throw error; }   // a failed message may be redelivered
+  }
+
+  async handleEventsub(channel, msg, origin, kind, now) {
     const subscriptionId = String(msg.subscription?.id || "");
     let result;
     if (kind === "webhook_callback_verification") result = this.advance(channel, { type: "chat_verified", subscriptionId }, now);

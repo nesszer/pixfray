@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import site from '../site.config.js';
 import { channelState, signUp, isBroadcaster, reviewReasons } from './channels.js';
 import { authOrigin } from './hosts.js';
+import { hit } from './ratelimit.js';
 export class AuthStore extends DurableObject {
   constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS entries (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL)');}
   async fetch(request){
@@ -9,6 +10,7 @@ export class AuthStore extends DurableObject {
     const url=new URL(request.url), key=url.searchParams.get('key');
     if(!key || key.length>200)return Response.json({error:'Invalid key'},{status:400});
     const sql=this.ctx.storage.sql;
+    if(url.pathname==='/hit'&&request.method==='POST'){const {limit,windowMs}=await request.json().catch(()=>({}));return Response.json(await hit(this.ctx,key,limit,windowMs));}   // per-user write limit (server/ratelimit.js)
     if(url.pathname==='/consume' && request.method==='POST'){
       // One statement: the row is removed and returned atomically, so a code can only ever be read once.
       const row=sql.exec('DELETE FROM entries WHERE key=? RETURNING value,expires',key).toArray()[0];

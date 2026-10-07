@@ -3,6 +3,7 @@
 // Usage: MINI_BASE_URL=http://127.0.0.1:5199 node tests/arena-browser.mjs
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
+import { enforceCsp } from './csp-helper.mjs';
 
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
 const browser = await chromium.launch({
@@ -13,6 +14,7 @@ const errors = [];
 const apiReads = [];
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await enforceCsp(context);
   await context.addInitScript(() => {
     window.__arenaSockets = [];
     window.__chatSockets = [];
@@ -60,6 +62,7 @@ try {
 
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
+  page.on('console', m => { if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text())) errors.push('CSP: ' + m.text()); });
   await page.route('**/api/state/**', async route => {
     apiReads.push({ path: new URL(route.request().url()).pathname, method: route.request().method() });
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(initial) });
@@ -99,7 +102,7 @@ try {
   const live = await page.evaluate(() => window.__arenaDebug());
   assert.equal(live.announce, 'top', 'the channel setting in the snapshot turns the banner on without a new link');
   assert.equal(live.build, 'build-1');
-  assert.equal(live.cap, 15, 'the channel setting for the on-stream limit replaces ?cap= from the link');
+  assert.equal(live.cap, 8, 'the lower of ?cap=8 in the link and the channel limit (15) applies');
   assert.equal(live.staleBuild, false, 'the first build seen is the one this page runs');
 
   const ircMessage = '@id=test-1;user-id=101;display-name=Chat Override;color=#ff0000 :aria!aria@aria.tmi.twitch.tv PRIVMSG #nesszerra :!color #ff0000\r\n';
@@ -122,6 +125,12 @@ try {
   await page.evaluate((event) => window.__sendArena(0, { type: 'event', revision: 4, event: { ...event, winnerId: '202', loserId: '101', at: Date.now() } }), completed);
   assert.deepEqual((await page.evaluate(() => window.__arenaDebug())).results.map((r) => r.text), ['Aria Prime wins, FLAWLESS! +11 Elo'], 'duplicate event IDs are not replayed');
   assert.deepEqual((await page.evaluate(() => window.__arenaDebug())).banners, [], 'no winner banner');
+  // An unrated duel (anti-farming: new account or pair cap) moves no Elo: "Just for fun", never "+0 Elo".
+  await page.evaluate(() => window.__sendArena(0, { type: 'event', revision: 4, event: { id: 'evt-unrated', type: 'duel_completed', at: Date.now(), duelId: 'duel-1', winnerId: '202', loserId: '101', unrated: 'pair_cap', ratings: { '202': { before: 1690, after: 1690, delta: 0 }, '101': { before: 1731, after: 1731, delta: 0 } } } }));
+  await page.waitForFunction(() => window.__arenaDebug().results.some((r) => r.text === 'Bex Prime wins!'));
+  const fun = await page.evaluate(() => window.__arenaDebug());
+  assert.equal(fun.players.find((p) => p.userId === '202').float, 'Just for fun', 'unrated win floats "Just for fun"');
+  assert.doesNotMatch(fun.players.map((p) => p.float || '').join('|'), /[+−-]0 Elo/, 'no "+0 Elo" or "-0 Elo" float');
   // Events older than 10 s (for example replayed after a reconnect) are not announced.
   await page.evaluate(() => window.__sendArena(0, { type: 'event', revision: 4, event: { id: 'evt-old', type: 'challenge_created', a: '202', b: '101', at: Date.now() - 60000 } }));
   assert.doesNotMatch((await page.evaluate(() => window.__arenaDebug())).announcement, /challenges/, 'stale events are not announced');
@@ -190,6 +199,7 @@ try {
   // and knocks the loser out only after the finisher.
   const quick = await context.newPage();
   quick.on('pageerror', error => errors.push(error.message));
+  quick.on('console', m => { if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text())) errors.push('CSP: ' + m.text()); });
   await quick.route('**/api/state/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...initial, duels: [] }) }));
   await quick.route('**/api/catalog/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await quick.goto(base + '/overlay.html?arena=1&debug=1&cap=8&size=64');
@@ -252,6 +262,7 @@ try {
   // point walks clear of the fighters so nameplates don't run together.
   const crowd = await context.newPage();
   crowd.on('pageerror', error => errors.push(error.message));
+  crowd.on('console', m => { if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text())) errors.push('CSP: ' + m.text()); });
   const cast = [...initial.players,
     { userId: '303', username: 'cy', displayName: 'Cy', avatar: 'player', color: '#ffaa22', elo: 1000, registered: true },
     { userId: '404', username: 'dot', displayName: 'Dot', avatar: 'player', color: '#22aaff', elo: 1000, registered: true }];
@@ -286,6 +297,7 @@ try {
   // (the edge rate limit's 429) is retried, not cached as "no saved fighter".
   const looksPage = await context.newPage();
   looksPage.on('pageerror', error => errors.push(error.message));
+  looksPage.on('console', m => { if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text())) errors.push('CSP: ' + m.text()); });
   const lookReads = [];
   await looksPage.route('**/api/state/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...initial, players: [], duels: [] }) }));
   await looksPage.route('**/api/catalog/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'neon', label: 'Neon', url: '/assets/player.png', frames: [{ x: 0, y: 0, w: 80, h: 110 }], fps: 8 }]) }));
@@ -311,6 +323,7 @@ try {
 
   const demoPage = await context.newPage();
   demoPage.on('pageerror', error => errors.push(error.message));
+  demoPage.on('console', m => { if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text())) errors.push('CSP: ' + m.text()); });
   const demoApiReads = [];
   await demoPage.route('**/api/**', async route => {
     demoApiReads.push(route.request().method() + ' ' + new URL(route.request().url()).pathname);
@@ -338,6 +351,7 @@ try {
   // fx=off: blows still land (dice, numbers, burst) without the glow, sparks or push-in.
   const flatPage = await context.newPage();
   flatPage.on('pageerror', error => errors.push(error.message));
+  flatPage.on('console', m => { if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text())) errors.push('CSP: ' + m.text()); });
   await flatPage.route('**/api/**', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
   await flatPage.goto(base + '/overlay.html?arena=1&demo=1&debug=1&fx=off&bubbles=0');
   await flatPage.waitForFunction(() => window.__arenaDebug?.().duels.some((duel) => Object.values(duel.hp || {}).some((hp) => hp < 100)), null, { timeout: 20000 });

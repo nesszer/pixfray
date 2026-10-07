@@ -17,6 +17,14 @@ fighter (saving and buying stay closed).
 - Request bodies must be a JSON object. Malformed JSON, `null` or an array returns 400; a body
   over the route's limit returns 413.
 - Auth uses the `mini_session` cookie (HttpOnly), set by `/auth/callback`.
+- Every response carries `Strict-Transport-Security: max-age=31536000; includeSubDomains` on https. Pages get a
+  Content-Security-Policy with `script-src 'self'` (no inline script, no eval) and `frame-ancestors 'none'`; the overlay
+  has the same without `frame-ancestors` (OBS and the /start demo load it). `/api/*` and `/auth/*` get a policy that
+  allows nothing. The policies live in server/security.js and are repeated in `public/_headers` (a test keeps them equal).
+- Writes (POST/PUT/DELETE on `/api/profile`, `/api/shop`, `/api/assets`, `/api/pets`, `/api/admin`) are limited to 30 a
+  minute per signed-in user across all channels (sliding window kept in AuthStore, server/ratelimit.js). Over the limit:
+  429 `{error, reason:"rate_limited", retryAfter}` plus a `Retry-After` header (seconds). Reads and dev-token requests
+  are not counted. If AuthStore can't count, the write goes through.
 - Roles come from `GET /api/access/:channel`: `owner` (the nesszerra account: its Twitch id must equal
   `OWNER_TWITCH_ID` when that binding is set, otherwise the `owner:nesszerra` record), `broadcaster` (the
   channel's own account), `moderator` (Helix moderator check, needs the stored broadcaster token) and
@@ -34,7 +42,7 @@ fighter (saving and buying stay closed).
 | POST | `/auth/logout` | cookie | none | clears the cookie | 403 when cross-origin |
 | GET | `/api/session` | optional | none | `{user:{id,login,displayName}\|null, owner, configured, channels:["nesszerra","miolafff"] (the built-ins), productionEnabled:false}`. `productionEnabled` is a constant `false` left from the first rollout, when production stayed closed until the broadcaster was onboarded. Nothing reads it; use `channelState` instead. | 503 when secrets are missing |
 | GET | `/api/channels` | none | none | `{channels:[login,...]}`: the built-ins first, then the enabled (not paused) registry channels in sign-up order. Cached 60 s per isolate. The viewer page at a bare `/` (no `?channel=`) shows "Which stream are you watching?" with one button per channel; every link the site, sign-in and `!fray` hand out carries `?channel=` so a fighter is never saved to the wrong channel by default | |
-| GET | `/api/health` | none | none | `{ok:true, version, twitchConfigured, productionEnabled:false}` (same constant) | |
+| GET | `/api/health` | none | none | `{ok:true}`; nothing else, so the public answer reveals no version or configuration (the owner's `/api/dev/diagnostics` has `worker.version` and `twitchConfigured`) | 503 `{ok:false}` when secrets are missing |
 | GET | `/api/access/:channel` | optional | none | `{owner, broadcaster, moderator, canManage, reason}` | 403 for a channel that isn't set up |
 | GET | `/api/state/:channel` | none | none | Snapshot (section 3) | 403, 405 |
 | GET | `/api/leaderboard/:channel` | none | none | Up to 100 `Profile` rows, ordered by elo desc, then wins desc, then username (quick-duel results still on stream are not shown yet; see Game rules) | 403 |
@@ -221,7 +229,10 @@ Request checks, in order:
    hex(HMAC-SHA256(AUTH_SECRET, "mini-chat:eventsub:v1")).
 3. Timestamp: at most 10 minutes old and at most 1 minute in the future (403).
 4. Message ids are deduplicated in the room for about 10 minutes; a duplicate returns 204 and
-   changes nothing. Commands are also deduplicated durably by the chat `message_id`.
+   changes nothing. Ids of command messages (a line starting with `!`, or anything read as the bot) are kept in the
+   room's SQLite table `eventsub_seen` (server/dedupe.js, 10 minutes, swept at most once a minute), so a redelivery
+   that lands on a restarted room is still a duplicate; plain chat lines are only remembered in memory. The claim is
+   released if handling throws, so Twitch's retry after a 5xx plays. Commands are also deduplicated durably by the chat `message_id`.
 
 Message types:
 - `webhook_callback_verification`: answers 200 `text/plain` with `challenge`. Chat counts as

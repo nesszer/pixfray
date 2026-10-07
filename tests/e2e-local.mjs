@@ -10,6 +10,7 @@ import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { cookies, users } from './seed-local.mjs';
+import { enforceCsp } from './csp-helper.mjs';
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
 const ch = 'nesszerra';
 const shots = fileURLToPath(new URL('../screenshots', import.meta.url));
@@ -66,7 +67,9 @@ async function command(user, text) {
 const presence = (user, text = 'hi') => say(user, text);
 
 const errors = [];
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] /* WebGL on the GPU, not software, with no window */ });
+const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--disable-features=LocalNetworkAccessChecks'] /* WebGL on the GPU, not software, with no window */ });
+// enforceCsp (csp-helper.mjs) serves the overlay through a Playwright route, which Chrome treats as a public page, so its
+// Local Network Access check would block the socket to 127.0.0.1. The deployed overlay is same-origin and never hits it.
 try {
   // 0. Seeded sessions: owner and three viewers.
   const sess = await api('/api/session', { cookie: cookies.owner });
@@ -105,8 +108,10 @@ try {
 
   // 3. Overlay in Chrome, connected to the real live socket.
   const overlayCtx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await enforceCsp(overlayCtx);
   const overlay = await overlayCtx.newPage();
   overlay.on('pageerror', (e) => errors.push('overlay: ' + e.message));
+  overlay.on('console', (m) => { if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text())) errors.push('overlay CSP: ' + m.text()); });
   await overlay.goto(base + '/overlay.html?channel=' + ch + '&arena=1&debug=1&size=64');
   await overlay.waitForFunction(() => window.__arenaDebug?.().revision > 0);
   const dbg = () => overlay.evaluate(() => window.__arenaDebug());
@@ -255,6 +260,7 @@ try {
   const sizes = [{ name: '1280', width: 1280, height: 900 }, { name: '390', width: 390, height: 844 }];
   for (const size of sizes) {
     const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height } });
+    await enforceCsp(ctx);
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(size.name + ' page: ' + e.message));
     await page.goto(base + '/overlay.html?channel=' + ch + '&arena=1&debug=1&size=64');

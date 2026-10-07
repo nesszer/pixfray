@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
 import { hostChannel, siteOrigin, authOrigin, channelPageRedirect } from '../server/hosts.js';
+import { PAGE_CSP } from '../server/security.js';
 
 const MAIN = 'https://pixfray.xyz', MIOLAF = 'https://chat.miolaf.xyz';
 function environment() {
@@ -57,7 +58,8 @@ test('pages keep their no-framing headers when they pass through the Worker', as
   for (const url of [MAIN + '/', MIOLAF + '/admin/?channel=miolafff', MAIN + '/start/']) {
     const r = await get(url);
     assert.equal(r.headers.get('X-Frame-Options'), 'DENY', url);
-    assert.equal(r.headers.get('Content-Security-Policy'), "frame-ancestors 'none'", url);
+    assert.equal(r.headers.get('Content-Security-Policy'), PAGE_CSP, url);
+    assert.match(r.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/, url);
     assert.equal(r.headers.get('X-Robots-Tag'), null, url);
   }
   for (const site of ['https://staging.pixfray.xyz/', 'https://test.chat.miolaf.xyz/?channel=miolafff']) assert.equal((await get(site)).headers.get('X-Robots-Tag'), 'noindex, nofollow', site);

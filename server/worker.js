@@ -9,10 +9,13 @@ import { handleStreamElements,seCommandLines,seHelpText,SE_SUBSCRIPTION_ID } fro
 import { channelState,isOn,offError,setPaused,publicChannels,listRecords } from './channels.js';
 import { COSMETIC_KINDS,COSMETIC_FIELDS,MAX_BUILDS } from './cosmetics.js';
 import { siteOrigin,channelPageRedirect,isPage } from './hosts.js';
+import { secure,PAGE_CSP,API_CSP } from './security.js';
+import { writeLimit } from './ratelimit.js';
 export {ChannelRoom,AuthStore};
 // A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
 // page's state and profile saves are refused.
 const OPEN_WHEN_PAUSED=['access','admin','leaderboard','catalog','assets','pets'];
+const WRITE_ROUTES=['profile','shop','assets','pets','admin'];
 function json(data,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
 // Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.js (the room checks the ids and prices).
 const SHOP_KINDS=['pet','hat','slot',...COSMETIC_KINDS];
@@ -80,7 +83,7 @@ async function page(request,env,url){
   const r=await env.ASSETS.fetch(request);
   if(!isPage(url.pathname))return r;
   const out=new Response(r.body,r);
-  out.headers.set('Content-Security-Policy',"frame-ancestors 'none'");out.headers.set('X-Frame-Options','DENY');
+  out.headers.set('Content-Security-Policy',PAGE_CSP);out.headers.set('X-Frame-Options','DENY');
   out.headers.set('X-Content-Type-Options','nosniff');out.headers.set('Referrer-Policy','strict-origin-when-cross-origin');
   if(/^(staging|test)\./.test(url.hostname))out.headers.set('X-Robots-Tag','noindex, nofollow');
   return out;
@@ -138,7 +141,10 @@ async function handleDevtools(request,env,channel,action,data){
   return json({error:'Not found'},404);
 }
 async function staticCatalog(env,url){const r=await env.ASSETS.fetch(new Request(url.origin+'/assets/characters.json'));return r.ok?await r.json():[];}
-export default {async fetch(request,env,ctx){
+// Every response leaves through secure() (server/security.js): HSTS on https, and a locked-down CSP on /api and /auth.
+const API_PATH=/^\/(api|auth)\//;
+export default {async fetch(request,env,ctx){const r=await handle(request,env,ctx),url=new URL(request.url);return secure(r,url,API_PATH.test(url.pathname)?API_CSP:'');}};
+async function handle(request,env,ctx){
   let path='';
   try{
     const url=new URL(request.url), mutating=!['GET','HEAD','OPTIONS'].includes(request.method);path=url.pathname;
@@ -166,6 +172,8 @@ export default {async fetch(request,env,ctx){
     if(path.startsWith('/auth/'))return handleAuth(request,env);
     if(path==='/robots.txt'||path==='/sitemap.xml')return seoFile(url,path);
     if(!path.startsWith('/api/'))return channelPageRedirect(env,url)||await page(request,env,url);
+    // Public health check: up or not, nothing else. Version and Twitch setup are in the owner's /api/dev/diagnostics (worker.version, worker.twitchConfigured).
+    if(path==='/api/health')return env.INTERNAL_SECRET&&env.AUTH_SECRET?json({ok:true}):json({ok:false},503);
     if(!env.INTERNAL_SECRET||!env.AUTH_SECRET)return json({error:'Server secrets are not configured'},503);
     const s=dev?null:await session(request,env),user=dev?await devUser(env):s?.user||null,owner=await isOwner(env,user);
     const devMatch=path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop|export)$/);
@@ -185,7 +193,6 @@ export default {async fetch(request,env,ctx){
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
     // The bare site asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
     if(path==='/api/channels')return json({channels:await publicChannels(env),defaultChannel:site.defaultChannel});
-    if(path==='/api/health')return json({ok:true,version:'0.2.0',twitchConfigured:configured(env),productionEnabled:false});
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,dev,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
     const match=path.match(/^\/api\/(state|live|profile|leaderboard|looks|catalog|access|admin|assets|pets|shop)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
     if(!match)return json({error:'Not found'},404);
@@ -196,6 +203,8 @@ export default {async fetch(request,env,ctx){
     const openWhenPaused=OPEN_WHEN_PAUSED.includes(route)||((route==='shop'||route==='profile')&&request.method==='GET');
     if(!isOn(state)&&!(state==='paused'&&openWhenPaused))return json(offError(state),403);
     if(route==='live'&&request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return json({error:'WebSocket upgrade required'},426);
+    // 30 writes a minute per signed-in user (profile saves, buys, uploads, admin changes), counted in AuthStore across channels. Reads and dev-token calls are not counted.
+    if(mutating&&user&&!dev&&WRITE_ROUTES.includes(route)){const limited=await writeLimit(env,user.id);if(limited)return limited;}
     if(route==='access')return json(await access(env,user,channel));
     if(route==='assets')return await handleUploads(request,env,{user,owner,channel,id:id||'',url,bodyJson,access:()=>access(env,user,channel),roomFetch:(p,init)=>roomFetch(null,env,channel,p,init)});
     // Pets (server/pets.js): the public catalog and images; mods upload and delete their own.
@@ -281,4 +290,4 @@ export default {async fetch(request,env,ctx){
     if(!error.status)ctx?.waitUntil?.(logWorkerError(env,error,{path}));
     return json({error:error.status?error.message:'Service unavailable; check owner diagnostics',...(error.reconnect?{reconnect:error.reconnect}:{}),...(error.connectedElsewhere?{connectedElsewhere:error.connectedElsewhere}:{})},error.status||503);
   }
-}};
+}

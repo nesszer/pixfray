@@ -3,6 +3,7 @@
 // Usage: MINI_BASE_URL=http://127.0.0.1:5193 node tests/ui.mjs
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
+import { enforceCsp } from './csp-helper.mjs';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const base = process.env.MINI_BASE_URL || 'http://127.0.0.1:5173';
@@ -31,6 +32,7 @@ async function noOverflow(page, label) {
 }
 async function newPage(viewport) {
   const context = await browser.newContext({ viewport });
+  await enforceCsp(context);
   await context.addInitScript(() => {   // no real live socket in stubbed runs
     window.__sockets = [];
     window.WebSocket = class { constructor(u) { this.url = u; window.__sockets.push(this); } send() {} close() {} };
@@ -487,8 +489,8 @@ try {
     await page.click('#tab-players');
     await page.locator('#ranks tbody tr').first().getByRole('button', { name: 'Reset rank' }).click(); await page.waitForTimeout(150);
     assert.deepEqual(posts.at(-1), { action: 'resetRank', payload: { userId: '3003' } });
-    assert.equal(await page.locator('#reset-all-ranks').isHidden(), true, 'resetting every rank is the broadcaster's');
-    assert.equal(await page.locator('#rotate-se').isHidden(), true, 'a new StreamElements key is the broadcaster's');
+    assert.equal(await page.locator('#reset-all-ranks').isHidden(), true, "resetting every rank is the broadcaster's");
+    assert.equal(await page.locator('#rotate-se').isHidden(), true, "a new StreamElements key is the broadcaster's");
     // mod gift: a Twitch name (with or without @) and a whole amount
     await page.locator('#gift-user').fill('@Cara');
     await page.locator('#gift-send').click();
