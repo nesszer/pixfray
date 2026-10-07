@@ -173,7 +173,10 @@ const die = buildDie(); die.visible = false; scene.add(die);
 const podium = buildPodium(); scene.add(podium.mesh);
 const coins = buildCoins(); scene.add(coins.mesh);
 const clouds = buildClouds(); scene.add(clouds.group);
-const chest = buildChest(); chest.group.position.set(-1.75, 0, 1.25); chest.group.rotation.y = 0.62; chest.group.visible = false; scene.add(chest.group);
+const chest = buildChest(); chest.group.position.set(-1.75, 0, 1.25); chest.group.rotation.y = 0.62; scene.add(chest.group);
+// the chest's light lives in the scene (dark until the lid opens): a light that comes and goes with the chest changes the
+// light count, and that rebuilds every lit material at once, a multi-second freeze the first time the loot chapter shows
+chest.group.updateMatrixWorld(true); scene.attach(chest.light); chest.group.visible = false;
 const hoard = buildHoard(); hoard.mesh.position.set(0, 0, 0.2); hoard.mesh.visible = false; scene.add(hoard.mesh);
 const frame3d = buildFrame(); frame3d.group.position.set(0, -0.7, 0); frame3d.group.visible = false; scene.add(frame3d.group);
 const FOG = small ? 0.8 : 1;
@@ -765,6 +768,24 @@ document.addEventListener('visibilitychange', () => { running = !document.hidden
 
 // first frame, then hide the loader; restore the sound choice on the first click anywhere
 try { if (localStorage.getItem('pixfray-intro-sound') === '1') addEventListener('pointerdown', () => { if (!sound.on) setSound(true); }, { once: true }); } catch { /* private mode */ }
+// draw everything once behind the loader, hidden and off-screen things too: the die, chest, hoard, beam and frame otherwise
+// finish compiling the first time they're drawn (ANGLE compiles at draw time), a stall of a third of a second mid-scroll
+// The podium's per-cube colours exist from the start too: made on first use, they switch its material to another shader.
+// Twice: three draws the shadow map before it counts the lights, so the first draw builds shadow shaders for a scene with no
+// lights, and the ones real frames use would still compile mid-scroll (the instanced podium and coins, the chest).
+{
+  if (!podium.mesh.instanceColor) podium.mesh.setColorAt(0, COL_STONE_B);
+  const hidden = [], culled = [], empty = [];
+  scene.traverse((o) => {
+    if (!o.visible) { hidden.push(o); o.visible = true; }
+    if (o.frustumCulled) { culled.push(o); o.frustumCulled = false; }
+    if (o.isInstancedMesh && o.count === 0) { empty.push(o); o.count = 1; }
+  });
+  renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.render(scene, camera); renderer.setRenderTarget(null);
+  for (const o of hidden) o.visible = false;
+  for (const o of culled) o.frustumCulled = true;
+  for (const o of empty) o.count = 0;
+}
 timer.update(); frame();
 finishLoading();
 requestAnimationFrame(loop);
