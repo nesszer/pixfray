@@ -41,7 +41,7 @@ const profile = { avatar: 'player', color: '#123456', defaultAbility: 'strike' }
 // ---------- headers ----------
 test('script policy: scripts load from this origin only, with no hashes, inline allowance or eval', () => {
   for (const csp of [PAGE_CSP, OVERLAY_CSP]) {
-    assert.match(csp, /(^|; )script-src 'self'(;|$)/);
+    assert.match(csp, csp === PAGE_CSP ? /(^|; )script-src 'self' https:\/\/static\.cloudflareinsights\.com(;|$)/ : /(^|; )script-src 'self'(;|$)/);   // pages: Cloudflare Web Analytics
     assert.doesNotMatch(csp, /script-src[^;]*('unsafe-inline'|'unsafe-eval'|'wasm-unsafe-eval'|sha256-|nonce-)/);
     assert.match(csp, /(^|; )object-src 'none'/);
     assert.match(csp, /(^|; )base-uri 'self'/);

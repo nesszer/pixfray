@@ -18,8 +18,8 @@ fighter (saving and buying stay closed).
   over the route's limit returns 413.
 - Auth uses the `mini_session` cookie (HttpOnly), set by `/auth/callback`.
 - Every response carries `Strict-Transport-Security: max-age=31536000; includeSubDomains` on https. Pages get a
-  Content-Security-Policy with `script-src 'self'` (no inline script, no eval) and `frame-ancestors 'none'`; the overlay
-  has the same without `frame-ancestors` (OBS and the /start demo load it). `/api/*` and `/auth/*` get a policy that
+  Content-Security-Policy with `script-src 'self'` plus Cloudflare's Web Analytics beacon (no inline script, no eval) and `frame-ancestors 'none'`; the overlay
+  has the same without the beacon or `frame-ancestors` (OBS and the /start demo load it). `/api/*` and `/auth/*` get a policy that
   allows nothing. The policies live in server/security.js and are repeated in `public/_headers` (a test keeps them equal).
 - Writes (POST/PUT/DELETE on `/api/profile`, `/api/shop`, `/api/assets`, `/api/pets`, `/api/admin`) are limited to 30 a
   minute per signed-in user across all channels (sliding window kept in AuthStore, server/ratelimit.js). Over the limit:
