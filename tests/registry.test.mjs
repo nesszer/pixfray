@@ -70,6 +70,7 @@ test('sign-up: any streamer signs in with moderation:read and their own channel 
   const { r, state } = await login(env, 'signup=1');
   assert.equal(r.status, 302);
   assert.equal(new URL(r.headers.get('Location')).searchParams.get('scope'), 'moderation:read');
+  assert.equal(new URL(r.headers.get('Location')).searchParams.get('force_verify'), 'true', 'sign-up shows the account picker');
   twitch(t, STREAMER, ['moderation:read']);
   const done = await callback(env, state);
   assert.equal(done.status, 303);

@@ -141,6 +141,24 @@ async function handleDevtools(request,env,channel,action,data){
   return json({error:'Not found'},404);
 }
 async function staticCatalog(env,url){const r=await env.ASSETS.fetch(new Request(url.origin+'/assets/characters.json'));return r.ok?await r.json():[];}
+// The bare site's channel picker in one request: each listed channel with its top three ranked fighters (and the uploaded
+// looks they wear, which only that channel's catalog has), plus the built-in catalog once. Kept a minute per isolate.
+let pickerCache=null;
+async function picker(request,env,url){
+  if(pickerCache&&Date.now()-pickerCache.at<60000)return pickerCache.data;
+  const [logins,catalog]=await Promise.all([publicChannels(env),staticCatalog(env,url)]),builtin=new Set(catalog.map(e=>e.id));
+  const channels=await Promise.all(logins.map(async login=>{
+    try{
+      const r=await internal(request,env,login,'/leaderboard'),board=r.ok?await r.json():[];
+      const top=board.filter(p=>p.wins+p.losses>0).slice(0,3).map(({displayName,username,elo,avatar})=>({displayName,username,elo,avatar}));
+      const own=top.filter(p=>!builtin.has(p.avatar)).map(p=>p.avatar);
+      const c=own.length?await internal(request,env,login,'/catalog'):null,looks=c?.ok?(await c.json()).filter(e=>own.includes(e.id)):[];
+      return {login,top,...(looks.length?{catalog:looks}:{})};
+    }catch{return {login,top:[]};}
+  }));
+  pickerCache={data:{channels,catalog},at:Date.now()};
+  return pickerCache.data;
+}
 // Every response leaves through secure() (server/security.js): HSTS on https, and a locked-down CSP on /api and /auth.
 const API_PATH=/^\/(api|auth)\//;
 export default {async fetch(request,env,ctx){const r=await handle(request,env,ctx),url=new URL(request.url);return secure(r,url,API_PATH.test(url.pathname)?API_CSP:'');}};
@@ -193,6 +211,7 @@ async function handle(request,env,ctx){
     if(path==='/api/session')return json({user,owner,configured:configured(env),channels:CHANNELS,productionEnabled:false});
     // The bare site asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
     if(path==='/api/channels')return json({channels:await publicChannels(env),defaultChannel:site.defaultChannel});
+    if(path==='/api/picker')return json(await picker(request,env,url));
     if(path.startsWith('/api/dev/'))return await handleDeveloper(request,env,{user,owner,dev,url,path,bodyJson,roomFetch:(channel,p,init)=>roomFetch(null,env,channel,p,init),chatAction:(channel,action,opts)=>chatAction(env,url,channel,action,opts),waitUntil:p=>ctx?.waitUntil?.(p)});
     const match=path.match(/^\/api\/(state|live|profile|leaderboard|looks|catalog|access|admin|assets|pets|shop)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/);
     if(!match)return json({error:'Not found'},404);

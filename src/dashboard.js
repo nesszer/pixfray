@@ -218,6 +218,7 @@ async function buy(kind, item, label, price, btn, out, text = "Buy for $" + pric
     setStatus(out, "Not bought: the price changed to $" + r.data.price + ". Check it and buy again.", "error");
     return;
   }
+  if (r.status === 401) { btn.disabled = false; btn.dataset.confirm = ""; btn.textContent = text; state.session = { ...state.session, user: null }; renderSignedIn(); setStatus(out, "Not bought: your session expired. Sign in again to buy.", "error"); return; }
   if (!r.ok) { btn.disabled = false; btn.dataset.confirm = ""; btn.textContent = text; setStatus(out, "Not bought: " + (REASONS[r.data?.error] || errorText(r)), "error"); return; }
   state.profile = { ...state.profile, dollars: r.data.dollars };
   state.owned = { ...emptyOwned(), ...(r.data.owned || state.owned) };
@@ -685,17 +686,19 @@ async function init() {
 // The bare site (no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
 async function pickChannel() {
   document.title = "PixFray: pick your stream";
-  for (const el of [$("#fighter"), $("main.page:not(#pick)")]) if (el) el.hidden = true;
+  for (const el of [$("#fighter"), $("body > .page")]) if (el) el.hidden = true;
   $("#pick").hidden = false;
-  const [session, list] = await Promise.all([api("/api/session"), api("/api/channels")]);
+  const [session, list] = await Promise.all([api("/api/session"), api("/api/picker")]);
   // Signing in happens on a channel's page, so the picker shows only who is already signed in.
   if (session.ok && session.data?.user) renderWho($("#who"), session.data, signOut); else $("#who").replaceChildren();
-  const channels = list.ok && Array.isArray(list.data?.channels) ? list.data.channels : site.builtinChannels;
-  $("#channel-list").replaceChildren(...channels.map((c) => {
+  // one request brings every channel's top fighters and the looks they wear (server/worker.js picker())
+  const picked = list.ok && Array.isArray(list.data?.channels) ? list.data.channels : site.builtinChannels.map((login) => ({ login, top: [] }));
+  const builtin = list.ok && Array.isArray(list.data?.catalog) ? list.data.catalog : [], channels = picked.map((c) => c.login);
+  $("#channel-list").replaceChildren(...picked.map(({ login: c, top, catalog = [] }) => {
     const crew = h("span", { class: "channel-crew", "aria-hidden": "true" }), meta = h("span", { class: "channel-meta" });
     const link = h("a", { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
       crew, h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta), h("span", { class: "channel-go" }, "Fight in " + c));
-    channelRanks(c, link, crew, meta);
+    channelRanks(c, link, crew, meta, top, new Map([...builtin, ...catalog].map((e) => [e.id, e])));
     return h("li", { "data-login": c }, link);
   }));
   channelSearch(channels);
@@ -744,10 +747,7 @@ function liveLanding() {
   }).catch(() => {});
 }
 // each channel row shows its top three fighters, walking while the row is hovered or focused
-async function channelRanks(channel, link, crew, meta) {
-  const [board, catalog] = await Promise.all([api("/api/leaderboard/" + channel), api("/api/catalog/" + channel)]);
-  const rows = board.ok && Array.isArray(board.data) ? board.data.filter((p) => p.wins + p.losses > 0) : [];
-  const byId = new Map((catalog.ok && Array.isArray(catalog.data) ? catalog.data : []).map((e) => [e.id, e]));
+function channelRanks(channel, link, crew, meta, rows, byId) {
   let lit = false;
   for (const ev of ["pointerenter", "focus"]) link.addEventListener(ev, () => { lit = true; });
   for (const ev of ["pointerleave", "blur"]) link.addEventListener(ev, () => { lit = false; });

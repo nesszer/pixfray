@@ -1381,8 +1381,8 @@ main.page:has(> .ready:last-child) { padding-bottom: 0; }
   .hero-card.has-3d > .status:empty { display: none; }
 }
 /* builder: the tabs hold every section, so the page's own main keeps only the credits line; it no longer pads out an empty band */
-body:has(.hero-card.has-3d) main.page { padding-block: 0 var(--space-6); }
-body:has(.hero-card.has-3d) main.page .caveat { margin-top: 0; }
+body:has(.hero-card.has-3d) .page { padding-block: 0 var(--space-6); }
+body:has(.hero-card.has-3d) .page .caveat { margin-top: 0; }
 body:has(.hero-card.has-3d) .site-foot { margin-top: 0; }
 
 /* ---------- round 28: the intro's camera moves on every page, as baked stills scrubbed by scroll (src/scrub.js) ---------- */
@@ -1587,6 +1587,7 @@ body:has(> .scene-sky.is-ready)::before { display: none; }
   /* The not-found page: the arena island floats off to the right, the way back sits on the left */
   body.is-lost::before { content: none; }
   .lost { position: relative; min-height: calc(100svh - 76px); display: flex; align-items: center; padding: var(--space-8) clamp(16px, 3.2vw, 48px);
+    padding-inline-start: max(clamp(16px, 3.2vw, 48px), calc((100% - var(--container)) / 2 + var(--space-5)));   /* lines up with the topbar and other pages */
     background: linear-gradient(90deg, var(--bg) 0%, rgb(12 9 7 / .92) 34%, rgb(12 9 7 / .2) 70%), linear-gradient(to bottom, rgb(12 9 7 / 0) 70%, var(--bg)), url("/assets/scene/island.webp") 70% 40% / cover no-repeat var(--bg); }
   .lost-copy { max-width: 34rem; }
   .lost h1 { margin: 0 0 var(--space-4); font-size: clamp(36px, 5vw, 56px); line-height: 1.08; }

@@ -113,6 +113,12 @@ for (const t of TABS) {
 selectTab(document.getElementById("tab-" + location.hash.slice(1)) || TABS[0]);
 
 // ---------- loading and access ----------
+// Why the access check said no (server/auth.js access), in words for the person at the gate.
+const GATE_REASONS = {
+  "Sign in with Twitch": () => "You're not signed in.",
+  "Current Twitch moderator role required": () => "Your Twitch account isn't a moderator of " + CHANNEL + ".",
+  "Broadcaster must connect moderator authorization": () => CHANNEL + " hasn't connected mod access yet, so moderators can't sign in until they do it on their Stream setup page.",
+};
 function gate(text, actions = []) {
   $("#gate").hidden = false; $("#app").hidden = true;
   $("#gate-text").textContent = text;
@@ -142,7 +148,8 @@ async function init() {
   if (!S.session.user) {
     if (S.session.configured === false) return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
     $("#who").replaceChildren();   // one sign-in button: the gate's
-    if (BARE) return gate("Sign in with Twitch to open mod controls. Streamers land on their own channel. Moderators: open the mod link your streamer shares; it ends in ?channel= and their name.", [h("a", { class: "btn btn-primary", href: "/auth/login?next=%2Fadmin%2F" }, "Sign in with Twitch"), startLink()]);
+    // a word joiner keeps "?channel=" on one line on phones
+    if (BARE) return gate("Sign in with Twitch to open mod controls. Streamers land on their own channel. Moderators: open the mod link your streamer shares; it ends in ?\u2060channel= and their name.", [h("a", { class: "btn btn-primary", href: "/auth/login?next=%2Fadmin%2F" }, "Sign in with Twitch"), startLink()]);
     return gate(CHANNEL === site.defaultChannel ? "Sign in with the " + site.owner.login + " account or a " + site.owner.login + " moderator account to open mod controls." : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.", [h("a", { class: "btn btn-primary", href: loginHref("/admin/") }, "Sign in with Twitch")]);
   }
   const login = S.session.user.login;
@@ -156,8 +163,8 @@ async function init() {
   if (!S.access?.canManage && BARE) return gate("PixFray isn't on for " + login + " yet. Set it up on /start. Moderators: open the mod link your streamer shares.", [startLink(true), h("a", { class: "btn", href: "/" }, "Pick a channel")]);
   if (access.data?.off === "not_enabled") return gate("PixFray isn't set up on " + CHANNEL + " yet. The " + CHANNEL + " account can turn it on in about 10 minutes.", [h("a", { class: "btn btn-primary", href: "/start/" }, "Set up PixFray"), h("a", { class: "btn", href: "/" }, "Pick a channel")]);
   if (!S.access?.canManage) {
-    const why = S.access?.reason ? " (" + S.access.reason + ")" : access.ok ? "" : " (" + errorText(access) + ")";
-    return gate((CHANNEL === site.defaultChannel ? "Only " + site.owner.login + " and current channel moderators can use mod controls" : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) + why + ".", [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")]);
+    const why = !access.ok ? "Twitch couldn't confirm moderators right now. Try again in a minute." : GATE_REASONS[S.access?.reason]?.() || "";
+    return gate((CHANNEL === site.defaultChannel ? "Only " + site.owner.login + " and current channel moderators can use mod controls" : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) + "." + (why ? " " + why : ""), [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")]);
   }
   named();
   $("#gate").hidden = true; $("#app").hidden = false;
@@ -668,12 +675,18 @@ function drawSeTable(se, tbody) {
     code.className = "reply-preview";
     Object.assign(copy, { type: "button", className: "btn btn-small", textContent: "Copy reply" });
     copy.setAttribute("aria-label", "Copy reply for " + cmd.name);
-    copy.addEventListener("click", async () => { await navigator.clipboard.writeText(cmd.response); setStatus($("#se-status"), "Copied the reply for " + input.value + ". Paste it as the response of that StreamElements command.", "ok"); });
+    copy.addEventListener("click", () => copyText(cmd.response, $("#se-status"), "Copied the reply for " + input.value + ". Paste it as the response of that StreamElements command."));
     reply.append(copy, " ", code);
     const seen = document.createElement("td"); seen.dataset.seen = cmd.action;
     tr.append(label, nameCell, seen, reply);
     return tr;
   }));
+}
+// Copy to the clipboard; when the browser blocks it (no permission, or not focused), show the text in a box to copy by hand.
+async function copyText(text, status, done) {
+  try { await navigator.clipboard.writeText(text); return setStatus(status, done, "ok"); }
+  catch { prompt("Your browser blocked copying. Copy this with Ctrl+C:", text); }
+  setStatus(status, "Your browser blocked copying, so the text opened in a box to copy by hand.", "warning");
 }
 async function seAct(body, button, done) {
   button.disabled = true;
@@ -696,8 +709,7 @@ $("#save-se-names").addEventListener("click", (e) => {
 $("#copy-timer").addEventListener("click", async () => {
   const text = S.admin?.streamelements?.timerText;
   if (!text) return;
-  await navigator.clipboard.writeText(text);
-  setStatus($("#se-status"), "Copied the timer message. Paste it as the message of a StreamElements timer.", "ok");
+  await copyText(text, $("#se-status"), "Copied the timer message. Paste it as the message of a StreamElements timer.");
 });
 $("#rotate-se").addEventListener("click", (e) => {
   if (!confirm("Make a new key? Every StreamElements command stops working until you paste the new replies.")) return;

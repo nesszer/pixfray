@@ -139,7 +139,7 @@ try {
   {
     const { context, page } = await newPage(sizes[0]);
     const many = ['nesszerra', 'miolafff', ...Array.from({ length: 10 }, (_, i) => 'streamer_' + i)];
-    await page.route('**/api/channels', (r) => json(r, { channels: many }));
+    await page.route('**/api/picker', async (r) => { const real = await (await r.fetch()).json(); return json(r, { ...real, channels: many.map((login) => real.channels.find((c) => c.login === login) || { login, top: [] }) }); });
     await page.goto(base + '/');
     await page.waitForSelector('#channel-list a');
     assert.equal(await page.locator('#channel-list li:visible').count(), 8);

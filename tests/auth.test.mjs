@@ -96,6 +96,28 @@ test('the leaderboard with dollars (?private=1) is for mods and the owner; the p
   assert.equal((await worker.fetch(req('/api/leaderboard/nesszerra?private=0'), f.env)).status, 200);
   assert.equal(new URL(f.forwarded.at(-1).url).search, '');
 });
+test('/api/picker lists every channel with its top three ranked fighters in one request', async () => {
+  const f = environment(), boards = {
+    nesszerra: [1, 2, 3, 4].map((n) => ({ userId: String(n), username: 'u' + n, displayName: 'U' + n, elo: 1100 - n, wins: 1, losses: 0, avatar: n === 1 ? 'up-1' : 'player', dollars: 50 })),
+    miolafff: [{ userId: '9', username: 'idle', displayName: 'Idle', elo: 1000, wins: 0, losses: 0, avatar: 'player' }],
+  };
+  f.env.AUTH = { idFromName: (x) => x, get: () => ({ fetch: async () => Response.json([]) }) };
+  f.env.ROOMS = { idFromName: (x) => x, get: (channel) => ({ async fetch(url) {
+    const path = new URL(url).pathname;
+    if (path === '/leaderboard') return Response.json(boards[channel] || []);
+    if (path === '/catalog') return Response.json([{ id: 'up-1', url: '/api/assets/' + channel + '/up-1' }, { id: 'up-2' }]);
+    return Response.json({});
+  } }) };
+  const r = await worker.fetch(req('/api/picker'), f.env), data = await r.json();
+  assert.equal(r.status, 200);
+  assert.deepEqual(data.catalog, [{ id: 'player' }], 'built-in catalog once');
+  const [ness, mio] = ['nesszerra', 'miolafff'].map((c) => data.channels.find((x) => x.login === c));
+  assert.deepEqual(ness.top.map((p) => p.username), ['u1', 'u2', 'u3']);
+  assert.deepEqual(Object.keys(ness.top[0]).sort(), ['avatar', 'displayName', 'elo', 'username'], 'no dollars or ids');
+  assert.deepEqual(ness.catalog, [{ id: 'up-1', url: '/api/assets/nesszerra/up-1' }], 'only the uploads its top fighters wear');
+  assert.deepEqual(mio.top, [], 'unranked fighters are left out');
+  assert.equal('catalog' in mio, false);
+});
 test('a viewer cannot grant themselves mod or developer permissions', async () => {
   const f = environment(), cookie = await signedIn(f);
   assert.equal((await worker.fetch(req('/api/admin/nesszerra', 'POST', { actorId: '1', owner: true, action: 'resetAllRanks' }, cookie), f.env)).status, 403);
@@ -109,6 +131,7 @@ test('connect=1 asks for the chat scopes the EventSub webhook needs', async () =
   assert.deepEqual(new URL(r.headers.get('Location')).searchParams.get('scope').split(' '), CONNECT_SCOPES);
   assert.deepEqual(CONNECT_SCOPES, ['moderation:read', 'user:read:chat', 'user:bot', 'channel:bot']);
   assert.equal(new URL((await worker.fetch(req('/auth/login'), f.env)).headers.get('Location')).searchParams.get('scope'), '', 'plain sign-in asks for nothing');
+  assert.equal(new URL(r.headers.get('Location')).searchParams.has('force_verify'), false, 'only sign-up shows the account picker');
 });
 test('a connect=1 callback without every chat scope is refused with a restart hint', async (t) => {
   const f = environment();

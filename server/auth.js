@@ -139,7 +139,8 @@ export async function handleAuth(request,env){
     }
     const nonce=await sealState(env,pending);
     const target=new URL('https://id.twitch.tv/oauth2/authorize');
-    Object.entries({client_id:env.TWITCH_CLIENT_ID,redirect_uri:callback,response_type:'code',scope,state:nonce,force_verify:'true'}).forEach(([k,v])=>target.searchParams.set(k,v));
+    // Only sign-up asks Twitch to show the account picker (it decides which channel gets PixFray); other sign-ins go straight through.
+    Object.entries({client_id:env.TWITCH_CLIENT_ID,redirect_uri:callback,response_type:'code',scope,state:nonce,...(pending.signup?{force_verify:'true'}:{})}).forEach(([k,v])=>target.searchParams.set(k,v));
     return new Response(null,{status:302,headers:{Location:target.href,'Set-Cookie':cookie('mini_oauth',nonce,600)}});
   }
   if(path!=='/auth/callback')return new Response('Not found',{status:404});

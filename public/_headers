@@ -5,6 +5,10 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
 
+# Vite's bundles have a content hash in the name (vite.config.js assetsDir), so a new build gets new URLs.
+/assets/build/*
+  Cache-Control: public, max-age=31536000, immutable
+
 # Pages with sign-in and mod actions can't be framed by other sites (clickjacking). The overlay stays frameable for OBS
 # and for the demo on /start. The pages in runWorkerFirst now pass through the Worker, which sets these itself
 # (server/worker.js page()); these rules cover them when assets answer directly, and /intro/ which never reaches the Worker.

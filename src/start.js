@@ -9,7 +9,8 @@ const error = params.get("error") || "";
 // The overlay lays fighters out in the pixels it gets. Narrow stages render it at least 640px wide (in the stage's own
 // shape: 16:9 wide, 4:5 on phones) and scale it down, so the nameplates keep their room and stay readable.
 const stage = $(".stage"), frame = stage.querySelector("iframe");
-frame.src = "/overlay.html?" + new URLSearchParams({ channel: site.defaultChannel, arena: "1", demo: "1", size: "64" });
+// the demo loads once the stage comes near the screen, capped at 6 fighters so it stays light on phones
+const demoSrc = "/overlay.html?" + new URLSearchParams({ channel: site.defaultChannel, arena: "1", demo: "1", size: "64", cap: "6" });
 function fitStage() {
   const w = stage.clientWidth, hgt = stage.clientHeight, v = Math.max(w, 640);
   Object.assign(frame.style, { width: v + "px", height: Math.round(v * hgt / w) + "px", transform: "scale(" + w / v + ")", transformOrigin: "0 0" });
@@ -17,7 +18,10 @@ function fitStage() {
 new ResizeObserver(fitStage).observe(stage);
 fitStage();
 // the demo only draws while it's on screen
-new IntersectionObserver(([en]) => frame.contentWindow?.postMessage({ demoPaused: !en.isIntersecting }, location.origin)).observe(stage);
+new IntersectionObserver(([en]) => {
+  if (en.isIntersecting && !frame.src) frame.src = demoSrc;
+  frame.contentWindow?.postMessage({ demoPaused: !en.isIntersecting }, location.origin);
+}, { rootMargin: "200px 0px" }).observe(stage);
 frame.addEventListener("load", () => { const r = stage.getBoundingClientRect(); frame.contentWindow?.postMessage({ demoPaused: r.bottom < 0 || r.top > innerHeight }, location.origin); });
 
 const PROBLEMS = {
