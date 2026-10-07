@@ -1,17 +1,6 @@
 # PixFray
 
-```text
-██████╗ ██╗██╗  ██╗███████╗██████╗  █████╗ ██╗   ██╗
-██╔══██╗██║╚██╗██╔╝██╔════╝██╔══██╗██╔══██╗╚██╗ ██╔╝
-██████╔╝██║ ╚███╔╝ █████╗  ██████╔╝███████║ ╚████╔╝
-██╔═══╝ ██║ ██╔██╗ ██╔══╝  ██╔══██╗██╔══██║  ╚██╔╝
-██║     ██║██╔╝ ██╗██║     ██║  ██║██║  ██║   ██║
-╚═╝     ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
-
-    [o_o]   !challenge @rival    [>_<]
-    /|_|\  ------------------->  /|_|\
-     / \         !fight          / \
-```
+![A knight types !challenge @ninja, the ninja answers !fight, and they duel until the ninja is knocked out](docs/banner.svg)
 
 PixFray puts a small pixel character on your Twitch stream for each viewer who chats. Viewers pick
 and dress their fighter on the website, challenge each other in chat, and the duels play out on the
