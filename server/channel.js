@@ -978,6 +978,21 @@ export class ChannelRoom extends DurableObject {
       if (verified.visible) this.broadcast(verified.state);
       await this.scheduleAlarm(verified.state);
     }
+    // "!fray off" / "!fray on" (broadcaster or a mod) turns the whole bot off or on in this channel; while it's off,
+    // every other command gets no reply.
+    const chatterId = validUserId(ev.chatter_user_id), boss = chatterId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
+    const toggle = action === "help" && boss ? String(words[1] || "").toLowerCase() : "";
+    const off = state.config.botEnabled === false;
+    if (toggle === "on" || toggle === "off") {
+      if (off !== (toggle === "off")) {
+        const set = this.advance(channel, { type: "admin", actorId: chatterId, actorName: String(ev.chatter_user_login || "").slice(0, 48), action: "config", payload: { patch: { botEnabled: toggle === "on" } }, note: "bot " + toggle + " (chat)" }, Date.now());
+        if (!set.result.ok) return json({ ok: false, reason: set.result.reason, reply: "" });
+        this.broadcast(set.state);
+        await this.scheduleAlarm(set.state);
+      }
+      return this.sendBotLines([toggle === "on" ? `PixFray bot is on. Type ${settings.names.help} to play.` : `PixFray bot is off: it ignores commands until the broadcaster or a mod types ${settings.names.help} on.`], channel);
+    }
+    if (off) return json({ ok: true, reason: "bot_off", reply: "" });
     // The alarm posts each result at its reveal time; any result it missed goes out now, before this reply.
     await this.postResults(channel, Date.now());
     if (custom) {
@@ -1586,7 +1601,7 @@ export class ChannelRoom extends DurableObject {
     for (const profile of state.players) if (profile.respawnAt > 0) due.push(profile.respawnAt);
     for (const lock of state.rematchLocks) due.push(lock.until);
     // a bot channel announces each duel's result once the stream has played it
-    if (this.botSource(state)) for (const duel of state.duels) if (duel.status === "completed" && duel.revealAt > Date.now()) due.push(duel.revealAt + 1);
+    if (this.botSource(state) && state.config.botEnabled !== false) for (const duel of state.duels) if (duel.status === "completed" && duel.revealAt > Date.now()) due.push(duel.revealAt + 1);
     if (this.dueResults(state, Date.now()).length) due.push(Date.now() + RESULT_RETRY_MS);   // one that couldn't go out yet
     const reminder = this.reminderDue(state);
     if (reminder) due.push(reminder);
@@ -1664,8 +1679,13 @@ export class ChannelRoom extends DurableObject {
 
   dueResults(state, now) {
     if (!this.botSource(state)) return [];
-    const row = this.ctx.storage.sql.exec("SELECT results_through FROM bot_reminder WHERE id = 1").toArray()[0];
+    const sql = this.ctx.storage.sql, row = sql.exec("SELECT results_through FROM bot_reminder WHERE id = 1").toArray()[0];
     if (!row) return [];
+    // With the bot off, results are skipped for good, so turning it back on doesn't post a backlog.
+    if (state.config.botEnabled === false) {
+      if (row.results_through < now) sql.exec("UPDATE bot_reminder SET results_through = ? WHERE id = 1", now);
+      return [];
+    }
     return state.duels.filter((d) => d.status === "completed" && d.ratings && d.revealAt > row.results_through && d.revealAt <= now && now - d.revealAt < RESULT_WINDOW_MS).sort((x, y) => x.revealAt - y.revealAt);
   }
 
@@ -1693,7 +1713,7 @@ export class ChannelRoom extends DurableObject {
 
   // Lines the bot posts on its own (no chat line to answer), under the reply cap.
   async postBotLines(channel, lines) {
-    if (!lines.length) return;
+    if (!lines.length || this.readState(channel).config.botEnabled === false) return;
     const row = this.ctx.storage.sql.exec("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1").toArray()[0];
     if (!row?.broadcaster_id || !row?.bot_id) return;
     const { replies } = await this.sendBotLines(lines, channel, { system: lines.length }).json();
@@ -1713,13 +1733,13 @@ export class ChannelRoom extends DurableObject {
     sql.exec("INSERT INTO bot_reminder (id, broadcaster_id, bot_id, origin) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET broadcaster_id = excluded.broadcaster_id, bot_id = excluded.bot_id, origin = excluded.origin", broadcasterId, botId, origin);
   }
 
-  // When the next !fray reminder is due, or 0: only with the bot connected, a known bot account and config.reminderMin > 0.
+  // When the next !fray reminder is due, or 0: only with the bot connected, a known bot account, the bot on and config.reminderMin > 0.
   // The first one comes a full interval after the reminder is turned on (or the room first sees the bot).
   reminderDue(state, now = Date.now()) {
     const every = Number(state.config.reminderMin) || 0, sql = this.ctx.storage.sql;
     const row = sql.exec("SELECT next_at FROM bot_reminder WHERE id = 1").toArray()[0];
     if (!row) return 0;
-    if (!every || !this.botSource(state)) { if (row.next_at) sql.exec("UPDATE bot_reminder SET next_at = 0 WHERE id = 1"); return 0; }
+    if (!every || !this.botSource(state) || state.config.botEnabled === false) { if (row.next_at) sql.exec("UPDATE bot_reminder SET next_at = 0 WHERE id = 1"); return 0; }
     const latest = now + every * 60000;
     if (!row.next_at || row.next_at > latest) { sql.exec("UPDATE bot_reminder SET next_at = ? WHERE id = 1", latest); return latest; }
     return row.next_at;

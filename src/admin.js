@@ -44,8 +44,9 @@ const GROUPS = [
     { key: "giveMaxPerStream", label: "Most one viewer gives per stream", unit: "$", min: 0, max: 10000 },
     { key: "giveMinDuels", label: "Finished duels before giving", unit: "duels", min: 0, max: 1000 },
   ] },
-  // The PixFray bot's timed !fray line (server/channel.js postReminder). Only channels the bot reads chat for.
+  // The PixFray bot as a whole (server/channel.js botCommand) and its timed !fray line (postReminder). Only channels the bot reads chat for.
   { title: "Chat bot", visible: (c, a) => Boolean(a.chatBot) && (a.chatStatus || a.chat || {}).connected === true && (a.chatStatus || a.chat || {}).source !== "streamelements", fields: [
+    { key: "botEnabled", label: "Bot answers commands", bool: true, hint: "Off: the bot ignores every command and posts nothing. The broadcaster or a mod can also type !fray off or !fray on in chat" },
     { key: "reminderMin", label: "!fray reminder every (0 = off)", unit: "min", min: 0, max: 240 },
   ] },
   // The shop (server/pets.js): pet prices by tier, and locked hats cost this much per win they need (0 = not for sale).
@@ -778,6 +779,11 @@ function renderBotStep(done) {
     return;
   }
   const heard = a.botStatus?.heardAt ? " It last answered a command " + timeAgo(a.botStatus.heardAt) + "." : " Type !fray in your chat to test it.";
+  if (done && a.config?.botEnabled === false) {
+    detail.textContent = "The PixFray bot (" + login + ") is turned off: it ignores every command and posts nothing. Type !fray on in your chat, or turn on Bot answers commands under Rules, Chat bot.";
+    actions.replaceChildren();
+    return;
+  }
   if (done) {
     detail.textContent = "The PixFray bot (" + login + ") reads your chat and answers the duel commands." + heard + " Type /mod " + login + " in your chat so it can answer more than one command a second.";
     actions.replaceChildren();

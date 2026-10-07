@@ -36,6 +36,9 @@ const DEFAULT_CONFIG = {
   giveMinDuels: 5,
   // The PixFray bot posts the !fray line every this many minutes while the channel is live (0 = off, else 10 to 240).
   reminderMin: 0,
+  // The PixFray bot as a whole (!fray off / !fray on, or the admin page). Off: it ignores every command and posts nothing
+  // (no replies, results, expired challenges or reminders); chatters still walk on the overlay.
+  botEnabled: true,
   // Shop (server/pets.js): pet prices by tier, and hats before their wins at wins needed x hatPricePerWin (0 = off).
   // A duel pays about $4, so a common pet is ~3 duels, a recolor ~5 and a legendary pet ~75 (prices cut to a third on 2026-10-06).
   petPriceCommon: 10,
@@ -683,7 +686,7 @@ function validateConfigPatch(patch) {
     buildSlotPriceMore: [1, 100_000],
   };
   for (const key of Object.keys(patch)) {
-    if (key === "enabled" || key === "quickDuel" || key === "streakBonus" || key === "giveEnabled") {
+    if (key === "enabled" || key === "quickDuel" || key === "streakBonus" || key === "giveEnabled" || key === "botEnabled") {
       if (typeof patch[key] !== "boolean") return { ok: false, reason: "invalid_config_" + key };
       out[key] = patch[key];
     } else if (key === "announce") {

@@ -1136,6 +1136,31 @@ test('chat bot status: heard, sent and dropped replies, held-back replies and !f
   assert.equal(warns.filter((m) => m === 'bot reply held back: reply_limit').length, 1, 'once a minute per reason');
 });
 
+test('chat bot: !fray off / !fray on (broadcaster or mod) silences the whole bot; the admin page toggles it too', async () => {
+  const r = botRoom({});
+  await r.save('u1', 'alice'); await r.save('u2', 'bob');
+  await r.connectChat('sub-bot');
+  assert.match((await r.say('u1', 'alice', '!fray off')).reply, /^PixFray duels/, 'a viewer gets the help line');
+  assert.equal(r.readState('nesszerra').config.botEnabled, true);
+  assert.match((await r.say('u2', 'modmia', '!fray off', { mod: true })).reply, /^PixFray bot is off: .*!fray on\.$/);
+  const s = r.readState('nesszerra');
+  assert.equal(s.config.botEnabled, false);
+  assert.deepEqual(r.dueResults(s, Date.now()), [], 'no result lines while off');
+  for (const text of ['!fray', '!challenge @bob', '!elo', '!fray debug', '!fray on']) assert.equal((await r.say('u1', 'alice', text)).reply, '', 'silent for ' + text);
+  assert.equal(r.readState('nesszerra').duels.length, s.duels.length, 'no duel started');
+  assert.equal(r.reminderDue({ ...r.readState('nesszerra'), config: { ...r.readState('nesszerra').config, reminderMin: 30 } }), 0, 'no reminder while off');
+  assert.match((await r.say('u2', 'modmia', '!fray off', { mod: true })).reply, /is off/, 'off again just says so');
+  assert.match((await r.say('owner1', 'nesszerra', '!fray on')).reply, /^PixFray bot is on\. Type !fray to play\.$/, 'the broadcaster turns it back on');
+  assert.match((await r.say('u1', 'alice', '!challenge @bob')).reply, /bob/);
+  // the admin page's Rules switch is the same setting
+  const admin = (patch) => r.call('/admin', { method: 'POST', body: { actorId: 'owner1', actorName: 'nesszerra', action: 'config', payload: { patch } } });
+  assert.equal((await admin({ botEnabled: false })).body.ok, true);
+  assert.equal((await r.say('u2', 'bob', '!fight')).reply, '');
+  assert.equal((await admin({ botEnabled: 'no' })).body.reason, 'invalid_config_botEnabled');
+  assert.equal((await admin({ botEnabled: true })).body.ok, true);
+  assert.notEqual((await r.say('u2', 'bob', '!elo')).reply, '');
+});
+
 // The reminder posts through Helix as the bot. Twitch is faked: an app token, then every chat line is recorded.
 // down: true makes every chat send fail (Twitch 503).
 function fakeTwitch() {

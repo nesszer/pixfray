@@ -310,6 +310,11 @@ Bot replies and status (room table `bot_status`, one row):
   the last command and its age, replies sent and dropped, replies used in the last 30 s, the last
   held-back reason and the reminder state. Anyone else gets "only the broadcaster or a mod can use
   !fray debug."
+- `!fray off` / `!fray on` from the broadcaster or a mod sets `config.botEnabled` (a config version
+  noted "bot off (chat)"; the admin page's Rules, Chat bot switch is the same setting) and answers
+  one line. While it's off the bot answers nothing else (including `!fray on` from viewers) and posts
+  no result, expired-challenge or reminder lines; results that finish while it's off are never posted.
+  Chatters still appear on the overlay. From anyone else, `!fray off` is the normal `!fray` reply.
 
 A command older than 60 s or more than 10 s in the future (by the message timestamp) is rejected
 as `stale_command`.

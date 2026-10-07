@@ -132,6 +132,8 @@ The same answers are under "If something doesn't work" at the bottom of Stream s
   source when not visible", then right-click the source and choose Refresh.
 - **The bot doesn't answer:** check that **Add the PixFray bot** is Done, then type `!fray debug`;
   the bot health line under Twitch chat connection shows what it last heard and sent.
+- **The bot doesn't answer anything at all:** it may be turned off. Type `!fray on` (broadcaster or
+  a mod), or turn on **Bot answers commands** under Rules, Chat bot. `!fray off` turns it off again.
 - **The bot answers only every other command:** type `/mod pixfray` in your chat.
 - **Two bots answer the same command:** the StreamElements Duel module is still on.
 - **A command answers "wrong key":** copy that row's reply again and replace the old one.
