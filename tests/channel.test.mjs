@@ -1033,7 +1033,7 @@ test("StreamElements !ranks, !elo, !fray and !look work even while duels are pau
     });
   assert.equal(
     (await cmd("u1", "alice", "help")).body.reply,
-    "PixFray duels: gear up at https://test.example/?channel=nesszerra, then name your rival with !challenge @name. They answer !fight. Again? !rematch. More: !checkin !wallet !ranks !look",
+    "PixFray duels: name your rival with !challenge @name. They answer !fight. Again? !rematch. More: !checkin !wallet !ranks !look. Gear up at https://test.example/?channel=nesszerra",
   );
   assert.equal(
     (await cmd("u1", "alice", "top")).body.reply,
@@ -2282,7 +2282,7 @@ test("chat bot reminder: off by default; on, it posts the !fray line as the bot 
     assert.equal(tw.sent[0].sender_id, "u9");
     assert.match(
       tw.sent[0].message,
-      /^PixFray duels: gear up at https:\/\/staging\.example\/\?channel=nesszerra.*Again\? !rematch\. More: !checkin !wallet !ranks !look$/,
+      /^PixFray duels: name your rival.*Again\? !rematch\. More: !checkin !wallet !ranks !look\. Gear up at https:\/\/staging\.example\/\?channel=nesszerra$/,
     );
     await r.postReminder("nesszerra", due + 30 * 60000 + 1000);
     assert.equal(tw.sent.length, 1, "not again until the next interval");
