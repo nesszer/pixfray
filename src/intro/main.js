@@ -147,7 +147,7 @@ addEventListener("popstate", () => {
 });
 // the copy is fixed in place while its chapter is on, so a keyboard user tabbing into another chapter's link scrolls that chapter in
 document.addEventListener("focusin", (e) => {
-  const sec = e.target.closest?.(".chapter");
+  const sec = /** @type {any} */ (e.target).closest?.(".chapter");
   if (sec && !sec.classList.contains("is-on") && !document.body.classList.contains("no-motion")) centerChapter(sec);
 });
 // the rail follows the nearest chapter; the copy shows only near a chapter's centre, so text never sits on a scene change
@@ -400,7 +400,7 @@ function makeTag(cls, html) {
   tagLayer.appendChild(el);
   return {
     el,
-    inner: el.firstChild,
+    inner: /** @type {HTMLElement} */ (el.firstChild),
     on: false,
     set(html) {
       if (this.html !== html) {
@@ -451,7 +451,7 @@ const lock = (() => {
   tagLayer.appendChild(el);
   return {
     el,
-    txt: el.lastChild,
+    txt: /** @type {HTMLElement} */ (el.lastChild),
     b: el.querySelector("b"),
     s: el.querySelector(".lock-txt span"),
     r: null,
@@ -922,12 +922,12 @@ document.addEventListener("pointerleave", () => {
 let overHero = false,
   jumpAt = -10;
 addEventListener("click", (e) => {
-  if (!overHero || e.target.closest("a, button, .copy")) return;
+  if (!overHero || /** @type {Element} */ (e.target).closest("a, button, .copy")) return;
   jumpAt = now;
   sound.jump();
 });
 addEventListener("keydown", (e) => {
-  if (e.key === "j" && !e.target.closest("input, textarea")) {
+  if (e.key === "j" && !(/** @type {Element} */ (e.target).closest("input, textarea"))) {
     jumpAt = now;
     sound.jump();
   }

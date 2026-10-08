@@ -484,6 +484,7 @@ export function buildDie(unit = 0.14) {
     ],
   };
   // face normal -> value (opposite faces add up to 7)
+  /** @type {[number[], number][]} */
   const faces = [
     [[0, 1, 0], 6],
     [[0, -1, 0], 1],
@@ -506,7 +507,7 @@ export function buildDie(unit = 0.14) {
       for (let z = -half; z <= half; z++) {
         const shell = Math.abs(x) === half || Math.abs(y) === half || Math.abs(z) === half;
         if (!shell) continue;
-        const corner = (Math.abs(x) === half) + (Math.abs(y) === half) + (Math.abs(z) === half) === 3;
+        const corner = Math.abs(x) === half && Math.abs(y) === half && Math.abs(z) === half;
         if (corner) continue; // rounded look
         cubes.push({ x, y, z, pip: isPip(x, y, z) });
       }

@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
   const origin = localTest ? "http://127.0.0.1:" + (Number(process.env.MINI_PORT) || 5173) : site.origins[environment];
   // Channel domains open their configured channel, and pages for other channels move to the main site.
   // The API and the overlay still answer there, so older OBS and StreamElements links keep working (server/hosts.js).
-  const channelDomains = site.channelDomains[environment] || {};
+  const channelDomains: Record<string, string> = site.channelDomains[environment] || {};
   const channelOrigins = Object.fromEntries(
     Object.entries(channelDomains).map(([channel, domain]) => [channel, "https://" + domain]),
   );

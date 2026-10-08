@@ -1,6 +1,6 @@
 // Browser code: the pages (src/) and the overlay and other scripts served as written (public/).
 {
   "extends": "./tsconfig.base.json",
-  "compilerOptions": { "lib": ["esnext", "dom", "dom.iterable"], "types": [] },
-  "include": ["src/**/*.js", "public/*.js"]
+  "compilerOptions": { "lib": ["esnext", "dom", "dom.iterable"], "types": ["vite/client"] },
+  "include": ["src/**/*.js", "public/*.js", "types/browser.d.ts"]
 }

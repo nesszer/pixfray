@@ -16,6 +16,18 @@ function revisionOf(value) {
 /**
  * Read-only client for the channel arena stream. The backend owns every player
  * profile, duel health value, event and rating. This client only renders them.
+ * @param {{
+ *   channel: string,
+ *   role?: string,
+ *   onSnapshot?: (snapshot: any, meta: { revision: number | null, source: string }) => void,
+ *   onEvent?: (event: any) => void,
+ *   onLooks?: (message: any) => void,
+ *   onStatus?: (status: any) => void,
+ *   pingMs?: number,
+ *   watchdogMs?: number,
+ *   fetchImpl?: typeof fetch,
+ *   WebSocketImpl?: any,
+ * }} options
  */
 export function createArenaClient({
   channel,
@@ -31,8 +43,8 @@ export function createArenaClient({
   watchdogMs = 45_000,
   fetchImpl = (...args) => fetch(...args),
   // Called with `new`, so this must be a plain function (an arrow function throws "is not a constructor").
-  WebSocketImpl = function (...args) {
-    return new WebSocket(...args);
+  WebSocketImpl = function (url) {
+    return new WebSocket(url);
   },
 }) {
   const normalizedChannel = String(channel ?? "")

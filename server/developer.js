@@ -537,7 +537,7 @@ async function codeFile({ g, gh, query }) {
     return fail(413, "File is too large for the web editor (512 KB max)", "file_too_large");
   let content;
   try {
-    content = new TextDecoder("utf-8", { fatal: true }).decode(fromBase64(r.data.content));
+    content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(fromBase64(r.data.content));
   } catch {
     return fail(415, "Binary files cannot be edited here", "binary_file");
   }

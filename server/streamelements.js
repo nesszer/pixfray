@@ -214,6 +214,7 @@ const UNRATED_TEXT = {
 export const unratedText = (reason) =>
   UNRATED_TEXT[reason] ? `Just for fun (${UNRATED_TEXT[reason]}): no Elo or dollars.` : "";
 
+/** @param {{ winner?: string, loser?: string, w?: { after?: number, delta?: number }, l?: { after?: number, delta?: number }, decision?: string, flawless?: boolean, unrated?: string }} [r] */
 export function seResultText({
   winner = "someone",
   loser = "someone",
@@ -255,7 +256,7 @@ export function seTopText(rows, { origin = "", channel = "" } = {}) {
 }
 
 // !elo [@name]: one fighter's rating and place. `found` = { profile, rank, total } or null.
-export function seEloText(found, { self, askerName = "", target = "", origin = "", channel = "" } = {}) {
+export function seEloText(found, { self = false, askerName = "", target = "", origin = "", channel = "" } = {}) {
   if (!found) {
     return self
       ? noFighter(short(askerName) || "you", true, origin, channel)

@@ -1033,6 +1033,7 @@ async function start() {
           const fa = findPlayer(String(event.a)),
             fb = findPlayer(String(event.b));
           if (fa && fb && !meetPoints.has(event.duelId)) {
+            /** @type {{ x: number, gap: number, aLeft: boolean, speed?: number, walkMs?: number }} */
             const meet = { ...placeMeet((fa.x + fb.x) / 2), aLeft: fa.x <= fb.x };
             const far = Math.max(Math.abs(fa.x - meet.x), Math.abs(fb.x - meet.x));
             meet.speed = Math.max(110, far / (DUEL_WALK_MS / 1000));
@@ -2049,7 +2050,7 @@ async function start() {
       ["Sprout", "player", "#34d399", "strike", 900],
     ].map(([displayName, avatar, color, defaultAbility, elo], index) => ({
       userId: "demo-" + index,
-      username: displayName.toLowerCase(),
+      username: String(displayName).toLowerCase(),
       displayName,
       registered: true,
       avatar,

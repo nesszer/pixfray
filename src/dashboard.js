@@ -289,7 +289,7 @@ $(".hero-pick .tabs").addEventListener("keydown", (e) => {
 });
 // In-page links (#duels, #upgrades, …) open their tab first.
 document.addEventListener("click", (e) => {
-  const a = e.target.closest("a[href^='#']");
+  const a = /** @type {Element} */ (e.target).closest("a[href^='#']");
   const hash = a?.getAttribute("href").slice(1),
     tab = hash && tabOf(hash);
   if (!tab || $("#fighter").hidden) return;
@@ -409,6 +409,10 @@ const buyButton = (kind, item, label, price, out, text = "Buy for $" + price) =>
 };
 // One picker tile: a radio (name = kind) with its picture and words, plus a Buy button while it isn't owned.
 // Anything can be picked to try it on in the preview; Save asks for the unowned ones to be bought first.
+/**
+ * @param {{ kind: string, id: string, label: string, visual: any, tag?: string, tier?: any, price?: number,
+ *   buyLabel?: string, out?: any, onPick: (id: string) => void }} t
+ */
 function tile({ kind, id, label, visual, tag, tier, price, buyLabel, out, onPick }) {
   const inputId = kind + "-" + (id || "none"),
     have = owns(kind, id);
@@ -480,6 +484,7 @@ const checkPicked = (box, kind, value) => {
 };
 
 // Thumbnails that show the picked character wearing an item; they follow the character as it changes.
+/** @type {any[] & { entry?: any }} */
 const lookSprites = [];
 const lookVox = [];
 // a pet on its own, as voxels, beside its flat sprite
@@ -1236,7 +1241,7 @@ function restoreDraft() {
 }
 // Every "Sign in" link (the Save button's and the header's) carries data-login.
 document.addEventListener("click", (e) => {
-  if (e.target.closest?.("[data-login]")) stashDraft();
+  if (/** @type {any} */ (e.target).closest?.("[data-login]")) stashDraft();
 });
 // Fighters are saved per channel: on a channel where the viewer has none, offer the base look they use on another.
 async function loadOthers() {

@@ -11,6 +11,7 @@ export function scrub(canvas, { frames, progress, keys = null, onFrame = null })
     raf = 0,
     last = 0,
     ready = false;
+  /** @type {(i: number) => Promise<void>} */
   const load = (i) =>
     new Promise((done) => {
       const im = new Image();

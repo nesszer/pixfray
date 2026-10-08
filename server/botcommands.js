@@ -43,6 +43,10 @@ export function replyCounters(reply) {
 }
 
 // Fills in a reply. count(name, add) returns the counter's value after adding (add is 1 or 0).
+/**
+ * @param {string} reply
+ * @param {{ user?: string, toUser?: string, count?: (name: string, add: number) => number }} [opts]
+ */
 export function renderCommandReply(reply, { user = "", toUser = "", count = () => 0 } = {}) {
   const target =
     String(toUser || "")

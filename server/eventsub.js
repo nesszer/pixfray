@@ -111,6 +111,20 @@ function slimEvent(ev) {
 // the room, which answers commands like the StreamElements route does, and sendChat posts the reply as the bot.
 // channels: the built-in rooms. findChannel(broadcasterId) names a signed-up channel's room, isEnabled(login) says whether
 // a signed-up channel is on, and botUserId() is the signed-in PixFray bot (which can also be the broadcaster of its own channel).
+/**
+ * @param {Request} request
+ * @param {any} env
+ * @param {{
+ *   channels: any,
+ *   roomFetch: (channel: string, path: string, init?: RequestInit) => Promise<Response>,
+ *   origin?: (channel: string) => string,
+ *   sendChat?: (opts: any) => void, // posts after the 204; the Worker hands the promise to waitUntil
+ *   findChannel?: (broadcasterId: string) => Promise<string>,
+ *   isEnabled?: (login: string) => Promise<boolean>,
+ *   botUserId?: () => Promise<string>,
+ *   now?: number,
+ * }} deps
+ */
 export async function handleEventsub(
   request,
   env,
@@ -425,6 +439,10 @@ export function botDropText(reason) {
   return reason || "unknown";
 }
 // A bot that isn't a channel mod may send about one line per second there, so a 429 is retried twice after a short wait.
+/**
+ * @param {any} env
+ * @param {{ broadcasterId: string, senderId: string, message: string, replyTo?: string, sleep?: (ms: number) => Promise<unknown> }} msg
+ */
 export async function sendChatMessage(
   env,
   { broadcasterId, senderId, message, replyTo = "", sleep = (ms) => new Promise((r) => setTimeout(r, ms)) },
@@ -458,6 +476,10 @@ export async function sendChatMessage(
   return out;
 }
 // The room's reply lines, in order and about a second apart (a bot that isn't a mod gets ~1 line per second).
+/**
+ * @param {any} env
+ * @param {{ broadcasterId: string, senderId: string, messages?: string[], replyTo?: string, sleep?: (ms: number) => Promise<unknown> }} msgs
+ */
 export async function sendChatMessages(
   env,
   { messages = [], sleep = (ms) => new Promise((r) => setTimeout(r, ms)), ...rest },

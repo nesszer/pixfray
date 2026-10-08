@@ -66,6 +66,10 @@ const toBase64 = (blob) =>
     r.readAsDataURL(blob);
   });
 
+/**
+ * @param {string} path
+ * @param {{ method?: string, body?: unknown }} [opts]
+ */
 async function api(path, { method = "GET", body } = {}) {
   try {
     const res = await fetch(path, {

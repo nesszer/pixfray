@@ -46,6 +46,10 @@ function commandFromText(text) {
   return null;
 }
 
+/**
+ * @param {string} channel
+ * @param {{ onMessage?: (message: any) => void, onModeration?: (event: any) => void, onStatus?: (status: any) => void }} [handlers]
+ */
 export function connectChat(channel, { onMessage = () => {}, onModeration = () => {}, onStatus = () => {} } = {}) {
   channel = String(channel ?? "")
     .replace(/^#/, "")

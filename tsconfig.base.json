@@ -6,6 +6,7 @@
     "strict": false,
     "target": "esnext",
     "module": "esnext",
+    "moduleDetection": "force",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "skipLibCheck": true

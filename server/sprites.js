@@ -299,6 +299,11 @@ function aiLeft(sql, userId, day) {
 
 // Durable Object side: everything under /sprites. hooks.approved(row, previousLiveId) puts the sprite on the fighter;
 // hooks.removed(id, userId) takes a removed sprite off it (channel.js).
+/**
+ * @param {any} room
+ * @param {Request} request
+ * @param {{ path: string, url: URL, channel: string, hooks?: { approved?: (row: any, previousLiveId: any) => void, removed?: (id: any, userId: string) => void } }} opts
+ */
 export async function handleRoomSprites(room, request, { path, url, channel, hooks = {} }) {
   const sql = room.ctx.storage.sql,
     now = Date.now(),

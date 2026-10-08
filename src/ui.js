@@ -22,7 +22,7 @@ export const loginHref = (next = here()) =>
 document.addEventListener(
   "click",
   (e) => {
-    const a = e.target.closest?.("a[data-login]");
+    const a = /** @type {any} */ (e.target).closest?.("a[data-login]");
     if (a) a.href = loginHref();
   },
   true,
@@ -56,7 +56,13 @@ export const DEFAULT_ABILITIES = {
 export const ABILITY_NAMES = { strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 
 // JSON fetch that never throws: {ok, status, data}. Same-origin, so POSTs carry the Origin header the Worker requires.
+/**
+ * @param {string} path
+ * @param {{ method?: string, body?: unknown }} [opts]
+ * @returns {Promise<{ ok: boolean, status: number, data: any }>}
+ */
 export async function api(path, { method = "GET", body } = {}) {
+  /** @type {RequestInit & { headers: Record<string, string> }} */
   const init = { method, credentials: "same-origin", headers: { Accept: "application/json" } };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
@@ -91,6 +97,12 @@ export const errorText = (r, fallback = "Request failed") =>
         : fallback);
 
 // Tiny DOM builder. Strings become text nodes, so user-supplied names are never parsed as HTML.
+/**
+ * @param {string} tag
+ * @param {Record<string, any> | null} [attrs]
+ * @param {...any} children
+ * @returns {any}
+ */
 export function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
@@ -107,6 +119,7 @@ export function h(tag, attrs = {}, ...children) {
       node.append(child instanceof Node ? child : String(child));
   return node;
 }
+/** @type {(selector: string, root?: ParentNode) => any} */
 export const $ = (selector, root = document) => root.querySelector(selector);
 export function setStatus(node, message, kind = "") {
   node.textContent = message || "";
@@ -308,6 +321,11 @@ export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0, loo
   return true;
 }
 // sprite = {canvas, entry, anim, active()} ; returns a handle with .set(entry) and .destroy()
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @param {any} entry
+ * @param {{ anim?: string, active?: () => boolean, hat?: string, pet?: any, looks?: Record<string, any> }} [opts]
+ */
 export function addSprite(
   canvas,
   entry,
@@ -439,6 +457,10 @@ function tick(now) {
 // The look as flat pictures for src/fighter3d.js to rebuild as voxels: the idle frame with its hat, recolor and
 // accessory, and the pet on its own canvas. frameH is the sprite's drawn height in pixels, so every character keeps
 // its size relative to the frame, as on stream. Returns null until the character image has loaded.
+/**
+ * @param {any} entry
+ * @param {{ hat?: string, pet?: any, looks?: Record<string, any> }} [opts]
+ */
 export function composeLook(entry, { hat = "", pet = null, looks = {} } = {}) {
   const frame = framesFor(entry, "idle")[0],
     img = entry && image(entry.url);

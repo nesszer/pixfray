@@ -194,6 +194,7 @@ sendBtn.addEventListener("click", async () => {
 
 // Shown to signed-in viewers on a channel that's on. onChange runs when the approved sprite goes away, so the page
 // can reload the character list.
+/** @param {{ onChange?: () => void }} [opts] */
 export function initSpriteMaker({ onChange } = {}) {
   s.onChange = onChange || s.onChange;
   return refresh();

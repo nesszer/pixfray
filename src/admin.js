@@ -44,6 +44,7 @@ const startLink = (primary) =>
 
 const LIMITS = { maxCharacters: 24, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 // Editable config fields (docs/CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
+/** @type {{ title: string, visible?: (config: any, admin: any) => boolean, fields: any[] }[]} */
 const GROUPS = [
   {
     title: "Health and duels",
@@ -375,6 +376,11 @@ function collectNames() {
 }
 
 // ---------- actions ----------
+/**
+ * @param {string} action
+ * @param {any} [payload]
+ * @param {{ confirmText?: string, button?: HTMLButtonElement, done?: string }} [opts]
+ */
 async function act(action, payload, { confirmText, button, done } = {}) {
   if (confirmText && !confirm(confirmText)) return null;
   if (button) button.disabled = true;
@@ -675,7 +681,9 @@ function hp(value, max, who) {
 }
 // Snapshots rebuild the tables; put keyboard focus back on the same row's button afterwards.
 function keepFocus(tbody, render) {
-  const key = tbody.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+  const key = tbody.contains(document.activeElement)
+    ? /** @type {HTMLElement} */ (document.activeElement).dataset.key
+    : null;
   render();
   if (key) tbody.querySelector('[data-key="' + CSS.escape(key) + '"]')?.focus();
 }

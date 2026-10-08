@@ -102,6 +102,7 @@ const BOT_TARGET_ACTIONS = {
 };
 // !fray e2e (BOT_DEBUG): [who, action, target, expected reasons, gate]. B is the bot account, O the opponent. A gate step
 // starts or answers a duel the next steps need, so the run stops when it fails.
+/** @type {[who: string, action: string, target: string, want: string[], gate?: boolean][]} */
 const E2E_STEPS = [
   ["B", "help", "", ["help"]],
   ["B", "look", "", ["look"]],
@@ -291,6 +292,10 @@ export class ChannelRoom extends DurableObject {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
+    /** @type {Record<string, number> | undefined} last time each held-duel reason was logged */
+    this.heldLogged = undefined;
+    /** @type {Map<string, number> | undefined} text command cooldowns (customReply) */
+    this.commandCooldowns = undefined;
     // Overlays send "ping" every 20 s to catch a half-open socket. The runtime answers "pong" itself, without waking this
     // object from hibernation or billing its time (public/arena-client.js).
     if (typeof WebSocketRequestResponsePair === "function")
@@ -432,14 +437,12 @@ export class ChannelRoom extends DurableObject {
 
     // Owner dev token only (server/worker.js /api/devtools/:channel/export): every row of the tables a copy needs. BLOBs as {$b64}.
     if (path === "/export" && request.method === "GET") {
+      const bytes = (v) =>
+        v instanceof ArrayBuffer ? new Uint8Array(v) : new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
       const b64 = (v) =>
         v instanceof ArrayBuffer || ArrayBuffer.isView(v)
           ? {
-              $b64: btoa(
-                Array.from(new Uint8Array(v.buffer ?? v, v.byteOffset ?? 0, v.byteLength), (c) =>
-                  String.fromCharCode(c),
-                ).join(""),
-              ),
+              $b64: btoa(Array.from(bytes(v), (c) => String.fromCharCode(c)).join("")),
             }
           : v;
       const out = {};
@@ -472,7 +475,7 @@ export class ChannelRoom extends DurableObject {
 
     // The catalog is the mods' uploads plus approved viewer sprites (each with the `owner` who alone may wear it).
     if (path === "/catalog" && request.method === "GET") {
-      const custom = await (await handleRoomAssets(this, request, { path, channel, url })).json();
+      const custom = await (await handleRoomAssets(this, request, { path, channel })).json();
       return json([...custom, ...spriteCatalog(this.ctx.storage.sql, channel)]);
     }
     if (path === "/sprites" || path.startsWith("/sprites/") || path.startsWith("/asset/v-")) {
@@ -494,7 +497,7 @@ export class ChannelRoom extends DurableObject {
       return response;
     }
     if (path === "/catalog" || path === "/asset" || path.startsWith("/asset/"))
-      return handleRoomAssets(this, request, { path, channel, url });
+      return handleRoomAssets(this, request, { path, channel });
     if (path.startsWith("/dev/")) return handleRoomDeveloper(this, request, { path, channel, url });
     if (path === "/pets" || path.startsWith("/pets/")) {
       // A deleted upload leaves the fighters using it with no pet; the stored profiles are cleared by handleRoomPets.
@@ -1321,7 +1324,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   // One saved profile with its leaderboard place (same order as leaderboard()), or null.
-  eloLookup(channel, { userId, username }) {
+  eloLookup(channel, { userId = "", username = "" }) {
     const sql = this.ctx.storage.sql;
     const row = (
       userId
@@ -1352,7 +1355,7 @@ export class ChannelRoom extends DurableObject {
       const other = sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, id).toArray()[0];
       if (!other) continue;
       const saved = normalizeProfileRow(other, state.config);
-      ahead += (boardOrder(shownProfile(saved, hidden), profile) < 0) - (boardOrder(saved, profile) < 0);
+      ahead += Number(boardOrder(shownProfile(saved, hidden), profile) < 0) - Number(boardOrder(saved, profile) < 0);
     }
     const total = sql.exec("SELECT COUNT(*) AS n FROM profiles").toArray()[0].n;
     return { profile, rank: ahead + 1, total: Number(total) };
@@ -1712,6 +1715,13 @@ export class ChannelRoom extends DurableObject {
   }
 
   // One command played by the bot account (BOT_DEBUG), through the same path as a chat line. Returns { reply, reason }.
+  /**
+   * @param {string} channel
+   * @param {any} bot
+   * @param {string} action
+   * @param {string} target
+   * @param {{ origin: string, settings: any, subscriptionId: string, kind?: string, amount?: number }} ctx
+   */
   async botPlays(channel, bot, action, target, { origin, settings, subscriptionId, kind = "bot", amount }) {
     const input = {
       action,
@@ -2240,7 +2250,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   // !pet [@name]: a saved fighter's active pet as the catalog names it, or null when there's no such fighter.
-  petInfo(channel, { userId, username }) {
+  petInfo(channel, { userId = "", username = "" }) {
     const config = this.readState(channel).config;
     const profile = userId ? this.getProfile(userId, config) : this.getProfileByUsername(username, config);
     if (!profile) return null;

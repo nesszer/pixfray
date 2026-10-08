@@ -1,4 +1,5 @@
 // Owner page (/admin/dev/, Lane E). Owner-only page over /api/dev/* (server/developer.js). No framework.
+/** @type {(selector: string) => any} */
 const $ = (s) => document.querySelector(s);
 const S = { session: null, diag: null, config: null, configVersion: 0, fileSha: "", fileRef: "", progress: {} };
 // Owner, default channel and sites, from site.config.js through the page's <html data-site-*> attributes.
@@ -10,7 +11,13 @@ const SITE = (({ siteOwner, siteChannel, siteOrigin, siteTestOrigin }) => ({
 }))(document.documentElement.dataset);
 const LOGIN = "/auth/login?next=%2Fadmin%2Fdev%2F"; // come back here after signing in, not to the viewer page
 
+/**
+ * @param {string} path
+ * @param {{ method?: string, body?: unknown }} [opts]
+ * @returns {Promise<{ ok: boolean, status: number, data: any }>}
+ */
 async function api(path, { method = "GET", body } = {}) {
+  /** @type {RequestInit & { headers: Record<string, string> }} */
   const init = { method, credentials: "same-origin", headers: { Accept: "application/json" } };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
@@ -30,6 +37,12 @@ async function api(path, { method = "GET", body } = {}) {
 }
 const errorText = (r, fallback = "Request failed") =>
   r.data?.error || (r.status ? `${fallback} (HTTP ${r.status})` : fallback);
+/**
+ * @param {string} tag
+ * @param {Record<string, any> | null} [attrs]
+ * @param {...any} children
+ * @returns {any}
+ */
 function h(tag, attrs = {}, ...children) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -50,7 +63,9 @@ function status(id, msg, kind = "") {
 const fmtTime = (v) => {
   if (!v) return "–";
   const d = new Date(v);
-  return isNaN(d) ? "–" : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return isNaN(d.getTime())
+    ? "–"
+    : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 const fmtNum = (n) => Number(n).toLocaleString("en-US");
 const ago = (t) => {
