@@ -5,7 +5,7 @@
 | Page | What it is |
 |---|---|
 | `/` | What PixFray is, with a duel playing. A returning viewer gets a "Back to <channel>" button. |
-| `/?channel=<login>` | That channel's fighter page. A signed-in viewer can turn a picture into their own sprite under **Your own sprite** (an optional AI redraw first). It joins their character list once a mod approves it. |
+| `/?channel=<login>` | That channel's fighter page. A signed-in viewer can turn a picture into their own sprite under **Your own sprite** (an optional AI redraw first). It joins their character list once a mod approves it. Fighters are saved per channel: with none saved here, the page offers the look the viewer saved on another channel. Signed out, the page says the fighter shown is a starting one, and edits made before signing in come back after it. |
 | `/play/` | Picks the channel. |
 | `/intro/` | Redirects to `/`. |
 | `/start/` | Streamer sign-up. |

@@ -197,6 +197,42 @@ try {
     await context.close();
   }
 
+  // 2b. Character resets: a browser that signed in before is told the signed-out fighter isn't theirs, edits made
+  // before signing in come back after it, and a viewer with no fighter here is offered the one from another channel.
+  {
+    const { context, page } = await newPage(sizes[1]);
+    let signedIn = false;
+    await page.route('**/api/session', (r) => json(r, { user: signedIn ? user : null, owner: false, configured: true, channels: ['nesszerra'], productionEnabled: false }));
+    await page.route('**/api/access/nesszerra', (r) => json(r, { owner: false, moderator: false, canManage: false }));
+    await page.route('**/api/profile/nesszerra', (r) => json(r, null));
+    await page.route('**/api/profile/nesszerra/others', (r) => json(r, { fighters: [{ channel: 'miolafff', avatar: 'player', color: '#aabbcc', defaultAbility: 'heal', lastSeen: 5 }, { channel: 'gone', avatar: 'no-such-character', color: '#000000', defaultAbility: 'strike', lastSeen: 1 }] }));
+    await page.route('**/auth/login*', (r) => { signedIn = true; return r.fulfill({ status: 302, headers: { location: base + '/?channel=nesszerra&signed_in=1' } }); });
+    await page.goto(base + '/?channel=nesszerra');
+    await page.waitForSelector('#save-signin:visible');
+    assert.equal(await page.locator('#save-signin').textContent(), 'Sign in with Twitch to save', 'a first visit gets the plain sign-in');
+    assert.equal(await page.locator('#save-status').textContent(), '');
+    await page.evaluate(() => localStorage.setItem('pixfray:signed-in', '1'));
+    await page.reload();
+    await page.waitForFunction(() => /signed out/.test(document.querySelector('#save-status').textContent));
+    assert.equal(await page.locator('#save-signin').textContent(), 'Sign in to load your fighter');
+    await page.locator('#char-soldier').check({ force: true });
+    await page.locator('#save-signin').click();
+    await page.waitForFunction(() => /from before you signed in are back/.test(document.querySelector('#save-status').textContent));
+    assert.equal(await page.locator('#char-soldier').isChecked(), true, 'the pick made while signed out came back');
+    assert.equal(await page.locator('#others').isHidden(), true, 'a restored draft is not replaced by an offer');
+    await page.screenshot({ path: shots + '/viewer-draft-restored-390.png', fullPage: false });
+    // A plain visit with no fighter here: one offer per usable fighter elsewhere.
+    await page.reload();
+    await page.waitForSelector('#others:not([hidden]) button');
+    assert.deepEqual(await page.locator('#others button').allTextContents(), ['Use my miolafff fighter'], 'unknown characters are not offered');
+    await page.locator('#others button').click();
+    assert.equal(await page.locator('#char-player').isChecked(), true);
+    assert.match(await page.locator('#save-status').textContent(), /Copied your miolafff fighter/);
+    await noOverflow(page, 'fighter offer 390');
+    await page.screenshot({ path: shots + '/viewer-others-offer-390.png', fullPage: false });
+    await context.close();
+  }
+
   // 3. Signed-in viewer (stubbed session/profile/leaderboard; catalog and state are real).
   for (const s of sizes) {
     const { context, page } = await newPage(s);

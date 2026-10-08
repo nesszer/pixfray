@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import worker from '../server/worker.js';
 import { createHmac } from 'node:crypto';
 import { digest } from '../server/auth.js';
+import { forgetChannel } from '../server/channels.js';
 import { makePng } from './upload-helpers.mjs';
 import { eventsubSecret, signEventsub, localTestMode, sendChatMessage, sendChatMessages, botDropText } from '../server/eventsub.js';
 
@@ -18,7 +19,10 @@ function environment() {
       if (u.pathname === '/consume') { const value = entries.get(key) ?? null; entries.delete(key); return Response.json(value); }
       if (method === 'GET') return Response.json(entries.get(key) ?? null);
       if (method === 'DELETE') { entries.delete(key); return Response.json({ ok: true }); }
-      entries.set(key, JSON.parse(options.body).value); return Response.json({ ok: true });
+      const { value, expires } = JSON.parse(options.body);
+      // The same expiry cap as the real AuthStore (server/auth.js).
+      if (!Number.isFinite(expires) || expires > Date.now() + (/^(channel|modsconnected|bot):/.test(key) ? 21 * 365 : 100) * 86400000) return Response.json({ error: 'Invalid expiry' }, { status: 400 });
+      entries.set(key, value); return Response.json({ ok: true });
     } }) },
     ROOMS: { idFromName: x => x, get: channel => ({ async fetch(url, options = {}) {
       const path = new URL(url).pathname;
@@ -90,6 +94,39 @@ test('catalog merges static and custom characters; profiles may pick either', as
   assert.equal(ok.status, 200);
   assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'ghost', color: '#aabbcc', defaultAbility: 'heal' }, cookie), f.env)).status, 400);
   assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'player', color: 'red', defaultAbility: 'heal' }, cookie), f.env)).status, 400);
+});
+
+test('a saved fighter is indexed per viewer, and /others lists their look on other channels', async () => {
+  const f = environment(), cookie = await signedIn(f);
+  // Rooms: the viewer (id 2) has a fighter on miolafff and on newstreamer, none on nesszerra.
+  const saved = { miolafff: { avatar: 'cowgirl', color: '#F87171', defaultAbility: 'heal', lastSeen: 100, hat: 'crown' }, newstreamer: { avatar: 'dog', color: '#FBBF24', defaultAbility: 'strike', lastSeen: 200 } };
+  const rooms = f.env.ROOMS.get;
+  f.env.ROOMS = { idFromName: x => x, get: channel => ({ async fetch(url, options = {}) {
+    const u = new URL(url);
+    if (u.pathname === '/profile' && (options.method || 'GET') === 'GET') { f.forwarded.push({ channel, path: '/profile' }); return Response.json(u.searchParams.get('userId') === '2' ? saved[channel] || null : null); }
+    return rooms(channel).fetch(url, options);
+  } }) };
+  f.entries.set('channel:newstreamer', { id: '77', login: 'newstreamer', enabledAt: 1 });
+  assert.equal((await worker.fetch(req('/api/profile/nesszerra/others'), f.env)).status, 401);
+  assert.equal((await worker.fetch(req('/api/profile/nesszerra/other', 'GET', undefined, cookie), f.env)).status, 404);
+  assert.equal((await worker.fetch(req('/api/profile/nesszerra/others', 'POST', {}, cookie), f.env)).status, 404);
+  // Before any save the index is empty: only the built-in channels are checked, never this one.
+  let r = await (await worker.fetch(req('/api/profile/nesszerra/others', 'GET', undefined, cookie), f.env)).json();
+  assert.deepEqual(r.fighters, [{ channel: 'miolafff', avatar: 'cowgirl', color: '#F87171', defaultAbility: 'heal', lastSeen: 100 }], 'base look only, no gear');
+  assert.equal(f.entries.has('fighters:2'), false);
+  // A save on newstreamer puts it first in the index; then it is listed too, newest first.
+  f.forwarded.length = 0;
+  assert.equal((await worker.fetch(req('/api/profile/newstreamer', 'POST', { avatar: 'c-robot', color: '#aabbcc', defaultAbility: 'heal' }, cookie), f.env)).status, 200);
+  assert.deepEqual(f.entries.get('fighters:2'), { channels: ['newstreamer'] });
+  assert.equal((await worker.fetch(req('/api/profile/nesszerra', 'POST', { avatar: 'c-robot', color: '#aabbcc', defaultAbility: 'heal' }, cookie), f.env)).status, 200);
+  assert.deepEqual(f.entries.get('fighters:2'), { channels: ['nesszerra', 'newstreamer'] });
+  r = await (await worker.fetch(req('/api/profile/nesszerra/others', 'GET', undefined, cookie), f.env)).json();
+  assert.deepEqual(r.fighters.map((x) => x.channel), ['newstreamer', 'miolafff']);
+  assert.ok(!f.forwarded.some((x) => x.channel === 'nesszerra' && x.path === '/profile' && !x.body), 'this channel is not asked');
+  // A channel that was turned off is skipped.
+  f.entries.delete('channel:newstreamer'); forgetChannel('newstreamer');
+  r = await (await worker.fetch(req('/api/profile/nesszerra/others', 'GET', undefined, cookie), f.env)).json();
+  assert.deepEqual(r.fighters.map((x) => x.channel), ['miolafff']);
 });
 
 test('malformed and oversized bodies are rejected before reaching a room', async () => {

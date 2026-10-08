@@ -65,7 +65,7 @@ Each one has happened here. Check for it by name before calling work done.
 3. **Guessed deploy:** `wrangler`, `--env staging` or a made-up secrets path instead of the commands above.
 4. **Domain leak:** a production deploy claiming a custom domain that another Worker serves. `channelDomains` stays
    empty unless the owner says otherwise.
-5. **Expired session read as a broken deploy:** the `mini_session` cookie lasts 6 hours, so a 401 from
+5. **Expired session read as a broken deploy:** the `mini_session` cookie lasts 30 days, so a 401 from
    `/api/admin` after a deploy usually means sign in again.
 6. **Duplicate chat line:** Twitch drops a message identical to the same user's previous one within 30 s (a trailing
    space doesn't make it different). Live tests vary their lines.

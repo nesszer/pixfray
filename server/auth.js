@@ -45,6 +45,8 @@ export class AuthStore extends DurableObject {
 }
 export const randomToken=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
 export async function digest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),x=>x.toString(16).padStart(2,'0')).join('');}
+// Sign-in lasts 30 days, so a viewer coming back for the next stream still sees their own fighter. Signing out ends it.
+export const SESSION_S=30*86400;
 export async function record(env,key,value,expires){
   const stub=env.AUTH.get(env.AUTH.idFromName('auth'));
   const res=await stub.fetch('https://auth/entry?key='+encodeURIComponent(key),{method:value===undefined?'GET':value===null?'DELETE':'POST',headers:{'X-Mini-Internal':env.INTERNAL_SECRET,'Content-Type':'application/json'},...(value!==undefined&&value!==null?{body:JSON.stringify({value,expires})}:{})});
@@ -199,7 +201,7 @@ export async function handleAuth(request,env){
     if(!modScope||pending.connectBot&&!validation.scopes?.includes('channel:bot'))return adminPage(pending.channel,'mods=denied');
     await keepBroadcaster(env,pending.channel,await seal(env,{...tokens,userId:user.id,validatedAt:Date.now()}));await markModsConnected(env,pending.channel);
   }
-  const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+6*3600000);
+  const key=randomToken();await record(env,'session:'+await digest(key),{user,createdAt:Date.now()},Date.now()+SESSION_S*1000);
   // Back to the page the sign-in started on; the viewer and mod pages get the channel when the address lacks it.
   const to=new URL(safeNext(pending.next||'/'),url.origin);
   for(const k of ['signed_in','mods','bot'])to.searchParams.delete(k);
@@ -210,7 +212,7 @@ export async function handleAuth(request,env){
   if(pending.bot)to.searchParams.set('bot','connected');
   if(pending.signup||pending.connectMods)to.hash='chat';
   const response=new Response(null,{status:303,headers:{Location:to.pathname+to.search+to.hash}});
-  response.headers.append('Set-Cookie',cookie('mini_session',key,21600));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
+  response.headers.append('Set-Cookie',cookie('mini_session',key,SESSION_S));response.headers.append('Set-Cookie',cookie('mini_oauth','',0));return response;
 }
 // Back to /start with the reason sign-up didn't finish (full, denied, failed).
 function startPage(error){return new Response(null,{status:303,headers:{Location:'/start/?error='+encodeURIComponent(error),'Set-Cookie':cookie('mini_oauth','',0)}});}

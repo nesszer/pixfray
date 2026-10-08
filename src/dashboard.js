@@ -31,6 +31,7 @@ const state = { session: null, catalog: [], profile: null, leaderboard: [], conf
   builds: [],       // saved loadouts per slot (GET /api/profile builds), null for a slot never saved
   drafts: [],       // unsaved edits per slot, kept while switching between builds
   filter: { q: "", group: "all" },
+  others: [],       // the viewer's fighters on other channels, offered when they have none here
   loading: true };   // until the first /api answers arrive
 const stage = addStage($("#preview"));
 // The 3D fighter above the on-stream preview loads after the page works; without WebGL the card keeps the 2D stage.
@@ -503,8 +504,12 @@ function renderSave() {
     setStatus(status, msg, locked.length || dirty() ? "" : "ok");
   } else if (signedIn()) {
     const locked = lockedWorn();
-    setStatus(status, locked.length ? "Trying on " + locked.map(([k, id]) => itemLabel(k, id)).join(", ") + ". Save a fighter first, then buy it." : "You don't have a saved profile yet. Pick your fighter and save.");
+    if (!locked.length && state.others.length) setStatus(status, "You don't have a fighter on " + CHANNEL + "'s channel yet. Fighters are saved per channel.");
+    else setStatus(status, locked.length ? "Trying on " + locked.map(([k, id]) => itemLabel(k, id)).join(", ") + ". Save a fighter first, then buy it." : "You don't have a saved profile yet. Pick your fighter and save.");
+  } else if (knownViewer() && !status.textContent && !state.loading) {
+    setStatus(status, "You're signed out, so this is a starting fighter, not yours. Sign in to load the one you saved.");
   }
+  renderOthers();
   saveBtn.textContent = state.slot !== activeBuild() ? "Save and wear build " + (state.slot + 1) : "Save profile";
   renderNextStep();
 }
@@ -560,11 +565,61 @@ function welcome() {
   if (!state.profile) $("#fighter").scrollIntoView({ block: "start" });
 }
 
+// This browser signed in before: signed out, the page says the preview isn't their fighter (sign-in lasts 30 days).
+const KNOWN_KEY = "pixfray:signed-in";
+function knownViewer() { try { return localStorage.getItem(KNOWN_KEY) === "1"; } catch { return false; } }
+// Edits made before signing in (signed out, or after the session ran out) come back after the Twitch round trip.
+const DRAFT_KEY = "pixfray:draft:" + CHANNEL, DRAFT_MS = 30 * 60_000;
+const sameLook = (a, b) => same(a, b) && a.defaultAbility === b.defaultAbility;
+function stashDraft() {
+  if (!state.d || state.loading) return;
+  const base = state.profile ? savedSlot() : loadoutOf(null);
+  if (sameLook(state.d, base) && state.slot === activeBuild()) return;
+  try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ d: current(), withProfile: Boolean(state.profile), at: Date.now() })); } catch {}
+}
+function restoreDraft() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || "null"); sessionStorage.removeItem(DRAFT_KEY); } catch {}
+  if (!signedIn() || !saved?.d || typeof saved.d !== "object" || !(Date.now() - saved.at < DRAFT_MS)) return false;
+  const d = loadoutOf(saved.d);
+  // Upgrade points come from the saved fighter, unless the draft was made on it (an expired session).
+  if (!(saved.withProfile && state.profile)) d.stats = copy(state.d).stats;
+  else if (Number.isInteger(saved.d.build) && saved.d.build >= 0 && saved.d.build < Math.max(1, state.builds.length)) state.slot = saved.d.build;
+  if (sameLook(d, state.d) && state.slot === activeBuild()) return false;
+  state.d = d;
+  renderAll();
+  setStatus(status, "Your changes from before you signed in are back, not saved yet. " + (state.profile ? "Save to keep them, or reload the page to see your saved fighter." : "Save to keep them."));
+  return true;
+}
+// Every "Sign in" link (the Save button's and the header's) carries data-login.
+document.addEventListener("click", (e) => { if (e.target.closest?.("[data-login]")) stashDraft(); });
+// Fighters are saved per channel: on a channel where the viewer has none, offer the base look they use on another.
+async function loadOthers() {
+  if (!signedIn() || state.profile || state.off) return;
+  const r = await api("/api/profile/" + CHANNEL + "/others");
+  const pick = new Set(pickable().map((e) => e.id));
+  state.others = r.ok && Array.isArray(r.data?.fighters) ? r.data.fighters.filter((f) => pick.has(f.avatar) && f.channel !== CHANNEL).slice(0, 3) : [];
+  if (state.others.length) renderSave();
+}
+function renderOthers() {
+  const box = $("#others"), list = signedIn() && !state.profile && !state.off ? state.others : [];
+  box.hidden = !list.length;
+  if (!list.length) return box.replaceChildren();
+  box.replaceChildren(h("p", { class: "small" }, "Start from the fighter you use on another channel. Gear and upgrades stay on their own channel."),
+    h("div", { class: "others-actions" }, ...list.map((f) => h("button", { class: "btn btn-small", type: "button", onclick: () => useOther(f) }, "Use my " + f.channel + " fighter"))));
+}
+function useOther(f) {
+  Object.assign(state.d, { avatar: f.avatar, color: /^#[0-9a-f]{6}$/i.test(f.color || "") ? f.color.toLowerCase() : state.d.color, defaultAbility: ["strike", "heavy", "heal"].includes(f.defaultAbility) ? f.defaultAbility : state.d.defaultAbility });
+  renderCharacters(); renderAll();
+  setStatus(status, "Copied your " + f.channel + " fighter. Save to keep it on " + CHANNEL + "'s channel.");
+}
+
 function renderSignedIn() {
   const s = state.session, note = $("#signin-note");
   renderWho($("#who"), s, signOut);
   saveBtn.hidden = !signedIn();
   saveSignin.hidden = signedIn() || s?.configured === false;
+  saveSignin.textContent = knownViewer() || state.profile ? "Sign in to load your fighter" : "Sign in with Twitch to save";
   if (!saveSignin.hidden) $("#who").replaceChildren();   // one sign-in button: the preview card's, next to what it saves
   note.hidden = signedIn() || Boolean(s?.configured);   // the usual signed-out case: the card's hint says what sign-in shares
   $("#signin-hint").hidden = saveSignin.hidden;
@@ -639,7 +694,7 @@ form.addEventListener("submit", async (event) => {
   setStatus(status, "Saving…");
   const r = await api("/api/profile/" + CHANNEL, { method: "POST", body });
   saveBtn.disabled = false;
-  if (r.status === 401) { state.session = { ...state.session, user: null }; renderSignedIn(); setStatus(status, "Your session expired. Sign in again to save.", "error"); return; }
+  if (r.status === 401) { state.session = { ...state.session, user: null }; renderSignedIn(); setStatus(status, "Your session expired. Sign in again to save. Your changes come back after you sign in.", "error"); return; }
   if (!r.ok) { setStatus(status, "Not saved: " + (REASONS[r.data?.error] || errorText(r)), "error"); return; }
   const drafts = state.drafts.map((d, i) => (i === body.build ? null : d));
   state.profile = { owned: state.owned, ...r.data.profile };
@@ -685,7 +740,9 @@ async function init() {
     $("#admin-link").hidden = !(access.ok && access.data?.canManage);
   }
   applyProfile(state.profile);
+  if (signedIn()) try { localStorage.setItem(KNOWN_KEY, "1"); } catch {}
   renderAll(); welcome();
+  if (!restoreDraft()) loadOthers();
   loadLeaderboard();
   if (signedIn() && !state.off) initSpriteMaker({ onChange: reloadCharacters });
 }

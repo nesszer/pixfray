@@ -36,6 +36,28 @@ function roomFetch(request,env,channel,path,init={}){
   if(request?.headers.get('Upgrade')){h.set('Upgrade','websocket');const ip=request.headers.get('CF-Connecting-IP');if(ip)h.set('X-Mini-Client-Ip',ip);}
   return env.ROOMS.get(env.ROOMS.idFromName(channel)).fetch('https://room'+path,{...init,headers:h});
 }
+// Fighters are saved per channel. AuthStore `fighters:<userId>` lists the channels a viewer saved one on, newest first,
+// so a channel where they have none yet can offer the look they use elsewhere (GET /api/profile/:channel/others).
+const FIGHTER_INDEX_MAX=8,FIGHTER_INDEX_MS=90*86400000,OTHERS_MAX=5;   // AuthStore keeps keys like this at most 100 days
+async function rememberFighter(env,userId,channel){
+  const prev=(await record(env,'fighters:'+userId))?.channels||[];   // rewritten on every save, so the expiry moves with it
+  await record(env,'fighters:'+userId,{channels:[channel,...prev.filter(c=>c!==channel)].slice(0,FIGHTER_INDEX_MAX)},Date.now()+FIGHTER_INDEX_MS);
+}
+// The viewer's base look (character, color, ability) on their other channels, newest save first. The built-in channels
+// are always checked, since fighters saved before the index existed aren't in it. Gear stays per channel.
+async function fightersElsewhere(request,env,user,channel){
+  const indexed=(await record(env,'fighters:'+user.id))?.channels||[];
+  const candidates=[...new Set([...indexed,...CHANNELS])].filter(c=>c!==channel&&/^[a-z0-9_]{1,25}$/.test(c)).slice(0,OTHERS_MAX);
+  const found=await Promise.all(candidates.map(async c=>{
+    try{
+      const st=await channelState(env,c);if(!isOn(st)&&st!=='paused')return null;
+      const r=await internal(request,env,c,'/profile?userId='+encodeURIComponent(user.id));if(!r.ok)return null;
+      const p=await r.json();if(!p||typeof p.avatar!=='string')return null;
+      return {channel:c,avatar:p.avatar,color:p.color,defaultAbility:p.defaultAbility,lastSeen:Number(p.lastSeen)||0};
+    }catch{return null;}
+  }));
+  return found.filter(Boolean).sort((a,b)=>b.lastSeen-a.lastSeen);
+}
 function internal(request,env,channel,path,body){
   const h={};
   if(body?.userId)h['X-Mini-User-Id']=body.userId;
@@ -263,6 +285,8 @@ async function handle(request,env,ctx){
     }
     if(route==='profile'){
       if(!user)return json({error:'Sign in to customize your profile'},401);
+      if(id&&(id!=='others'||request.method!=='GET'))return json({error:'Not found'},404);
+      if(id)return json({fighters:await fightersElsewhere(request,env,user,channel)});
       if(request.method==='GET')return internal(request,env,channel,'/profile?userId='+encodeURIComponent(user.id));
       if(request.method!=='POST')return json({error:'Use GET or POST'},405);
       const body=await bodyJson(request,4000),{avatar,color,defaultAbility,stats,hat,pet}=body,loadout=loadoutFields(body);
@@ -274,7 +298,9 @@ async function handle(request,env,ctx){
       if(!character)return json({error:'Unknown character'},400);
       // An approved viewer sprite belongs to the viewer who made it.
       if(character.owner&&character.owner!==user.id)return json({error:'That sprite belongs to another viewer'},403);
-      return internal(request,env,channel,'/profile',{userId:user.id,username:user.login,displayName:user.displayName,avatar,color,defaultAbility,stats,hat,pet,...loadout.fields});
+      const saved=await internal(request,env,channel,'/profile',{userId:user.id,username:user.login,displayName:user.displayName,avatar,color,defaultAbility,stats,hat,pet,...loadout.fields});
+      if(saved.ok)await rememberFighter(env,user.id,channel).catch(e=>console.warn('fighter index write failed',e?.message));
+      return saved;
     }
     if(route==='admin'){
       if(request.method!=='GET'&&request.method!=='POST')return json({error:'Use GET or POST'},405);

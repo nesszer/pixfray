@@ -187,6 +187,7 @@ test('viewers can still sign in when Twitch fails to look up the channel owner',
   const r = await worker.fetch(new Request('https://chat.miolaf.xyz/auth/callback?code=c&state=' + state, { headers: { Cookie: 'mini_oauth=' + state } }), f.env);
   assert.equal(r.status, 303);
   assert.match(r.headers.get('Set-Cookie'), /mini_session=/);
+  assert.match(r.headers.get('Set-Cookie'), /mini_session=[a-f0-9]{64};[^,]*Max-Age=2592000/, 'sign-in lasts 30 days');
 });
 
 // Signs in through /auth/login?<query> as a viewer and returns where the callback sends the browser.
