@@ -14,7 +14,8 @@ before relying on memory. Don't guess commands, flags or file locations: they ar
 |---|---|
 | Install | `bun install` (Bun runs packages and scripts; the tools run on Node 22.18+) |
 | Dev server | `bun run dev`, then http://127.0.0.1:5173 (`.dev.vars` holds throwaway local values only) |
-| Unit tests | `bun run test:unit` (run before every commit) |
+| Before every commit | `bun run check` (format, lint, types, unit tests; `bun run format` fixes formatting) |
+| Unit tests only | `bun run test:unit` |
 | Smoke test | `bun run test` (needs the dev server running) |
 | Everything | `bun run test:all` (unit, builds, workerd upload, browser tests, local end-to-end duel) |
 | Deploy to staging | `bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json` |
@@ -36,6 +37,8 @@ It is not wrangler: never `wrangler deploy` or `--env`.
   refuses on its own.
 - **Every behavior change gets a unit test** in `tests/*.test.mjs` and a doc update: routes, rules and config in
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
+- **Plain JavaScript, type checked.** Code stays `.js`; when `tsc` can't infer something, describe it with JSDoc
+  rather than silencing the check (docs/DEVELOPMENT.md).
 - **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.mjs`. Don't set `HEADLESS=1`.
 - **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in
   `public/dashboard.css` (tokens, classes, one gold accent, lock-on selection) and the patterns reviews keep catching.

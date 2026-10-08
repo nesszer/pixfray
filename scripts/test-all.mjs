@@ -1,4 +1,4 @@
-// Runs every check in order and stops at the first failure: unit tests, both cf builds, the workerd upload test,
+// Runs every check in order and stops at the first failure: format, lint, type checks and unit tests, both cf builds, the workerd upload test,
 // then a local `cf dev` (own port, own state folder, seeded test sessions) for the browser and end-to-end tests.
 // Usage: bun run test:all          (MINI_PORT=5199 by default; set MINI_BASE_URL to reuse a running, seeded server
 //                                   that was started with MINI_LOCAL_TEST=1, and MINI_AUTH_SECRET to its AUTH_SECRET)
@@ -73,7 +73,7 @@ function summary() {
 }
 process.on("exit", stop);
 try {
-  run("unit tests", "bun run test:unit");
+  run("format, lint, types, unit tests", "bun run check");
   run("cf build", "bunx cf build");
   run("cf build (test)", "bunx cf build --mode test");
   run("module versions", "node tests/build-versions.mjs");

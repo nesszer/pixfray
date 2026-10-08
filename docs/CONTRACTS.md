@@ -522,6 +522,10 @@ Use SQLite DOs only, and nothing outside Cloudflare Free.
 ## 9. Tests and build
 
 ```
+bun run check              # format:check + lint + typecheck + test:unit (CI runs this)
+bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
+bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
+bun run typecheck          # tsc over the JS: tsconfig.worker.json, tsconfig.web.json, tsconfig.node.json
 bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.mjs"
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test

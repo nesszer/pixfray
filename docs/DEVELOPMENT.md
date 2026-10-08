@@ -25,11 +25,29 @@ bun run dev
 - `/overlay.html?demo=1&arena=1` shows the overlay with fake chatters.
 - Twitch sign-in needs a real Twitch app and a public https site, so it only works once deployed.
 
+## Format, lint and types
+
+`bun run check` runs everything below plus the unit tests. Run it before every commit; CI runs it on
+pull requests.
+
+- `bun run format` formats the code with [oxfmt](https://oxc.rs/docs/guide/usage/formatter) (`.oxfmtrc.json`,
+  120 columns); `bun run format:check` only reports. HTML, Markdown and `public/assets` are left alone.
+- `bun run lint` runs [oxlint](https://oxc.rs/docs/guide/usage/linter) with type-aware rules
+  (`.oxlintrc.json`). Warnings fail it. In `server/` every promise must be awaited or handed to
+  `waitUntil`, because the Worker can cancel one that is dropped.
+- `bun run typecheck` runs `tsc` over the plain JavaScript: `tsconfig.worker.json` (server/, Workers
+  types), `tsconfig.web.json` (src/ and public/, DOM types plus `types/browser.d.ts`) and
+  `tsconfig.node.json` (the build configs). Tests and scripts are linted but not type checked.
+  Where inference falls short, add JSDoc (`/** @param {{ … }} opts */`) rather than casting the
+  problem away; the code stays `.js`.
+- The one whole-repo format commit is listed in `.git-blame-ignore-revs`; run
+  `git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame` skips it.
+
 ## Tests
 
 `bun run test:all` runs:
 
-- the unit tests (`bun run test:unit` on its own),
+- `bun run check` (format, lint, types and the unit tests; `bun run test:unit` on its own),
 - both builds and the workerd upload test,
 - the browser tests,
 - a local end-to-end duel against a `cf dev` it starts on port 5199 with its own state folder.
