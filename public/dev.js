@@ -326,7 +326,7 @@ async function loadRestore() {
   const r = await api('/api/dev/restore?channel=' + encodeURIComponent(login));
   const last = r.ok ? r.data.last : null;
   $('#restore-last').textContent = !r.ok ? errorText(r, 'Could not read the last restore')
-    : last ? login + ' was restored to ' + fmtTime(last.at) + ' by ' + last.by + ', ' + ago(last.restoredAt) + '.' : login + ' has not been restored in the last 30 days.';
+    : last ? login + ' was restored to ' + fmtTime(last.at) + ' by ' + last.by + ', ' + ago(last.restoredAt) + '.' : 'No restore to undo on ' + login + '.';
   $('#undo-restore').hidden = !last;
 }
 async function runRestore(button, undo) {

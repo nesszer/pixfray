@@ -85,10 +85,9 @@
           <div class="controls">
             <div><label for="restore-channel">Channel</label><select id="restore-channel"></select></div>
             <div><label for="restore-at">Time (your clock)</label><input id="restore-at" type="datetime-local" step="60"></div>
-            <div class="end toolbar"><button class="btn btn-danger" id="restore" type="button">Restore channel</button></div>
+            <div class="end toolbar"><button class="btn btn-danger" id="restore" type="button">Restore channel</button><button class="btn" id="undo-restore" type="button" hidden>Undo last restore</button></div>
           </div>
           <p class="muted" id="restore-last" role="status">Loading the last restore…</p>
-          <div class="toolbar"><button class="btn" id="undo-restore" type="button" hidden>Undo last restore</button></div>
           <p class="status" id="restore-status" role="status"></p>
           <p class="caveat">Only the picked channel goes back; the channel list, sign-ins and other channels stay as they are. For a copy older than 30 days, use Export above.</p>
         </section>
