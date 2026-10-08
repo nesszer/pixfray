@@ -5,39 +5,26 @@
 // Grids face right like the character sprites; the overlay mirrors both together.
 const HATS = {
   cap: {
-    span: [1, 13], sink: 2,
+    span: [1, 13],
+    sink: 2,
     colors: { R: "#d63b3b", D: "#9e2424", W: "#ffffff" },
-    rows: [
-      "....RRRRR.....",
-      "..RRRRRRRRR...",
-      ".RRRRWRRRRRR..",
-      ".RRRRRRRRRRR..",
-      ".DDDDDDDDDDDDD",
-    ],
+    rows: ["....RRRRR.....", "..RRRRRRRRR...", ".RRRRWRRRRRR..", ".RRRRRRRRRRR..", ".DDDDDDDDDDDDD"],
   },
   bandana: {
-    span: [2, 14], sink: 4,
+    span: [2, 14],
+    sink: 4,
     colors: { K: "#2f6fd6", W: "#ffffff" },
-    rows: [
-      "..KKKKKKKKKKKK",
-      "KKKWKKKWKKKWKK",
-      "K.K...........",
-    ],
+    rows: ["..KKKKKKKKKKKK", "KKKWKKKWKKKWKK", "K.K..........."],
   },
   beanie: {
-    span: [0, 12], sink: 3,
+    span: [0, 12],
+    sink: 3,
     colors: { G: "#2e9e5b", L: "#1f7a43", P: "#f1f1f1" },
-    rows: [
-      ".....PP.....",
-      "....PPPP....",
-      "...GGGGGG...",
-      "..GGGGGGGG..",
-      ".GGGGGGGGGG.",
-      "GLGLGLGLGLGL",
-    ],
+    rows: [".....PP.....", "....PPPP....", "...GGGGGG...", "..GGGGGGGG..", ".GGGGGGGGGG.", "GLGLGLGLGLGL"],
   },
   wizard: {
-    span: [2, 14], sink: 2,
+    span: [2, 14],
+    sink: 2,
     colors: { N: "#3157b8", B: "#22408a", Y: "#f5d142" },
     rows: [
       ".......N........",
@@ -54,46 +41,28 @@ const HATS = {
     ],
   },
   tophat: {
-    span: [1, 11], sink: 2,
+    span: [1, 11],
+    sink: 2,
     colors: { K: "#1d1d22", H: "#4a4a55", R: "#c0392b" },
-    rows: [
-      "..HKKKKKKK..",
-      "..HKKKKKKK..",
-      "..HKKKKKKK..",
-      "..HKKKKKKK..",
-      "..RRRRRRRR..",
-      "KKKKKKKKKKKK",
-    ],
+    rows: ["..HKKKKKKK..", "..HKKKKKKK..", "..HKKKKKKK..", "..HKKKKKKK..", "..RRRRRRRR..", "KKKKKKKKKKKK"],
   },
   horns: {
-    span: [1, 11], sink: 2,
+    span: [1, 11],
+    sink: 2,
     colors: { W: "#e8e0cc", K: "#6b5b45" },
-    rows: [
-      "K..........K",
-      "KW........WK",
-      ".WW......WW.",
-      "..WW....WW..",
-    ],
+    rows: ["K..........K", "KW........WK", ".WW......WW.", "..WW....WW.."],
   },
   halo: {
-    span: [1, 11], sink: -2,
+    span: [1, 11],
+    sink: -2,
     colors: { Y: "#ffd84a" },
-    rows: [
-      "..YYYYYYYY..",
-      "YY........YY",
-      "..YYYYYYYY..",
-    ],
+    rows: ["..YYYYYYYY..", "YY........YY", "..YYYYYYYY.."],
   },
   crown: {
-    span: [0, 11], sink: 2,
+    span: [0, 11],
+    sink: 2,
     colors: { Y: "#f2c230", R: "#d63b3b", B: "#3b82d6" },
-    rows: [
-      "Y....Y....Y",
-      "YY..YYY..YY",
-      "YYYYYYYYYYY",
-      "YRYYYBYYYRY",
-      "YYYYYYYYYYY",
-    ],
+    rows: ["Y....Y....Y", "YY..YYY..YY", "YYYYYYYYYYY", "YRYYYBYYYRY", "YYYYYYYYYYY"],
   },
 };
 
@@ -108,37 +77,58 @@ function headOf(image, frame) {
   let head = { top: 0, left: 0.25, right: 0.75 };
   try {
     const c = document.createElement("canvas");
-    c.width = frame.w; c.height = frame.h;
+    c.width = frame.w;
+    c.height = frame.h;
     const g = c.getContext("2d", { willReadFrequently: true });
     g.drawImage(image, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
     const data = g.getImageData(0, 0, frame.w, frame.h).data;
     const solid = (x, y) => data[(y * frame.w + x) * 4 + 3] > 40;
-    let top = -1, bottom = -1;
-    for (let y = 0; y < frame.h && top < 0; y++) for (let x = 0; x < frame.w; x++) if (solid(x, y)) { top = y; break; }
-    for (let y = frame.h - 1; y >= 0 && bottom < 0; y--) for (let x = 0; x < frame.w; x++) if (solid(x, y)) { bottom = y; break; }
+    let top = -1,
+      bottom = -1;
+    for (let y = 0; y < frame.h && top < 0; y++)
+      for (let x = 0; x < frame.w; x++)
+        if (solid(x, y)) {
+          top = y;
+          break;
+        }
+    for (let y = frame.h - 1; y >= 0 && bottom < 0; y--)
+      for (let x = 0; x < frame.w; x++)
+        if (solid(x, y)) {
+          bottom = y;
+          break;
+        }
     if (top >= 0) {
-      let left = frame.w, right = -1;
+      let left = frame.w,
+        right = -1;
       const last = top + Math.max(2, Math.round((bottom - top) * 0.2));
-      for (let y = top; y <= last; y++) for (let x = 0; x < frame.w; x++) if (solid(x, y)) { left = Math.min(left, x); right = Math.max(right, x + 1); }
+      for (let y = top; y <= last; y++)
+        for (let x = 0; x < frame.w; x++)
+          if (solid(x, y)) {
+            left = Math.min(left, x);
+            right = Math.max(right, x + 1);
+          }
       if (right > left) head = { top: top / frame.h, left: left / frame.w, right: right / frame.w };
     }
-  } catch { /* cross-origin image: keep the guess */ }
+  } catch {
+    /* cross-origin image: keep the guess */
+  }
   byFrame.set(key, head);
   return head;
 }
 
 // A catalog entry may say where the head is ({top, left, right} as fractions of the cell) when the top of the figure
 // isn't the head, like the turtle's shell.
-const validHead = (h) => h && ["top", "left", "right"].every((k) => Number.isFinite(h[k]) && h[k] >= 0 && h[k] <= 1) && h.right > h.left;
+const validHead = (h) =>
+  h && ["top", "left", "right"].every((k) => Number.isFinite(h[k]) && h[k] >= 0 && h[k] <= 1) && h.right > h.left;
 // The head of a frame: the catalog hint when it has one, else measured. Accessories (cosmetics.js) use it too.
-export const headFor = (image, frame, headHint = null) => validHead(headHint) ? headHint : headOf(image, frame);
+export const headFor = (image, frame, headHint = null) => (validHead(headHint) ? headHint : headOf(image, frame));
 
 // Draws hat `id` on a sprite frame drawn at (dx, dy, dw, dh) in the current transform. Unknown ids draw nothing.
 export function drawHat(ctx, id, image, frame, dx, dy, dw, dh, headHint = null) {
   const hat = HATS[id];
   if (!hat || !image || !frame) return;
   const head = headFor(image, frame, headHint);
-  const px = (head.right - head.left) * dw / (hat.span[1] - hat.span[0]);
+  const px = ((head.right - head.left) * dw) / (hat.span[1] - hat.span[0]);
   const x0 = dx + head.left * dw - hat.span[0] * px;
   const y0 = dy + head.top * dh + hat.sink * px - hat.rows.length * px;
   ctx.save();

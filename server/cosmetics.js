@@ -5,9 +5,33 @@
 
 // kind -> the profile field that wears it, and the config key with its price (every item of a kind costs the same).
 export const COSMETIC_KINDS = ["recolor", "petcolor", "accessory", "trail", "effect", "taunt", "title"];
-export const COSMETIC_FIELDS = { recolor: "recolor", petcolor: "petColor", accessory: "accessory", trail: "trail", effect: "winEffect", taunt: "taunt", title: "title" };
-export const COSMETIC_PRICE_KEYS = { recolor: "recolorPrice", petcolor: "petColorPrice", accessory: "accessoryPrice", trail: "trailPrice", effect: "effectPrice", taunt: "tauntPrice", title: "titlePrice" };
-export const COSMETIC_LABELS = { recolor: "Recolor", petcolor: "Pet color", accessory: "Accessory", trail: "Trail", effect: "Win effect", taunt: "Win taunt", title: "Title" };
+export const COSMETIC_FIELDS = {
+  recolor: "recolor",
+  petcolor: "petColor",
+  accessory: "accessory",
+  trail: "trail",
+  effect: "winEffect",
+  taunt: "taunt",
+  title: "title",
+};
+export const COSMETIC_PRICE_KEYS = {
+  recolor: "recolorPrice",
+  petcolor: "petColorPrice",
+  accessory: "accessoryPrice",
+  trail: "trailPrice",
+  effect: "effectPrice",
+  taunt: "tauntPrice",
+  title: "titlePrice",
+};
+export const COSMETIC_LABELS = {
+  recolor: "Recolor",
+  petcolor: "Pet color",
+  accessory: "Accessory",
+  trail: "Trail",
+  effect: "Win effect",
+  taunt: "Win taunt",
+  title: "Title",
+};
 
 // A recolor tints the whole character (or pet, for petcolor); the same palette serves both.
 const COLORS = [
@@ -80,7 +104,8 @@ export const titleText = (id) => cosmeticItem("title", id)?.label || "";
 export function cleanCosmetics(input) {
   const out = {};
   for (const kind of COSMETIC_KINDS) {
-    const field = COSMETIC_FIELDS[kind], id = typeof input?.[field] === "string" ? input[field] : "";
+    const field = COSMETIC_FIELDS[kind],
+      id = typeof input?.[field] === "string" ? input[field] : "";
     out[field] = knownCosmetic(kind, id) ? id : "";
   }
   return out;
@@ -88,12 +113,26 @@ export function cleanCosmetics(input) {
 
 // Builds: slot 0 is free; the 2nd costs buildSlotPrice and each one after buildSlotPriceMore, up to MAX_BUILDS.
 export const MAX_BUILDS = 5;
-export const slotPrice = (slots, config) => (slots >= MAX_BUILDS ? null : slots <= 1 ? config?.buildSlotPrice ?? null : config?.buildSlotPriceMore ?? null);
+export const slotPrice = (slots, config) =>
+  slots >= MAX_BUILDS ? null : slots <= 1 ? (config?.buildSlotPrice ?? null) : (config?.buildSlotPriceMore ?? null);
 // What a build keeps (each slot spends the full point pool on its own stats).
-export const BUILD_FIELDS = ["avatar", "color", "defaultAbility", "stats", "hat", "pet", ...COSMETIC_KINDS.map((k) => COSMETIC_FIELDS[k])];
-export const buildOf = (profile) => Object.fromEntries(BUILD_FIELDS.map((f) => [f, f === "stats" ? { ...(profile?.stats || {}) } : profile?.[f] ?? ""]));
+export const BUILD_FIELDS = [
+  "avatar",
+  "color",
+  "defaultAbility",
+  "stats",
+  "hat",
+  "pet",
+  ...COSMETIC_KINDS.map((k) => COSMETIC_FIELDS[k]),
+];
+export const buildOf = (profile) =>
+  Object.fromEntries(
+    BUILD_FIELDS.map((f) => [f, f === "stats" ? { ...(profile?.stats || {}) } : (profile?.[f] ?? "")]),
+  );
 
 // The public shop list with this channel's prices (GET /api/shop).
 export function cosmeticCatalog(config) {
-  return Object.fromEntries(COSMETIC_KINDS.map((kind) => [kind, COSMETICS[kind].map((x) => ({ ...x, price: cosmeticPrice(kind, config) }))]));
+  return Object.fromEntries(
+    COSMETIC_KINDS.map((kind) => [kind, COSMETICS[kind].map((x) => ({ ...x, price: cosmeticPrice(kind, config) }))]),
+  );
 }

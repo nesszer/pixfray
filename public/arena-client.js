@@ -2,9 +2,9 @@ const MAX_SEEN_EVENTS = 2000;
 const MAX_RETRY_MS = 30_000;
 
 function snapshotFrom(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const state = value.snapshot ?? value.state ?? value;
-  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
+  if (!state || typeof state !== "object" || Array.isArray(state)) return null;
   return state;
 }
 
@@ -19,10 +19,10 @@ function revisionOf(value) {
  */
 export function createArenaClient({
   channel,
-  role = '',   // 'overlay' lets the admin page count open OBS overlays
+  role = "", // 'overlay' lets the admin page count open OBS overlays
   onSnapshot = () => {},
   onEvent = () => {},
-  onLooks = () => {},   // {type:'looks'} pushes: saved fighters changed for viewers the snapshot doesn't list
+  onLooks = () => {}, // {type:'looks'} pushes: saved fighters changed for viewers the snapshot doesn't list
   onStatus = () => {},
   // A socket can go half open: the network dropped but no close event came, so the overlay would freeze on its last
   // picture. The client sends "ping" every pingMs and the room's auto-response answers "pong" without waking it, so a
@@ -31,10 +31,15 @@ export function createArenaClient({
   watchdogMs = 45_000,
   fetchImpl = (...args) => fetch(...args),
   // Called with `new`, so this must be a plain function (an arrow function throws "is not a constructor").
-  WebSocketImpl = function (...args) { return new WebSocket(...args); },
+  WebSocketImpl = function (...args) {
+    return new WebSocket(...args);
+  },
 }) {
-  const normalizedChannel = String(channel ?? '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 25);
-  if (!normalizedChannel) throw new Error('Invalid arena channel');
+  const normalizedChannel = String(channel ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "")
+    .slice(0, 25);
+  if (!normalizedChannel) throw new Error("Invalid arena channel");
 
   let stopped = false;
   let socket = null;
@@ -48,7 +53,7 @@ export function createArenaClient({
   let clockOffset = 0;
   const local = (value) => (Number(value) > 0 ? Number(value) - clockOffset : value);
   function localEvent(event) {
-    if (!clockOffset || !event || typeof event !== 'object') return event;
+    if (!clockOffset || !event || typeof event !== "object") return event;
     const out = { ...event };
     if (Number.isFinite(out.at)) out.at = local(out.at);
     if (out.respawnAt) out.respawnAt = local(out.respawnAt);
@@ -60,7 +65,9 @@ export function createArenaClient({
     return {
       ...snapshot,
       chat: snapshot.chat && { ...snapshot.chat, lastSeen: local(snapshot.chat.lastSeen) },
-      players: Array.isArray(snapshot.players) ? snapshot.players.map(p => (p && p.respawnAt ? { ...p, respawnAt: local(p.respawnAt) } : p)) : snapshot.players,
+      players: Array.isArray(snapshot.players)
+        ? snapshot.players.map((p) => (p && p.respawnAt ? { ...p, respawnAt: local(p.respawnAt) } : p))
+        : snapshot.players,
       events: Array.isArray(snapshot.events) ? snapshot.events.map(localEvent) : snapshot.events,
     };
   }
@@ -70,9 +77,9 @@ export function createArenaClient({
   }
 
   function rememberEvent(event) {
-    if (!event || typeof event !== 'object') return false;
+    if (!event || typeof event !== "object") return false;
     const id = event.id ?? event.eventId;
-    if (id === undefined || id === null || id === '') return true;
+    if (id === undefined || id === null || id === "") return true;
     const key = String(id);
     if (seenEventIds.has(key)) return false;
     seenEventIds.add(key);
@@ -106,26 +113,26 @@ export function createArenaClient({
     const controller = new AbortController();
     const activeGeneration = generation;
     try {
-      const response = await fetchImpl('/api/state/' + encodeURIComponent(normalizedChannel), {
-        method: 'GET',
-        cache: 'no-store',
-        headers: { accept: 'application/json' },
+      const response = await fetchImpl("/api/state/" + encodeURIComponent(normalizedChannel), {
+        method: "GET",
+        cache: "no-store",
+        headers: { accept: "application/json" },
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error('Arena state HTTP ' + response.status);
+      if (!response.ok) throw new Error("Arena state HTTP " + response.status);
       const payload = await response.json();
-      if (!stopped && activeGeneration === generation) receiveSnapshot(payload, 'http:' + reason);
+      if (!stopped && activeGeneration === generation) receiveSnapshot(payload, "http:" + reason);
     } catch (error) {
-      if (stopped || activeGeneration !== generation || error?.name === 'AbortError') return;
-      status('offline', { message: error?.message || 'Arena state unavailable', revision });
+      if (stopped || activeGeneration !== generation || error?.name === "AbortError") return;
+      status("offline", { message: error?.message || "Arena state unavailable", revision });
     }
   }
 
   function scheduleReconnect(activeSocket, detail = {}) {
     if (stopped || socket !== activeSocket || retryTimer) return;
-    const base = Math.min(MAX_RETRY_MS, 500 * (2 ** Math.min(retryAttempt++, 6)));
+    const base = Math.min(MAX_RETRY_MS, 500 * 2 ** Math.min(retryAttempt++, 6));
     const retryInMs = Math.min(MAX_RETRY_MS, base + Math.floor(Math.random() * Math.min(500, base / 3)));
-    status('reconnecting', { retryInMs, revision, ...detail });
+    status("reconnecting", { retryInMs, revision, ...detail });
     retryTimer = setTimeout(() => {
       retryTimer = null;
       connect();
@@ -140,75 +147,106 @@ export function createArenaClient({
   // Drop the current socket without waiting for its close event and open a fresh one now.
   function reconnectNow() {
     const old = socket;
-    socket = null;   // its late close event is then ignored
+    socket = null; // its late close event is then ignored
     clearTimeout(retryTimer);
     retryTimer = null;
     retryAttempt = 0;
-    try { old?.close(); } catch { /* already gone */ }
+    try {
+      old?.close();
+    } catch {
+      /* already gone */
+    }
     connect();
   }
   function watchdogTick() {
     watchdog = null;
     if (stopped) return;
-    if (retryTimer) return armWatchdog();   // already reconnecting
-    status('reconnecting', { message: 'Arena stream went silent; reconnecting', revision });
+    if (retryTimer) return armWatchdog(); // already reconnecting
+    status("reconnecting", { message: "Arena stream went silent; reconnecting", revision });
     reconnectNow();
   }
   let pinger = null;
   function startPing(activeSocket) {
     clearInterval(pinger);
-    pinger = stopped || !(pingMs > 0) ? null : setInterval(() => {
-      if (socket !== activeSocket || activeSocket.readyState !== 1) return;
-      try { activeSocket.send('ping'); } catch { /* the watchdog notices */ }
-    }, pingMs);
+    pinger =
+      stopped || !(pingMs > 0)
+        ? null
+        : setInterval(() => {
+            if (socket !== activeSocket || activeSocket.readyState !== 1) return;
+            try {
+              activeSocket.send("ping");
+            } catch {
+              /* the watchdog notices */
+            }
+          }, pingMs);
   }
 
   function handleMessage(data, activeSocket) {
     if (stopped || socket !== activeSocket) return;
-    armWatchdog();   // any message shows the stream is alive
-    if (typeof data !== 'string' || data === 'pong') return;
+    armWatchdog(); // any message shows the stream is alive
+    if (typeof data !== "string" || data === "pong") return;
     let payload;
-    try { payload = JSON.parse(data); } catch { return; }
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
-
-    if (payload.type === 'looks') {   // not a snapshot or an event: it carries no revision
-      if (payload.looks && typeof payload.looks === 'object') onLooks(payload);
+    try {
+      payload = JSON.parse(data);
+    } catch {
       return;
     }
-    const hasSnapshotFields = ['players', 'duels', 'chat', 'config', 'events', 'snapshot', 'state']
-      .some(key => Object.prototype.hasOwnProperty.call(payload, key));
-    if (payload.type === 'event' || payload.event || (!hasSnapshotFields && payload.type && payload.type !== 'snapshot')) {
-      const event = payload.event && typeof payload.event === 'object' ? payload.event : payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+
+    if (payload.type === "looks") {
+      // not a snapshot or an event: it carries no revision
+      if (payload.looks && typeof payload.looks === "object") onLooks(payload);
+      return;
+    }
+    const hasSnapshotFields = ["players", "duels", "chat", "config", "events", "snapshot", "state"].some((key) =>
+      Object.prototype.hasOwnProperty.call(payload, key),
+    );
+    if (
+      payload.type === "event" ||
+      payload.event ||
+      (!hasSnapshotFields && payload.type && payload.type !== "snapshot")
+    ) {
+      const event = payload.event && typeof payload.event === "object" ? payload.event : payload;
       const eventRevision = revisionOf(payload) ?? revisionOf(event);
       if (eventRevision !== null && revision !== null && eventRevision < revision) return;
       if (eventRevision !== null) revision = Math.max(revision ?? 0, eventRevision);
       if (rememberEvent(event)) onEvent(localEvent(event));
-      status('connected', { revision, chat: payload.chat && { ...payload.chat, lastSeen: local(payload.chat.lastSeen) } });
+      status("connected", {
+        revision,
+        chat: payload.chat && { ...payload.chat, lastSeen: local(payload.chat.lastSeen) },
+      });
       return;
     }
 
-    receiveSnapshot(payload, 'websocket');
+    receiveSnapshot(payload, "websocket");
     const raw = snapshotFrom(payload);
     const snapshot = raw && localSnapshot(raw);
-    if (snapshot) status(snapshot.chat?.connected === false ? 'degraded' : 'connected', {
-      revision,
-      chat: snapshot.chat,
-      lastSeen: snapshot.chat?.lastSeen,
-    });
+    if (snapshot)
+      status(snapshot.chat?.connected === false ? "degraded" : "connected", {
+        revision,
+        chat: snapshot.chat,
+        lastSeen: snapshot.chat?.lastSeen,
+      });
   }
 
   function connect() {
     if (stopped) return;
     const activeGeneration = ++generation;
     socket = null;
-    status('connecting', { revision });
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = protocol + '//' + location.host + '/api/live/' + encodeURIComponent(normalizedChannel) + (role === 'overlay' ? '?role=overlay' : '');
+    status("connecting", { revision });
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const url =
+      protocol +
+      "//" +
+      location.host +
+      "/api/live/" +
+      encodeURIComponent(normalizedChannel) +
+      (role === "overlay" ? "?role=overlay" : "");
     let activeSocket;
     try {
       activeSocket = new WebSocketImpl(url);
     } catch (error) {
-      status('offline', { message: error?.message || 'Arena websocket unavailable', revision });
+      status("offline", { message: error?.message || "Arena websocket unavailable", revision });
       scheduleReconnect(null, { message: error?.message });
       return;
     }
@@ -222,12 +260,12 @@ export function createArenaClient({
       }
       retryAttempt = 0;
       startPing(activeSocket);
-      status('connected', { revision, transport: 'websocket' });
-      void fetchSnapshot('connect');
+      status("connected", { revision, transport: "websocket" });
+      void fetchSnapshot("connect");
     };
     activeSocket.onmessage = ({ data }) => handleMessage(data, activeSocket);
     activeSocket.onerror = () => {
-      if (!stopped && socket === activeSocket) status('degraded', { message: 'Arena stream interrupted', revision });
+      if (!stopped && socket === activeSocket) status("degraded", { message: "Arena stream interrupted", revision });
     };
     activeSocket.onclose = () => {
       if (stopped || socket !== activeSocket) return;
@@ -236,10 +274,12 @@ export function createArenaClient({
   }
 
   connect();
-  void fetchSnapshot('initial');
+  void fetchSnapshot("initial");
 
   return {
-    get revision() { return revision; },
+    get revision() {
+      return revision;
+    },
     disconnect() {
       if (stopped) return;
       stopped = true;
@@ -253,7 +293,7 @@ export function createArenaClient({
       const activeSocket = socket;
       socket = null;
       activeSocket?.close();
-      onStatus({ state: 'offline', message: 'Arena disconnected', revision });
+      onStatus({ state: "offline", message: "Arena disconnected", revision });
     },
   };
 }

@@ -18,28 +18,11 @@ const PETS = {
   },
   chick: {
     colors: { Y: "#facc15", L: "#fde68a", O: "#f97316", K: "#1f2937" },
-    rows: [
-      "....YYY..",
-      "...YYYYY.",
-      "...YYKYOO",
-      "YY.YYYYY.",
-      "YYYYLLYY.",
-      ".YYYLLYY.",
-      "..YYYYY..",
-      "...O.O...",
-    ],
+    rows: ["....YYY..", "...YYYYY.", "...YYKYOO", "YY.YYYYY.", "YYYYLLYY.", ".YYYLLYY.", "..YYYYY..", "...O.O..."],
   },
   slime: {
     colors: { G: "#4ade80", L: "#bbf7d0", D: "#16a34a", K: "#14532d" },
-    rows: [
-      "...GGGG...",
-      ".GGLLGGGG.",
-      "GGLGGGGGGG",
-      "GGGGGKGGKG",
-      "GGGGGGGGGG",
-      "GGGGGGGGGG",
-      ".DDDDDDDD.",
-    ],
+    rows: ["...GGGG...", ".GGLLGGGG.", "GGLGGGGGGG", "GGGGGKGGKG", "GGGGGGGGGG", "GGGGGGGGGG", ".DDDDDDDD."],
   },
   frog: {
     colors: { G: "#22c55e", L: "#bbf7d0", W: "#ffffff", K: "#052e16", R: "#15803d", S: "#166534" },
@@ -228,10 +211,16 @@ const RARE_SPARKLE = { epic: "#c4b5fd", legendary: "#fde047" };
 // Each built-in pet frame is painted once into a small canvas (CELL px per pixel-art cell) and then drawn as one
 // image; a pet color is baked into its own copy the same way. A canvas filter on the stage costs a pass over the
 // whole 1920x1080 canvas, so a crowd of tinted pets drawn with one dropped the overlay to 1 fps or crashed it.
-const CELL = 8, frames = new Map(), tintedImages = new WeakMap();
+const CELL = 8,
+  frames = new Map(),
+  tintedImages = new WeakMap();
 function blank(w, h) {
-  const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(w, h)
-    : typeof document === "object" ? Object.assign(document.createElement("canvas"), { width: w, height: h }) : null;
+  const canvas =
+    typeof OffscreenCanvas === "function"
+      ? new OffscreenCanvas(w, h)
+      : typeof document === "object"
+        ? Object.assign(document.createElement("canvas"), { width: w, height: h })
+        : null;
   return canvas?.getContext("2d") || null;
 }
 function tintCopy(source, w, h, tint) {
@@ -250,7 +239,15 @@ function petFrame(id, rows, cols, tint) {
     frame = plain && tintCopy(plain, plain.width, plain.height, tint);
   } else {
     const g = blank(cols * CELL, rows.length * CELL);
-    if (g) rows.forEach((row, r) => [...row].forEach((ch, c) => { if (ch !== ".") { g.fillStyle = PETS[id].colors[ch]; g.fillRect(c * CELL, r * CELL, CELL, CELL); } }));
+    if (g)
+      rows.forEach((row, r) =>
+        [...row].forEach((ch, c) => {
+          if (ch !== ".") {
+            g.fillStyle = PETS[id].colors[ch];
+            g.fillRect(c * CELL, r * CELL, CELL, CELL);
+          }
+        }),
+      );
     frame = g?.canvas || null;
   }
   frames.set(key, frame);
@@ -259,7 +256,7 @@ function petFrame(id, rows, cols, tint) {
 function tintedImage(image, tint) {
   if (tint === "none") return image;
   let byTint = tintedImages.get(image);
-  if (!byTint) tintedImages.set(image, byTint = new Map());
+  if (!byTint) tintedImages.set(image, (byTint = new Map()));
   if (!byTint.has(tint)) byTint.set(tint, tintCopy(image, image.naturalWidth, image.naturalHeight, tint) || image);
   return byTint.get(tint);
 }
@@ -268,42 +265,61 @@ function tintedImage(image, tint) {
 // `facing` (1 right, -1 left). t is a clock in ms for the hop, hover and sparkles; tier adds the epic/legendary sparkle.
 // Unknown ids draw nothing. Returns true when something was drawn.
 // tint: a canvas filter (a pet color) baked into a cached copy of the pet, never run on ctx.
-export function drawPet(ctx, pet, x, baseY, size, { facing = 1, t = 0, moving = false, tier = "", still = false, tint = "none" } = {}) {
+export function drawPet(
+  ctx,
+  pet,
+  x,
+  baseY,
+  size,
+  { facing = 1, t = 0, moving = false, tier = "", still = false, tint = "none" } = {},
+) {
   const art = typeof pet === "string" ? PETS[pet] : null;
   const image = pet && typeof pet === "object" ? pet.image : null;
   if (!art && !(image?.complete && image.naturalWidth)) return false;
   const hover = art?.fly || tier === "legendary";
-  const lift = still ? (hover ? size * 0.25 : 0) : hover ? size * (0.3 + 0.08 * Math.sin(t / 260)) : moving ? Math.abs(Math.sin(t / 110)) * size * 0.18 : 0;
+  const lift = still
+    ? hover
+      ? size * 0.25
+      : 0
+    : hover
+      ? size * (0.3 + 0.08 * Math.sin(t / 260))
+      : moving
+        ? Math.abs(Math.sin(t / 110)) * size * 0.18
+        : 0;
   ctx.save();
   ctx.translate(x, baseY - lift);
   if (facing < 0) ctx.scale(-1, 1);
   if (art) {
     const flap = art.wings && !still && Math.floor(t / 180) % 2 === 1;
-    const rows = flap ? art.wings : art.rows, cols = Math.max(...art.rows.map((r) => r.length));
+    const rows = flap ? art.wings : art.rows,
+      cols = Math.max(...art.rows.map((r) => r.length));
     const px = size / Math.max(art.rows.length, cols * 0.8);
-    const x0 = -cols * px / 2, y0 = -rows.length * px;
+    const x0 = (-cols * px) / 2,
+      y0 = -rows.length * px;
     const frame = petFrame(pet, rows, cols, tint || "none");
     if (frame) {
       const smooth = ctx.imageSmoothingEnabled;
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(frame, x0, y0, cols * px, rows.length * px);
       ctx.imageSmoothingEnabled = smooth;
-    } else rows.forEach((row, r) => {
-      // One rect per run of a color; a slight overlap hides seams between cells.
-      for (let c = 0; c < row.length;) {
-        const ch = row[c];
-        let end = c + 1;
-        while (end < row.length && row[end] === ch) end++;
-        if (ch !== ".") {
-          ctx.fillStyle = art.colors[ch];
-          ctx.fillRect(x0 + c * px, y0 + r * px, (end - c) * px + 0.4, px + 0.4);
+    } else
+      rows.forEach((row, r) => {
+        // One rect per run of a color; a slight overlap hides seams between cells.
+        for (let c = 0; c < row.length;) {
+          const ch = row[c];
+          let end = c + 1;
+          while (end < row.length && row[end] === ch) end++;
+          if (ch !== ".") {
+            ctx.fillStyle = art.colors[ch];
+            ctx.fillRect(x0 + c * px, y0 + r * px, (end - c) * px + 0.4, px + 0.4);
+          }
+          c = end;
         }
-        c = end;
-      }
-    });
+      });
   } else {
     const scale = Math.min(size / image.naturalHeight, (size * 1.4) / image.naturalWidth);
-    const w = image.naturalWidth * scale, h = image.naturalHeight * scale;
+    const w = image.naturalWidth * scale,
+      h = image.naturalHeight * scale;
     const smooth = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(tintedImage(image, tint || "none"), -w / 2, -h, w, h);
@@ -315,10 +331,16 @@ export function drawPet(ctx, pet, x, baseY, size, { facing = 1, t = 0, moving = 
     ctx.fillStyle = sparkle;
     const count = tier === "legendary" ? 3 : 2;
     for (let i = 0; i < count; i++) {
-      const a = t / 600 + (i * Math.PI * 2) / count, r = size * 0.6, s = Math.max(2, size * (0.06 + 0.03 * Math.sin(t / 150 + i)));
-      const sx = Math.cos(a) * r, sy = -size * 0.5 + Math.sin(a) * r * 0.5;
+      const a = t / 600 + (i * Math.PI * 2) / count,
+        r = size * 0.6,
+        s = Math.max(2, size * (0.06 + 0.03 * Math.sin(t / 150 + i)));
+      const sx = Math.cos(a) * r,
+        sy = -size * 0.5 + Math.sin(a) * r * 0.5;
       ctx.beginPath();
-      ctx.moveTo(sx, sy - s); ctx.lineTo(sx + s, sy); ctx.lineTo(sx, sy + s); ctx.lineTo(sx - s, sy);
+      ctx.moveTo(sx, sy - s);
+      ctx.lineTo(sx + s, sy);
+      ctx.lineTo(sx, sy + s);
+      ctx.lineTo(sx - s, sy);
       ctx.fill();
     }
   }

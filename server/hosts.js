@@ -4,14 +4,18 @@
 // domain, so older OBS and StreamElements links keep working.
 export function channelOrigins(env) {
   try {
-    const all = JSON.parse(env.CHANNEL_ORIGINS || '{}'), out = {};
-    for (const [channel, origin] of Object.entries(all && typeof all === 'object' ? all : {})) out[channel] = new URL(origin).origin;
+    const all = JSON.parse(env.CHANNEL_ORIGINS || "{}"),
+      out = {};
+    for (const [channel, origin] of Object.entries(all && typeof all === "object" ? all : {}))
+      out[channel] = new URL(origin).origin;
     return out;
-  } catch { return {}; }
+  } catch {
+    return {};
+  }
 }
 // The channel whose own domain this request came in on, or ''.
 export function hostChannel(env, url) {
-  return Object.entries(channelOrigins(env)).find(([, origin]) => origin === url.origin)?.[0] || '';
+  return Object.entries(channelOrigins(env)).find(([, origin]) => origin === url.origin)?.[0] || "";
 }
 // Where links for a channel point: its own domain if it has one, else the main site.
 export function siteOrigin(env, url, channel) {
@@ -26,14 +30,15 @@ export const isPage = (path) => /^\/(index\.html)?$|^\/(admin|start|play)(\/|$)/
 // Page requests on a channel domain: other channels and the site-wide pages (/start, /play, /admin/dev) move to the main
 // site; a page without ?channel= gets the domain's channel. 302, so a later change is not stuck in browser caches.
 export function channelPageRedirect(env, url) {
-  const channel = hostChannel(env, url), path = url.pathname;
+  const channel = hostChannel(env, url),
+    path = url.pathname;
   if (!channel || !isPage(path)) return null;
-  const asked = (url.searchParams.get('channel') || '').toLowerCase();
+  const asked = (url.searchParams.get("channel") || "").toLowerCase();
   if (env.PUBLIC_ORIGIN && (/^\/(start|play|admin\/dev)(\/|$)/.test(path) || (asked && asked !== channel)))
     return Response.redirect(env.PUBLIC_ORIGIN + path + url.search + url.hash, 302);
   if (!asked && !/^\/(start|play|admin\/dev)(\/|$)/.test(path)) {
     const to = new URL(url);
-    to.searchParams.set('channel', channel);
+    to.searchParams.set("channel", channel);
     return Response.redirect(to.href, 302);
   }
   return null;

@@ -4,7 +4,10 @@ import { appToken } from "./eventsub.js";
 // Twitch can't be asked (not configured, or the request failed), so the caller can try again later.
 export async function accountCreatedAt(env, userId) {
   if (!env?.TWITCH_CLIENT_ID || !env?.TWITCH_CLIENT_SECRET) throw new Error("twitch_not_configured");
-  const call = async (token) => fetch("https://api.twitch.tv/helix/users?id=" + encodeURIComponent(userId), { headers: { "Client-Id": env.TWITCH_CLIENT_ID, Authorization: "Bearer " + token } });
+  const call = async (token) =>
+    fetch("https://api.twitch.tv/helix/users?id=" + encodeURIComponent(userId), {
+      headers: { "Client-Id": env.TWITCH_CLIENT_ID, Authorization: "Bearer " + token },
+    });
   let r = await call(await appToken(env));
   if (r.status === 401) r = await call(await appToken(env, true));
   if (!r.ok) throw new Error("helix_users_" + r.status);

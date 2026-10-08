@@ -17,7 +17,13 @@ size.addEventListener("input", update);
 document.querySelector("#copy").addEventListener("click", async () => {
   const input = document.querySelector("#obs-url");
   const status = document.querySelector("#copy-status");
-  try { await navigator.clipboard.writeText(input.value); status.textContent = "Copied. Paste it into your OBS Browser Source."; }
-  catch { input.focus(); input.select(); status.textContent = "Select the URL and copy it with Ctrl+C."; }
+  try {
+    await navigator.clipboard.writeText(input.value);
+    status.textContent = "Copied. Paste it into your OBS Browser Source.";
+  } catch {
+    input.focus();
+    input.select();
+    status.textContent = "Select the URL and copy it with Ctrl+C.";
+  }
 });
 update();
