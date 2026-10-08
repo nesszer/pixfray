@@ -183,26 +183,21 @@ test("rollback points all traffic at the previous version; dry run changes nothi
   );
 });
 
-function loadYaml(t, file) {
-  const py = spawnSync(
-    "python",
-    ["-c", 'import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1], encoding="utf-8"))))', file],
+// Bun parses the YAML (YAML 1.2, so `on` stays a string). Bun runs every script here, so a missing Bun fails the
+// test instead of skipping it.
+function loadYaml(file) {
+  const out = spawnSync(
+    "bun",
+    ["-e", "console.log(JSON.stringify(Bun.YAML.parse(await Bun.file(process.argv[1]).text())))", file],
     { encoding: "utf8" },
   );
-  if (py.error || py.status !== 0) {
-    if (/No module named|ENOENT|not found/i.test(String(py.error?.message || "") + py.stderr)) {
-      t.skip("python with PyYAML is not available");
-      return null;
-    }
-    assert.fail("YAML did not parse: " + py.stderr);
-  }
-  return JSON.parse(py.stdout);
+  if (out.error || out.status !== 0) assert.fail("YAML did not parse: " + (out.error?.message || out.stderr));
+  return JSON.parse(out.stdout);
 }
 
-test("deploy workflow parses and exposes the inputs /api/dev dispatches", (t) => {
-  const wf = loadYaml(t, ".github/workflows/deploy.yml");
-  if (!wf) return;
-  const on = wf.on ?? wf[true]; // YAML 1.1 reads a bare `on` key as boolean true
+test("deploy workflow parses and exposes the inputs /api/dev dispatches", () => {
+  const wf = loadYaml(".github/workflows/deploy.yml");
+  const on = wf.on;
   const inputs = on.workflow_dispatch.inputs;
   assert.deepEqual(Object.keys(inputs).sort(), [
     "hotfix",
@@ -234,12 +229,15 @@ test("deploy workflow parses and exposes the inputs /api/dev dispatches", (t) =>
   assert.ok(check < steps.findIndex((r) => r.includes("release.mjs deploy")), "checks run before the upload");
 });
 
-test("CI workflow checks every push to main, scans for secrets and never sees secrets", (t) => {
-  const wf = loadYaml(t, ".github/workflows/ci.yml");
-  if (!wf) return;
-  const on = wf.on ?? wf[true];
+test("CI workflow checks every push to main, scans for secrets and never sees secrets", () => {
+  const wf = loadYaml(".github/workflows/ci.yml");
+  const on = wf.on;
   assert.ok(on.push.branches.includes("main"));
   assert.ok(wf.jobs.test.steps.some((s) => s.run === "bun run check"));
+  assert.ok(
+    wf.jobs.test.steps.some((s) => s.run === "bun run audit"),
+    "dependencies are audited",
+  );
   const scan = wf.jobs.secrets;
   assert.equal(scan.steps[0].with["fetch-depth"], 0, "the secret scan sees the whole history");
   assert.ok(

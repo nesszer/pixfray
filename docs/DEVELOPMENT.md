@@ -35,7 +35,7 @@ bun run dev
 
 `bun run check` runs everything below plus the unit tests. The pre-commit hook runs it, and CI
 (`.github/workflows/ci.yml`) runs it on every push to `main` and every pull request, next to a
-gitleaks scan of the whole history. The deploy workflow runs it before uploading a version.
+gitleaks scan of the whole history and `bun run audit`. The deploy workflow runs it before uploading a version.
 
 - `bun run format` formats the code with [oxfmt](https://oxc.rs/docs/guide/usage/formatter) (`.oxfmtrc.json`,
   120 columns); `bun run format:check` only reports. HTML, Markdown and `public/assets` are left alone.
@@ -47,6 +47,10 @@ gitleaks scan of the whole history. The deploy workflow runs it before uploading
   `tsconfig.node.json` (the build configs). Tests and scripts are linted but not type checked.
   Where inference falls short, add JSDoc (`/** @param {{ … }} opts */`) rather than casting the
   problem away; the code stays `.js`.
+- `bun run audit` checks every installed package against the advisory database and fails on a high or
+  critical one. When the fix sits behind a dependency that pins the old version, add an exact version to
+  `overrides` in `package.json` (as for `sharp`) once that release is 7 days old. Before bumping a package,
+  `bun pm diff <pkg>@<old> <pkg>@<new>` shows what its code changed.
 - The one whole-repo format commit is listed in `.git-blame-ignore-revs`; run
   `git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame` skips it.
 
