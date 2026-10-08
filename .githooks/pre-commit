@@ -1,0 +1,11 @@
+#!/bin/sh
+# Installed by `bun install` (scripts/install-hooks.mjs). Skip once with `git commit --no-verify`.
+set -e
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks is not installed. Install it (https://github.com/gitleaks/gitleaks#installing," >&2
+  echo "  e.g. winget install Gitleaks.Gitleaks) so secrets are caught before they reach the public repo." >&2
+  exit 1
+fi
+gitleaks git --pre-commit --staged --config .gitleaks.toml --redact --no-banner -v --log-level warn .
+# The checks read the working tree, not only the staged files. Quiet when they pass.
+out=$(bun run --silent check 2>&1) || { printf '%s\n' "$out"; echo "pre-commit: bun run check failed" >&2; exit 1; }

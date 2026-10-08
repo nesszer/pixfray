@@ -522,7 +522,8 @@ Use SQLite DOs only, and nothing outside Cloudflare Free.
 ## 9. Tests and build
 
 ```
-bun run check              # format:check + lint + typecheck + test:unit (CI runs this)
+bun run check              # format:check + lint + typecheck + test:unit (pre-commit hook, CI, deploy.yml)
+gitleaks git --config .gitleaks.toml --redact .   # secret scan; CI scans the whole history on every push
 bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
 bun run typecheck          # tsc over the JS: tsconfig.worker.json, tsconfig.web.json, tsconfig.node.json

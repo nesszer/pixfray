@@ -1,10 +1,11 @@
-# Format, lint, type checks, unit tests and a production build for every live-fix pull request. No secrets, no deploys.
+# Format, lint, type checks, unit tests, a production build and a secret scan for every push to main and every
+# live-fix pull request. No secrets, no deploys.
 name: CI
 on:
   pull_request:
     branches: [main]
   push:
-    branches: ["live-fix/**", "hotfix/**"]
+    branches: [main, "live-fix/**", "hotfix/**"]
 
 permissions:
   contents: read
@@ -27,3 +28,25 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bunx cf build
+
+  # The whole history is scanned (a few seconds), so a secret committed and then removed still fails the run.
+  # The binary is pinned by checksum; gitleaks-action needs a paid license on organization repos.
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks
+        run: |
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$f"
+          echo "$GITLEAKS_SHA256  $f" | sha256sum -c -
+          tar -xzf "$f" gitleaks
+      - name: Scan the git history for secrets
+        run: ./gitleaks git --config .gitleaks.toml --redact --no-banner .

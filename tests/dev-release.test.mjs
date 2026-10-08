@@ -227,11 +227,25 @@ test("deploy workflow parses and exposes the inputs /api/dev dispatches", (t) =>
   const src = readFileSync(".github/workflows/deploy.yml", "utf8");
   assert.match(src, /node scripts\/release\.mjs deploy/);
   assert.match(src, /node scripts\/release\.mjs rollback/);
+  // a deploy runs the same checks as CI before it uploads anything
+  const steps = wf.jobs.deploy.steps.map((s) => s.run || "");
+  const check = steps.findIndex((r) => r === "bun run check");
+  assert.ok(check >= 0, "deploy runs bun run check");
+  assert.ok(check < steps.findIndex((r) => r.includes("release.mjs deploy")), "checks run before the upload");
 });
 
-test("CI workflow parses and never sees secrets", (t) => {
+test("CI workflow checks every push to main, scans for secrets and never sees secrets", (t) => {
   const wf = loadYaml(t, ".github/workflows/ci.yml");
   if (!wf) return;
-  assert.ok(wf.jobs.test.steps.some((s) => s.run === "bun run test:unit"));
+  const on = wf.on ?? wf[true];
+  assert.ok(on.push.branches.includes("main"));
+  assert.ok(wf.jobs.test.steps.some((s) => s.run === "bun run check"));
+  const scan = wf.jobs.secrets;
+  assert.equal(scan.steps[0].with["fetch-depth"], 0, "the secret scan sees the whole history");
+  assert.ok(
+    scan.steps.some((s) => /sha256sum -c/.test(s.run || "")),
+    "the gitleaks binary is checksum-pinned",
+  );
+  assert.ok(scan.steps.some((s) => /gitleaks git --config \.gitleaks\.toml --redact/.test(s.run || "")));
   assert.doesNotMatch(readFileSync(".github/workflows/ci.yml", "utf8"), /secrets\./);
 });

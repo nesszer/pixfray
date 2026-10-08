@@ -25,7 +25,7 @@ settings work without any of them.
    `hotfix/<name>`, load a file, edit it and press **Save to branch**. If the branch doesn't exist,
    it's created from `main` (or `GITHUB_BASE_BRANCH`).
 2. **Deploy to test.** **Deploy branch to test** starts `.github/workflows/deploy.yml` with
-   `target=test`. The workflow runs the unit tests, uploads a new version of
+   `target=test`. The workflow runs `bun run check` (format, lint, types, unit tests), uploads a new version of
    `nesszerra-mini-chat-test` and sends it 100% of test traffic.
 3. **Check in OBS.** Point a test browser source at
    `https://staging.pixfray.xyz/overlay.html?channel=nesszerra&arena=1`.
@@ -97,8 +97,8 @@ to `production` for a second confirmation. The jobs already use `environment: <t
 - `AUTH_SECRET`, `INTERNAL_SECRET` and the Twitch secrets must already be set on each Worker.
   `scripts/release.mjs` checks that the uploaded version has `AUTH_SECRET` and `INTERNAL_SECRET`,
   and refuses to move traffic if either is missing.
-- `.github/workflows/ci.yml` runs `bunx cf build` without credentials. That hasn't been tried on a
-  GitHub runner yet. If it fails, drop that step; the unit tests remain.
+- `.github/workflows/ci.yml` runs on every push to `main` and every pull request: `bun run check`,
+  `bunx cf build` without credentials, and a gitleaks scan of the whole history.
 
 ## Security limits
 

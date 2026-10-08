@@ -9,6 +9,12 @@ scripts; the tools themselves (`cf`, Vite, Playwright, the tests) run on Node.
 bun install
 ```
 
+`bun install` also points git at the hooks in `.githooks/` (`scripts/install-hooks.mjs`). Before
+each commit they run [gitleaks](https://github.com/gitleaks/gitleaks) over the staged changes and
+`bun run check`; before each push they scan the commits being pushed for secrets. Install gitleaks
+first (`winget install Gitleaks.Gitleaks`, `brew install gitleaks`), or the hooks refuse.
+`git commit --no-verify` skips them once; the push scan and CI still catch a secret.
+
 Create `.dev.vars` in the repo folder with throwaway local values (never your deployed secrets):
 
 ```bash
@@ -27,8 +33,9 @@ bun run dev
 
 ## Format, lint and types
 
-`bun run check` runs everything below plus the unit tests. Run it before every commit; CI runs it on
-pull requests.
+`bun run check` runs everything below plus the unit tests. The pre-commit hook runs it, and CI
+(`.github/workflows/ci.yml`) runs it on every push to `main` and every pull request, next to a
+gitleaks scan of the whole history. The deploy workflow runs it before uploading a version.
 
 - `bun run format` formats the code with [oxfmt](https://oxc.rs/docs/guide/usage/formatter) (`.oxfmtrc.json`,
   120 columns); `bun run format:check` only reports. HTML, Markdown and `public/assets` are left alone.

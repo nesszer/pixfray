@@ -1,0 +1,11 @@
+#!/bin/sh
+# Installed by `bun install` (scripts/install-hooks.mjs). Scans the commits being pushed for secrets, including
+# commits made with --no-verify. Skip once with `git push --no-verify`.
+set -e
+command -v gitleaks >/dev/null 2>&1 || { echo "pre-push: gitleaks is not installed (see .githooks/pre-commit)." >&2; exit 1; }
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # deleting a branch
+  if [ "$remote_sha" = "$zero" ]; then range="$local_sha --not --remotes"; else range="$remote_sha..$local_sha"; fi
+  gitleaks git --config .gitleaks.toml --redact --no-banner -v --log-level warn --log-opts="$range" .
+done

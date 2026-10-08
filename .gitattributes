@@ -2,3 +2,6 @@
 public/assets/KENNEY_NEW_PLATFORMER_LICENSE.txt -text
 public/assets/KENNEY_PIXEL_PLATFORMER_LICENSE.txt -text
 public/assets/KENNEY_ABSTRACT_PLATFORMER_LICENSE.txt -text
+
+# Git hooks run through sh on every platform.
+.githooks/* text eol=lf

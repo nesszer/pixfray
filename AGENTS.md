@@ -14,7 +14,7 @@ before relying on memory. Don't guess commands, flags or file locations: they ar
 |---|---|
 | Install | `bun install` (Bun runs packages and scripts; the tools run on Node 22.18+) |
 | Dev server | `bun run dev`, then http://127.0.0.1:5173 (`.dev.vars` holds throwaway local values only) |
-| Before every commit | `bun run check` (format, lint, types, unit tests; `bun run format` fixes formatting) |
+| Before every commit | `bun run check` (format, lint, types, unit tests; the pre-commit hook runs it plus gitleaks) |
 | Unit tests only | `bun run test:unit` |
 | Smoke test | `bun run test` (needs the dev server running) |
 | Everything | `bun run test:all` (unit, builds, workerd upload, browser tests, local end-to-end duel) |

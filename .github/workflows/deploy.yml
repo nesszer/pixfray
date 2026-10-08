@@ -111,8 +111,8 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Unit tests
-        run: bun run test:unit
+      - name: Format, lint, types and unit tests
+        run: bun run check
 
       - name: Upload the version and move traffic
         env:
