@@ -1,5 +1,5 @@
-# Format, lint, type checks, unit tests, a production build and a secret scan for every push to main and every
-# live-fix pull request. No secrets, no deploys.
+# Format, lint, type checks, unit tests, a production build, a dependency audit and a secret scan for every push to
+# main and every pull request. No secrets, no deploys.
 name: CI
 on:
   pull_request:
@@ -28,6 +28,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bunx cf build
+      # Fails on a high or critical advisory in any installed package.
+      - run: bun run audit
 
   # The whole history is scanned (a few seconds), so a secret committed and then removed still fails the run.
   # The binary is pinned by checksum; gitleaks-action needs a paid license on organization repos.

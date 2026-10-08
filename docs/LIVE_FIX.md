@@ -98,7 +98,7 @@ to `production` for a second confirmation. The jobs already use `environment: <t
   `scripts/release.mjs` checks that the uploaded version has `AUTH_SECRET` and `INTERNAL_SECRET`,
   and refuses to move traffic if either is missing.
 - `.github/workflows/ci.yml` runs on every push to `main` and every pull request: `bun run check`,
-  `bunx cf build` without credentials, and a gitleaks scan of the whole history.
+  `bunx cf build` without credentials, `bun run audit` and a gitleaks scan of the whole history.
 
 ## Security limits
 

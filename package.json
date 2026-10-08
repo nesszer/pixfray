@@ -13,6 +13,7 @@
     "format:check": "oxfmt --check",
     "lint": "oxlint --deny-warnings",
     "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.web.json && tsc -p tsconfig.node.json",
+    "audit": "bun audit --audit-level=high",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit",
     "test": "node tests/smoke.mjs",
     "test:unit": "node --import ./tests/register.mjs --test \"tests/*.test.mjs\"",
@@ -41,6 +42,7 @@
     "vite": "8.3.0"
   },
   "overrides": {
+    "sharp": "0.35.5",
     "undici": "7.30.0"
   },
   "trustedDependencies": [
