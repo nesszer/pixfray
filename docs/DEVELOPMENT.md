@@ -50,6 +50,19 @@ gitleaks scan of the whole history. The deploy workflow runs it before uploading
 - The one whole-repo format commit is listed in `.git-blame-ignore-revs`; run
   `git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame` skips it.
 
+## Pull requests and review
+
+Changes reach `main` through a pull request:
+
+1. Commit on a branch (the hooks run), push it and open a PR against `main` (`gh pr create`).
+2. CI runs, and [CodeRabbit](https://coderabbit.ai) (free on public repositories) reviews the diff.
+   Its settings are in `.coderabbit.yaml`: it reviews against `AGENTS.md` and `DESIGN.md`, runs
+   oxlint, gitleaks, actionlint and shellcheck, and warns when a behavior change has no test or
+   doc, or when a channel or domain is hard-coded outside `site.config.js`.
+3. Fix each finding with a new commit, or answer it in the thread when it doesn't apply.
+   `@coderabbitai review` asks for another pass.
+4. Deploy the branch to staging and check it, then squash-merge. Production deploys from `main`.
+
 ## Tests
 
 `bun run test:all` runs:
