@@ -46,8 +46,15 @@ request id (`r` + 10 hex digits), so a click can be matched to its run.
 
 ## Backups
 
-There is no automatic backup. Before a risky change, open the owner page (`/admin/dev/`) and
-download the data:
+Cloudflare keeps 30 days of every change to each channel's storage (point-in-time recovery on SQLite
+Durable Objects, included on the Free plan). To undo a mistake, such as a rank reset or a bad
+setting, open the owner page (`/admin/dev/`), go to **Restore a channel**, pick the channel and the
+time, and press **Restore channel**. Everything that channel saved after that time is gone: fighters,
+ranks, dollars, settings and its error log. Open overlays and pages reload on their own. **Undo last
+restore** puts the channel back to how it was just before the restore. Only that channel moves; the
+channel list and sign-ins stay as they are. Restore works on Cloudflare only, not with `bun run dev`.
+
+For a copy you keep yourself, or anything older than 30 days, download the data from the same page:
 - **Export** on a channel row: that channel's fighters, ranks, config and config history, the
   metadata of its custom characters (not their images) and the names of its StreamElements
   commands (`mini-chat-<login>-<date>.json`).

@@ -1546,3 +1546,16 @@ test('viewer sprites: AI redraws per viewer and per channel each day, refunded w
   assert.equal((await take('u2')).body.reason, 'ai_channel_limit');
   assert.equal((await r.call('/sprites/mine?userId=u2')).body.aiLeft, 0);
 });
+
+test('rooms answer the overlay "ping" with "pong" through the WebSocket auto-response, without waking', () => {
+  const had = 'WebSocketRequestResponsePair' in globalThis, original = globalThis.WebSocketRequestResponsePair;
+  globalThis.WebSocketRequestResponsePair = function (request, response) { this.request = request; this.response = response; };
+  try {
+    const ctx = fakeCtx(), pairs = [];
+    ctx.setWebSocketAutoResponse = (pair) => pairs.push(pair);
+    new ChannelRoom(ctx, {});
+    assert.deepEqual(pairs.map((p) => [p.request, p.response]), [['ping', 'pong']]);
+  } finally {
+    if (had) globalThis.WebSocketRequestResponsePair = original; else delete globalThis.WebSocketRequestResponsePair;
+  }
+});

@@ -77,8 +77,8 @@ function stubFetch(t, routes) {
   return calls;
 }
 
-const ROUTES = ['diagnostics', 'logs', 'settings', 'channels', 'progress?logins=nesszerra', 'export?channel=nesszerra', 'export?registry=1', 'usage', 'versions', 'code/tree', 'code/file?path=README.md', 'runs'];
-const POSTS = ['settings', 'channels', 'code/save', 'code/pr', 'deploy', 'promote', 'hotfix', 'rollback'];
+const ROUTES = ['diagnostics', 'logs', 'settings', 'channels', 'progress?logins=nesszerra', 'export?channel=nesszerra', 'export?registry=1', 'restore?channel=nesszerra', 'usage', 'versions', 'code/tree', 'code/file?path=README.md', 'runs'];
+const POSTS = ['settings', 'channels', 'restore', 'code/save', 'code/pr', 'deploy', 'promote', 'hotfix', 'rollback'];
 
 test('every developer route returns 401 signed out and 403 for a non-owner', async () => {
   const f = environment(GITHUB), viewer = await cookieFor(f, false);
@@ -247,6 +247,71 @@ test('export downloads one room as JSON: fighters, ranks, config, history, chara
   assert.deepEqual(data.builds, [{ userId: '11', slot: 0, data: { title: '' } }]);
   assert.ok(!text.includes(secret), 'the StreamElements key is not exported');
   assert.doesNotMatch(text, /secret|subscriptionId|token/i);
+});
+
+// Point-in-time restore. Node has no PITR, so the room's storage gets a fake one: bookmarks are 'b<ms>' style hex
+// strings, onNextSessionRestoreBookmark returns an undo point, and abort() throws as the real one ends the session.
+function fakePitr(room) {
+  const calls = { armed: [], aborted: 0, times: [] };
+  Object.assign(room.ctx.storage, {
+    async getBookmarkForTime(t) { calls.times.push(t); return '0000007b-' + Number(t).toString(16).padStart(12, '0') + '-00001538-0c3e87bb37b3db5cc52eedb93cd3b96b'; },
+    async onNextSessionRestoreBookmark(b) { calls.armed.push(b); return '0000007c-00000000ffff-00001539-' + 'e'.repeat(32); },
+  });
+  room.ctx.abort = () => { calls.aborted++; throw new Error('Restoring channel data'); };
+  return calls;
+}
+
+test('restore arms the point, restarts the room, moves the revision past the old one and keeps an undo point', async () => {
+  const f = environment(), owner = await cookieFor(f, true);
+  f.env.ROOMS.get('nesszerra');
+  const room = f.rooms.get('nesszerra'), pitr = fakePitr(room);
+  const state = room.readState('nesszerra'); state.revision = 40; room.writeState(state);
+  room.ctx.storage.sql.exec("INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen) VALUES ('11', 'fighter1', 'Fighter1', 'player', '#ff0000', 'strike', 1000, 0, 0, 0)");
+  const at = Date.now() - 3 * 3600000;
+
+  assert.deepEqual((await call(f, '/api/dev/restore?channel=nesszerra', 'GET', undefined, owner)).body, { channel: 'nesszerra', last: null, windowDays: 30 });
+  const r = await call(f, '/api/dev/restore', 'POST', { channel: 'NessZerra', at }, owner);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual([r.body.ok, r.body.channel, r.body.at, r.body.undone, r.body.undoSaved, r.body.profiles], [true, 'nesszerra', at, false, true, 1]);
+  assert.deepEqual(pitr.times, [at]);
+  assert.equal(pitr.armed.length, 1);
+  assert.equal(pitr.aborted, 1, 'the room was restarted right away');
+  assert.equal(room.readState('nesszerra').revision, 41, 'open overlays accept the restored state');
+  const saved = f.entries.get('restore:nesszerra');
+  assert.deepEqual([saved.at, saved.by, saved.undo], [at, 'nesszerra', '0000007c-00000000ffff-00001539-' + 'e'.repeat(32)]);
+  const info = (await call(f, '/api/dev/restore?channel=nesszerra', 'GET', undefined, owner)).body;
+  assert.deepEqual([info.last.at, info.last.by], [at, 'nesszerra']);
+  assert.equal('undo' in info.last, false, 'the undo point stays on the server');
+
+  const u = await call(f, '/api/dev/restore', 'POST', { channel: 'nesszerra', undo: true }, owner);
+  assert.deepEqual([u.status, u.body.undone], [200, true]);
+  assert.equal(pitr.armed[1], saved.undo, 'undo restores to the saved point');
+  assert.equal(pitr.aborted, 2);
+  assert.equal(f.entries.has('restore:nesszerra'), false, 'an undone restore leaves nothing to undo');
+  const again = await call(f, '/api/dev/restore', 'POST', { channel: 'nesszerra', undo: true }, owner);
+  assert.deepEqual([again.status, again.body.reason], [409, 'nothing_to_undo']);
+});
+
+test('restore refuses times outside the 30-day window, unknown channels, and local dev without PITR', async () => {
+  const f = environment(), owner = await cookieFor(f, true), day = 86400000, now = Date.now();
+  for (const at of [now - 31 * day, now, now + day, 'yesterday', undefined]) {
+    const r = await call(f, '/api/dev/restore', 'POST', { channel: 'nesszerra', at }, owner);
+    assert.deepEqual([r.status, r.body.reason], [400, 'invalid_restore_time'], String(at));
+  }
+  const unknown = await call(f, '/api/dev/restore', 'POST', { channel: 'nobody_here', at: now - day }, owner);
+  assert.deepEqual([unknown.status, unknown.body.reason], [404, 'unknown_channel']);
+  assert.equal((await call(f, '/api/dev/restore?channel=bad%20login', 'GET', undefined, owner)).status, 400);
+  const local = await call(f, '/api/dev/restore', 'POST', { channel: 'nesszerra', at: now - day }, owner);
+  assert.deepEqual([local.status, local.body.reason], [501, 'restore_unavailable']);
+  assert.equal(f.entries.has('restore:nesszerra'), false);
+  f.env.ROOMS.get('nesszerra');
+  const room = f.rooms.get('nesszerra');
+  fakePitr(room);
+  room.ctx.storage.getBookmarkForTime = async () => 'not a bookmark; DROP TABLE';
+  const bad = await call(f, '/api/dev/restore', 'POST', { channel: 'nesszerra', at: now - day }, owner);
+  assert.deepEqual([bad.status, bad.body.reason], [502, 'invalid_bookmark']);
+  const crossOrigin = await call(f, '/api/dev/restore', 'POST', { channel: 'nesszerra', at: now - day }, owner, { Origin: 'https://evil.example' });
+  assert.equal(crossOrigin.status, 403);
 });
 
 test('export does not create a StreamElements key or change the room', async () => {

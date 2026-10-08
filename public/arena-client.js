@@ -24,9 +24,10 @@ export function createArenaClient({
   onEvent = () => {},
   onLooks = () => {},   // {type:'looks'} pushes: saved fighters changed for viewers the snapshot doesn't list
   onStatus = () => {},
-  // A socket that goes silent (no message for this long) may be half open: the network dropped but no close event came,
-  // so the overlay would freeze on its last picture. The server sends no pings, so the client asks /api/state instead and
-  // reconnects if the arena moved on without telling it. 0 turns the watchdog off.
+  // A socket can go half open: the network dropped but no close event came, so the overlay would freeze on its last
+  // picture. The client sends "ping" every pingMs and the room's auto-response answers "pong" without waking it, so a
+  // socket with no message at all for watchdogMs is dead and gets replaced. 0 turns either off.
+  pingMs = 20_000,
   watchdogMs = 45_000,
   fetchImpl = (...args) => fetch(...args),
   // Called with `new`, so this must be a plain function (an arrow function throws "is not a constructor").
@@ -146,34 +147,26 @@ export function createArenaClient({
     try { old?.close(); } catch { /* already gone */ }
     connect();
   }
-  async function watchdogTick() {
+  function watchdogTick() {
     watchdog = null;
     if (stopped) return;
     if (retryTimer) return armWatchdog();   // already reconnecting
-    const activeSocket = socket, activeGeneration = generation;
-    if (activeSocket && activeSocket.readyState === 0) { reconnectNow(); return; }   // never finished connecting
-    try {
-      const response = await fetchImpl('/api/state/' + encodeURIComponent(normalizedChannel), { method: 'GET', cache: 'no-store', headers: { accept: 'application/json' } });
-      if (!response.ok) throw new Error('Arena state HTTP ' + response.status);
-      const payload = await response.json();
-      if (stopped || activeGeneration !== generation) return;   // the socket changed meanwhile and re-armed the watchdog itself
-      const fresh = revisionOf(snapshotFrom(payload));
-      if (fresh !== null && (revision === null || fresh > revision)) {
-        receiveSnapshot(payload, 'watchdog');
-        status('reconnecting', { message: 'Arena stream was silent; reconnecting', revision });
-        reconnectNow();
-        return;
-      }
-    } catch (error) {
-      if (stopped || activeGeneration !== generation) return;
-    }
-    armWatchdog();
+    status('reconnecting', { message: 'Arena stream went silent; reconnecting', revision });
+    reconnectNow();
+  }
+  let pinger = null;
+  function startPing(activeSocket) {
+    clearInterval(pinger);
+    pinger = stopped || !(pingMs > 0) ? null : setInterval(() => {
+      if (socket !== activeSocket || activeSocket.readyState !== 1) return;
+      try { activeSocket.send('ping'); } catch { /* the watchdog notices */ }
+    }, pingMs);
   }
 
   function handleMessage(data, activeSocket) {
     if (stopped || socket !== activeSocket) return;
     armWatchdog();   // any message shows the stream is alive
-    if (typeof data !== 'string') return;
+    if (typeof data !== 'string' || data === 'pong') return;
     let payload;
     try { payload = JSON.parse(data); } catch { return; }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
@@ -228,6 +221,7 @@ export function createArenaClient({
         return;
       }
       retryAttempt = 0;
+      startPing(activeSocket);
       status('connected', { revision, transport: 'websocket' });
       void fetchSnapshot('connect');
     };
@@ -254,6 +248,8 @@ export function createArenaClient({
       retryTimer = null;
       clearTimeout(watchdog);
       watchdog = null;
+      clearInterval(pinger);
+      pinger = null;
       const activeSocket = socket;
       socket = null;
       activeSocket?.close();

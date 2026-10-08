@@ -294,10 +294,13 @@ function renderChannels(d) {
   const done = Object.values(S.progress).filter((p) => setupOf(p) === 3).length;
   $('#channels-title').textContent = on + (on === 1 ? ' channel is on' : ' channels are on') + ', ' + done + ' with setup done right now' + (S.progressLoading ? ' (checked ' + S.progressSeen + ' of ' + S.progressTotal + ' so far)' : '');
   $('#channels-text').textContent = (waiting.length ? waiting.length + (waiting.length === 1 ? ' sign-up is' : ' sign-ups are') + ' waiting for your approval at the top of the table. ' : '') + 'Setup counts as done while the overlay is open in OBS and the duel commands work, so streamers who are live right now show up as done.';
-  // the error log can read any channel that is set up
-  const pick = $('#log-channel'), current = pick.value;
-  pick.replaceChildren(...[...d.builtin, ...d.channels.map((c) => c.login)].map((login) => h('option', { value: login }, login)));
-  pick.value = current;
+  // the error log and restore can read any channel that is set up
+  for (const id of ['#log-channel', '#restore-channel']) {
+    const pick = $(id), current = pick.value;
+    pick.replaceChildren(...[...d.builtin, ...d.channels.map((c) => c.login)].map((login) => h('option', { value: login }, login)));
+    if (current) pick.value = current;
+  }
+  if (!S.restoreLoaded) { S.restoreLoaded = true; loadRestore(); }
 }
 // The sign-up page link to send a streamer: this site's /start/
 $('#signup-link').href = $('#signup-link').textContent = location.origin + '/start/';
@@ -305,6 +308,46 @@ $('#copy-signup').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText($('#signup-link').href); status('#channel-status', 'Copied.', 'ok'); }
   catch { status('#channel-status', 'Select the link and copy it with Ctrl+C.'); }
 });
+
+// ---------- restore ----------
+// Point-in-time restore (/api/dev/restore): Cloudflare keeps 30 days of each channel room's storage.
+const MINUTE = 60000, RESTORE_DAYS = 30;
+const localInput = (t) => { const d = new Date(t - new Date(t).getTimezoneOffset() * MINUTE); return d.toISOString().slice(0, 16); };
+function restoreBounds() {
+  const input = $('#restore-at'), now = Date.now();
+  input.min = localInput(now - RESTORE_DAYS * 86400000 + 2 * MINUTE);
+  input.max = localInput(now - MINUTE);
+  if (!input.value) input.value = localInput(now - 60 * MINUTE);
+}
+async function loadRestore() {
+  restoreBounds();
+  const login = $('#restore-channel').value;
+  if (!login) return;
+  const r = await api('/api/dev/restore?channel=' + encodeURIComponent(login));
+  const last = r.ok ? r.data.last : null;
+  $('#restore-last').textContent = !r.ok ? errorText(r, 'Could not read the last restore')
+    : last ? login + ' was restored to ' + fmtTime(last.at) + ' by ' + last.by + ', ' + ago(last.restoredAt) + '.' : login + ' has not been restored in the last 30 days.';
+  $('#undo-restore').hidden = !last;
+}
+async function runRestore(button, undo) {
+  const login = $('#restore-channel').value, at = new Date($('#restore-at').value).getTime();
+  if (!login) return;
+  if (!undo && !Number.isFinite(at)) return status('#restore-status', 'Pick a date and time first.', 'error');
+  const ask = undo ? 'Undo the last restore of ' + login + '? It goes back to how it was just before that restore.'
+    : 'Restore ' + login + ' to ' + fmtTime(at) + '? Everything it saved after that time is dropped: duels, ranks, dollars, fighter changes and settings.';
+  if (!confirm(ask)) return;
+  await busy(button, async () => {
+    status('#restore-status', undo ? 'Undoing the restore…' : 'Restoring ' + login + '…');
+    const r = await api('/api/dev/restore', { method: 'POST', body: undo ? { channel: login, undo: true } : { channel: login, at } });
+    if (!r.ok) return status('#restore-status', errorText(r, 'Could not restore ' + login), 'error');
+    status('#restore-status', (undo ? login + ' is back to how it was before the restore: ' : login + ' is restored: ') + fmtNum(r.data.profiles) + ' saved fighters, ' + fmtNum(r.data.players) + ' on stage.'
+      + (r.data.undoSaved ? '' : ' The undo point could not be saved, so this one cannot be undone from here.'), r.data.undoSaved ? 'ok' : 'warning');
+    loadRestore();
+  });
+}
+$('#restore-channel').addEventListener('change', loadRestore);
+$('#restore').addEventListener('click', (e) => runRestore(e.currentTarget, false));
+$('#undo-restore').addEventListener('click', (e) => runRestore(e.currentTarget, true));
 
 // ---------- logs ----------
 async function loadLogs() {

@@ -50,6 +50,7 @@
     <div class="with-index">
       <nav class="page-index" aria-label="On this page"><ol>
         <li><a href="#sec-channels">Channels</a></li>
+        <li><a href="#sec-restore">Restore a channel</a></li>
         <li><a href="#sec-health">Site health</a></li>
         <li><a href="#sec-logs">Error log</a></li>
         <li><a href="#dev-tools">Developer tools</a></li>
@@ -76,6 +77,20 @@
           </table></div>
           <p class="caveat">Overlay in OBS counts overlays open right now, so it reads "not open" whenever the streamer is offline. Chat shows how many of the StreamElements commands have reached PixFray. A channel that's off keeps its fighters and ranks; its overlay, commands and viewer page stop until it's turned back on. A channel you turn off here stays off until you turn it back on; its streamer can't. Up to <span id="channels-max">200</span> channels can be on. Export downloads one channel's fighters, ranks, settings and StreamElements command names as a JSON file; keys and tokens are never included.</p>
           <p class="toolbar"><a class="btn" id="export-registry" href="/api/dev/export?registry=1" download>Export channel list</a></p>
+        </section>
+
+        <section class="section" id="sec-restore" aria-labelledby="restore-title">
+          <h2 id="restore-title">Restore a channel to an earlier time</h2>
+          <p>Cloudflare keeps every change to a channel's fighters, ranks, dollars and settings for 30 days. Restoring puts one channel back the way it was at the time you pick, and drops everything it saved after that. Open overlays and pages reload on their own.</p>
+          <div class="controls">
+            <div><label for="restore-channel">Channel</label><select id="restore-channel"></select></div>
+            <div><label for="restore-at">Time (your clock)</label><input id="restore-at" type="datetime-local" step="60"></div>
+            <div class="end toolbar"><button class="btn btn-danger" id="restore" type="button">Restore channel</button></div>
+          </div>
+          <p class="muted" id="restore-last" role="status">Loading the last restore…</p>
+          <div class="toolbar"><button class="btn" id="undo-restore" type="button" hidden>Undo last restore</button></div>
+          <p class="status" id="restore-status" role="status"></p>
+          <p class="caveat">Only the picked channel goes back; the channel list, sign-ins and other channels stay as they are. For a copy older than 30 days, use Export above.</p>
         </section>
 
         <section class="section" id="sec-health" aria-live="polite">

@@ -194,6 +194,9 @@ export class ChannelRoom extends DurableObject {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
+    // Overlays send "ping" every 20 s to catch a half-open socket. The runtime answers "pong" itself, without waking this
+    // object from hibernation or billing its time (public/arena-client.js).
+    if (typeof WebSocketRequestResponsePair === "function") ctx.setWebSocketAutoResponse?.(new WebSocketRequestResponsePair("ping", "pong"));
     const sql = this.ctx.storage.sql;
     sql.exec("CREATE TABLE IF NOT EXISTS game_state (id INTEGER PRIMARY KEY CHECK (id = 1), channel TEXT NOT NULL, document TEXT NOT NULL)");
     sql.exec("CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT NOT NULL, avatar TEXT NOT NULL, color TEXT NOT NULL, default_ability TEXT NOT NULL, elo INTEGER NOT NULL, wins INTEGER NOT NULL, losses INTEGER NOT NULL, last_seen INTEGER NOT NULL DEFAULT 0)");
@@ -921,7 +924,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   async webSocketMessage(ws) {
-    // Overlay sockets are read-only snapshots.
+    // Overlay sockets are read-only snapshots. "ping" never reaches here: the auto-response in the constructor answers it.
     try { ws.close(1008, "Read-only socket"); } catch {}
   }
 

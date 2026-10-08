@@ -1,6 +1,6 @@
 import { chatStatus } from './game.js';
 import site from '../site.config.js';
-import { CHANNELS } from './auth.js';
+import { CHANNELS, record } from './auth.js';
 import { channelState, overview, listRecords, setPaused, LOGIN } from './channels.js';
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from './streamelements.js';
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
@@ -18,6 +18,8 @@ const SCRIPTS = site.workers;
 const MAX_FILE_BYTES = 512 * 1024;
 const BRANCH = /^(live-fix|hotfix)\/[a-z0-9][a-z0-9._-]{0,60}$/;
 const SHA = /^[a-f0-9]{40}$/;
+// Restore points from the PITR API, e.g. 0000007b-0000b26e-00001538-0c3e87bb37b3db5cc52eedb93cd3b96b.
+const BOOKMARK = /^[0-9a-f]{1,32}(-[0-9a-f]{1,64}){1,7}$/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 // Paths the web editor may never read or write: local secrets, generated output, CI definitions.
@@ -55,6 +57,7 @@ const ROUTES = {
   channels: { GET: channelsList, POST: channelsAction },
   progress: { GET: progress },
   export: { GET: exportData },
+  restore: { GET: restoreInfo, POST: restore },
   logs: { GET: ({ room, query }) => room('/dev/logs?' + logQuery(query)), DELETE: ({ room }) => room('/dev/logs', { method: 'DELETE' }) },
   settings: { GET: ({ room }) => room('/admin'), POST: settings },
   usage: { GET: async ({ env }) => json(await usage(env)) },
@@ -109,6 +112,41 @@ async function exportData({ env, c, query }) {
   const r = await c.roomFetch(login, '/dev/export');
   if (!r.ok) return fail(502, 'The channel room could not be read', 'room_unavailable', { status: r.status });
   return download({ ...head, kind: 'channel', channel: login, status: state, ...await r.json() }, `mini-chat-${login}-${day}.json`);
+}
+
+// Point-in-time restore. Cloudflare keeps 30 days of every change to a room's SQLite storage (fighters, ranks, dollars,
+// settings, logs), so one channel can go back to any minute in that window. POST {channel, at} restores to `at`;
+// POST {channel, undo: true} goes back to just before the last restore. The undo point lives in AuthStore, because the
+// room's own storage is the thing being rolled back. GET ?channel= reads the last restore for the owner page.
+const DAY_MS = 86400000, RESTORE_WINDOW_MS = 30 * DAY_MS, RESTORE_MARGIN_MS = 60000;
+async function restoreInfo({ env, query }) {
+  const login = String(query.get('channel') || '').toLowerCase();
+  if (!LOGIN.test(login)) return fail(400, 'Use ?channel=<login>', 'channel_required');
+  const last = await record(env, 'restore:' + login);
+  return json({ channel: login, last: last ? { at: last.at, restoredAt: last.restoredAt, by: last.by } : null, windowDays: 30 });
+}
+async function restore({ env, c, body }) {
+  const login = String(body?.channel || '').toLowerCase(), undo = body?.undo === true, now = Date.now(), at = Number(body?.at);
+  if (!LOGIN.test(login) || !await channelState(env, login)) return fail(404, (login || 'That channel') + ' is not set up', 'unknown_channel');
+  const last = undo ? await record(env, 'restore:' + login) : null;
+  if (undo && !last?.undo) return fail(409, 'There is no restore to undo on ' + login, 'nothing_to_undo');
+  if (!undo && !(Number.isFinite(at) && at >= now - RESTORE_WINDOW_MS + RESTORE_MARGIN_MS && at <= now - RESTORE_MARGIN_MS)) {
+    return fail(400, 'Pick a time between 30 days ago and 1 minute ago', 'invalid_restore_time');
+  }
+  const post = (path, data) => c.roomFetch(login, path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  const r = await post('/dev/restore', undo ? { bookmark: last.undo } : { at });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); return fail(r.status === 501 ? 501 : 502, e.error || 'The channel room could not be restored', e.reason || 'room_unavailable'); }
+  const point = await r.json();
+  // The restore is now armed for the room's next start, so restart it right away: waiting would apply it at some
+  // random later moment. ctx.abort() ends the room's session, so this call fails by design.
+  await post('/dev/restart', {}).catch(() => null);
+  let after = null;
+  for (let i = 0; i < 3 && !after; i++) after = await post('/dev/restored', { revision: point.revision }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+  let undoSaved = true;
+  try { await record(env, 'restore:' + login, undo ? null : { at, restoredAt: now, by: c.user.login, undo: point.undo }, now + RESTORE_WINDOW_MS); }
+  catch { undoSaved = false; }
+  if (!after) return fail(502, 'Restored, but the room has not started again yet. Open the channel page in a minute to check.', 'restart_pending', { undoSaved });
+  return json({ ok: true, channel: login, at: undo ? null : at, undone: undo, undoSaved, players: after.players, profiles: after.profiles });
 }
 
 // Owner Channels box: turn a channel off or on. Off from here sticks: the streamer can't turn it back on.
@@ -455,6 +493,32 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
     if (names.top === '!top') names.top = DEFAULT_SE_NAMES.top;
     return json({ counts: { profiles: profiles.length, configVersions: history.length, customCharacters: characters.length, purchases: purchases.length, builds: builds.length, customPets: pets.length },
       profiles, purchases, builds, customPets: pets, config: state.config, configVersion: state.configVersion, configHistory: history, customCharacters: characters, streamelements: { commandNames: names } });
+  }
+  // Point-in-time restore, called by the Worker's restore() in this order: restore arms the restore point and returns
+  // the undo point; restart ends this session so the next one loads the restored storage; restored moves the revision
+  // past the pre-restore one, because open overlays drop a snapshot older than the last revision they saw.
+  if (path === '/dev/restore' && method === 'POST') {
+    const body = await request.json().catch(() => ({})), storage = room.ctx.storage;
+    const unavailable = () => json({ error: 'Restore works on Cloudflare only, not in local dev', reason: 'restore_unavailable' }, 501);
+    if (typeof storage.getBookmarkForTime !== 'function' || typeof storage.onNextSessionRestoreBookmark !== 'function') return unavailable();
+    let bookmark;
+    try { bookmark = body.bookmark ? String(body.bookmark) : await storage.getBookmarkForTime(Number(body.at)); } catch { return unavailable(); }
+    if (!BOOKMARK.test(bookmark)) return json({ error: 'Invalid restore point', reason: 'invalid_bookmark' }, 400);
+    const revision = room.readState(channel).revision, undo = await storage.onNextSessionRestoreBookmark(bookmark);
+    return json({ ok: true, undo, revision });
+  }
+  if (path === '/dev/restart' && method === 'POST') {
+    room.ctx.abort('Restoring channel data');
+    return json({ ok: true });
+  }
+  if (path === '/dev/restored' && method === 'POST') {
+    const body = await request.json().catch(() => ({})), state = room.readState(channel);
+    state.revision = Math.max(Number(state.revision) || 0, Number(body.revision) || 0) + 1;
+    room.writeState(state);
+    logRoomEvent(room, 'warn', 'Channel data restored to an earlier time', { revision: state.revision });
+    room.broadcast(state);
+    room.looksReset = true; room.flushLooksSoon();   // overlays drop the saved looks they cached and fetch them again
+    return json({ ok: true, revision: state.revision, players: state.players.length, profiles: Number(sql.exec('SELECT COUNT(*) AS n FROM profiles').toArray()[0]?.n) || 0 });
   }
   return json({ error: 'Not found' }, 404);
 }

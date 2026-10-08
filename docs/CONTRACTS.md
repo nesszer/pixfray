@@ -91,6 +91,7 @@ everything else is revalidated.
 | POST | `/api/assets/:channel` | canManage | `{label:1-32 chars, mode:"single"\|"frames", fps:1-30, atlas:<base64 PNG, data: prefix allowed>, frames:[Frame], animations:{idle?,walk?,attack?,ko?,jump?,cheer?:[Frame]}}` | 201 `{ok:true, item:CatalogEntry, usage:{count,limit,bytes}}` | `{ok:false, reason, error}`: 400 `invalid_label`/`invalid_*`/`too_many_frames`/`frame_too_large`/`frame_out_of_bounds`/`atlas_dimensions`, 413 `atlas_too_large`, 415 `not_png`, 409 `custom_limit_reached`, 401, 403 |
 | DELETE | `/api/assets/:channel/:id` | canManage | none | `{ok:true, id, usage}` | 404 `not_found`, 401, 403 |
 | GET | `/api/dev/diagnostics` | owner | none | `{worker:{version,twitchConfigured,productionEnabled,deployedVersion}, room:{channel,revision,chat:{connected,lastSeen,status},chatStatus,paused,configVersion,players,openDuels,sockets:{live},errors,errorsBySource,lastError}, integrations:{github:{configured,missing[],repo,base,workflow}, cloudflare:{configured,missing[],versionMetadata}}, usage}`; `room` also has `seLastCommandAt` (0 until a StreamElements command arrives with the current key); `errors` and `lastError` count only `room` and `worker` entries, because command lines and warnings (also listed in `errorsBySource`) are not errors | 401, 403 |
+| GET, POST | `/api/dev/restore` | owner | POST `{channel, at:ms}` or `{channel, undo:true}` | Point-in-time restore of one channel's room (Cloudflare keeps 30 days of every SQLite Durable Object). `at` must be between 30 days and 1 minute ago. The Worker calls the room's internal `POST /dev/restore` (arms the restore point, returns the undo point and the revision), `POST /dev/restart` (`ctx.abort()`, so the next session loads it) and `POST /dev/restored` (revision = max(old, restored) + 1, broadcast, looks reset), then keeps `{at, restoredAt, by, undo}` in AuthStore `restore:<login>` for 30 days. `undo:true` restores to that undo point and drops the record. Answers `{ok, channel, at, undone, undoSaved, players, profiles}`. GET `?channel=` answers `{channel, last:{at, restoredAt, by}\|null, windowDays:30}`. Only that room goes back; the channel registry, sessions and other channels don't. | 400 `invalid_restore_time`/`channel_required`, 404 `unknown_channel`, 409 `nothing_to_undo`, 501 `restore_unavailable` (local dev), 502 `room_unavailable`/`restart_pending` |
 | GET, DELETE | `/api/dev/logs[?source=room\|worker&limit=1..100]` | owner | none | GET: error rows `[{id,at,source,message,context}]`, newest first. DELETE clears them. | 401, 403 |
 | GET, POST | `/api/dev/settings` | owner | POST `{action:"config"\|"rollbackConfig", payload}` or `{action:"connectChat"\|"disconnectChat", takeover?:true}` | The same versioned config as `/api/admin` (history rows carry the owner's actorName); chat actions answer like the admin ones | 400, 403 `reconnect`, 409, 502 |
 | GET, POST | `/api/dev/channels` | owner | POST `{action:"pause"\|"resume", login}` | `{builtin:[login], max, channels:[{login,enabledAt,pausedAt,pausedBy,review?}], progressBatch:40}`. GET no longer returns setup progress; the owner page reads it from `/api/dev/progress` in batches of `progressBatch` after the list renders | 400 `builtin`/`unknown_action`, 404 `not_found`, 403 `full` (resuming past 200 channels on) |
@@ -172,9 +173,12 @@ channel of that account only, so nobody can turn on someone else's channel.
 
 ## 3. Overlay socket `/api/live/:channel`
 
-The server sends a snapshot as soon as the socket opens and after every visible change. The client
-sends nothing; any client message closes the socket with 1008. Reconnect with backoff, and use
-`GET /api/state/:channel` as the fallback.
+The server sends a snapshot as soon as the socket opens and after every visible change. The only
+message a client may send is the text `ping`, which the room's WebSocket auto-response answers with
+`pong` without waking the Durable Object; any other client message closes the socket with 1008.
+`public/arena-client.js` pings every 20 s and replaces a socket that has received nothing, not even
+`pong`, for 45 s (half open). Reconnect with backoff, and use `GET /api/state/:channel` for the state
+after each (re)connect.
 
 ```
 Snapshot = {

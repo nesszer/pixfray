@@ -55,71 +55,68 @@ test('arena client: snapshots without serverNow pass through unchanged', () => {
   h.client.disconnect();
 });
 
-// Watchdog: the server sends no pings, so a half-open socket looks like a quiet arena. After 45 s of silence the client
-// asks /api/state and reconnects only if the arena moved on.
-function watchdogHarness(stateRevision) {
+// Ping and watchdog: the client sends "ping" every 20 s, the room's auto-response answers "pong", and a socket with no
+// message at all for 45 s is half open, so it gets replaced. No /api/state polling.
+function watchdogHarness() {
   globalThis.location = { protocol: 'https:', host: 'test.example' };
-  const sockets = [], snapshots = [], fetches = [];
-  function FakeSocket() { this.closed = false; this.close = () => { this.closed = true; }; sockets.push(this); }
+  const sockets = [], snapshots = [], events = [], fetches = [];
+  function FakeSocket() { this.readyState = 0; this.sent = []; this.closed = false; this.send = (m) => this.sent.push(m); this.close = () => { this.closed = true; this.readyState = 3; }; sockets.push(this); }
   const client = createArenaClient({
     channel: 'nesszerra',
     onSnapshot: (s) => snapshots.push(s),
-    fetchImpl: async (url) => {
-      fetches.push(url);
-      if (fetches.length === 1) return new Promise(() => {});   // the initial snapshot fetch never answers
-      return { ok: true, json: async () => ({ type: 'snapshot', revision: stateRevision(), players: [], events: [] }) };
-    },
+    onEvent: (e) => events.push(e),
+    fetchImpl: (url) => { fetches.push(url); return new Promise(() => {}); },
     WebSocketImpl: FakeSocket,
   });
-  const send = (payload) => sockets.at(-1).onmessage({ data: JSON.stringify(payload) });
-  return { client, sockets, snapshots, fetches, send };
+  const open = () => { const ws = sockets.at(-1); ws.readyState = 1; ws.onopen(); };
+  const send = (data) => sockets.at(-1).onmessage({ data: typeof data === 'string' ? data : JSON.stringify(data) });
+  return { client, sockets, snapshots, events, fetches, open, send };
 }
-const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
 
-test('arena client watchdog: 45 s of silence and a newer /api/state revision reconnects the socket', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  let revision = 5;
-  const h = watchdogHarness(() => revision);
+test('arena client ping: an open socket sends "ping" every 20 s, and "pong" keeps it without polling /api/state', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const h = watchdogHarness();
+  h.open();
   h.send({ type: 'snapshot', revision: 5, players: [], events: [] });
+  const fetched = h.fetches.length;
+  for (let i = 0; i < 6; i++) { t.mock.timers.tick(20_000); h.send('pong'); }
+  assert.equal(h.sockets[0].sent.filter((m) => m === 'ping').length, 6, 'one ping per 20 s');
+  assert.equal(h.sockets.length, 1, 'answered pings keep the socket');
+  assert.equal(h.fetches.length, fetched, 'no /api/state polling');
+  assert.equal(h.snapshots.length, 1, 'pong is not a snapshot');
+  assert.equal(h.events.length, 0, 'or an event');
+  h.client.disconnect();
+});
+
+test('arena client watchdog: 45 s with no pong or message replaces the socket', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const h = watchdogHarness();
+  h.open();
+  h.send({ type: 'snapshot', revision: 5, players: [], events: [] });
+  const fetched = h.fetches.length;
   t.mock.timers.tick(44_999);
-  await flush();
-  assert.equal(h.fetches.length, 1, 'no state fetch before 45 s');
-  revision = 8;   // the arena moved on while the socket said nothing
+  assert.equal(h.sockets.length, 1, 'two pings unanswered is not yet 45 s');
   t.mock.timers.tick(1);
-  await flush();
-  assert.equal(h.fetches.length, 2, 'one /api/state fetch');
-  assert.equal(h.fetches[1], '/api/state/nesszerra');
   assert.equal(h.sockets.length, 2, 'a fresh socket was opened');
   assert.equal(h.sockets[0].closed, true, 'the silent one was dropped');
-  assert.equal(h.snapshots.at(-1).revision, 8, 'the newer state was applied');
-  assert.equal(h.client.revision, 8);
+  assert.equal(h.fetches.length, fetched, 'the watchdog itself fetches nothing; the new socket asks for state once it opens');
+  t.mock.timers.tick(20_000);
+  assert.equal(h.sockets[0].sent.length, 2, 'the dropped socket gets no more pings');
+  assert.equal(h.sockets[1].sent.length, 0, 'a socket that is still connecting gets none either');
   h.client.disconnect();
 });
 
-test('arena client watchdog: an unchanged revision keeps the socket and asks again 45 s later', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const h = watchdogHarness(() => 5);
-  h.send({ type: 'snapshot', revision: 5, players: [], events: [] });
-  t.mock.timers.tick(45_000);
-  await flush();
-  assert.equal(h.fetches.length, 2);
-  assert.equal(h.sockets.length, 1, 'a quiet arena is not a dead socket');
-  t.mock.timers.tick(45_000);
-  await flush();
-  assert.equal(h.fetches.length, 3, 'the watchdog re-arms');
-  h.client.disconnect();
-});
-
-test('arena client watchdog: every message restarts the 45 s wait, and disconnect stops it', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const h = watchdogHarness(() => 9);
+test('arena client watchdog: every message restarts the 45 s wait, and disconnect stops pings and the watchdog', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const h = watchdogHarness();
+  h.open();
   t.mock.timers.tick(40_000);
   h.send({ type: 'snapshot', revision: 5, players: [], events: [] });
   t.mock.timers.tick(40_000);
-  await flush();
-  assert.equal(h.fetches.length, 1, '40 s after the last message is not silence yet');
+  assert.equal(h.sockets.length, 1, '40 s after the last message is not silence yet');
   h.client.disconnect();
+  const sent = h.sockets[0].sent.length;
   t.mock.timers.tick(200_000);
-  await flush();
-  assert.equal(h.fetches.length, 1, 'no checks after disconnect');
+  assert.equal(h.sockets.length, 1, 'no reconnect after disconnect');
+  assert.equal(h.sockets[0].sent.length, sent, 'no pings after disconnect');
 });
