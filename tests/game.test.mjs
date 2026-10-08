@@ -1033,7 +1033,15 @@ test("!rematch challenges the last finished duel's opponent, with the rematch lo
     }),
     "alice, you have nobody to rematch yet. Start one: !challenge @name",
   );
-  assert.match(seHelpText({ names: { rematch: "!again" } }), / Again\? !again\. More: !checkin !wallet !ranks !look$/);
+  assert.match(
+    seHelpText({ names: { rematch: "!again" } }),
+    / Again\? !again\. More: !checkin !wallet !ranks !look\. Gear up on the PixFray site$/,
+  );
+  // Nothing follows the link: Twitch would take it into the link.
+  assert.match(
+    seHelpText({ origin: "https://x.example", channel: "miolafff" }),
+    / at https:\/\/x\.example\/\?channel=miolafff$/,
+  );
   assert.equal(seLookText({ who: "Alice", hasFighter: true }), "@Alice, change your look on the PixFray site");
 });
 

@@ -2,10 +2,18 @@
 // ?channel=<login> picks the channel; the configured default is used otherwise.
 // Without it the viewer page asks which stream the viewer watches (CHANNEL_PICKED false); the admin page uses the default.
 import site from "../site.config.js";
+import { channelParam } from "./channel-param.js";
 // The pages' HTML names the default channel (%SITE_CHANNEL%, vite.config.js); applyChannel swaps it for the current one.
 const TEMPLATE_CHANNEL = site.defaultChannel;
-const asked = (new URLSearchParams(location.search).get("channel") || "").toLowerCase();
-export const CHANNEL_PICKED = /^[a-z0-9_]{1,25}$/.test(asked);
+const raw = new URLSearchParams(location.search).get("channel");
+const asked = channelParam(raw);
+export const CHANNEL_PICKED = asked !== "";
+// A link that carried trailing punctuation from chat: show the clean address, so sharing or signing in keeps it.
+if (CHANNEL_PICKED && raw !== asked) {
+  const u = new URL(location.href);
+  u.searchParams.set("channel", asked);
+  history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+}
 export const CHANNEL = CHANNEL_PICKED ? asked : site.defaultChannel;
 // A same-site link that keeps the current channel. Links always name it, since the viewer page without one is the /play/ picker.
 export const withChannel = (path) => path + (path.includes("?") ? "&" : "?") + "channel=" + CHANNEL;

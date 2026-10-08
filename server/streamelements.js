@@ -190,7 +190,8 @@ const noFighter = (who, self, origin, channel) =>
 export function seHelpText({ names = {}, origin = "", channel = "" } = {}) {
   const n = (a) => names[a] || DEFAULT_SE_NAMES[a];
   const link = siteLink(origin, channel);
-  return `PixFray duels: gear up${link ? " at " + link : " on the PixFray site"}, then name your rival with ${n("challenge")} @name. They answer ${n("accept")}. Again? ${n("rematch")}. More: ${n("checkin")} ${n("wallet")} ${n("top")} ${n("look")}`;
+  // The link goes last: Twitch takes punctuation right after a link into it, and the page then can't tell the channel.
+  return `PixFray duels: name your rival with ${n("challenge")} @name. They answer ${n("accept")}. Again? ${n("rematch")}. More: ${n("checkin")} ${n("wallet")} ${n("top")} ${n("look")}. Gear up ${link ? "at " + link : "on the PixFray site"}`;
 }
 
 // The bot's timed reminder (config.reminderMin): the !fray line, which already lists the other commands.
