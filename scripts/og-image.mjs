@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import site from '../site.config.js';
+import { chromeOptions } from '../tests/chrome.mjs';
 
 const root = new URL('../public/', import.meta.url);
 const catalog = JSON.parse(readFileSync(new URL('assets/characters.json', root)));
@@ -28,10 +28,10 @@ p { margin: 20px 0 0; font-size: 36px; color: #d6c6a8; }
 .row { margin-top: auto; display: flex; align-items: flex-end; justify-content: space-between; padding-bottom: 36px; border-bottom: 2px solid #6b5234; }
 .s { flex: none; }
 </style></head><body><div class="wrap">
-<h1>PixFray</h1><p>Pick your fighter and duel in ${site.defaultChannel}'s Twitch chat.</p>
+<h1>PixFray</h1><p>Pick your fighter and duel in the Twitch chats you watch.</p>
 <div class="row">${picks.map(sprite).join('')}</div></div></body></html>`;
 
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch(chromeOptions());
 const page = await browser.newPage({ viewport: { width: 1200, height: 630 } });
 const file = join(mkdtempSync(join(tmpdir(), 'og-')), 'og.html');   // file:// so the art and font load
 writeFileSync(file, html);
