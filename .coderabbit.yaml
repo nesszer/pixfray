@@ -64,8 +64,8 @@ reviews:
       - name: Config lives in site.config.js
         mode: warning
         instructions: >-
-          Fail if the pull request hard-codes a Twitch channel login, bot login, Worker name or domain
-          (such as pixfray.xyz) outside site.config.js, docs/, tests/ or AGENTS.md. Pass otherwise.
+          Fail if the pull request hard-codes a Twitch channel login, bot login, Worker name or the site's
+          domain outside site.config.js, docs/, tests/, AGENTS.md or .coderabbit.yaml. Pass otherwise.
   tools:
     # oxlint matches CI (.oxlintrc.json); gitleaks, actionlint and shellcheck cover secrets, workflows and .githooks.
     oxc:
