@@ -1,0 +1,6 @@
+// The Cloudflare Worker and its Durable Objects (server/).
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "lib": ["esnext"], "types": ["@cloudflare/workers-types"] },
+  "include": ["server/**/*.js", "site.config.js"]
+}

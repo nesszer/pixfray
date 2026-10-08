@@ -2,12 +2,17 @@
   "name": "mini-chat",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "license": "MIT",
+  "type": "module",
   "scripts": {
     "dev": "cf dev",
     "build": "cf build",
     "deploy": "cf deploy",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint --deny-warnings",
+    "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.web.json && tsc -p tsconfig.node.json",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit",
     "test": "node tests/smoke.mjs",
     "test:unit": "node --import ./tests/register.mjs --test \"tests/*.test.mjs\"",
     "test:ui": "node tests/ui.mjs && node tests/arena-browser.mjs",
@@ -19,17 +24,23 @@
     "test:all": "node scripts/test-all.mjs",
     "test:live": "node scripts/live-chat-e2e.mjs"
   },
+  "dependencies": {
+    "three": "0.186.1"
+  },
   "devDependencies": {
     "@cloudflare/vite-plugin": "beta",
+    "@cloudflare/workers-types": "5.20261001.1",
     "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
     "cf": "1.0.0-beta.9",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
+    "oxlint-tsgolint": "7.0.2003",
+    "typescript": "7.0.2",
     "vite": "8.3.0"
   },
   "overrides": {
     "undici": "7.30.0"
-  },
-  "dependencies": {
-    "three": "0.186.1"
   },
   "trustedDependencies": [
     "workerd"

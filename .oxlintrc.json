@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": { "typeAware": true },
+  "env": { "es2024": true },
+  "ignorePatterns": ["dist/**", ".cf/**", "public/assets/**"],
+  "rules": {
+    // The chat sanitizers strip control characters on purpose.
+    "no-control-regex": "off",
+    // Flags `body: undefined` on GET requests, which fetch accepts.
+    "unicorn/no-invalid-fetch-options": "off",
+    // Without type annotations it misreads optional parameters as always set.
+    "typescript/no-useless-default-assignment": "off",
+    // Only the Worker must await or hand every promise to waitUntil (see the server override below).
+    "typescript/no-floating-promises": "off"
+  },
+  "overrides": [
+    {
+      // A promise the Worker drops can be cancelled when the response ends.
+      "files": ["server/**/*.js"],
+      "rules": { "typescript/no-floating-promises": "error" }
+    }
+  ]
+}
