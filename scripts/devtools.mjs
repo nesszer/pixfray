@@ -4,10 +4,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import siteConfig from "../site.config.js";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Real secrets stay outside the repo folder, in ~/.pixfray/ (docs/SELF_HOSTING.md).
 const SECRETS = process.env.MINI_SECRETS || path.join(os.homedir(), ".pixfray", "secrets.json"); // DEV_TOOLS_TOKEN, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
 const ALT_FILE = process.env.MINI_DEVTOOLS_FILE || path.join(os.homedir(), ".pixfray", "devtools.json"); // alt account tokens from `login`

@@ -85,6 +85,7 @@ const lineText = (n) => {
 async function lines(page, freshOnly = false) {
   return page.$$eval(
     freshOnly ? ".chat-line__message:not([data-e2e-seen])" : ".chat-line__message",
+    // oxlint-disable-next-line no-eval -- rebuilds lineText inside the page, which only takes serializable arguments
     (ns, src) => ns.map((n) => (0, eval)(src)(n)),
     lineText.toString(),
   );
@@ -92,6 +93,7 @@ async function lines(page, freshOnly = false) {
 // Every new chat line with the time it showed, so lines the bot posts on its own (results, expiries) can be found later.
 async function collect(page) {
   await page.evaluate((src) => {
+    // oxlint-disable-next-line no-eval -- same as in lines()
     const text = (0, eval)(src);
     window.__e2eChat = [];
     document.querySelectorAll(".chat-line__message").forEach((n) => n.setAttribute("data-e2e-log", ""));

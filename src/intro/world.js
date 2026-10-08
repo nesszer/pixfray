@@ -130,7 +130,6 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
           : [0.22 + shade + wear, 0.145 + (shade + wear) * 0.7, 0.088 + wear * 0.4];
         topY = (hash(board * 7, run * 3) - 0.5) * 0.02;
         kind = "floor";
-        const ang = Math.atan2(z, x);
         if (Math.abs(r - 2.66) < cell * 0.55) {
           topY = -0.01;
           color = [0.12, 0.075, 0.045];

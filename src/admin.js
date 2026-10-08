@@ -1010,7 +1010,7 @@ const mergeConfig = (base, patch) => ({
   ...base,
   ...patch,
   abilities: Object.fromEntries(
-    Object.entries(base.abilities || {}).map(([k, v]) => [k, { ...v, ...(patch.abilities?.[k] || {}) }]),
+    Object.entries(base.abilities || {}).map(([k, v]) => [k, { ...v, ...patch.abilities?.[k] }]),
   ),
 });
 $("#config-form").addEventListener("submit", async (event) => {

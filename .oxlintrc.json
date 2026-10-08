@@ -4,12 +4,18 @@
   "env": { "es2024": true },
   "ignorePatterns": ["dist/**", ".cf/**", "public/assets/**"],
   "rules": {
-    // The chat sanitizers strip control characters on purpose.
+    // The chat sanitizers strip control, zero-width and combining characters one by one on purpose.
     "no-control-regex": "off",
+    "no-misleading-character-class": "off",
+    // `({ dollars, ...rest }) => rest` drops a field on purpose.
+    "no-unused-vars": ["warn", { "ignoreRestSiblings": true }],
     // Flags `body: undefined` on GET requests, which fetch accepts.
     "unicorn/no-invalid-fetch-options": "off",
-    // Without type annotations it misreads optional parameters as always set.
+    // These need declared types to be right; in plain JavaScript they misread optional parameters, string ids
+    // and FileReader results.
     "typescript/no-useless-default-assignment": "off",
+    "typescript/require-array-sort-compare": "off",
+    "typescript/no-base-to-string": "off",
     // Only the Worker must await or hand every promise to waitUntil (see the server override below).
     "typescript/no-floating-promises": "off"
   },
@@ -18,6 +24,11 @@
       // A promise the Worker drops can be cancelled when the response ends.
       "files": ["server/**/*.js"],
       "rules": { "typescript/no-floating-promises": "error" }
+    },
+    {
+      // Test doubles pass methods around and spread ASCII test strings.
+      "files": ["tests/**"],
+      "rules": { "typescript/unbound-method": "off", "typescript/no-misused-spread": "off" }
     }
   ]
 }

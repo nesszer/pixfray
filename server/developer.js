@@ -429,26 +429,22 @@ async function versions({ env }) {
     out[target] = {
       script,
       deployments: d.ok
-        ? (d.data.result?.deployments || [])
-            .slice(0, 5)
-            .map((x) => ({
-              id: x.id,
-              createdOn: x.created_on,
-              source: x.source,
-              message: x.annotations?.["workers/message"] || "",
-              versions: (x.versions || []).map((y) => ({ versionId: y.version_id, percentage: y.percentage })),
-            }))
+        ? (d.data.result?.deployments || []).slice(0, 5).map((x) => ({
+            id: x.id,
+            createdOn: x.created_on,
+            source: x.source,
+            message: x.annotations?.["workers/message"] || "",
+            versions: (x.versions || []).map((y) => ({ versionId: y.version_id, percentage: y.percentage })),
+          }))
         : [],
       versions: v.ok
-        ? (v.data.result?.items || [])
-            .slice(0, 10)
-            .map((x) => ({
-              id: x.id,
-              number: x.number,
-              createdOn: x.metadata?.created_on,
-              tag: x.annotations?.["workers/tag"] || "",
-              message: x.annotations?.["workers/message"] || "",
-            }))
+        ? (v.data.result?.items || []).slice(0, 10).map((x) => ({
+            id: x.id,
+            number: x.number,
+            createdOn: x.metadata?.created_on,
+            tag: x.annotations?.["workers/tag"] || "",
+            message: x.annotations?.["workers/message"] || "",
+          }))
         : [],
       error: d.ok && v.ok ? undefined : "Cloudflare API error " + (d.ok ? v.status : d.status),
     };

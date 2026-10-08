@@ -334,7 +334,7 @@ export async function connectChat(
     });
   const asBot = userId !== broadcasterId,
     allowBot = "/auth/login?channel=" + channel + "&connect=bot";
-  if (!/^https:\/\//.test(origin)) throw fail("PUBLIC_ORIGIN must be https for Twitch webhooks", 400);
+  if (!String(origin).startsWith("https://")) throw fail("PUBLIC_ORIGIN must be https for Twitch webhooks", 400);
   const callback = origin + EVENTSUB_PATH;
   const all = await listChatSubscriptions(env);
   const ours = (s) => s.transport?.method === "webhook" && s.transport.callback === callback;

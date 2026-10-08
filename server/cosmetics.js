@@ -126,9 +126,7 @@ export const BUILD_FIELDS = [
   ...COSMETIC_KINDS.map((k) => COSMETIC_FIELDS[k]),
 ];
 export const buildOf = (profile) =>
-  Object.fromEntries(
-    BUILD_FIELDS.map((f) => [f, f === "stats" ? { ...(profile?.stats || {}) } : (profile?.[f] ?? "")]),
-  );
+  Object.fromEntries(BUILD_FIELDS.map((f) => [f, f === "stats" ? { ...profile?.stats } : (profile?.[f] ?? "")]));
 
 // The public shop list with this channel's prices (GET /api/shop).
 export function cosmeticCatalog(config) {

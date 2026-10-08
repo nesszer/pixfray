@@ -366,7 +366,7 @@ function expireState(state, now) {
   return changed;
 }
 
-function addRecent(state, event, now) {
+function addRecent(state, event) {
   const id = normalizeUserId(event.messageId || event.id);
   if (!id) return { ok: false, reason: "missing_message_id" };
   if (state.appliedMessageIds.includes(id)) return { ok: false, reason: "duplicate" };
@@ -1216,7 +1216,7 @@ export function reduceGame(inputState, event, now = Date.now()) {
       addEvent(state, "player_seen", now, { userId });
     } else result = { ok: false, reason: "active_player_cap" };
   } else if (event?.type === "command") {
-    const dedupe = addRecent(state, event, now);
+    const dedupe = addRecent(state, event);
     if (!dedupe.ok) result = { ok: false, reason: dedupe.reason };
     else if (!state.chat.connected) result = { ok: false, reason: "chat_offline" };
     else if (!Number.isFinite(event.timestamp) || now - event.timestamp > 60_000 || event.timestamp - now > 10_000)

@@ -128,7 +128,9 @@ function pump() {
     if (!look) {
       if (++job.tries < 40)
         setTimeout(() => {
-          if (waiting.get(job.target) === job) (queue.push(job), wake());
+          if (waiting.get(job.target) !== job) return;
+          queue.push(job);
+          wake();
         }, 250);
       continue;
     }
@@ -189,7 +191,7 @@ function fillRest() {
 }
 // queues every shown tile, in page order; a tab that just opened calls it so its lower tiles don't stay flat
 export function voxAll() {
-  for (const [t, job] of waiting) if (!t.isConnected) waiting.delete(t);
+  for (const t of waiting.keys()) if (!t.isConnected) waiting.delete(t);
   for (const job of waiting.values())
     if (job.target.isConnected && job.target.offsetParent && !queue.includes(job)) queue.push(job);
   if (queue.length) wake();

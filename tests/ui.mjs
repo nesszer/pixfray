@@ -1192,10 +1192,7 @@ try {
         payload: { patch: { enabled: false }, baseVersion: 3, note: "duels paused" },
       });
       await page.locator("#duels tbody tr").first().getByRole("button", { name: "Cancel duel" }).click();
-      await page.waitForFunction(
-        (n) => document.querySelector("#action-status").textContent.includes("cancelled"),
-        posts.length,
-      );
+      await page.waitForFunction(() => document.querySelector("#action-status").textContent.includes("cancelled"));
       assert.deepEqual(posts.at(-1), { action: "cancelDuel", payload: { duelId: "d1" } });
       await page.locator("#reset-health").click();
       await page.waitForTimeout(150);

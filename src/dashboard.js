@@ -1119,7 +1119,7 @@ function renderAll() {
 }
 
 function applyProfile(p) {
-  state.owned = { ...emptyOwned(), ...(p?.owned || {}) };
+  state.owned = { ...emptyOwned(), ...p?.owned };
   state.builds = Array.isArray(p?.builds) ? [...p.builds] : [];
   if (p && !state.builds[p.build || 0]) state.builds[p.build || 0] = p; // the active build is always the profile itself
   state.slot = p?.build || 0;

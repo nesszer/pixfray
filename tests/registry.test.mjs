@@ -47,7 +47,7 @@ function environment() {
     ROOMS: {
       idFromName: (x) => x,
       get: (channel) => ({
-        async fetch(url, init) {
+        async fetch(url) {
           rooms.push({ channel, path: new URL(url).pathname });
           return Response.json(new URL(url).pathname === "/se" ? { reply: "room answered" } : { channel });
         },
@@ -347,7 +347,7 @@ test(`the registry is capped at ${MAX_CHANNELS} channels that are on`, async (t)
   assert.equal(await isFull(env), true, "the /play/ search stops inviting (picker full)");
 });
 
-test("turning a channel off keeps its admin page; overlay feed, viewer page and commands say it is off", async (t) => {
+test("turning a channel off keeps its admin page; overlay feed, viewer page and commands say it is off", async () => {
   const { env } = environment();
   await record(env, "channel:newstreamer", { id: "55", login: "newstreamer", enabledAt: 1 }, Date.now() + 86400000);
   const streamer = await signIn(env, STREAMER),

@@ -1027,7 +1027,7 @@ async function start() {
             a: String(event.a),
             b: String(event.b),
             status: "active",
-            hp: { ...(event.hp || {}) },
+            hp: { ...event.hp },
             rules: { maxHp: Number(arenaConfig?.maxHp) || 100 },
           });
           const fa = findPlayer(String(event.a)),

@@ -1340,7 +1340,7 @@ function frame() {
   sky.material.uniforms.uTime.value = t;
   embers.material.uniforms.uTime.value = t * tm;
   embers.material.uniforms.uBurst.value = lastRoll === 2 && t - rollAt < 0.8 ? (1 - (t - rollAt) / 0.8) * 2 : 0;
-  lanterns.flames.forEach((f, i) => {
+  lanterns.flames.forEach((f) => {
     f.mesh.material.emissiveIntensity =
       2.8 + (reduced ? 0 : Math.sin(t * 9 + f.seed) * 0.35 + Math.sin(t * 23 + f.seed * 3) * 0.2);
   });

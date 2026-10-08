@@ -44,11 +44,11 @@ test("spritify: sizes, cut-outs and the background fill", () => {
   assert.equal(at(cut, 150, 100)[3], 255);
   assert.deepEqual(contentBox(cut), { x: 91, y: 41, width: 119, height: 119 });
   // A picture that is already cut out is left alone.
-  const png = picture(20, 20, (x, y) => (x > 5 && x < 15 ? [0, 0, 0, 255] : [255, 255, 255, 0]));
+  const png = picture(20, 20, (x) => (x > 5 && x < 15 ? [0, 0, 0, 255] : [255, 255, 255, 0]));
   assert.equal(hasCutout(png), true);
   assert.equal(removeBackground(png), png);
   // A subject touching the border keeps its body: only the border's main colors are background.
-  const tall = picture(100, 100, (x, y) => (x > 40 && x < 60 ? [200, 20, 20, 255] : [255, 255, 255, 255]));
+  const tall = picture(100, 100, (x) => (x > 40 && x < 60 ? [200, 20, 20, 255] : [255, 255, 255, 255]));
   const kept = removeBackground(tall);
   assert.equal(at(kept, 50, 0)[3], 255);
   assert.equal(at(kept, 10, 50)[3], 0);

@@ -202,7 +202,7 @@ export async function isOwner(env, user) {
 // Where sign-in returns: a page on this site (the one the sign-in started on, with its ?channel= and #tab), never
 // another site, /auth/ or /api/.
 export function safeNext(v) {
-  if (typeof v !== "string" || v.length > 500 || !/^\/(?![\/\\])/.test(v) || /[\u0000-\u001f\\]/.test(v)) return "/";
+  if (typeof v !== "string" || v.length > 500 || !/^\/(?![/\\])/.test(v) || /[\u0000-\u001f\\]/.test(v)) return "/";
   const u = new URL(v, "https://next.invalid");
   return u.origin === "https://next.invalid" && !/^\/(auth|api)(\/|$)/.test(u.pathname)
     ? u.pathname + u.search + u.hash

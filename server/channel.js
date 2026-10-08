@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import site from "../site.config.js";
 import {
-  applyProfile,
   chatStatus,
   createInitialState,
   defaultConfig,

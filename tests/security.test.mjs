@@ -60,7 +60,7 @@ function environment(extra = {}) {
     ROOMS: {
       idFromName: (x) => x,
       get: (channel) => ({
-        async fetch(url, init = {}) {
+        async fetch(url) {
           const path = new URL(url).pathname;
           rooms.push({ channel, path });
           return Response.json(path === "/catalog" ? [] : { ok: true, path });

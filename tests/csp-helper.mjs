@@ -3,7 +3,7 @@
 import { OVERLAY_CSP } from "../server/security.js";
 export async function enforceCsp(target) {
   await target.route(
-    (url) => /\/overlay\.html$/.test(url.pathname),
+    (url) => url.pathname.endsWith("/overlay.html"),
     async (route) => {
       if (route.request().resourceType() !== "document") return route.fallback();
       const response = await route.fetch(),
