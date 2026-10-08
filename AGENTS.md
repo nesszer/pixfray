@@ -27,6 +27,8 @@ It is not wrangler: never `wrangler deploy` or `--env`.
 
 - **Staging first.** Every change deploys to staging (`--mode test`) and is checked there. Production needs the
   owner's explicit go for that specific change; an earlier approval doesn't carry over.
+- **Changes land by pull request.** Push a branch and open a PR to `main`; CI and CodeRabbit review it. Fix or
+  answer every finding, then squash-merge (docs/DEVELOPMENT.md).
 - **Secrets stay out of the repo.** Deploy secrets live in `~/.pixfray/secrets.json`. Never copy them into
   `.dev.vars`, a test, a doc, a commit or command output. `.gitleaks.toml` allowlists only `.dev.vars`.
 - **Cloudflare Free only:** SQLite Durable Objects, no paid products.

@@ -1,0 +1,96 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit reviews every pull request to main (free for public repositories). The repo rules it reviews against
+# are AGENTS.md and DESIGN.md; CI (.github/workflows/ci.yml) already runs format, lint, types, tests and gitleaks,
+# so the review is for what those can't see.
+language: en-US
+tone_instructions: "Plain and short. Lead with the bug or risk and the line it is on; skip praise and restating the diff."
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  collapse_walkthrough: true
+  sequence_diagrams: false
+  poem: false
+  in_progress_fortune: false
+  estimate_code_review_effort: false
+  suggested_labels: false
+  suggested_reviewers: false
+  enable_prompt_for_ai_agents: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!bun.lock"
+    - "!public/assets/**"
+  path_instructions:
+    - path: "server/**"
+      instructions: >-
+        Cloudflare Worker and the ChannelRoom SQLite Durable Object, on the Workers Free plan only (no paid
+        products). Every promise is awaited or handed to ctx.waitUntil; a dropped one can be cancelled. Chat mod
+        checks use ev.mod from MOD_BADGES in eventsub.js (a lead moderator has only the lead_moderator badge);
+        flag any other badge read. Refusing the bot as a target stays the single BOT_TARGET_ACTIONS check.
+        Channels, logins and domains come from site.config.js only. Secrets, OAuth tokens and session values must
+        never reach logs, chat replies or error bodies.
+    - path: "{src,public}/**"
+      instructions: >-
+        Pages and the OBS overlay follow DESIGN.md: tokens from public/dashboard.css only (no new hex, size,
+        radius or spacing), one gold .btn-primary per screen, lock-on corner brackets for selection, pixel art
+        drawn with image-rendering: pixelated at whole-pixel scale, no horizontal overflow at 390 px, and nothing
+        on the overlay but fighters, nameplates, bubbles and duel effects. Code stays .js with JSDoc types.
+    - path: "tests/**"
+      instructions: >-
+        node:test unit tests. Browser tests must use chromeOptions() from tests/chrome.mjs (headed, GPU flags),
+        never HEADLESS=1. Tests must not need real secrets or post in real Twitch chat.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Workflow inputs reach shell only through env, never ${{ }} inside run. CI must never see repository
+        secrets; only deploy.yml uses the Cloudflare token. Deploys go through scripts/release.mjs (never wrangler).
+    - path: "docs/**"
+      instructions: >-
+        Check the docs still match the code in this pull request: routes, admin actions and config keys in
+        CONTRACTS.md, streamer-facing behavior in STREAMER_SETUP.md and DUELS.md, page and overlay options in PAGES.md.
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    custom_checks:
+      - name: Behavior change has a test and docs
+        mode: warning
+        instructions: >-
+          If the pull request changes behavior in server/, src/ or public/ (not only formatting, comments or
+          types), it must also change or add a test in tests/*.test.mjs and update the matching doc in docs/
+          (CONTRACTS.md for routes, rules and config; STREAMER_SETUP.md or DUELS.md for what a streamer sees).
+          Pass if both are present or the change has no behavior effect.
+      - name: Config lives in site.config.js
+        mode: warning
+        instructions: >-
+          Fail if the pull request hard-codes a Twitch channel login, bot login, Worker name or the site's
+          domain outside site.config.js, docs/, tests/, AGENTS.md or .coderabbit.yaml. Pass otherwise.
+  tools:
+    # oxlint matches CI (.oxlintrc.json); gitleaks, actionlint and shellcheck cover secrets, workflows and .githooks.
+    oxc:
+      enabled: true
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    # No config for these in the repo; they would contradict oxfmt/oxlint or flag the docs' style.
+    biome:
+      enabled: false
+    eslint:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    stylelint:
+      enabled: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "DESIGN.md"
