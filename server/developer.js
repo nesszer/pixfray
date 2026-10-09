@@ -861,7 +861,8 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
   }
   if (path === "/dev/log" && method === "POST") {
     const body = await request.json().catch(() => ({}));
-    insertLog(sql, "worker", body?.message, body?.context);
+    // The Worker logs errors here, and as "warn" the profile saves it refuses before they reach the room.
+    insertLog(sql, body?.source === "warn" ? "warn" : "worker", body?.message, body?.context);
     return json({ ok: true });
   }
   // Setup progress for the owner's Channels table: read only, so it never creates a StreamElements key.

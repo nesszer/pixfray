@@ -1419,6 +1419,11 @@ test("viewer sprites: only the owner may wear one; sends need sign-in, reviews n
   assert.equal((await save("v-mine-aaaaaa")).status, 200);
   const theirs = await save("v-theirs-bbbbbb");
   assert.deepEqual([theirs.status, (await theirs.json()).error], [403, "That sprite belongs to another viewer"]);
+  assert.deepEqual(f.forwarded.filter((x) => x.path === "/dev/log").at(-1)?.body, {
+    source: "warn",
+    message: "viewer profile not saved: sprite_not_owned",
+    context: { channel: "nesszerra", action: "save", userId: "2", user: "viewer", reason: "sprite_not_owned" },
+  });
 
   assert.equal((await worker.fetch(req("/api/sprite/nesszerra"), f.env)).status, 401);
   const status = await (await worker.fetch(req("/api/sprite/nesszerra", "GET", undefined, cookie), f.env)).json();

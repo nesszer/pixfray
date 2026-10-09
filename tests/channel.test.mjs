@@ -1949,6 +1949,16 @@ test("a save after the fighter left the arena keeps its stored rank and record",
   const fighter = r.readState("nesszerra").players.find((p) => p.userId === "u1");
   assert.deepEqual([fighter.elo, fighter.wins, fighter.losses], [1106, 14, 9]);
 });
+test("a save the Worker refuses lands in the room's owner log as a warn row", async () => {
+  const r = room();
+  const message = "bob profile not saved: unknown_character";
+  await r.call("/dev/log", {
+    method: "POST",
+    body: { source: "warn", message, context: { reason: "unknown_character" } },
+  });
+  const row = (await r.call("/dev/logs?source=warn")).body[0];
+  assert.deepEqual([row.source, row.message, row.context], ["warn", message, { reason: "unknown_character" }]);
+});
 test("profile saves land in the owner log: a save as a command row, a refusal with its reason as a warn row", async () => {
   const r = room();
   await r.save("u1", "alice");
