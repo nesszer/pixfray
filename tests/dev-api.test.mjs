@@ -72,7 +72,8 @@ function environment(extra = {}) {
     ROOMS: {
       idFromName: (x) => x,
       get: (name) => {
-        if (!rooms.has(name)) rooms.set(name, new ChannelRoom(fakeCtx(), { INTERNAL_SECRET: SECRET }));
+        if (!rooms.has(name))
+          rooms.set(name, new ChannelRoom(fakeCtx(), { INTERNAL_SECRET: SECRET, BACKUPS: env.BACKUPS }));
         const room = rooms.get(name);
         return { fetch: (url, init) => room.fetch(new Request(url, init)) };
       },
@@ -81,6 +82,39 @@ function environment(extra = {}) {
     ...extra,
   };
   return { env, entries, rooms };
+}
+// D1 (prepare/bind/run/all/first/batch) over node:sqlite. Blobs come back as arrays of numbers, as D1 returns them.
+function fakeD1() {
+  const db = new DatabaseSync(":memory:");
+  const args = (params) => params.map((v) => (v instanceof ArrayBuffer ? new Uint8Array(v) : v));
+  const row = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v instanceof Uint8Array ? [...v] : v]));
+  const statement = (query, params = []) => ({
+    bind: (...p) => statement(query, p),
+    run: async () => (db.prepare(query).run(...args(params)), { success: true }),
+    all: async () => ({
+      results: db
+        .prepare(query)
+        .all(...args(params))
+        .map(row),
+    }),
+    first: async () => {
+      const r = db.prepare(query).get(...args(params));
+      return r ? row(r) : null;
+    },
+  });
+  return {
+    prepare: (query) => statement(query),
+    async batch(list) {
+      const out = [];
+      for (const st of list) out.push(await st.run());
+      return out;
+    },
+  };
+}
+async function cron(f, at) {
+  const pending = [];
+  await worker.scheduled({ scheduledTime: at, cron: "0 9 * * *" }, f.env, { waitUntil: (p) => pending.push(p) });
+  await Promise.all(pending);
 }
 const GITHUB = { GITHUB_TOKEN: "test-only-gh-token", GITHUB_REPO: "Finesssee/pixfray" };
 async function cookieFor(f, owner) {
@@ -145,13 +179,25 @@ const ROUTES = [
   "export?channel=nesszerra",
   "export?registry=1",
   "restore?channel=nesszerra",
+  "backups?channel=nesszerra",
   "usage",
   "versions",
   "code/tree",
   "code/file?path=README.md",
   "runs",
 ];
-const POSTS = ["settings", "channels", "restore", "code/save", "code/pr", "deploy", "promote", "hotfix", "rollback"];
+const POSTS = [
+  "settings",
+  "channels",
+  "restore",
+  "backups",
+  "code/save",
+  "code/pr",
+  "deploy",
+  "promote",
+  "hotfix",
+  "rollback",
+];
 
 test("every developer route returns 401 signed out and 403 for a non-owner", async () => {
   const f = environment(GITHUB),
@@ -580,6 +626,163 @@ test("export of the channel list has every channel and who turned it off", async
   assert.deepEqual([data.kind, data.builtin], ["registry", ["nesszerra", "miolafff"]]);
   assert.deepEqual(data.channels, [{ id: "7", login: "oldone", enabledAt: 1000, pausedAt: 2000, pausedBy: "" }]);
   assert.equal("invites" in data, false);
+});
+
+test("the daily cron backs up every channel into D1; the owner lists the days, downloads one and reads one fighter", async () => {
+  const f = environment({ BACKUPS: fakeD1() }),
+    owner = await cookieFor(f, true);
+  f.entries.set("channel:paused_one", { id: "9", login: "paused_one", enabledAt: 1, pausedAt: 2 });
+  f.env.ROOMS.get("nesszerra");
+  const sql = f.rooms.get("nesszerra").ctx.storage.sql;
+  sql.exec(
+    "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen) VALUES ('11', 'fighter1', 'Fighter1', 'player', '#ff0000', 'strike', 1234, 9, 3, 5)",
+  );
+  sql.exec(
+    "INSERT INTO owned_items (user_id, kind, item_id, price, bought_at) VALUES ('11', 'title', 'legend', 50, 7), ('12', 'hat', 'crown', 40, 8)",
+  );
+  sql.exec("INSERT INTO builds (user_id, slot, data) VALUES ('11', 0, '{\"title\":\"legend\"}')");
+  const at = Date.UTC(2026, 9, 9, 9);
+  await cron(f, at);
+  // A reset after the backup doesn't reach it.
+  sql.exec("UPDATE profiles SET elo = 1000, wins = 0, losses = 0 WHERE user_id = '11'");
+
+  const list = await call(f, "/api/dev/backups?channel=NessZerra", "GET", undefined, owner);
+  assert.equal(list.status, 200);
+  assert.equal(list.body.keepDays, 90);
+  assert.deepEqual(
+    list.body.backups.map((b) => [b.day, b.at]),
+    [["2026-10-09", at]],
+  );
+  assert.ok(list.body.backups[0].bytes > 100);
+  for (const user of ["fighter1", "@FIGHTER1", "11"]) {
+    const one = await call(
+      f,
+      "/api/dev/backups?channel=nesszerra&day=2026-10-09&user=" + user,
+      "GET",
+      undefined,
+      owner,
+    );
+    assert.equal(one.status, 200, user);
+    assert.deepEqual(
+      [one.body.day, one.body.exportedAt, one.body.profile.elo, one.body.profile.wins, one.body.profile.losses],
+      ["2026-10-09", "2026-10-09T09:00:00.000Z", 1234, 9, 3],
+    );
+    assert.deepEqual(
+      one.body.purchases.map((p) => p.itemId),
+      ["legend"],
+    );
+    assert.deepEqual(one.body.builds, [{ userId: "11", slot: 0, data: { title: "legend" } }]);
+  }
+  const res = await worker.fetch(
+    req("/api/dev/backups?channel=nesszerra&day=2026-10-09", "GET", undefined, owner),
+    f.env,
+    {
+      waitUntil() {},
+    },
+  );
+  assert.equal(
+    res.headers.get("Content-Disposition"),
+    'attachment; filename="mini-chat-nesszerra-2026-10-09-backup.json"',
+  );
+  const data = await res.json();
+  assert.deepEqual(
+    [data.format, data.kind, data.channel, data.status, data.counts.profiles, data.counts.purchases],
+    ["mini-chat-export", "channel", "nesszerra", "builtin", 1, 2],
+  );
+  const paused = await call(f, "/api/dev/backups?channel=paused_one&day=2026-10-09", "GET", undefined, owner);
+  assert.deepEqual([paused.status, paused.body.status], [200, "paused"]);
+  assert.equal((await call(f, "/api/dev/backups?channel=miolafff", "GET", undefined, owner)).body.backups.length, 1);
+
+  const reason = async (q) => {
+    const r = await call(f, "/api/dev/backups?" + q, "GET", undefined, owner);
+    return [r.status, r.body.reason];
+  };
+  assert.deepEqual(await reason(""), [400, "channel_required"]);
+  assert.deepEqual(await reason("channel=nesszerra&day=yesterday"), [400, "invalid_day"]);
+  assert.deepEqual(await reason("channel=nesszerra&day=2026-10-08"), [404, "no_backup"]);
+  assert.deepEqual(await reason("channel=nesszerra&day=2026-10-09&user=nobody"), [404, "fighter_not_in_backup"]);
+});
+
+test("backups keep 90 days, and a second backup on the same day replaces that day's", async () => {
+  const f = environment({ BACKUPS: fakeD1() }),
+    owner = await cookieFor(f, true),
+    day = 86400000,
+    start = Date.UTC(2026, 6, 1, 9);
+  const list = async () => (await call(f, "/api/dev/backups?channel=nesszerra", "GET", undefined, owner)).body.backups;
+  await cron(f, start);
+  await cron(f, start + day);
+  await cron(f, start + day + 60000);
+  assert.deepEqual(
+    (await list()).map((b) => [b.day, b.at]),
+    [
+      ["2026-07-02", start + day + 60000],
+      ["2026-07-01", start],
+    ],
+  );
+  await cron(f, start + 91 * day);
+  assert.deepEqual(
+    (await list()).map((b) => b.day),
+    ["2026-09-30", "2026-07-02"],
+  );
+});
+
+test("the owner can back up one channel now; without D1 the routes answer 501 and the cron does nothing", async () => {
+  const f = environment({ BACKUPS: fakeD1() }),
+    owner = await cookieFor(f, true);
+  const now = await call(f, "/api/dev/backups", "POST", { channel: "NessZerra" }, owner);
+  assert.equal(now.status, 200);
+  assert.match(now.body.day, /^\d{4}-\d{2}-\d{2}$/);
+  assert.deepEqual(
+    now.body.channels.map((c) => [c.channel, c.ok]),
+    [["nesszerra", true]],
+  );
+  assert.equal((await call(f, "/api/dev/backups?channel=miolafff", "GET", undefined, owner)).body.backups.length, 0);
+  const all = await call(f, "/api/dev/backups", "POST", {}, owner);
+  assert.deepEqual(
+    all.body.channels.map((c) => c.channel),
+    ["nesszerra", "miolafff"],
+  );
+  const unknown = await call(f, "/api/dev/backups", "POST", { channel: "nobody_here" }, owner);
+  assert.deepEqual([unknown.status, unknown.body.reason], [404, "unknown_channel"]);
+  const room = await f.env.ROOMS.get("nesszerra").fetch("https://room/dev/backup", {
+    method: "POST",
+    headers: { "X-Mini-Internal": SECRET, "X-Mini-Channel": "nesszerra" },
+    body: JSON.stringify({ at: "soon", status: "on" }),
+  });
+  assert.deepEqual([room.status, (await room.json()).reason], [400, "invalid_backup"]);
+
+  const bare = environment(),
+    cookie = await cookieFor(bare, true);
+  for (const [method, p] of [
+    ["GET", "/api/dev/backups?channel=nesszerra"],
+    ["POST", "/api/dev/backups"],
+  ]) {
+    const r = await call(bare, p, method, method === "POST" ? {} : undefined, cookie);
+    assert.deepEqual([r.status, r.body.reason], [501, "backups_unavailable"], method);
+  }
+  await cron(bare, Date.now());
+  assert.equal(bare.rooms.size, 0);
+});
+
+test("a room that fails its backup is logged, and the other channels are still backed up", async () => {
+  const f = environment({ BACKUPS: fakeD1() }),
+    owner = await cookieFor(f, true),
+    get = f.env.ROOMS.get;
+  f.env.ROOMS.get = (name) =>
+    name === "miolafff"
+      ? {
+          fetch: async () => {
+            throw new Error("room down");
+          },
+        }
+      : get(name);
+  await cron(f, Date.UTC(2026, 9, 9, 9));
+  assert.equal((await call(f, "/api/dev/backups?channel=nesszerra", "GET", undefined, owner)).body.backups.length, 1);
+  const logs = await call(f, "/api/dev/logs?source=worker", "GET", undefined, owner);
+  assert.deepEqual(
+    logs.body.map((l) => [l.message, l.context.failed]),
+    [["Daily backup failed for 1 channel(s)", [{ channel: "miolafff", ok: false, reason: "room down" }]]],
+  );
 });
 
 test("rooms no longer create the leftover dev_settings table", () => {

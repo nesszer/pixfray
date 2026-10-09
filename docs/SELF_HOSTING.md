@@ -43,6 +43,10 @@ bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json
 Check the test site, then deploy production with the same command without `--mode test`. The hosts
 in `origins` and `channelDomains` must be zones on your Cloudflare account.
 
+The first deploy of each Worker also creates its D1 database for the daily backups,
+`<worker name>-backups`, and the 09:00 UTC cron that fills it. The Free plan allows 10 D1 databases
+and 5 cron triggers per account.
+
 ## 6. Go live
 
 Sign in on `/admin/` as the owner. Send streamers to `/start/`.

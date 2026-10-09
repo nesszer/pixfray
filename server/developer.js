@@ -4,6 +4,7 @@ import { CHANNELS, record } from "./auth.js";
 import { channelState, overview, listRecords, setPaused, LOGIN } from "./channels.js";
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.js";
 import { rankHistory } from "./ranklog.js";
+import { BACKUP_DAYS, backupChannels, backupDay, listBackups, readBackup, writeBackup } from "./backups.js";
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -95,6 +96,7 @@ const ROUTES = {
     GET: ({ room, query }) => room("/dev/logs?" + logQuery(query)),
     DELETE: ({ room }) => room("/dev/logs", { method: "DELETE" }),
   },
+  backups: { GET: backupsRead, POST: backupsRun },
   ranks: {
     GET: ({ room, query }) =>
       room("/dev/ranks?" + new URLSearchParams({ user: query.get("user") || "", limit: query.get("limit") || "" })),
@@ -169,7 +171,7 @@ function download(data, filename) {
 async function exportData({ env, c, query }) {
   const now = new Date(),
     day = now.toISOString().slice(0, 10),
-    head = { format: "mini-chat-export", version: 1, exportedAt: now.toISOString() };
+    head = exportHead(now.getTime());
   if (query.get("registry") === "1") {
     const channels = await listRecords(env, "channel:");
     return download(
@@ -198,6 +200,49 @@ async function exportData({ env, c, query }) {
     { ...head, kind: "channel", channel: login, status: state, ...(await r.json()) },
     `mini-chat-${login}-${day}.json`,
   );
+}
+
+const exportHead = (/** @type {number} */ at) => ({
+  format: "mini-chat-export",
+  version: 1,
+  exportedAt: new Date(at).toISOString(),
+});
+
+// Daily backups (server/backups.js). GET ?channel= lists the days kept; &day= downloads that day's export; &user= (login
+// or id) reads one fighter from it. POST {channel?} backs up one channel or all of them now.
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+async function backupsRead({ env, query }) {
+  if (!env.BACKUPS) return fail(501, "No BACKUPS database is bound (local dev)", "backups_unavailable");
+  const login = String(query.get("channel") || "").toLowerCase(),
+    day = query.get("day") || "",
+    user = String(query.get("user") || "")
+      .replace(/^@/, "")
+      .slice(0, 64);
+  if (!LOGIN.test(login)) return fail(400, "Use ?channel=<login>", "channel_required");
+  if (!day) return json({ channel: login, keepDays: BACKUP_DAYS, backups: await listBackups(env.BACKUPS, login) });
+  if (!DAY.test(day)) return fail(400, "Use &day=YYYY-MM-DD", "invalid_day");
+  const data = await readBackup(env.BACKUPS, login, day);
+  if (!data) return fail(404, "No backup of " + login + " on " + day, "no_backup");
+  if (!user) return download(data, `mini-chat-${login}-${day}-backup.json`);
+  const lower = user.toLowerCase(),
+    profile = data.profiles.find((p) => p.userId === user || String(p.username).toLowerCase() === lower);
+  if (!profile) return fail(404, user + " is not in the " + day + " backup", "fighter_not_in_backup");
+  const mine = (/** @type {{userId: string}} */ x) => x.userId === profile.userId;
+  return json({
+    channel: login,
+    day,
+    exportedAt: data.exportedAt,
+    profile,
+    purchases: data.purchases.filter(mine),
+    builds: data.builds.filter(mine),
+  });
+}
+async function backupsRun({ env, c, body }) {
+  if (!env.BACKUPS) return fail(501, "No BACKUPS database is bound (local dev)", "backups_unavailable");
+  const login = String(body?.channel || "").toLowerCase();
+  if (login && !(await channelState(env, login))) return fail(404, login + " is not set up", "unknown_channel");
+  const now = Date.now();
+  return json({ day: backupDay(now), channels: await backupChannels(env, now, c.roomFetch, login) });
 }
 
 // Point-in-time restore. Cloudflare keeps 30 days of every change to a room's SQLite storage (fighters, ranks, dollars,
@@ -899,112 +944,15 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
       players: state.players.length,
     });
   }
-  // Backup of this room (read only). StreamElements: command names only, never the key (and not seSettings(),
-  // which would create a key in a room that has none). Custom characters and pets: metadata, not the images.
-  if (path === "/dev/export" && method === "GET") {
-    const state = room.readState(channel);
-    const profiles = sql
-      .exec("SELECT * FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC")
-      .toArray()
-      .map((p) => ({
-        userId: p.user_id,
-        username: p.username,
-        displayName: p.display_name,
-        avatar: p.avatar,
-        color: p.color,
-        defaultAbility: p.default_ability,
-        elo: p.elo,
-        wins: p.wins,
-        losses: p.losses,
-        lastSeen: p.last_seen,
-        power: p.power,
-        guard: p.guard,
-        luck: p.luck,
-        hat: p.hat,
-        lastOpponentId: p.last_opponent,
-        bonus: p.bonus_points,
-        checkins: p.checkins,
-        streak: p.streak,
-        dollars: p.dollars,
-        pet: p.pet,
-        recolor: p.recolor,
-        petColor: p.pet_color,
-        accessory: p.accessory,
-        trail: p.trail,
-        winEffect: p.win_effect,
-        taunt: p.taunt,
-        title: p.title,
-        build: p.build,
-      }));
-    const purchases = sql
-      .exec("SELECT user_id, kind, item_id, price, bought_at FROM owned_items ORDER BY bought_at, user_id")
-      .toArray()
-      .map((x) => ({ userId: x.user_id, kind: x.kind, itemId: x.item_id, price: x.price, boughtAt: x.bought_at }));
-    const builds = sql
-      .exec("SELECT user_id, slot, data FROM builds ORDER BY user_id, slot")
-      .toArray()
-      .map((x) => ({ userId: x.user_id, slot: x.slot, data: safeParse(x.data) || {} }));
-    const pets = sql
-      .exec(
-        "SELECT id, label, tier, stat, stat2, bytes, width, height, created_by, created_at FROM custom_pets ORDER BY created_at",
-      )
-      .toArray()
-      .map((x) => ({
-        id: x.id,
-        label: x.label,
-        tier: x.tier,
-        stat: x.stat,
-        stat2: x.stat2,
-        bytes: x.bytes,
-        width: x.width,
-        height: x.height,
-        createdBy: x.created_by,
-        createdAt: x.created_at,
-      }));
-    const history = sql
-      .exec("SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC")
-      .toArray()
-      .map((h) => ({
-        version: h.version,
-        config: safeParse(h.config) || {},
-        actorId: h.actor_id,
-        actorName: h.actor_name,
-        at: h.at,
-        note: h.note,
-      }));
-    const characters = sql
-      .exec("SELECT id, meta, bytes, created_by, created_at FROM custom_characters ORDER BY created_at")
-      .toArray()
-      .map((x) => ({
-        id: x.id,
-        meta: safeParse(x.meta) || {},
-        bytes: x.bytes,
-        createdBy: x.created_by,
-        createdAt: x.created_at,
-      }));
-    const stored = safeParse(sql.exec("SELECT names FROM se_settings WHERE id = 1").toArray()[0]?.names) || {},
-      names = { ...DEFAULT_SE_NAMES, ...stored };
-    if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;
-    if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top;
-    return json({
-      counts: {
-        profiles: profiles.length,
-        configVersions: history.length,
-        customCharacters: characters.length,
-        purchases: purchases.length,
-        builds: builds.length,
-        customPets: pets.length,
-      },
-      profiles,
-      purchases,
-      builds,
-      customPets: pets,
-      config: state.config,
-      configVersion: state.configVersion,
-      configHistory: history,
-      customCharacters: characters,
-      streamelements: { commandNames: names },
-    });
+  if (path === "/dev/export" && method === "GET") return json(roomExport(room, channel));
+  // Daily backup (server/backups.js): this room's export, written by the room itself so the cron run stays small.
+  if (path === "/dev/backup" && method === "POST") {
+    if (!room.env.BACKUPS) return json({ error: "No BACKUPS database is bound", reason: "backups_unavailable" }, 501);
+    const { at, status } = await request.json().catch(() => ({}));
+    if (!Number.isInteger(at) || !["builtin", "on", "paused"].includes(status))
+      return json({ error: "Send {at, status}", reason: "invalid_backup" }, 400);
+    const data = { ...exportHead(at), kind: "channel", channel, status, ...roomExport(room, channel) };
+    return json({ ok: true, bytes: await writeBackup(room.env.BACKUPS, channel, at, data) });
   }
   // Point-in-time restore, called by the Worker's restore() in this order: restore arms the restore point and returns
   // the undo point; restart ends this session so the next one loads the restored storage; restored moves the revision
@@ -1089,6 +1037,115 @@ export async function logWorkerError(env, error, context = {}) {
       body: JSON.stringify({ message: error?.message || String(error), context }),
     });
   } catch {}
+}
+
+// Backup of this room (read only). StreamElements: command names only, never the key (and not seSettings(),
+// which would create a key in a room that has none). Custom characters and pets: metadata, not the images.
+function roomExport(room, channel) {
+  const sql = room.ctx.storage.sql;
+  const state = room.readState(channel);
+  const profiles = sql
+    .exec("SELECT * FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC")
+    .toArray()
+    .map((p) => ({
+      userId: p.user_id,
+      username: p.username,
+      displayName: p.display_name,
+      avatar: p.avatar,
+      color: p.color,
+      defaultAbility: p.default_ability,
+      elo: p.elo,
+      wins: p.wins,
+      losses: p.losses,
+      lastSeen: p.last_seen,
+      power: p.power,
+      guard: p.guard,
+      luck: p.luck,
+      hat: p.hat,
+      lastOpponentId: p.last_opponent,
+      bonus: p.bonus_points,
+      checkins: p.checkins,
+      streak: p.streak,
+      dollars: p.dollars,
+      pet: p.pet,
+      recolor: p.recolor,
+      petColor: p.pet_color,
+      accessory: p.accessory,
+      trail: p.trail,
+      winEffect: p.win_effect,
+      taunt: p.taunt,
+      title: p.title,
+      build: p.build,
+    }));
+  const purchases = sql
+    .exec("SELECT user_id, kind, item_id, price, bought_at FROM owned_items ORDER BY bought_at, user_id")
+    .toArray()
+    .map((x) => ({ userId: x.user_id, kind: x.kind, itemId: x.item_id, price: x.price, boughtAt: x.bought_at }));
+  const builds = sql
+    .exec("SELECT user_id, slot, data FROM builds ORDER BY user_id, slot")
+    .toArray()
+    .map((x) => ({ userId: x.user_id, slot: x.slot, data: safeParse(x.data) || {} }));
+  const pets = sql
+    .exec(
+      "SELECT id, label, tier, stat, stat2, bytes, width, height, created_by, created_at FROM custom_pets ORDER BY created_at",
+    )
+    .toArray()
+    .map((x) => ({
+      id: x.id,
+      label: x.label,
+      tier: x.tier,
+      stat: x.stat,
+      stat2: x.stat2,
+      bytes: x.bytes,
+      width: x.width,
+      height: x.height,
+      createdBy: x.created_by,
+      createdAt: x.created_at,
+    }));
+  const history = sql
+    .exec("SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC")
+    .toArray()
+    .map((h) => ({
+      version: h.version,
+      config: safeParse(h.config) || {},
+      actorId: h.actor_id,
+      actorName: h.actor_name,
+      at: h.at,
+      note: h.note,
+    }));
+  const characters = sql
+    .exec("SELECT id, meta, bytes, created_by, created_at FROM custom_characters ORDER BY created_at")
+    .toArray()
+    .map((x) => ({
+      id: x.id,
+      meta: safeParse(x.meta) || {},
+      bytes: x.bytes,
+      createdBy: x.created_by,
+      createdAt: x.created_at,
+    }));
+  const stored = safeParse(sql.exec("SELECT names FROM se_settings WHERE id = 1").toArray()[0]?.names) || {},
+    names = { ...DEFAULT_SE_NAMES, ...stored };
+  if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;
+  if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top;
+  return {
+    counts: {
+      profiles: profiles.length,
+      configVersions: history.length,
+      customCharacters: characters.length,
+      purchases: purchases.length,
+      builds: builds.length,
+      customPets: pets.length,
+    },
+    profiles,
+    purchases,
+    builds,
+    customPets: pets,
+    config: state.config,
+    configVersion: state.configVersion,
+    configHistory: history,
+    customCharacters: characters,
+    streamelements: { commandNames: names },
+  };
 }
 
 function insertLog(sql, source, message, context) {
