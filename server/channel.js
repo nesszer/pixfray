@@ -12,6 +12,7 @@ import {
   shownProfile,
 } from "./game.js";
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
+import { ensureRankLogSchema, rankBefore } from "./ranklog.js";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
 import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.js";
 import { accountCreatedAt } from "./accounts.js";
@@ -383,6 +384,8 @@ export class ChannelRoom extends DurableObject {
     );
     sql.exec("INSERT OR IGNORE INTO bot_status (id) VALUES (1)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
+    // v3.2: rank history, written by triggers on profiles (server/ranklog.js).
+    ensureRankLogSchema(sql, Date.now());
     sql.exec(
       "CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')",
     );
@@ -713,6 +716,12 @@ export class ChannelRoom extends DurableObject {
         // A version saved before a setting existed has no value for it; it goes back to its default, not the current value.
         payload = { patch: { ...defaultConfig(), ...safeJsonParse(row.config, {}) } };
         note = "rollback to v" + version;
+      }
+      // restoreRank {userId, before}: the fighter's last recorded rank before that time (server/ranklog.js).
+      if (action === "restoreRank" && Number.isInteger(payload.before)) {
+        const rank = rankBefore(this.ctx.storage.sql, validUserId(payload.userId) || "", payload.before);
+        if (!rank) return json({ ok: false, reason: "no_rank_history", error: "no_rank_history" }, 404);
+        payload = { userId: payload.userId, ...rank };
       }
       const targetId = validUserId(payload.userId);
       const targetProfile = targetId ? this.getProfile(targetId, this.readState(channel).config) : null;

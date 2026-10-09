@@ -619,6 +619,45 @@ test("restoreRank sets a fighter's stored rank, offline or active, and logs who 
   );
 });
 
+test("rank history records every rank change, and restoreRank can go back to before a time", async () => {
+  const r = room();
+  await r.save("u1", "alice");
+  r.ctx.storage.sql.exec("UPDATE profiles SET elo = 1106, wins = 14, losses = 9 WHERE user_id = ?", "u1");
+  await sleep(5);
+  const mark = Date.now();
+  await sleep(5);
+  await r.save("u1", "alice", { color: "#654321" });
+  await r.call("/admin", { method: "POST", body: { actorId: "mod1", action: "resetRank", payload: { userId: "u1" } } });
+  const history = async (user) => (await r.call("/dev/ranks?user=" + user)).body;
+  const ranks = (rows) => rows.map((x) => [x.elo, x.wins, x.losses]);
+  assert.deepEqual(ranks(await history("Alice")), [
+    [1000, 0, 0],
+    [1106, 14, 9],
+    [1000, 0, 0],
+  ]);
+  assert.deepEqual(ranks(await history("u1")), ranks(await history("alice")), "by login or by id");
+  const restore = (payload) =>
+    r.call("/admin", { method: "POST", body: { actorId: "1", actorName: "owner", action: "restoreRank", payload } });
+  assert.equal((await restore({ userId: "u1", before: mark })).status, 200);
+  const p = (await r.call("/profile?userId=u1")).body;
+  assert.deepEqual([p.elo, p.wins, p.losses, p.color], [1106, 14, 9, "#654321"]);
+  const none = await restore({ userId: "u1", before: 0 });
+  assert.deepEqual([none.status, none.body.reason], [404, "no_rank_history"]);
+  assert.equal((await r.call("/dev/ranks")).body.reason, "invalid_user");
+});
+
+test("rank history starts from the current ranks in a room that had fighters before it", async () => {
+  const r = room();
+  await r.save("u1", "alice");
+  r.ctx.storage.sql.exec("UPDATE profiles SET elo = 1042, wins = 5, losses = 1 WHERE user_id = ?", "u1");
+  for (const name of ["rank_log_insert", "rank_log_update"]) r.ctx.storage.sql.exec("DROP TRIGGER " + name);
+  r.ctx.storage.sql.exec("DROP TABLE rank_log");
+  const again = new ChannelRoom(r.ctx, { INTERNAL_SECRET: SECRET });
+  assert.deepEqual(again.ctx.storage.sql.exec("SELECT user_id, elo, wins, losses FROM rank_log").toArray(), [
+    { user_id: "u1", elo: 1042, wins: 5, losses: 1 },
+  ]);
+});
+
 test("looks push: profile writes for viewers off the active list reach open overlays", async () => {
   const r = room();
   await r.save("u1", "alice");
