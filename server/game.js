@@ -1092,6 +1092,11 @@ export function applyProfile(state, profile, now) {
   if (!normalized.userId || !normalized.username) return { ok: false, reason: "invalid_profile" };
   const existing = player(state, normalized.userId);
   const p = existing || defaultProfile(normalized.userId, state.config, now);
+  // A fighter who left the arena comes back with the rank and record saved in its profile.
+  if (!existing) {
+    for (const key of ["elo", "wins", "losses"]) if (Number.isInteger(profile?.[key])) p[key] = profile[key];
+    if (normalizeUserId(profile?.lastOpponentId)) p.lastOpponentId = normalizeUserId(profile.lastOpponentId);
+  }
   // No respec while a challenge or duel is open: the build counts from when the duel starts to its end.
   const build = (x) => JSON.stringify([cleanStats(x.stats), cleanBoost(x.petBoost)]);
   if (existing && hasOpenDuel(state, p.userId) && build(p) !== build(normalized))

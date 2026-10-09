@@ -1937,6 +1937,18 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
   assert.equal(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM builds WHERE user_id = 'u1'").toArray()[0].n, 0);
 });
 
+test("a save after the fighter left the arena keeps its stored rank and record", async () => {
+  const r = room();
+  await r.save("u1", "alice");
+  r.ctx.storage.sql.exec("UPDATE profiles SET elo = 1106, wins = 14, losses = 9 WHERE user_id = 'u1'");
+  const state = r.readState("nesszerra");
+  r.writeState({ ...state, players: state.players.filter((p) => p.userId !== "u1") });
+  assert.equal((await r.save("u1", "alice", { color: "#654321" })).status, 200);
+  const row = r.ctx.storage.sql.exec("SELECT elo, wins, losses, color FROM profiles WHERE user_id = 'u1'").toArray()[0];
+  assert.deepEqual({ ...row }, { elo: 1106, wins: 14, losses: 9, color: "#654321" });
+  const fighter = r.readState("nesszerra").players.find((p) => p.userId === "u1");
+  assert.deepEqual([fighter.elo, fighter.wins, fighter.losses], [1106, 14, 9]);
+});
 test("profile saves land in the owner log: a save as a command row, a refusal with its reason as a warn row", async () => {
   const r = room();
   await r.save("u1", "alice");
