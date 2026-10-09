@@ -594,6 +594,31 @@ test("rank reset reaches stored profiles; removePlayer deletes the profile", asy
   assert.equal((await r.call("/admin", { method: "POST", body: { action: "resetAll" } })).status, 403);
 });
 
+test("restoreRank sets a fighter's stored rank, offline or active, and logs who did it", async () => {
+  const r = room();
+  await r.save("u1", "alice");
+  await r.save("u2", "bob");
+  const quiet = r.readState("nesszerra");
+  quiet.players = quiet.players.filter((p) => p.userId !== "u1");
+  r.writeState(quiet);
+  const restore = (payload) =>
+    r.call("/admin", { method: "POST", body: { actorId: "1", actorName: "owner", action: "restoreRank", payload } });
+  assert.equal((await restore({ userId: "u1", elo: 1016, wins: 3, losses: 3 })).status, 200);
+  assert.equal((await restore({ userId: "u2", elo: 1042, wins: 5, losses: 1 })).status, 200);
+  const rank = (p) => [p.elo, p.wins, p.losses];
+  assert.deepEqual(rank((await r.call("/profile?userId=u1")).body), [1016, 3, 3]);
+  assert.deepEqual(rank((await r.call("/profile?userId=u2")).body), [1042, 5, 1]);
+  assert.deepEqual(rank(r.readState("nesszerra").players.find((p) => p.userId === "u2")), [1042, 5, 1]);
+  const bad = await restore({ userId: "u1", elo: 1016.5, wins: 3, losses: 3 });
+  assert.deepEqual([bad.status, bad.body.reason], [400, "invalid_rank"]);
+  assert.equal((await restore({ userId: "nobody", elo: 1000, wins: 0, losses: 0 })).body.reason, "profile_not_found");
+  const logs = (await r.call("/dev/logs?source=command")).body.filter((x) => x.context?.action === "restoreRank");
+  assert.deepEqual(
+    logs.map((x) => x.message),
+    ["owner restored rank 1042/5/1 -> u2", "owner restored rank 1016/3/3 -> u1"],
+  );
+});
+
 test("looks push: profile writes for viewers off the active list reach open overlays", async () => {
   const r = room();
   await r.save("u1", "alice");

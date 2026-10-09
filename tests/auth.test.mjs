@@ -122,6 +122,11 @@ test("miolafff: the broadcaster manages their own channel, through StreamElement
     (await worker.fetch(req("/api/admin/miolafff", "POST", { action: "resetAllRanks" }, s), f.env)).status,
     200,
   );
+  assert.deepEqual(
+    await (await worker.fetch(req("/api/admin/miolafff", "POST", { action: "restoreRank" }, s), f.env)).json(),
+    { error: "Only the site owner can restore a rank", reason: "owner_only" },
+    "the broadcaster can't set ranks by hand",
+  );
   assert.equal(
     (await worker.fetch(req("/api/admin/miolafff", "POST", { action: "connectChat" }, s), f.env)).status,
     400,
