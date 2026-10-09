@@ -62,6 +62,12 @@ For a copy you keep yourself, or anything older than 30 days, download the data 
 
 Neither file holds StreamElements keys or Twitch tokens. A paused channel can still be exported.
 
+Every day at 09:00 UTC each channel also saves that same export into a D1 database on the Free plan,
+kept 90 days. The owner reads it through `/api/dev/backups` (docs/CONTRACTS.md): the days kept for a
+channel, the whole export for one day, or one fighter on that day. That last one is the quick way to
+put back a single fighter's rank (`restoreRank` on `/api/admin`) without rolling back the whole
+channel. `POST /api/dev/backups` saves one now, for example before a risky change.
+
 ## Settings to add
 
 ### Worker secrets and vars (both Workers: production and test)

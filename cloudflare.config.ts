@@ -1,4 +1,4 @@
-import { defineConfig, defineWorker, bindings, exports } from "cf/config";
+import { defineConfig, defineWorker, bindings, exports, triggers } from "cf/config";
 import { readFileSync } from "node:fs";
 // site.config.js is read as text, not imported: under cf dev the Worker can't load a file this config process has loaded.
 const site = (await import("data:text/javascript," + encodeURIComponent(readFileSync("site.config.js", "utf8"))))
@@ -26,6 +26,8 @@ export default defineConfig(({ mode }) => {
       compatibilityDate: "2026-09-25",
       entrypoint: "./server/worker.js",
       domains: [new URL(origin).hostname, ...Object.values(channelDomains)],
+      // Daily backup of every channel into the BACKUPS D1 database at 09:00 UTC (server/backups.js).
+      ...(localTest ? {} : { triggers: [triggers.scheduled({ schedule: "0 9 * * *" })] }),
       // The pages go through the Worker too, so a channel domain can send other channels' pages to the main site.
       assets: {
         runWorkerFirst: [
@@ -57,6 +59,9 @@ export default defineConfig(({ mode }) => {
         ASSETS: bindings.assets(),
         ROOMS: bindings.durableObject({ worker: name, exportName: "ChannelRoom" }),
         AUTH: bindings.durableObject({ worker: name, exportName: "AuthStore" }),
+        // Daily backups, kept 90 days (server/backups.js). One D1 database per Worker, named after it. A local server goes
+        // without, and the owner routes answer backups_unavailable.
+        ...(localTest || process.argv.includes("dev") ? {} : { BACKUPS: bindings.d1({ name: name + "-backups" }) }),
         AUTH_SECRET: bindings.secret(),
         INTERNAL_SECRET: bindings.secret(),
         TWITCH_CLIENT_ID: bindings.secret(),

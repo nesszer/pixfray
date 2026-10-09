@@ -13,6 +13,7 @@ import {
   markModsConnected,
 } from "./auth.js";
 import { handleDeveloper, logWorkerError } from "./developer.js";
+import { backupChannels } from "./backups.js";
 import { handleUploads } from "./uploads.js";
 import { handlePets } from "./pets.js";
 import { handleSprites } from "./sprites.js";
@@ -418,6 +419,20 @@ export default {
     const r = await handle(request, env, ctx),
       url = new URL(request.url);
     return secure(r, url, API_PATH.test(url.pathname) ? API_CSP : "");
+  },
+  // The daily cron (cloudflare.config.ts): back up every channel into D1 (server/backups.js).
+  async scheduled(controller, env, ctx) {
+    if (!env.BACKUPS || !env.INTERNAL_SECRET) return;
+    const run = backupChannels(env, controller.scheduledTime, (channel, p, init) =>
+      roomFetch(null, env, channel, p, init),
+    )
+      .then((results) => {
+        const failed = results.filter((r) => !r.ok);
+        if (failed.length)
+          return logWorkerError(env, new Error("Daily backup failed for " + failed.length + " channel(s)"), { failed });
+      })
+      .catch((e) => logWorkerError(env, e, { source: "backup" }));
+    ctx.waitUntil(run);
   },
 };
 async function handle(request, env, ctx) {
