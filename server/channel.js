@@ -641,9 +641,24 @@ export class ChannelRoom extends DurableObject {
       if (!body.ok) return json({ error: body.error }, 400);
       const actorId = validUserId(request.headers.get(USER_HEADER));
       const requestedId = validUserId(body.value.userId);
-      if (!actorId || !requestedId || actorId !== requestedId) return json({ error: "profile identity mismatch" }, 403);
+      const login = normalizeUsername(body.value.username) || actorId || "?";
+      const logCtx = { channel, action: "save", userId: actorId, user: login };
+      if (!actorId || !requestedId || actorId !== requestedId) {
+        logRoomEvent(this, "warn", `${login} profile not saved: identity_mismatch`, {
+          ...logCtx,
+          reason: "identity_mismatch",
+        });
+        return json({ error: "profile identity mismatch" }, 403);
+      }
       const result = this.saveProfile(channel, actorId, body.value);
-      if (!result.ok) return json({ error: result.reason }, result.status || 400);
+      if (!result.ok) {
+        logRoomEvent(this, "warn", `${login} profile not saved: ${result.reason}`, {
+          ...logCtx,
+          reason: result.reason,
+        });
+        return json({ error: result.reason }, result.status || 400);
+      }
+      logRoomEvent(this, "command", `${login} saved profile`, { ...logCtx, reason: "saved" });
       this.broadcast(result.state);
       await this.scheduleAlarm(result.state);
       const shown = shownProfile(result.profile, hiddenResults(result.state, Date.now()));

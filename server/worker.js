@@ -132,6 +132,15 @@ function internal(request, env, channel, path, body) {
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
 }
+// A save refused here never reaches the room, so log it there as the room logs its own refusals (owner log, warn row).
+async function refuseSave(request, env, channel, user, reason, error, status) {
+  await internal(request, env, channel, "/dev/log", {
+    source: "warn",
+    message: `${user.login} profile not saved: ${reason}`,
+    context: { channel, action: "save", userId: user.id, user: user.login, reason },
+  }).catch(() => {});
+  return json({ error }, status);
+}
 async function bodyJson(request, limit = 2200000) {
   if (Number(request.headers.get("Content-Length")) > limit)
     throw Object.assign(new Error("Request too large"), { status: 413 });
@@ -591,21 +600,29 @@ async function handle(request, env, ctx) {
         { avatar, color, defaultAbility, stats, hat, pet } = body,
         loadout = loadoutFields(body);
       if (!validProfile({ avatar, color, defaultAbility }) || !loadout.ok)
-        return json({ error: "Invalid profile fields" }, 400);
+        return refuseSave(request, env, channel, user, "invalid_fields", "Invalid profile fields", 400);
       // stats/hat are optional; the room checks them against the saved wins (server/upgrades.js).
       if (
         (stats !== undefined && (!stats || typeof stats !== "object" || Array.isArray(stats))) ||
         (hat !== undefined && typeof hat !== "string") ||
         (pet !== undefined && (typeof pet !== "string" || pet.length > 64))
       )
-        return json({ error: "Invalid profile fields" }, 400);
+        return refuseSave(request, env, channel, user, "invalid_fields", "Invalid profile fields", 400);
       const dynamicRes = await internal(request, env, channel, "/catalog");
       const dynamic = dynamicRes.ok ? await dynamicRes.json() : [];
       const character = [...(await staticCatalog(env, url)), ...dynamic].find((x) => x.id === avatar);
-      if (!character) return json({ error: "Unknown character" }, 400);
+      if (!character) return refuseSave(request, env, channel, user, "unknown_character", "Unknown character", 400);
       // An approved viewer sprite belongs to the viewer who made it.
       if (character.owner && character.owner !== user.id)
-        return json({ error: "That sprite belongs to another viewer" }, 403);
+        return refuseSave(
+          request,
+          env,
+          channel,
+          user,
+          "sprite_not_owned",
+          "That sprite belongs to another viewer",
+          403,
+        );
       const saved = await internal(request, env, channel, "/profile", {
         userId: user.id,
         username: user.login,
