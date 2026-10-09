@@ -977,6 +977,27 @@ export class ChannelRoom extends DurableObject {
         );
         this.lookChanged(userId);
       }
+      const set = result.result?.rankSet;
+      if (set) {
+        this.ctx.storage.sql.exec(
+          "UPDATE profiles SET elo = ?, wins = ?, losses = ? WHERE user_id = ?",
+          set.elo,
+          set.wins,
+          set.losses,
+          set.userId,
+        );
+        this.lookChanged(set.userId);
+        logRoomEvent(
+          this,
+          "command",
+          `${event.actorName || event.actorId} restored rank ${set.elo}/${set.wins}/${set.losses} -> ${set.userId}`,
+          {
+            channel,
+            action: "restoreRank",
+            ...set,
+          },
+        );
+      }
       for (const userId of result.deletedProfileIds || []) this.deleteProfile(userId);
       if (result.result?.reason === "config_updated") {
         this.recordConfigVersion(

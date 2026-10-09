@@ -159,6 +159,7 @@ channel of that account only, so nobody can turn on someone else's channel.
 | `cancelDuel` | `{duelId}` | Cancels the duel without scoring it. If it was active, both players go back to maxHp. |
 | `resetHealth` | none | Every active player goes to maxHp, and respawn is cleared. |
 | `resetRank` | `{userId}` | Sets elo to initialElo and wins and losses to 0. Works for offline profiles too. |
+| `restoreRank` | `{userId, elo, wins, losses}` | Sets one fighter's elo (0 to 10,000), wins and losses (0 to 1,000,000), active or offline, to repair a rank lost to a bug. Site owner only (403 `{error, reason:"owner_only"}`). 400 `invalid_rank`, 400 `profile_not_found`. Logged as a command (`<owner> restored rank <elo>/<wins>/<losses> -> <userId>`). |
 | `resetAllRanks` | none | The same reset for every stored profile, and the daily pair counts (`pairPlays`) start over. Broadcaster or owner only (403 `{error, reason:"broadcaster_only"}`); clear arena and the other resets stay with mods. |
 | `resetRound` | none | Cancels open duels and sets `round` to 0. |
 | `resetAll` | none | Clears players, duels and locks. Stored profiles stay. |

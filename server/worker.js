@@ -685,6 +685,9 @@ async function handle(request, env, ctx) {
         await setPaused(env, channel, data.action === "pauseChannel", roles.owner ? "owner" : "broadcaster");
         return json({ ok: true, channelState: data.action === "pauseChannel" ? "paused" : "on" });
       }
+      // Sets one fighter's rank by hand, to repair a rank lost to a bug: the site owner only, so no channel can raise its own.
+      if (data.action === "restoreRank" && !roles.owner)
+        return json({ error: "Only the site owner can restore a rank", reason: "owner_only" }, 403);
       // Can't be undone, or moves chat away from another site: the broadcaster or the owner, never a mod.
       const only =
         data.action === "resetAllRanks"

@@ -972,6 +972,20 @@ function applyAdmin(state, event, now) {
     return { ok: true, reason: "rank_reset", dirtyProfileIds, deletedProfileIds, rankResetIds: [userId] };
   }
 
+  if (action === "restoreRank") {
+    const userId = normalizeUserId(payload.userId);
+    const p = player(state, userId);
+    const stored = event.targetProfile?.userId === userId && event.targetProfile?.registered;
+    if (!userId || (!p?.registered && !stored)) return { ok: false, reason: "profile_not_found" };
+    const rank = { elo: payload.elo, wins: payload.wins, losses: payload.losses };
+    const fits = (value, max) => Number.isInteger(value) && value >= 0 && value <= max;
+    if (!fits(rank.elo, 10_000) || !fits(rank.wins, 1_000_000) || !fits(rank.losses, 1_000_000))
+      return { ok: false, reason: "invalid_rank" };
+    if (p) Object.assign(p, rank);
+    addEvent(state, "rank_restored", now, { actorId, userId, ...rank });
+    return { ok: true, reason: "rank_restored", dirtyProfileIds, deletedProfileIds, rankSet: { userId, ...rank } };
+  }
+
   if (action === "resetAllRanks") {
     for (const p of state.players) {
       if (!p.registered) continue;
