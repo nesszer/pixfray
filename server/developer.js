@@ -3,6 +3,7 @@ import site from "../site.config.js";
 import { CHANNELS, record } from "./auth.js";
 import { channelState, overview, listRecords, setPaused, LOGIN } from "./channels.js";
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.js";
+import { rankHistory } from "./ranklog.js";
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -93,6 +94,10 @@ const ROUTES = {
   logs: {
     GET: ({ room, query }) => room("/dev/logs?" + logQuery(query)),
     DELETE: ({ room }) => room("/dev/logs", { method: "DELETE" }),
+  },
+  ranks: {
+    GET: ({ room, query }) =>
+      room("/dev/ranks?" + new URLSearchParams({ user: query.get("user") || "", limit: query.get("limit") || "" })),
   },
   settings: { GET: ({ room }) => room("/admin"), POST: settings },
   usage: { GET: async ({ env }) => json(await usage(env)) },
@@ -854,6 +859,14 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
           .toArray()
       : sql.exec("SELECT id, at, source, message, context FROM error_log ORDER BY id DESC LIMIT ?", limit).toArray();
     return json(rows.map((r) => ({ ...r, context: safeParse(r.context) })));
+  }
+  // A fighter's rank history, newest first: ?user=<login or id>&limit=1..500 (default 100).
+  if (path === "/dev/ranks" && method === "GET") {
+    const q = url || new URL(request.url),
+      user = (q.searchParams.get("user") || "").replace(/^@/, "").slice(0, 64),
+      limit = Math.min(500, Math.max(1, Number(q.searchParams.get("limit")) || 100));
+    if (!user) return json({ error: "Name a fighter with ?user=", reason: "invalid_user" }, 400);
+    return json(rankHistory(sql, user, limit));
   }
   if (path === "/dev/logs" && method === "DELETE") {
     sql.exec("DELETE FROM error_log");
