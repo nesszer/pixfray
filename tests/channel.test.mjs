@@ -929,7 +929,7 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
   ); // +3 if flawless
   assert.notEqual(saved.u1.elo, 1000);
   // Every command lands in the dev log with what came in, the game's decision and the reply.
-  const log = (await r.call("/dev/logs?source=command")).body;
+  const log = (await r.call("/dev/logs?source=command")).body.filter((x) => x.context.action !== "save");
   assert.deepEqual(log.map((x) => x.context.reason).reverse(), [
     "challenge",
     "quick_duel",
@@ -1013,7 +1013,10 @@ test("StreamElements !rematch challenges the last opponent, saved with the profi
   } finally {
     Date.now = realNow;
   }
-  const reasons = (await r.call("/dev/logs?source=command")).body.map((x) => x.context.reason).reverse();
+  const reasons = (await r.call("/dev/logs?source=command")).body
+    .filter((x) => x.context.action !== "save")
+    .map((x) => x.context.reason)
+    .reverse();
   assert.deepEqual(
     [...reasons.slice(0, 3), ...reasons.slice(4)],
     ["no_previous_opponent", "challenge", "quick_duel", "rematch", "player_busy", "quick_duel"],
@@ -1932,6 +1935,24 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
     body: { actorId: "mod1", action: "removePlayer", payload: { userId: "u1" } },
   });
   assert.equal(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM builds WHERE user_id = 'u1'").toArray()[0].n, 0);
+});
+
+test("profile saves land in the owner log: a save as a command row, a refusal with its reason as a warn row", async () => {
+  const r = room();
+  await r.save("u1", "alice");
+  const saved = (await r.call("/dev/logs?source=command")).body[0];
+  assert.equal(saved.message, "alice saved profile");
+  assert.equal(saved.context.reason, "saved");
+  assert.equal((await r.save("u1", "alice", { accessory: "glasses" })).body.error, "item_locked");
+  const refused = (await r.call("/dev/logs?source=warn")).body[0];
+  assert.equal(refused.message, "alice profile not saved: item_locked");
+  assert.deepEqual(refused.context, {
+    channel: "nesszerra",
+    action: "save",
+    userId: "u1",
+    user: "alice",
+    reason: "item_locked",
+  });
 });
 
 test("cosmetic ids: the overlay drawings (public/cosmetics.js) match the server lists", async () => {
