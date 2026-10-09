@@ -24,11 +24,13 @@ every origin and channel domain.
 
 ## 4. Store the secrets
 
-Put the deploy secrets in `~/.pixfray/secrets.json`, outside the repo folder:
+Put the deploy secrets in two files outside the repo folder, `~/.pixfray/secrets.json` for production and
+`~/.pixfray/secrets.test.json` for the test site:
 
 - `AUTH_SECRET` and `INTERNAL_SECRET`: long random strings, for example `openssl rand -hex 32`.
 - `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`.
-- `DEV_TOOLS_TOKEN`, for the test site only.
+- `DEV_TOOLS_TOKEN`, in the test file only. `cf deploy` uploads every key in the file it's given, so a token in
+  the production file would let scripts act as the owner on the live site.
 
 ## 5. Deploy
 
@@ -37,7 +39,7 @@ bunx cf auth login
 ```
 
 ```bash
-bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.json
+bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.test.json
 ```
 
 Check the test site, then deploy production with the same command without `--mode test`. The hosts
