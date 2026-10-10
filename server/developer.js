@@ -29,7 +29,7 @@ const DENIED_PATH =
   /(^|\/)(\.dev\.vars[^/]*|\.secrets[^/]*|\.env[^/]*|node_modules|\.git|\.wrangler|\.cloudflare|dist)(\/|$)|^\.github\/|\.dpapi$/i;
 // Files that run with the deploy workflow's Cloudflare token (install, build and release): readable, never saved here.
 const BUILD_FILE =
-  /^(package\.json|package-lock\.json|bun\.lock|bunfig\.toml|\.npmrc|site\.config\.js|cloudflare\.config\.ts|vite\.config\.js|scripts\/|\.github\/)/i;
+  /^(package\.json|package-lock\.json|bun\.lock|bunfig\.toml|\.npmrc|site\.config\.(js|ts)|cloudflare\.config\.ts|vite\.config\.[cm]?[jt]s|tsconfig(\.[^/]+)?\.json|types\/|scripts\/|\.github\/)/i;
 // Production changes need the owner signed in with Twitch; the test site's dev token can't make them.
 const productionChange = (op, body) =>
   op === "promote" || op === "hotfix" || (op === "rollback" && body?.target === "production");
