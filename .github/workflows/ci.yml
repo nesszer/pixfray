@@ -1,11 +1,11 @@
 # Format, lint, type checks, unit tests, a production build, a dependency audit and a secret scan for every push to
-# main and every pull request. No secrets, no deploys.
+# main, live-fix/, hotfix/ and port/ branches and every pull request. No secrets, no deploys.
 name: CI
 on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "live-fix/**", "hotfix/**"]
+    branches: [main, "live-fix/**", "hotfix/**", "port/**"]
 
 permissions:
   contents: read
@@ -30,7 +30,8 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run check
-      # A port branch must change no runtime code (docs/DEVELOPMENT.md).
+      # A port branch must change no runtime code (docs/DEVELOPMENT.md): head_ref names a pull request's branch,
+      # ref_name a pushed branch.
       - if: startsWith(github.head_ref, 'port/') || startsWith(github.ref_name, 'port/')
         run: bun run port-check
       - run: bunx cf build

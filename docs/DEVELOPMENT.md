@@ -63,10 +63,15 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
 - New and ported files are `.ts`, import local files with the `.ts` extension and use only syntax
   that strips to JavaScript (no `enum`, `namespace` or parameter properties; `erasableSyntaxOnly`).
   Type-only imports say `import type` (`verbatimModuleSyntax`).
-- Every new or ported `.ts` file is listed in `files` in `tsconfig.strict.json`.
+- Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`, `.d.ts` included) is listed in `files` in
+  `tsconfig.strict.json`. Two are checked by another program instead: `cloudflare.config.ts` by
+  `tsconfig.node.json` and `types/browser.d.ts` by `tsconfig.web.json`. `bun run check` enforces
+  this through `node scripts/port-check.ts --strict-list` in `tests/port-check.test.mjs`, which
+  reads every tracked and untracked file that git doesn't ignore.
 - Each `any`, `as` cast or `!` assertion says why in a comment on that line or the line above.
 - `types/lib-guards.d.ts` lets `Number.isInteger` narrow `unknown` to `number`, so a port needs no
-  added `typeof` check, which would change the runtime code.
+  added `typeof` check, which would change the runtime code. The guard names a branded number, so
+  the false branch of `number | undefined` stays `number | undefined`.
 
 A port pull request changes types only, from a `port/<name>` branch:
 
@@ -74,10 +79,28 @@ A port pull request changes types only, from a `port/<name>` branch:
    the `.ts` path and updates the repo path in docs, configs and comments. It lists the code strings
    that still name the old path; they are runtime values, so decide on them in their own change.
 2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json`.
-3. `bun run port-check` strips types and comments from each changed `.ts` file and from its version
-   on `main` with oxc, then compares the JavaScript. It prints `N files compared, M different` and
-   the first differing line of each file, and exits 1 on any difference or on a `.ts` file missing
-   from `tsconfig.strict.json`. CI runs it on every pull request from a `port/` branch.
+3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) compares every code file
+   (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`) that differs between the working
+   tree and where the branch left `main`:
+   - Pairing. A file pairs with the same path. A file gone at head pairs with a new file of the
+     same name, the base name without its code extension: first in the same folder
+     (`server/a.js` and `server/a.ts`), then anywhere in the repo (`public/overlay.js` and
+     `src/served/overlay.js`). git's rename detection is not used. When more than one gone or new
+     file shares a name, the check fails and names them instead of guessing; move or rename such
+     files in separate steps. A port keeps each file's name.
+   - A gone file with no pair fails. A new file with no pair passes only when it strips to no
+     runtime code (types only, such as `server/env.ts`).
+   - Comparing. Both versions are stripped to JavaScript with oxc, with comments removed except
+     bundler annotations (`/*#__PURE__*/`, `/* @vite-ignore */`, `webpack...:`), which stay.
+     A relative import path at head is read as the path the base file would write to reach the
+     base version of the same target, so a moved importer or a renamed target is not a
+     difference, while `./b.mjs` changed to `./b.js` is.
+   - It prints the first differing line of each file with its source line at base and at head,
+     then `N files compared, M different` (with `, K other problems` for unpaired, ambiguous and
+     strict-list failures), and exits 1 on any of them. A branch that adds runtime code, such as
+     a new script, fails it by design: that belongs in a `ts/` branch.
+
+   CI runs it on every push to a `port/` branch and every pull request from one.
 
 A bug the port uncovers (a missing check, a wrong default) gets its own pull request.
 

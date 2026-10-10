@@ -114,7 +114,9 @@ function main(): number {
     writeFileSync(full, next);
     console.log(`updated ${file}${imports > 0 ? ` (${imports} import${imports === 1 ? "" : "s"})` : ""}`);
   }
-  console.log(`Next: annotate the .ts files, add them to tsconfig.strict.json "files", run node scripts/port-check.ts`);
+  console.log(
+    `Next: annotate the .ts files, add them to tsconfig.strict.json "files", run node scripts/port-check.ts --base origin/main`,
+  );
   return 0;
 }
 
