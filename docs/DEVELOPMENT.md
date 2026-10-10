@@ -204,6 +204,8 @@ A port pull request changes types only, from a `port/<name>` branch:
      tree stops both builds before anything is written. The checkout and the build would write
      through it to wherever it points:
      `the builds could not start: <path> is a link (a symlink or junction), which port-check and the build would write through to wherever it points; make it a plain folder or move it out, and rerun`.
+     On Linux and macOS, git sees a symlink named `.cloudflare` or `.wrangler` as a file that
+     the folder rules in `.gitignore` don't match, so it is also listed as `is new and ships`.
    - `.port-check/` is git-ignored and grows by one folder per merge base (about 17 MB for this
      repo, built output included), with git's scratch index for the checkout inside it;
      port-check reuses a folder and never deletes one. Recycle old folders by hand. Before either

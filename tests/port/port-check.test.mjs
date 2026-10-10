@@ -1571,7 +1571,13 @@ describe("port-check", { concurrency: true }, () => {
     const dir = await buildRepo({});
     const { target, empty } = outside(dir);
     symlinkSync(target, path.join(dir, ".cloudflare"), "junction");
-    assert.deepEqual(await portCheck(dir), refused(".cloudflare"));
+    const expected = refused(".cloudflare");
+    // Git on POSIX lists a symlink as a file, which the folder rule `.cloudflare/` in .gitignore doesn't match, so
+    // there it also ships; git on Windows sees the junction as an ignored folder.
+    if (process.platform !== "win32") {
+      expected.stdout = `.cloudflare is new and ships\n${expected.stdout.replace("0 files compared, 0", "1 files compared, 1")}`;
+    }
+    assert.deepEqual(await portCheck(dir), expected);
     empty();
   });
 
