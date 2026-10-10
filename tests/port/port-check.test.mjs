@@ -20,7 +20,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, describe, test } from "node:test";
+import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -241,9 +241,6 @@ async function nodeWith(env, dir, ...args) {
 const portCheck = (dir) => nodeWith(ENV, dir, SCRIPT, "--base", "main");
 
 describe("port-check", { concurrency: true }, () => {
-  // The literal cap, not BUILD_SLOTS: 6 is what the 16 GB CI runner holds.
-  after(() => assert.ok(inBuildSlot.peak >= 1 && inBuildSlot.peak <= 6, `${inBuildSlot.peak} builds ran at once`));
-
   test("the fixture env drops GIT_* and node_modules/.bin from PATH, and turns off Node's compile cache", () => {
     const paths = Object.entries(ENV).filter(([key]) => key.toUpperCase() === "PATH");
     assert.ok(paths.length > 0);
@@ -1589,6 +1586,13 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await portCheck(dir), refused(".wrangler/state/v3"));
     empty();
   });
+});
+
+// A test, not an `after` hook: Node 22.22 prints a failed suite hook as `not ok` but still exits 0. Top-level tests run
+// in order, so this runs once every port-check test has finished. The literal cap, not BUILD_SLOTS: 6 is what the
+// 16 GB CI runner holds.
+test("at most six port-check fixtures built at once", () => {
+  assert.ok(inBuildSlot.peak >= 1 && inBuildSlot.peak <= 6, `${inBuildSlot.peak} builds ran at once`);
 });
 
 describe("port-rename", () => {
