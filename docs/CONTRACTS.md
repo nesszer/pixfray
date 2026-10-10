@@ -536,8 +536,12 @@ bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), tsc
                            # the TypeScript files plus site.config.js)
 bun run port-check         # node scripts/port-check.ts --base origin/main: pairs and compares every changed file,
                            # checks relative imports at head (docs/DEVELOPMENT.md); exits 1 on a difference or
-                           # problem, 2 on bad usage; CI runs it on pushes to and PRs from port/ branches
-node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths
+                           # problem, 2 on bad usage; CI runs it on pushes to and PRs from port/ branches;
+                           # a tsconfig*.json outside public/ may change only files, include and exclude
+                           # (resolved compilerOptions, through extends, must be equal at base and head);
+                           # code under public/ keeps its path and stays JavaScript, as Vite serves it as written
+node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
+                                        # refuses files under public/
 bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.mjs"
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test

@@ -4,15 +4,17 @@
 // JavaScript with oxc and compared. A file pairs with the same path; a code file gone at head pairs with a new code file
 // of the same name (the path's base name without its code extension), first in the same folder, then anywhere in the
 // repo. A name that more than one gone or new file shares fails instead of guessing. A gone file with no pair fails;
-// a new code file with no pair passes only when it strips to no runtime code. Other changed files fail unless they
-// don't ship (UNSHIPPED) or their only change names a moved code file's new path. Every relative import at head must
-// name a file at head, and none may re-export only inline types. `--strict-list` checks only the strict list.
+// a new code file with no pair passes only when it strips to no runtime code. A code file under public/ keeps its path
+// and stays JavaScript, because public/ is served as written. A tsconfig passes only when its compilerOptions, with
+// `extends` followed, stay the same: Vite compiles TypeScript with them. Other changed files fail unless they don't
+// ship (UNSHIPPED) or their only change names a moved code file's new path. Every relative import at head must name a
+// file at head, and none may re-export only inline types. `--strict-list` checks only the strict list.
 // Usage: node scripts/port-check.ts --base origin/main | node scripts/port-check.ts --strict-list
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { transformWithOxc } from "vite";
-import { replaceSpans, scanModule, type Specifier } from "./lib/port.ts";
+import { replaceSpans, scanModule, splitSpecifier, type Specifier } from "./lib/port.ts";
 
 const STRICT_CONFIG = "tsconfig.strict.json";
 
@@ -50,9 +52,17 @@ const STRICT_EXCLUSIONS: Record<string, string> = {
 /** Changed files that don't ship to the Worker or the pages, each with the reason printed when one is allowed. */
 const UNSHIPPED: [RegExp, string][] = [
   [/^(?!public\/).*\.md$/, "documentation"],
-  [/(?:^|\/)tsconfig[^/]*\.json$/, "type-check config"],
   [/^\.coderabbit\.yaml$/, "review config"],
 ];
+
+/** A tsconfig the build reads. One under public/ is served as a file instead, so it compares like any shipped file. */
+const TSCONFIG = /^(?!public\/)(?:.*\/)?tsconfig[^/]*\.json$/;
+
+/** The tsconfig keys that only choose which files tsc checks. */
+const FILE_LISTS = ["files", "include", "exclude"];
+
+/** Served as written: Vite copies public/ to the build unchanged. */
+const PUBLIC = "public/";
 
 /** A path in a non-code file that names a code file: `./x.js`, `../x.js`, `/x.js` or `dir/x.js`. */
 const CODE_PATH = /(?<![\w.@/-])(?:\.{1,2}\/|\/)?(?:[\w@.-]+\/)*[\w@-][\w@.-]*\.[cm]?[jt]sx?(?![\w/-]|\.\w)/g;
@@ -95,10 +105,9 @@ function headFiles(root: string): string[] {
   return [...new Set(listed)].filter((file) => existsSync(path.join(root, file)));
 }
 
-/** The `include` and `files` entries of a tsconfig, as written. The file is JSONC: comments and trailing commas are
- * dropped outside strings before parsing. */
-function tsconfigEntries(root: string, config: string): Set<string> {
-  const text = readFileSync(path.join(root, config), "utf8");
+/** A JSONC file (a tsconfig) as an object: comments and trailing commas are dropped outside strings before parsing. A
+ * file that is not an object reads as `{}`. */
+function parseJsonc(text: string): Record<string, unknown> {
   let json = "";
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
@@ -117,14 +126,77 @@ function tsconfigEntries(root: string, config: string): Set<string> {
       json += ch;
     }
   }
-  const parsed: unknown = JSON.parse(json.replace(/,(\s*[}\]])/g, "$1"));
+  return asObject(JSON.parse(json.replace(/,(\s*[}\]])/g, "$1")));
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? { ...value } : {};
+}
+
+/** The `include` and `files` entries of a tsconfig, as written. */
+function tsconfigEntries(root: string, config: string): Set<string> {
+  const parsed = parseJsonc(readFileSync(path.join(root, config), "utf8"));
   const entries = new Set<string>();
-  if (typeof parsed !== "object" || parsed === null) return entries;
-  for (const key of ["include", "files"]) {
-    const list: unknown = key in parsed ? (parsed as Record<string, unknown>)[key] : undefined; // `key in parsed` holds
+  for (const list of [parsed["include"], parsed["files"]]) {
     if (Array.isArray(list)) for (const entry of list) entries.add(path.posix.normalize(String(entry)));
   }
   return entries;
+}
+
+/** A tsconfig as the build reads it: each relative `extends` merged in first, then the file's own keys, with
+ * compilerOptions merged option by option, and without `extends` and the file lists. `read` gives a file's text, or
+ * undefined when it is missing; a missing `file` reads as `{}`, so a new or gone tsconfig compares against nothing. */
+function resolvedTsconfig(
+  read: (file: string) => string | undefined,
+  file: string,
+  from: readonly string[] = [],
+): Record<string, unknown> {
+  const text = read(file);
+  const parent = from.at(-1);
+  if (text === undefined && parent === undefined) return {};
+  if (text === undefined || from.includes(file)) throw new Error(`${parent} extends ${file}, which cannot be read`);
+  const own = parseJsonc(text);
+  const extended: unknown = own["extends"];
+  let merged: Record<string, unknown> = {};
+  for (const layer of [...(extended === undefined ? [] : [extended].flat()), own]) {
+    let options: Record<string, unknown>;
+    if (layer === own) options = own;
+    else if (typeof layer === "string" && /^\.{1,2}\//.test(layer)) {
+      const target = path.posix.join(path.posix.dirname(file), layer.endsWith(".json") ? layer : `${layer}.json`);
+      options = resolvedTsconfig(read, target, [...from, file]);
+    } else throw new Error(`${file} extends ${String(layer)}, which port-check cannot follow`);
+    const compilerOptions = { ...asObject(merged["compilerOptions"]), ...asObject(options["compilerOptions"]) };
+    merged = { ...merged, ...options, compilerOptions };
+  }
+  for (const key of ["extends", ...FILE_LISTS]) delete merged[key];
+  return merged;
+}
+
+/** JSON with object keys sorted, so equal values print the same. */
+function canonical(value: unknown): string | undefined {
+  return JSON.stringify(value, (_key, item: unknown) =>
+    typeof item === "object" && item !== null && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : item,
+  );
+}
+
+/** The keys, as `compilerOptions.<name>` for an option, whose resolved value differs between two tsconfigs. */
+function tsconfigChanges(base: Record<string, unknown>, head: Record<string, unknown>): string[] {
+  const keys = (a: object, b: object) => [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
+  const changes: string[] = [];
+  for (const key of keys(base, head)) {
+    if (key !== "compilerOptions") {
+      if (canonical(base[key]) !== canonical(head[key])) changes.push(key);
+      continue;
+    }
+    const before = asObject(base[key]);
+    const after = asObject(head[key]);
+    for (const option of keys(before, after)) {
+      if (canonical(before[option]) !== canonical(after[option])) changes.push(`compilerOptions.${option}`);
+    }
+  }
+  return changes;
 }
 
 /** One line per TypeScript file in the working tree that no strict program checks. */
@@ -249,39 +321,62 @@ function sourceLine({ lines, sourceLines }: Runtime, index: number): string {
   return "has no runtime code";
 }
 
-function show(line: string | undefined): string {
-  if (line === undefined) return "(end of file)";
-  const trimmed = line.trim();
-  return trimmed.length > 160 ? `${trimmed.slice(0, 157)}...` : trimmed;
+/** Prints a differing pair of lines, trimmed. A line over 160 characters prints 150 of them, from 60 before the first
+ * column where the two differ, so the difference stays in view. */
+function showDifference(base: string | undefined, head: string | undefined): void {
+  const before = base?.trim() ?? "";
+  const after = head?.trim() ?? "";
+  let at = 0;
+  while (at < before.length && before[at] === after[at]) at++;
+  const from = Math.max(0, at - 60);
+  const cut = (line: string | undefined, text: string) => {
+    if (line === undefined) return "(end of file)";
+    if (text.length <= 160) return text;
+    return `${from > 0 ? "..." : ""}${text.slice(from, from + 150)}${from + 150 < text.length ? "..." : ""}`;
+  };
+  console.log(`  base: ${cut(base, before)}`);
+  console.log(`  head: ${cut(head, after)}`);
+}
+
+/** True when a pair moves or renames a code file into, out of or within public/. */
+function movesPublic(base: string, head: string): boolean {
+  return base !== head && (base.startsWith(PUBLIC) || head.startsWith(PUBLIC));
 }
 
 async function checkPort(root: string, baseRef: string, files: readonly string[]): Promise<number> {
   const mergeBase = git(["merge-base", baseRef, "HEAD"], root).trim();
   const baseFiles = nulList(git(["ls-tree", "-r", "-z", "--name-only", mergeBase], root));
+  const baseSet = new Set(baseFiles);
   const changed = new Set(nulList(git(["diff", "--name-only", "--no-renames", "-z", mergeBase], root)));
   const units = pairFiles(baseFiles, files, changed);
   units.sort((a, b) => (key(a) < key(b) ? -1 : 1));
 
   // A head path of a moved file maps to its base path, so a path that names it compares as one naming the base file.
   const movedFrom = new Map<string, string>();
-  for (const unit of units) if (unit.kind === "compare" && unit.base !== unit.head) movedFrom.set(unit.head, unit.base);
+  for (const unit of units) {
+    if (unit.kind === "compare" && unit.base !== unit.head && !movesPublic(unit.base, unit.head))
+      movedFrom.set(unit.head, unit.base);
+  }
   /** `written`, a path in head file `file`, as base file `baseFile` would write it to reach the base version of the
-   * same target. `./` and `../` paths resolve from the file's folder, `/` paths from the repo root or public/ (Vite
-   * serves both at `/`), and other paths from the repo root. */
+   * same target. `./` and `../` paths resolve from the file's folder, other paths from the repo root (a leading `/`
+   * kept). A query or hash stays as written. */
   const asBase = (file: string, baseFile: string) => (written: string) => {
-    if (written.startsWith("./") || written.startsWith("../")) {
-      const target = path.posix.join(path.posix.dirname(file), written);
-      const baseTarget = movedFrom.get(target) ?? target;
-      if (baseTarget === target && path.posix.dirname(file) === path.posix.dirname(baseFile)) return written;
+    const { file: target, suffix } = splitSpecifier(written);
+    if (target.startsWith("./") || target.startsWith("../")) {
+      const full = path.posix.join(path.posix.dirname(file), target);
+      const baseTarget = movedFrom.get(full) ?? full;
+      if (baseTarget === full && path.posix.dirname(file) === path.posix.dirname(baseFile)) return written;
       const relative = path.posix.relative(path.posix.dirname(baseFile), baseTarget);
-      return relative.startsWith("../") ? relative : `./${relative}`;
+      return (relative.startsWith("../") ? relative : `./${relative}`) + suffix;
     }
-    const lead = written.startsWith("/") ? "/" : "";
-    for (const served of lead ? ["", "public/"] : [""]) {
-      const baseTarget = movedFrom.get(served + written.slice(lead.length));
-      if (baseTarget?.startsWith(served)) return lead + baseTarget.slice(served.length);
-    }
-    return written;
+    const lead = target.startsWith("/") ? "/" : "";
+    const baseTarget = movedFrom.get(target.slice(lead.length));
+    return baseTarget === undefined ? written : lead + baseTarget + suffix;
+  };
+  const readBase = (file: string) => (baseSet.has(file) ? git(["show", `${mergeBase}:${file}`], root) : undefined);
+  const readHead = (file: string) => {
+    const full = path.join(root, file);
+    return existsSync(full) ? readFileSync(full, "utf8") : undefined;
   };
   const same = () => (value: string) => value;
 
@@ -292,6 +387,30 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
     const reason = UNSHIPPED.find(([pattern]) => pattern.test(key(unit)))?.[1];
     if (reason !== undefined) {
       console.log(`allowed: ${key(unit)} (${reason}, does not ship)`);
+      continue;
+    }
+    if (TSCONFIG.test(key(unit))) {
+      const config = key(unit);
+      let changes: string[];
+      try {
+        changes = tsconfigChanges(resolvedTsconfig(readBase, config), resolvedTsconfig(readHead, config));
+      } catch (error) {
+        changes = [`what port-check cannot read (${error instanceof Error ? error.message : String(error)})`];
+      }
+      if (changes.length === 0) {
+        console.log(`allowed: ${config} (compiler options unchanged, does not ship)`);
+        continue;
+      }
+      compared++;
+      different++;
+      console.log(
+        `${config} changes ${changes.join(", ")}, which the build reads; only files, include and exclude may change`,
+      );
+      continue;
+    }
+    if (unit.kind === "compare" && movesPublic(unit.base, unit.head)) {
+      console.log(`${unit.base} -> ${unit.head} changes a path under public/, which serves code as written`);
+      problems++;
       continue;
     }
     if (unit.kind === "gone") {
@@ -334,8 +453,7 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
         }
         different++;
         console.log(`${label} differs (line ${index + 1})`);
-        console.log(`  base: ${show(baseLines[index])}`);
-        console.log(`  head: ${show(headLines[index])}`);
+        showDifference(baseLines[index], headLines[index]);
         continue;
       }
       const headSource = readFileSync(path.join(root, unit.head), "utf8");
@@ -353,14 +471,17 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
       if (index === -1) continue;
       different++;
       console.log(`${label} differs (base ${sourceLine(base, index)}, head ${sourceLine(head, index)})`);
-      console.log(`  base: ${show(base.lines[index])}`);
-      console.log(`  head: ${show(head.lines[index])}`);
+      showDifference(base.lines[index], head.lines[index]);
     } catch (error) {
       different++;
       console.log(`${label} could not be compared: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  for (const line of [...importProblems(root, files), ...strictListProblems(root, files)]) {
+  const publicTypeScript = files
+    .filter((file) => file.startsWith(PUBLIC) && /\.(?:ts|mts|cts|tsx)$/.test(file))
+    .sort()
+    .map((file) => `${file} is TypeScript under public/, which serves code as written`);
+  for (const line of [...publicTypeScript, ...importProblems(root, files), ...strictListProblems(root, files)]) {
     console.log(line);
     problems++;
   }
@@ -395,7 +516,7 @@ function importProblems(root: string, files: readonly string[]): string[] {
     }
     for (const { value, start, inlineTypes } of specifiers) {
       const line = code.slice(0, start).split("\n").length;
-      const target = path.posix.join(path.posix.dirname(file), value.replace(/[?#].*$/s, ""));
+      const target = path.posix.join(path.posix.dirname(file), splitSpecifier(value).file);
       if (!atHead.has(target)) problems.push(`${file} line ${line} imports ${value}, which does not exist at head`);
       if (inlineTypes) {
         problems.push(
@@ -430,6 +551,12 @@ async function main(): Promise<number> {
     return 2;
   }
   const top = root();
+  try {
+    git(["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`], top);
+  } catch {
+    console.error(`port-check: ${baseRef} is not a commit`);
+    return 2;
+  }
   return checkPort(top, baseRef, headFiles(top));
 }
 
