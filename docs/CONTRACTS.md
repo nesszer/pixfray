@@ -470,7 +470,7 @@ Viewer sprites (server/sprites.js):
 | giveMaxPerStream | 100 | 0 to 10000 (dollars one viewer can give per stream) |
 | giveMinDuels | 5 | 0 to 1000 (finished duels before a viewer can give) |
 | reminderMin | 0 | 0 (off) or 10 to 240 (the PixFray bot posts the `!fray` line plus a command list every this many minutes while Twitch says the channel is live; only while the bot reads the channel's chat. The first one is a full interval after it's turned on. The room learns the bot and broadcaster ids from the bot's commands, in `bot_reminder`) |
-| botEnabled | true | boolean (off: the bot ignores every command and posts nothing, and chatters still walk on the overlay; `!fray off` and `!fray on` from the broadcaster or a mod set it) |
+| botEnabled | true | boolean (off: the bot ignores every other command and posts nothing except its one-line reply to `!fray on` or `!fray off` from the broadcaster or a mod; chatters still walk on the overlay; `!fray off` and `!fray on` from the broadcaster or a mod set it) |
 | petPriceCommon, petPriceUncommon, petPriceRare, petPriceEpic, petPriceLegendary | 10, 25, 60, 140, 300 | 1 to 100000 (dollars per pet of that tier) |
 | hatPricePerWin | 3 | 0 to 1000 (a locked hat costs this times the wins it needs; 0 = hats aren't sold) |
 | recolorPrice, petColorPrice, accessoryPrice, trailPrice, effectPrice, tauntPrice, titlePrice | 20, 15, 25, 40, 50, 10, 15 | 1 to 100000 (dollars per item of that kind) |
