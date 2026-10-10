@@ -112,9 +112,10 @@ to `production` for a second confirmation. The jobs already use `environment: <t
   change code on a branch and, with a promote, in production. Sign out on shared machines.
 - The editor refuses `.dev.vars*`, `.env*`, `.secrets*`, `*.dpapi`, `.github/`, `.git`, `node_modules`, `dist`, `.wrangler` and `.cloudflare`, and files over 512 KB.
 - Build files open read-only: `package.json`, `package-lock.json`, `bun.lock`, `bunfig.toml`, `.npmrc`, `site.config.js`,
-  `site.config.ts`, `cloudflare.config.ts`, `vite.config.{js,mjs,cjs,ts,mts,cts}`, `tsconfig.json` and
-  `tsconfig.<name>.json`, `types/` and `scripts/` run with the deploy workflow's Cloudflare token, so saving them
-  returns 403 `build_file`. Change them from a local checkout.
+  `site.config.ts`, `cloudflare.config.ts`, `vite.config.{js,mjs,cjs,ts,mts,cts}`,
+  `postcss.config.{js,mjs,cjs,ts,mts,cts}`, `.postcssrc`, `.postcssrc.{json,yaml,yml,js,cjs,mjs,ts,cts,mts}`,
+  `wrangler.{json,jsonc,toml}`, `tsconfig.json` and `tsconfig.<name>.json`, `types/` and `scripts/` run with the
+  deploy workflow's Cloudflare token, so saving them returns 403 `build_file`. Change them from a local checkout.
 - Code on a `live-fix/` branch runs in CI while `CLOUDFLARE_API_TOKEN` is set on the release step.
   A malicious branch could use that token, so the token is scoped to Workers Scripts Edit only.
 - Workflow inputs reach shell steps only through `env`, never through `${{ }}` inside `run:`. The

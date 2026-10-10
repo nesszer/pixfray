@@ -968,6 +968,26 @@ test("code editor request validation happens before GitHub is called", async (t)
     "vite.config.cjs",
     "vite.config.mts",
     "vite.config.cts",
+    "postcss.config.js",
+    "postcss.config.cjs",
+    "postcss.config.mjs",
+    "postcss.config.ts",
+    "postcss.config.cts",
+    "postcss.config.mts",
+    "PostCSS.config.js",
+    ".postcssrc",
+    ".postcssrc.json",
+    ".postcssrc.yaml",
+    ".postcssrc.yml",
+    ".postcssrc.js",
+    ".postcssrc.cjs",
+    ".postcssrc.mjs",
+    ".postcssrc.ts",
+    ".postcssrc.cts",
+    ".postcssrc.mts",
+    "wrangler.json",
+    "wrangler.jsonc",
+    "wrangler.toml",
     "site.config.ts",
     "tsconfig.json",
     "tsconfig.strict.json",
@@ -980,6 +1000,36 @@ test("code editor request validation happens before GitHub is called", async (t)
     assert.deepEqual([r.status, r.body.reason], [403, "build_file"], path);
   }
   assert.equal(calls.length, 0);
+});
+
+test("the editor saves files whose names only resemble build configs", async (t) => {
+  const calls = stubFetch(t, [
+    [
+      ["GET", /\/git\/ref\/heads\/live-fix\/notes$/],
+      [200, { object: { sha: "b".repeat(40) } }],
+    ],
+    [
+      ["PUT", /\/contents\//],
+      [200, { content: { sha: "c".repeat(40) }, commit: { sha: "d".repeat(40) } }],
+    ],
+  ]);
+  const f = environment(GITHUB),
+    owner = await cookieFor(f, true);
+  const notes = ["docs/postcss.md", "src/wrangler-notes.js", "docs/postcss.config.js", "docs/wrangler.toml"];
+  for (const path of notes) {
+    const r = await call(
+      f,
+      "/api/dev/code/save",
+      "POST",
+      { path, content: "notes\n", branch: "live-fix/notes", sha: "a".repeat(40) },
+      owner,
+    );
+    assert.deepEqual([r.status, r.body.path], [200, path], path);
+  }
+  assert.deepEqual(
+    calls.filter((c) => c.method === "PUT").map((c) => decodeURIComponent(c.url).split("/contents/")[1].split("?")[0]),
+    notes,
+  );
 });
 
 test("the editor saves TypeScript source files, which are not build files", async (t) => {
