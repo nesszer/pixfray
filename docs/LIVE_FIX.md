@@ -25,8 +25,8 @@ settings work without any of them.
    `hotfix/<name>`, load a file, edit it and press **Save to branch**. If the branch doesn't exist,
    it's created from `main` (or `GITHUB_BASE_BRANCH`).
 2. **Deploy to test.** **Deploy branch to test** starts `.github/workflows/deploy.yml` with
-   `target=test`. The workflow runs `bun run check` (format, lint, types, unit tests), uploads a new version of
-   `nesszerra-mini-chat-test` and sends it 100% of test traffic.
+   `target=test`. Its `check` job runs `bun run check` (format, lint, types, unit tests) without secrets. Then its
+   `release` job uploads a new version of `nesszerra-mini-chat-test` and sends it 100% of test traffic.
 3. **Check in OBS.** Point a test browser source at
    `https://staging.pixfray.xyz/overlay.html?channel=nesszerra&arena=1`.
 4. **Promote.** Enter the pull request number (use **Open pull request** first) and press
@@ -93,7 +93,8 @@ is required on every deploy. Set them with `cf` or the Cloudflare dashboard.
 | `CLOUDFLARE_ACCOUNT_ID` | The account id |
 
 Optional: create GitHub environments named `test` and `production`, and add required reviewers
-to `production` for a second confirmation. The jobs already use `environment: <target>`.
+to `production` for a second confirmation. The `release` and `rollback` jobs use `environment: <target>`, so the environment's
+rules apply to them. `check` has no environment, so its checks run before anyone is asked to approve.
 
 ## Before the first use
 
@@ -112,17 +113,31 @@ to `production` for a second confirmation. The jobs already use `environment: <t
   change code on a branch and, with a promote, in production. Sign out on shared machines.
 - The editor refuses `.dev.vars*`, `.env*`, `.secrets*`, `*.dpapi`, `.github/`, `.git`, `node_modules`, `dist`, `.wrangler` and `.cloudflare`, and files over 512 KB.
 - Build files open read-only. Saving one returns 403 `build_file`. Change them from a local checkout.
-  - These files run, or decide what runs, in the release step's build while it holds the deploy workflow's
-    Cloudflare token: `package.json`, `package-lock.json`, `bun.lock`, `bunfig.toml`, `.npmrc`, `site.config.js`,
+  - These files decide what runs in the release job's install and upload steps. Only the upload step holds the
+    deploy workflow's Cloudflare token: `package.json`, `package-lock.json`, `bun.lock`, `bunfig.toml`, `.npmrc`, `site.config.js`,
     `site.config.ts`, `cloudflare.config.ts`, `vite.config.{js,mjs,cjs,ts,mts,cts}`,
     `postcss.config.{js,mjs,cjs,ts,mts,cts}`, `.postcssrc`, `.postcssrc.{json,yaml,yml,js,cjs,mjs,ts,cts,mts}`,
     `tsconfig.json`, `tsconfig.<name>.json`, `types/` and `scripts/`.
   - Wrangler config is refused as a precaution, because the Cloudflare Vite plugin reads a `wrangler.json` or
     `wrangler.jsonc` in the project root: `wrangler.{json,jsonc,toml}`.
-- Code on a `live-fix/` branch runs in CI while `CLOUDFLARE_API_TOKEN` is set on the release step.
-  A malicious branch could use that token, so the token is scoped to Workers Scripts Edit only.
-- Workflow inputs reach shell steps only through `env`, never through `${{ }}` inside `run:`. The
-  workflow also checks that the commit is on the branch it names.
+- Only the `release` job (its upload step) and the `rollback` job (its rollback step) get `CLOUDFLARE_API_TOKEN`
+  and `CLOUDFLARE_ACCOUNT_ID`. The `check` job has no environment, no secrets and `contents: read` only. It runs the
+  ref and ancestry checks, `bun install --frozen-lockfile` and `bun run check` on the branch's code. Its only output is
+  the commit SHA it verified.
+- `release` waits for its environment, then starts on a new runner, checks out that SHA, confirms the checkout matches,
+  runs `bun install --frozen-lockfile`, and only then runs the upload step with the token. Nothing else from `check`
+  reaches it. That install runs the committed `package.json`'s lifecycle scripts before the token step, so a script added
+  by a push from outside the editor could change the Cloudflare CLI before the upload step runs.
+- `rollback` checks out `github.sha`. The owner page always dispatches rollbacks on the base branch, so that is the
+  base branch's head. A rollback dispatched by hand from another ref would run that ref's `scripts/release.mjs` with
+  the token, so start rollbacks from the owner page.
+- Code on a `live-fix/` or `hotfix/` branch, such as a lint plugin in `.oxlintrc.json`, runs in `check` without
+  secrets, so it can't reach the token. The commit that `release` deploys is still that branch's code:
+  `scripts/release.mjs` and the Cloudflare CLI run from it while the token is set. The token is scoped to Workers
+  Scripts Edit only, and the editor refuses the files those scripts read, so a branch can change them only with a push
+  from outside the editor.
+- Workflow inputs reach shell steps only through `env`, never through `${{ }}` inside `run:`. The `check` job checks
+  that the commit is on the branch it names, and `release` deploys only that commit.
 - Mutating `/api/dev/*` requests must be same-origin, and every route returns `403` to anyone but
   the owner. The one exception is the test site's `DEV_TOOLS_TOKEN` (docs/DEVTOOLS.md): it skips the
   same-origin check and counts as the owner, but promote, hotfix and rollback to production return 403
