@@ -42,17 +42,44 @@ gitleaks scan of the whole history and `bun run audit`. The deploy workflow runs
 - `bun run lint` runs [oxlint](https://oxc.rs/docs/guide/usage/linter) with type-aware rules
   (`.oxlintrc.json`). Warnings fail it. In `server/` every promise must be awaited or handed to
   `waitUntil`, because the Worker can cancel one that is dropped.
-- `bun run typecheck` runs `tsc` over the plain JavaScript: `tsconfig.worker.json` (server/, Workers
-  types), `tsconfig.web.json` (src/ and public/, DOM types plus `types/browser.d.ts`) and
-  `tsconfig.node.json` (the build configs). Tests and scripts are linted but not type checked.
-  Where inference falls short, add JSDoc (`/** @param {{ … }} opts */`) rather than casting the
-  problem away; the code stays `.js`.
+- `bun run typecheck` runs `tsc` four times. `tsconfig.worker.json` (server/, Workers types),
+  `tsconfig.web.json` (src/ and public/, DOM types plus `types/browser.d.ts`) and `tsconfig.node.json`
+  (the build configs) check the JavaScript loosely; `tsconfig.strict.json` checks every TypeScript
+  file with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests and the
+  `.mjs` scripts are linted but not type checked. In a `.js` file, add JSDoc where inference falls
+  short (`/** @param {{ … }} opts */`) rather than casting the problem away.
 - `bun run audit` checks every installed package against the advisory database and fails on a high or
   critical one. When the fix sits behind a dependency that pins the old version, add an exact version to
   `overrides` in `package.json` (as for `sharp`) once that release is 7 days old. Before bumping a package,
   `bun pm diff <pkg>@<old> <pkg>@<new>` shows what its code changed.
 - The one whole-repo format commit is listed in `.git-blame-ignore-revs`; run
   `git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame` skips it.
+
+## TypeScript port
+
+The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a time. Node 22.18+ runs
+`.ts` scripts with no flags, and Vite and `cf build` strip the types from the pages and the Worker.
+
+- New and ported files are `.ts`, import local files with the `.ts` extension and use only syntax
+  that strips to JavaScript (no `enum`, `namespace` or parameter properties; `erasableSyntaxOnly`).
+  Type-only imports say `import type` (`verbatimModuleSyntax`).
+- Every new or ported `.ts` file is listed in `files` in `tsconfig.strict.json`.
+- Each `any`, `as` cast or `!` assertion says why in a comment on that line or the line above.
+- `types/lib-guards.d.ts` lets `Number.isInteger` narrow `unknown` to `number`, so a port needs no
+  added `typeof` check, which would change the runtime code.
+
+A port pull request changes types only, from a `port/<name>` branch:
+
+1. `node scripts/port-rename.ts server/<name>.js` renames the file to `.ts`, points its importers at
+   the `.ts` path and updates the repo path in docs, configs and comments. It lists the code strings
+   that still name the old path; they are runtime values, so decide on them in their own change.
+2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json`.
+3. `bun run port-check` strips types and comments from each changed `.ts` file and from its version
+   on `main` with oxc, then compares the JavaScript. It prints `N files compared, M different` and
+   the first differing line of each file, and exits 1 on any difference or on a `.ts` file missing
+   from `tsconfig.strict.json`. CI runs it on every pull request from a `port/` branch.
+
+A bug the port uncovers (a missing check, a wrong default) gets its own pull request.
 
 ## Pull requests and review
 

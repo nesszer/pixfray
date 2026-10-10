@@ -22,7 +22,7 @@
   "overrides": [
     {
       // A promise the Worker drops can be cancelled when the response ends.
-      "files": ["server/**/*.js"],
+      "files": ["server/**/*.{js,ts}"],
       "rules": { "typescript/no-floating-promises": "error" }
     },
     {

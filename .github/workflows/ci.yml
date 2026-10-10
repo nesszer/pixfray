@@ -15,18 +15,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Full history, so port-check can find where the branch left main.
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+      # Node runs the .ts scripts with no flags; pinned to the version they are checked on.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22.22"
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run check
+      # A port branch must change no runtime code (docs/DEVELOPMENT.md).
+      - if: startsWith(github.head_ref, 'port/') || startsWith(github.ref_name, 'port/')
+        run: bun run port-check
       - run: bunx cf build
       # Fails on a high or critical advisory in any installed package.
       - run: bun run audit
