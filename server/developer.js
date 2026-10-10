@@ -28,8 +28,9 @@ const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 const DENIED_PATH =
   /(^|\/)(\.dev\.vars[^/]*|\.secrets[^/]*|\.env[^/]*|node_modules|\.git|\.wrangler|\.cloudflare|dist)(\/|$)|^\.github\/|\.dpapi$/i;
 // Files that run with the deploy workflow's Cloudflare token (install, build and release): readable, never saved here.
+// The TypeScript build inputs (tsconfig*.json, types/) count too, so a renamed config stays as protected as its .js form.
 const BUILD_FILE =
-  /^(package\.json|package-lock\.json|bun\.lock|bunfig\.toml|\.npmrc|site\.config\.js|cloudflare\.config\.ts|vite\.config\.js|scripts\/|\.github\/)/i;
+  /^(package\.json|package-lock\.json|bun\.lock|bunfig\.toml|\.npmrc|site\.config\.(js|ts)|cloudflare\.config\.ts|vite\.config\.(js|ts)|tsconfig(\.[^/]+)?\.json|types\/|scripts\/|\.github\/)/i;
 // Production changes need the owner signed in with Twitch; the test site's dev token can't make them.
 const productionChange = (op, body) =>
   op === "promote" || op === "hotfix" || (op === "rollback" && body?.target === "production");

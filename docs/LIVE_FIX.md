@@ -111,9 +111,9 @@ to `production` for a second confirmation. The jobs already use `environment: <t
 - The owner session effectively has push access to the repo. Anyone holding that session can
   change code on a branch and, with a promote, in production. Sign out on shared machines.
 - The editor refuses `.dev.vars*`, `.env*`, `.secrets*`, `*.dpapi`, `.github/`, `.git`, `node_modules`, `dist`, `.wrangler` and `.cloudflare`, and files over 512 KB.
-- Build files open read-only: `package.json`, `bun.lock`, `.npmrc`, `site.config.js`,
-  `cloudflare.config.ts`, `vite.config.js` and `scripts/` run with the deploy workflow's Cloudflare token, so
-  saving them returns 403 `build_file`. Change them from a local checkout.
+- Build files open read-only: `package.json`, `bun.lock`, `.npmrc`, `site.config.js` and `site.config.ts`,
+  `cloudflare.config.ts`, `vite.config.js` and `vite.config.ts`, `tsconfig*.json`, `types/` and `scripts/` run with
+  the deploy workflow's Cloudflare token, so saving them returns 403 `build_file`. Change them from a local checkout.
 - Code on a `live-fix/` branch runs in CI while `CLOUDFLARE_API_TOKEN` is set on the release step.
   A malicious branch could use that token, so the token is scoped to Workers Scripts Edit only.
 - Workflow inputs reach shell steps only through `env`, never through `${{ }}` inside `run:`. The
