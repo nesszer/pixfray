@@ -69,9 +69,28 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
   `tsconfig.node.json` and `types/browser.d.ts` by `tsconfig.web.json`. `bun run typecheck` (so
   `bun run check`) enforces this by ending with `node scripts/port-check.ts --strict-list`, which
   reads every tracked and untracked file that git doesn't ignore and prints
-  `tsconfig.strict.json covers every TypeScript file`, or one line per file it misses.
+  `tsconfig.strict.json covers every TypeScript file`, or one line per file it misses. It asks tsc
+  for the program (`tsc -p <config> --listFilesOnly`), so `files`, `include` and `exclude` count as
+  tsc reads them, and each error tsc prints reading the config fails it too, as
+  `tsc -p tsconfig.strict.json: error TS…`.
+- The strict list also fails when `tsconfig.strict.json` checks less, as tsc reads it after
+  `extends` (`tsc --showConfig`; the rules take about 0.25 s):
+  - `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax` and
+    `erasableSyntaxOnly` must be true:
+    `tsconfig.strict.json must set <option> to true (it is <value or "not set">)`.
+  - `noCheck`, `noLib`, `noResolve` and `noStrictGenericChecks` turn checks off, so true fails. Every
+    other `strict*` or `no*` option, `alwaysStrict` and `useUnknownInCatchVariables` fail at false:
+    `tsconfig.strict.json sets <option> to <value>, which checks less`.
+  - Every program keeps `skipLibCheck`, because `@types/node` and `@cloudflare/workers-types`
+    declare the same globals, and `skipLibCheck` skips every declaration file. So a `.d.ts` file in
+    the strict program fails with
+    `<file> is a declaration file, which skipLibCheck leaves unchecked in tsconfig.strict.json; name it .ts`.
+    That is why `types/lib-guards.ts` is a `.ts` file.
+- `bun run lint` fails `// @ts-nocheck` and a `@ts-ignore` or `@ts-expect-error` with no reason
+  after it (`typescript/ban-ts-comment`), so a TypeScript file is checked whole. oxlint reads that
+  rule in TypeScript files only.
 - Each `any`, `as` cast or `!` assertion says why in a comment on that line or the line above.
-- `types/lib-guards.d.ts` lets `Number.isInteger` narrow `unknown` to `number`, so a port needs no
+- `types/lib-guards.ts` lets `Number.isInteger` narrow `unknown` to `number`, so a port needs no
   added `typeof` check, which would change the runtime code. The guard names a branded number, so
   the false branch of `number | undefined` stays `number | undefined`. Inside
   `if (Number.isInteger(u))`, `let c = u` infers the branded type, so `c = c + 1` fails; write
@@ -180,6 +199,11 @@ A port pull request changes types only, from a `port/<name>` branch:
      so any entry there other than a `<sha>` or `<sha>.partial` folder stops both builds with
      `the builds could not start: .port-check holds <names>, which the base build would load from above its checkout; only base checkouts (<sha> folders) belong there, so move the rest out and rerun`
      (up to three names, then `and N more`).
+   - A link (a symlink, or a junction on Windows) at `.port-check`, at a `.port-check/<sha>`
+     folder, or at or inside `.cloudflare/` or `.wrangler/` in the base checkout or the working
+     tree stops both builds before anything is written. The checkout and the build would write
+     through it to wherever it points:
+     `the builds could not start: <path> is a link (a symlink or junction), which port-check and the build would write through to wherever it points; make it a plain folder or move it out, and rerun`.
    - `.port-check/` is git-ignored and grows by one folder per merge base (about 17 MB for this
      repo, built output included), with git's scratch index for the checkout inside it;
      port-check reuses a folder and never deletes one. Recycle old folders by hand. Before either
@@ -198,18 +222,21 @@ A port pull request changes types only, from a `port/<name>` branch:
      (`head has no runtime code` when the head strips to nothing), then
      `N files compared, M different`, then `; B build output files compared, D different` when it
      built (`; the build failed` when a build failed, `; the builds did not run` when a committed
-     or mismatched `.port-check` stopped them). N counts every changed, moved and new file
+     or mismatched `.port-check`, a stray entry in it or a link stopped them). N counts every changed, moved and new file
      it compared: gone, ambiguous, don't-ship and allowed `tsconfig*.json` files and code moved in
      or out of `public/` are not counted. `, K other problems` follows for unpaired and ambiguous
      files, `public/` paths and TypeScript, a committed or mismatched `.port-check`, import and
-     strict-list failures and failed builds. It exits 1 on any difference or problem. A branch
+     strict-list failures, and builds that failed or could not start. It exits 1 on any difference or problem. A branch
      that adds runtime code, such as a new script, fails it by design: that belongs in a `ts/`
      branch.
 
    CI runs it on every push to a `port/` branch and every pull request from one to `main`. Its
    own tests are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of
-   `bun run check` because they build small fixture repos in the OS temp folder (about 35 s on a
-   fast machine, about 80 s on CI).
+   `bun run check` because they build small fixture repos in the OS temp folder (40-70 s on a
+   32-thread machine with the six-build cap below, about 80 s on CI). Each run keeps its fixtures in
+   one new `pixfray-port-check-*` folder there (about 19 MB), so the temp folder gains one entry
+   per run. Nothing is deleted by script (AGENTS.md), and reusing a fixed folder would mean emptying
+   it first, so recycle old run folders by hand.
    CI runs them next to `bun run check`, on pull requests to `main` and pushes to `main`,
    `live-fix/`, `hotfix/` and `port/` branches; run them after changing
    `scripts/port-check.ts`, `scripts/port-rename.ts` or `scripts/lib/port.ts`. Each build

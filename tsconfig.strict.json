@@ -11,7 +11,7 @@
     "exactOptionalPropertyTypes": true
   },
   "files": [
-    "types/lib-guards.d.ts",
+    "types/lib-guards.ts",
     "types/site.ts",
     "site.config.js",
     "scripts/lib/port.ts",
