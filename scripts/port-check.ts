@@ -93,6 +93,11 @@ const CACHE = ".port-check";
 /** The scratch index inside each CACHE/<sha> folder: it checks the base out, then proves the folder still matches. */
 const CACHE_INDEX = ".port-check-index";
 
+/** The only names CACHE may hold: a base checkout, or one still being written (`.partial`). Anything else there sits
+ * between a checkout and the repo, so the base build would read it first: bunx runs the nearest
+ * `node_modules/.bin/cf` and Node resolves packages from the nearest `node_modules`. */
+const CACHE_ENTRY = /^[0-9a-f]{40}(?:[0-9a-f]{24})?(?:\.partial)?$/;
+
 /** What the build writes inside the base folder, so verifyBase leaves it out. */
 const BUILD_WRITES = [".cloudflare", ".wrangler"];
 
@@ -139,6 +144,11 @@ function nulList(out: string): string[] {
   return out.split("\0").filter((item) => item !== "");
 }
 
+/** The first three of `paths`, then how many more there are. */
+function firstFew(paths: string[]): string {
+  return paths.slice(0, 3).join(", ") + (paths.length > 3 ? ` and ${paths.length - 3} more` : "");
+}
+
 function codeExtension(file: string): CodeExtension | undefined {
   const ext = path.posix.extname(file);
   return ext in LANG ? (ext as CodeExtension) : undefined; // `in LANG` proves ext is one of its keys
@@ -155,7 +165,9 @@ function stem(file: string): string {
 function headFiles(root: string): string[] {
   const listed = nulList(git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root));
   return [...new Set(listed)].filter((file) => {
-    const lower = file.toLowerCase();
+    // ASCII letters only, as cacheProblems' :(icase) folds them: toLowerCase() also folds the Kelvin sign (U+212A) to
+    // "k", so a tracked `.port-chec\u212A/x.js`, a separate folder on NTFS, would drop out of every check.
+    const lower = file.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
     return lower !== CACHE && !lower.startsWith(`${CACHE}/`) && existsSync(path.join(root, file));
   });
 }
@@ -568,9 +580,21 @@ function cacheProblems(root: string): string[] {
 
 /** The merge base checked out at CACHE/<sha> through a scratch index kept inside it, so the repo's own index stays as
  * it is. A folder already there is reused; a new one is written as <sha>.partial and renamed once complete. Either way
- * verifyBase proves it holds the base before it builds. */
+ * verifyBase proves it holds the base before it builds. Throws when CACHE holds anything but checkouts (CACHE_ENTRY). */
 function checkoutBase(root: string, sha: string): string {
-  const dir = path.join(root, CACHE, sha);
+  const cache = path.join(root, CACHE);
+  const stray = existsSync(cache)
+    ? readdirSync(cache, { withFileTypes: true })
+        .filter((entry) => !entry.isDirectory() || !CACHE_ENTRY.test(entry.name))
+        .map((entry) => entry.name)
+        .sort()
+    : [];
+  if (stray.length > 0) {
+    throw new Error(
+      `${CACHE} holds ${firstFew(stray)}, which the base build would load from above its checkout; only base checkouts (<sha> folders) belong there, so move the rest out and rerun`,
+    );
+  }
+  const dir = path.join(cache, sha);
   if (!existsSync(dir)) {
     const partial = `${dir}.partial`;
     mkdirSync(partial, { recursive: true });
@@ -579,7 +603,7 @@ function checkoutBase(root: string, sha: string): string {
     git(["checkout-index", "--all", "--force", `--prefix=${partial.split(path.sep).join("/")}/`], root, env);
     renameSync(partial, dir);
   }
-  verifyBase(dir, sha);
+  verifyBase(root, dir, sha);
   return dir;
 }
 
@@ -587,19 +611,19 @@ function checkoutBase(root: string, sha: string): string {
  * no file changed or missing and none extra. A reused folder could hold a hand edit, or a file committed in another
  * letter case. It refuses rather than rebuilds, since rebuilding would mean deleting the extra files. Reading the tree
  * into the scratch index and hashing every file costs about 0.3 s on PixFray's base. */
-function verifyBase(dir: string, sha: string): void {
-  const env = { ...process.env, GIT_INDEX_FILE: path.join(dir, CACHE_INDEX), GIT_WORK_TREE: dir };
+function verifyBase(root: string, dir: string, sha: string): void {
+  // GIT_DIR is named, not found by walking up from `dir`: a `.git` left in the folder would point git elsewhere.
+  const gitDir = git(["rev-parse", "--absolute-git-dir"], root).trim();
+  const env = { ...process.env, GIT_DIR: gitDir, GIT_INDEX_FILE: path.join(dir, CACHE_INDEX), GIT_WORK_TREE: dir };
   git(["read-tree", sha], dir, env);
   git(["update-index", "-q", "--refresh"], dir, env);
   const changed = nulList(git(["diff-files", "--name-only", "-z"], dir, env));
   const skip = [...BUILD_WRITES, CACHE_INDEX].map((name) => `:!${name}`);
   const extra = nulList(git(["ls-files", "--others", "-z", "--", ".", ...skip], dir, env));
   if (changed.length === 0 && extra.length === 0) return;
-  const list = (paths: string[]) =>
-    paths.slice(0, 3).join(", ") + (paths.length > 3 ? ` and ${paths.length - 3} more` : "");
   const found = [
-    ...(changed.length > 0 ? [`changed or missing: ${list(changed)}`] : []),
-    ...(extra.length > 0 ? [`not in the base: ${list(extra)}`] : []),
+    ...(changed.length > 0 ? [`changed or missing: ${firstFew(changed)}`] : []),
+    ...(extra.length > 0 ? [`not in the base: ${firstFew(extra)}`] : []),
   ];
   throw new Error(
     `${CACHE}/${sha} does not hold the base commit (${found.join("; ")}); move that folder out of the repo and rerun`,
@@ -608,8 +632,8 @@ function verifyBase(dir: string, sha: string): void {
 
 /** Builds the merge base (checked out under CACHE) and the working tree at once. Resolves to the base folder and one
  * report block per failed build. The base folder has no node_modules, so its build loads the repo's packages from
- * above it. That is sound: a change to package.json or bun.lock already fails the file checks, so both builds would
- * install the same packages. */
+ * above it, and checkoutBase refuses anything else in CACHE that would come first. That is sound: a change to
+ * package.json or bun.lock already fails the file checks, so both builds would install the same packages. */
 async function buildBoth(
   root: string,
   mergeBase: string,
