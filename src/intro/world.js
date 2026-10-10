@@ -238,6 +238,7 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
     make(nonRing, topMat, (t, i, mesh) => {
       m4.makeScale(1, capH, 1).setPosition(t.x, t.y - capH / 2, t.z);
       mesh.setMatrixAt(i, m4);
+      // t.color is a 3-number array literal built in this file (lines 135 to 147).
       mesh.setColorAt(i, col.setRGB(.../** @type {[number, number, number]} */ (t.color), THREE.SRGBColorSpace));
     }),
   );
@@ -738,6 +739,7 @@ export function buildHoard({ radius = 1.6, cell = 0.14 } = {}) {
   cols.forEach((c, i) =>
     mesh.setColorAt(
       i,
+      // c.gem is one of the 3-number literals built at line 728 of this file.
       c.gem
         ? col.setRGB(.../** @type {[number, number, number]} */ (c.gem), THREE.SRGBColorSpace)
         : col.setRGB(0.95, 0.68 + c.s * 0.12, 0.25 + c.s * 0.1, THREE.SRGBColorSpace),
