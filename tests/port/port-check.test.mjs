@@ -1,7 +1,8 @@
 // scripts/port-check.ts and scripts/port-rename.ts against small git repos: each test commits a base on main, changes
 // it on a branch, and checks the exact report and exit code. The tests run at once, since each spends about a second
-// waiting on git and node, and the build tests about ten. Every repo lives in the OS temp folder and is not removed
-// (files are never deleted by script here; see AGENTS.md), so a test that needs a file gone moves it out of the repo.
+// waiting on git and node, and the build tests about ten. Every repo lives in one folder per run in the OS temp folder
+// (RUN) and is not removed (files are never deleted by script here; see AGENTS.md), so a test that needs a file gone
+// moves it out of the repo.
 // `bun run test:port` runs this file; `bun run check` leaves it out to stay fast.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -9,15 +10,17 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -27,6 +30,11 @@ const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SCRIPT = path.join(ROOT, "scripts", "port-check.ts");
 const RENAME = path.join(ROOT, "scripts", "port-rename.ts");
 const OXLINT = path.join(ROOT, "node_modules", "oxlint", "bin", "oxlint");
+
+/** This run's folder in the OS temp folder: every fixture repo, file moved out and lint probe goes inside, so a run
+ * adds one entry there (about 18 MB) and two runs never share a folder. Fixed folders reused across runs would need
+ * emptying first, which is deletion (AGENTS.md); recycle old runs by hand. */
+const RUN = mkdtempSync(path.join(tmpdir(), "pixfray-port-check-"));
 
 // The pre-commit hook runs these tests with GIT_DIR and GIT_INDEX_FILE pointing at the PixFray repo. Passed on, they
 // would make `git init` in a temp folder re-initialize that repo as bare and commit the fixtures into it. `bun run`
@@ -72,7 +80,7 @@ function moveOut(dir, file) {
 /** A repo with `files` committed on main and a port branch checked out, in a new temp folder or in `dir`. */
 async function repo(files, dir) {
   if (dir === undefined) {
-    dir = mkdtempSync(path.join(tmpdir(), "pixfray-port-check-"));
+    dir = mkdtempSync(path.join(RUN, "repo-"));
     const outside = await git(dir, "rev-parse", "--show-toplevel").then(
       (top) => `inside ${top.trim()}`,
       (error) => (/not a git repository/.test(error.stderr) ? "outside" : error.stderr),
@@ -93,9 +101,23 @@ async function repo(files, dir) {
   return dir;
 }
 
-function strictList(...files) {
-  return `// Fixture: JSONC with a comment and a trailing comma.\n{ "files": [${files.map((f) => `"${f}"`).join(", ")},] }\n`;
+/** The options port-check requires tsconfig.strict.json to set (STRICT_ON in scripts/port-check.ts). */
+const STRICT_OPTIONS = {
+  strict: true,
+  noUncheckedIndexedAccess: true,
+  exactOptionalPropertyTypes: true,
+  verbatimModuleSyntax: true,
+  erasableSyntaxOnly: true,
+};
+
+/** A tsconfig.strict.json with the required options plus `options`, any other top-level keys in `more`, then `files`
+ * (left out when null), as JSONC with a comment and a trailing comma. */
+function strictConfig({ files = [], options = {}, ...more }) {
+  const config = { compilerOptions: { ...STRICT_OPTIONS, ...options }, ...more, ...(files && { files }) };
+  return `// Fixture: JSONC with a comment and a trailing comma.\n${JSON.stringify(config, null, 2).replace(/\n}$/, ",\n}")}\n`;
 }
+
+const strictList = (...files) => strictConfig({ files });
 
 /** The Cloudflare Vite plugin, imported by its full URL: a build fixture has no node_modules of its own. */
 const PLUGIN = import.meta.resolve("@cloudflare/vite-plugin");
@@ -145,22 +167,33 @@ async function buildRepo(files, headCf) {
  * all 16 together took the 16 GB CI runner down, where 12 had passed. */
 const buildDirs = new Set();
 const BUILD_SLOTS = 6;
-let freeSlots = BUILD_SLOTS;
-/** @type {(() => void)[]} */
-const waitingForSlot = [];
 
-/** Runs `job` once a build slot is free, and frees it (or hands it to the next waiter) when `job` settles. */
-async function inBuildSlot(job) {
-  if (freeSlots > 0) freeSlots -= 1;
-  else await new Promise((resolve) => waitingForSlot.push(resolve));
-  try {
-    return await job();
-  } finally {
-    const next = waitingForSlot.shift();
-    if (next) next();
-    else freeSlots += 1;
-  }
+/** Runs at most `count` jobs at once: `limit(job)` runs `job` once a slot is free, and frees the slot (or hands it to
+ * the next waiter) when `job` settles. `limit.peak` is the most that ran at once. */
+function slotLimiter(count) {
+  let free = count;
+  let running = 0;
+  /** @type {(() => void)[]} */
+  const waiting = [];
+  const limit = async (job) => {
+    if (free > 0) free -= 1;
+    else await new Promise((resolve) => waiting.push(resolve));
+    running += 1;
+    limit.peak = Math.max(limit.peak, running);
+    try {
+      return await job();
+    } finally {
+      running -= 1;
+      const next = waiting.shift();
+      if (next) next();
+      else free += 1;
+    }
+  };
+  limit.peak = 0;
+  return limit;
 }
+
+const inBuildSlot = slotLimiter(BUILD_SLOTS);
 
 /** Writes the fixture's node_modules/.bin (git-ignored): `cf` and `vite` run this repo's entry scripts with this Node,
  * both by absolute path, as a sh script for Linux and a .cmd for Windows. bunx takes the nearest node_modules/.bin,
@@ -208,6 +241,41 @@ async function nodeWith(env, dir, ...args) {
 const portCheck = (dir) => nodeWith(ENV, dir, SCRIPT, "--base", "main");
 
 describe("port-check", { concurrency: true }, () => {
+  // The literal cap, not BUILD_SLOTS: 6 is what the 16 GB CI runner holds.
+  after(() => assert.ok(inBuildSlot.peak >= 1 && inBuildSlot.peak <= 6, `${inBuildSlot.peak} builds ran at once`));
+
+  test("the fixture env drops GIT_* and node_modules/.bin from PATH, and turns off Node's compile cache", () => {
+    const paths = Object.entries(ENV).filter(([key]) => key.toUpperCase() === "PATH");
+    assert.ok(paths.length > 0);
+    for (const [, value] of paths) assert.equal(withoutPackageBins(value ?? ""), value);
+    assert.deepEqual(
+      Object.keys(ENV).filter((key) => key.startsWith("GIT_")),
+      [],
+    );
+    assert.equal(ENV.NODE_DISABLE_COMPILE_CACHE, "1");
+  });
+
+  test("the build slots never run more jobs than they hold, even after a waiter takes a freed slot", async () => {
+    const limit = slotLimiter(2);
+    /** @type {(() => void)[]} */
+    const finish = [];
+    const job = () => limit(() => new Promise((resolve) => finish.push(() => resolve(undefined))));
+    const first = [job(), job(), job()];
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(finish.length, 2);
+    finish.shift()?.();
+    await first[0];
+    await new Promise((resolve) => setImmediate(resolve));
+    const late = job();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(limit.peak, 2);
+    while (finish.length > 0) {
+      finish.shift()?.();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await Promise.all([...first, late]);
+    assert.equal(limit.peak, 2);
+  });
   test("annotations, comments and type-only code strip to the same JavaScript", async () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList("pair.ts", "sum.ts"),
@@ -588,7 +656,7 @@ describe("port-check", { concurrency: true }, () => {
       ].join("\n"),
       stderr: "",
     });
-    const probe = path.join(mkdtempSync(path.join(tmpdir(), "pixfray-lint-probe-")), "probe.ts");
+    const probe = path.join(mkdtempSync(path.join(RUN, "lint-probe-")), "probe.ts");
     writeFileSync(probe, 'import { type Y } from "./x.ts";\nexport const p: Y = 1;\n');
     // An explicit format: oxlint switches to GitHub annotations when it runs in Actions.
     const lint = await node(ROOT, OXLINT, "-f", "unix", "-c", path.join(ROOT, ".oxlintrc.json"), probe);
@@ -618,7 +686,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("without a build config, a tsconfig change is allowed, and a tsconfig under public/ compares byte for byte", async () => {
     const dir = await repo({
-      "tsconfig.base.json": '{ "compilerOptions": { "target": "esnext", "verbatimModuleSyntax": true } }\n',
+      "tsconfig.base.json": `${JSON.stringify({ compilerOptions: { target: "esnext", ...STRICT_OPTIONS } })}\n`,
       "tsconfig.strict.json":
         '// Strict.\n{ "extends": "./tsconfig.base.json", "compilerOptions": { "strict": true }, "files": [] }\n',
       "tsconfig.web.json": '{ "extends": "./tsconfig.base.json", "include": ["src/**/*.js"] }\n',
@@ -1356,6 +1424,164 @@ describe("port-check", { concurrency: true }, () => {
       ].join("\n"),
       stderr: "",
     });
+  });
+
+  test("--strict-list reads the program from tsc, so exclude takes a file out and a glob include puts one in", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictConfig({ files: null, include: ["**/*.ts"], exclude: ["server/rank.ts"] }),
+      "a.ts": "export const a = 1;\n",
+      "server/rank.ts": "export const rank = 1;\n",
+    });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 1,
+      stdout: "server/rank.ts is not in tsconfig.strict.json\n",
+      stderr: "",
+    });
+    write(dir, { "tsconfig.strict.json": strictConfig({ files: null, include: ["**/*.ts"] }) });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 0,
+      stdout: "tsconfig.strict.json covers every TypeScript file\n",
+      stderr: "",
+    });
+  });
+
+  const loose = [
+    {
+      options: { exactOptionalPropertyTypes: undefined },
+      line: "must set exactOptionalPropertyTypes to true (it is not set)",
+    },
+    { options: { noUncheckedIndexedAccess: false }, line: "must set noUncheckedIndexedAccess to true (it is false)" },
+    { options: { noCheck: true }, line: "sets noCheck to true, which checks less" },
+    { options: { strictFunctionTypes: false }, line: "sets strictFunctionTypes to false, which checks less" },
+    { options: { noImplicitAny: false }, line: "sets noImplicitAny to false, which checks less" },
+    {
+      options: { useUnknownInCatchVariables: false },
+      line: "sets useUnknownInCatchVariables to false, which checks less",
+    },
+  ];
+  for (const { options, line } of loose) {
+    test(`--strict-list fails a tsconfig.strict.json that ${line.replace(/ \(.*|, which.*/, "")}`, async () => {
+      const dir = await repo({
+        "tsconfig.strict.json": strictConfig({ files: ["a.ts"], options }),
+        "a.ts": "export const a = 1;\n",
+      });
+      assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+        status: 1,
+        stdout: `tsconfig.strict.json ${line}\n`,
+        stderr: "",
+      });
+    });
+  }
+
+  test("--strict-list reads options through extends, and fails a declaration file skipLibCheck would skip", async () => {
+    const dir = await repo({
+      "tsconfig.base.json": '{ "compilerOptions": { "strictBindCallApply": false, "skipLibCheck": true } }\n',
+      "tsconfig.strict.json": strictConfig({ extends: "./tsconfig.base.json", files: ["a.ts", "types/x.d.ts"] }),
+      "a.ts": "export const a = 1;\n",
+      "types/x.d.ts": "export type X = string;\n",
+    });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 1,
+      stdout: [
+        "tsconfig.strict.json sets strictBindCallApply to false, which checks less",
+        "types/x.d.ts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.strict.json; name it .ts",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("--strict-list fails on each error tsc prints reading the strict list", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictConfig({ files: ["a.ts", "gone.ts"] }),
+      "a.ts": "export const a = 1;\n",
+    });
+    const { status, stdout, stderr } = await node(dir, SCRIPT, "--strict-list");
+    assert.deepEqual({ status, stderr }, { status: 1, stderr: "" });
+    assert.match(stdout, /^tsc -p tsconfig\.strict\.json: error TS6053: File '[^']*\/gone\.ts' not found\.\n$/);
+  });
+
+  test("oxlint fails // @ts-nocheck and a @ts-ignore that doesn't say why, and passes a @ts-expect-error that does", async () => {
+    const folder = mkdtempSync(path.join(RUN, "lint-probe-"));
+    const probe = (name, text) => {
+      writeFileSync(path.join(folder, name), text);
+      return path.join(folder, name);
+    };
+    const nocheck = probe("nocheck.ts", "// @ts-nocheck\nexport const n: number = 1;\n");
+    const ignore = probe("ignore.ts", "// @ts-ignore\nexport const i: number = 1;\n");
+    const said = probe("said.ts", '// @ts-expect-error: the string is the point here\nexport const s: number = "1";\n');
+    const lint = (file) => node(ROOT, OXLINT, "-f", "unix", "-c", path.join(ROOT, ".oxlintrc.json"), file);
+    for (const file of [nocheck, ignore]) {
+      const { status, stdout } = await lint(file);
+      assert.equal(status, 1, file);
+      assert.match(stdout.split("\n")[0] ?? "", /\[Error\/typescript\(ban-ts-comment\)\]$/);
+    }
+    assert.equal((await lint(said)).status, 0);
+  });
+
+  /** An empty folder next to the repo for a link to point at, and a check that nothing was written through to it. */
+  const outside = (dir) => {
+    const target = `${dir}-outside`;
+    mkdirSync(target);
+    return { target, empty: () => assert.deepEqual(readdirSync(target), []) };
+  };
+  const refused = (label) => ({
+    status: 1,
+    stdout: [
+      `the builds could not start: ${label} is a link (a symlink or junction), which port-check and the build would write through to wherever it points; make it a plain folder or move it out, and rerun`,
+      "0 files compared, 0 different; the builds did not run, 1 other problems",
+      "",
+    ].join("\n"),
+    stderr: "",
+  });
+
+  test("a link at .port-check stops the builds before anything is written through it", async () => {
+    const dir = await buildRepo({});
+    const { target, empty } = outside(dir);
+    symlinkSync(target, path.join(dir, ".port-check"), "junction");
+    assert.deepEqual(await portCheck(dir), refused(".port-check"));
+    empty();
+  });
+
+  test("a link at .port-check/<sha> stops the builds", async () => {
+    const dir = await buildRepo({});
+    const sha = (await git(dir, "rev-parse", "main")).trim();
+    const { target, empty } = outside(dir);
+    mkdirSync(path.join(dir, ".port-check"));
+    symlinkSync(target, path.join(dir, ".port-check", sha), "junction");
+    assert.deepEqual(await portCheck(dir), refused(`.port-check/${sha}`));
+    empty();
+  });
+
+  test("a link at the base checkout's .cloudflare stops the builds", async () => {
+    const dir = await buildRepo({});
+    const sha = (await git(dir, "rev-parse", "main")).trim();
+    const cache = path.join(dir, ".port-check", sha);
+    const env = { ...ENV, GIT_INDEX_FILE: path.join(cache, ".port-check-index") };
+    mkdirSync(cache, { recursive: true });
+    await run("git", ["read-tree", sha], { cwd: dir, env });
+    await run("git", ["checkout-index", "--all", `--prefix=${cache.split(path.sep).join("/")}/`], { cwd: dir, env });
+    const { target, empty } = outside(dir);
+    symlinkSync(target, path.join(cache, ".cloudflare"), "junction");
+    assert.deepEqual(await portCheck(dir), refused(`.port-check/${sha}/.cloudflare`));
+    empty();
+  });
+
+  test("a link at the head's .cloudflare stops the builds", async () => {
+    const dir = await buildRepo({});
+    const { target, empty } = outside(dir);
+    symlinkSync(target, path.join(dir, ".cloudflare"), "junction");
+    assert.deepEqual(await portCheck(dir), refused(".cloudflare"));
+    empty();
+  });
+
+  test("a link inside the head's .wrangler stops the builds", async () => {
+    const dir = await buildRepo({});
+    const { target, empty } = outside(dir);
+    mkdirSync(path.join(dir, ".wrangler", "state"), { recursive: true });
+    symlinkSync(target, path.join(dir, ".wrangler", "state", "v3"), "junction");
+    assert.deepEqual(await portCheck(dir), refused(".wrangler/state/v3"));
+    empty();
   });
 });
 

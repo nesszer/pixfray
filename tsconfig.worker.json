@@ -2,5 +2,5 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "lib": ["esnext"], "types": ["@cloudflare/workers-types"] },
-  "include": ["server/**/*.js", "site.config.js", "types/lib-guards.d.ts"]
+  "include": ["server/**/*.js", "site.config.js", "types/lib-guards.ts"]
 }

@@ -532,8 +532,9 @@ bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
 bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), tsconfig.strict.json (strict:
                            # the TypeScript files plus site.config.js); then port-check --strict-list: every
-                           # TypeScript file in tsconfig.strict.json, except cloudflare.config.ts
-                           # (tsconfig.node.json) and types/browser.d.ts (tsconfig.web.json)
+                           # TypeScript file in the program tsc reads from tsconfig.strict.json, except
+                           # cloudflare.config.ts (tsconfig.node.json) and types/browser.d.ts (tsconfig.web.json);
+                           # no tsc error reading it, its strict options on and no .d.ts under skipLibCheck
 bun run port-check         # node scripts/port-check.ts --base origin/main: pairs and compares every changed file,
                            # checks relative imports at head (docs/DEVELOPMENT.md); exits 1 on a difference or
                            # problem, 2 on bad usage; CI runs it on pushes to and PRs from port/ branches;
@@ -546,14 +547,15 @@ bun run port-check         # node scripts/port-check.ts --base origin/main: pair
                            # passes; public/ is served as written: its code keeps its path and stays JavaScript,
                            # and every file there compares byte for byte; bytes that change but decode the same
                            # fail; a path committed at .port-check in any letter case fails and skips the builds,
-                           # and so does anything in .port-check/ besides <sha> and <sha>.partial folders
+                           # and so does anything in .port-check/ besides <sha> and <sha>.partial folders, or
+                           # a symlink or junction at .port-check, .port-check/<sha>, .cloudflare or .wrangler
 node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
                                         # refuses files under public/ and never rewrites one: it lists each
                                         # line there that names a renamed file as file:line
 bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.{mjs,ts}"
 bun run test:port          # node --test tests/port/port-check.test.mjs: port-check and port-rename against fixture
-                           # repos in the OS temp folder (the build tests run bunx cf build); not in check, for
-                           # speed; CI runs it next to bun run check
+                           # repos in one new OS temp folder per run (the build tests run bunx cf build); not in
+                           # check, for speed; CI runs it next to bun run check
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test
 bunx cf dev                # local only; reads .dev.vars. Never deploy from a lane.

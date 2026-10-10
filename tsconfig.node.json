@@ -3,5 +3,5 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "lib": ["esnext"], "types": ["node"] },
-  "include": ["vite.config.js", "cloudflare.config.ts", "types/lib-guards.d.ts"]
+  "include": ["vite.config.js", "cloudflare.config.ts", "types/lib-guards.ts"]
 }

@@ -2,5 +2,5 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "lib": ["esnext", "dom", "dom.iterable"], "types": ["vite/client"] },
-  "include": ["src/**/*.js", "public/*.js", "types/browser.d.ts", "types/lib-guards.d.ts"]
+  "include": ["src/**/*.js", "public/*.js", "types/browser.d.ts", "types/lib-guards.ts"]
 }
