@@ -809,7 +809,7 @@ function applyMood(C) {
     a = MOODS[i],
     b = MOODS[i + 1];
   scene.fog.color.copy(a.fog).lerp(b.fog, f);
-  // scene.fog is always the FogExp2 set in this file at line 213.
+  // scene.fog is always the FogExp2 this file creates at scene setup.
   /** @type {THREE.FogExp2} */ (scene.fog).density = mixN(a.fogD, b.fogD, f) * FOG;
   for (const m of clouds.mats) {
     m.uniforms.uDeep.value.copy(scene.fog.color);
@@ -1432,7 +1432,7 @@ try {
       culled.push(o);
       o.frustumCulled = false;
     }
-    // The walk checks isInstancedMesh before it reads or writes count, which only instanced meshes have.
+    // isInstancedMesh is declared only on InstancedMesh; any other object reads it as undefined.
     if (/** @type {THREE.InstancedMesh} */ (o).isInstancedMesh && o.count === 0) {
       empty.push(o);
       o.count = 1;
