@@ -155,12 +155,12 @@ A port pull request changes types only, from a `port/<name>` branch:
      changed pairs with the one file of the same name on the other side, and is labelled
      `.cloudflare/output/<base file> -> <head name>`. A difference prints as
      `.cloudflare/output/<file> differs (line N)` with both lines (`(base line X, head line Y)`
-     when the lines differ, `end of file` past the last line, `(binary)` for a file with a NUL
+     when the line numbers differ, `end of file` past the last line, `(binary)` for a file with a NUL
      byte), or as `.cloudflare/output/<file> is only in the base build` (or `head build`).
    - A failed build prints `the head build failed (bunx cf build):`, or
      `the base build failed (bunx cf build in .port-check/<sha>):`, then one indented block. For
-     a non-zero exit, that is up to the last 12 lines of its output, without colors, stack frames
-     or blank lines. For an exit 0 that left an output marker missing or older than the run, it
+     a non-zero exit, that is up to the last 12 lines of its output, without colors, stack frames,
+     blank lines or bare braces. For an exit 0 that left an output marker missing or older than the run, it
      is one line naming only those markers:
      `  exited 0 without writing .cloudflare/output/v0/config.json, .cloudflare/output/v0/workers/default/worker.config.json`.
      When `bunx` cannot start, it is the error message. Builds that cannot be set up at all print
@@ -184,7 +184,7 @@ A port pull request changes types only, from a `port/<name>` branch:
 
    CI runs it on every push to a `port/` branch and every pull request from one. Its own tests
    are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of `bun run check`
-   because they build small fixture repos in the OS temp folder (about 30 s). CI runs them on
+   because they build small fixture repos in the OS temp folder (20 to 30 s). CI runs them on
    every pull request and every push; run them after changing `scripts/port-check.ts`,
    `scripts/port-rename.ts` or `scripts/lib/port.ts`.
 
