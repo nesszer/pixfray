@@ -74,6 +74,7 @@ function summary() {
 process.on("exit", stop);
 try {
   run("format, lint, types, unit tests", "bun run check");
+  run("port-check tests", "bun run test:port");
   run("cf build", "bunx cf build");
   run("cf build (test)", "bunx cf build --mode test");
   run("module versions", "node tests/build-versions.mjs");

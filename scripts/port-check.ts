@@ -142,8 +142,9 @@ function stem(file: string): string {
   return path.posix.basename(file, path.posix.extname(file));
 }
 
-/** Files in the working tree, tracked or untracked but not ignored, without port-check's own CACHE (a branch from
- * before .gitignore named it would otherwise list every base copy). */
+/** Files in the working tree, tracked or untracked but not ignored, without port-check's own CACHE: where .gitignore
+ * does not name it, the base copies there would pair with the head's files. A committed CACHE fails on its own
+ * (cacheProblems). */
 function headFiles(root: string): string[] {
   const listed = nulList(git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root));
   return [...new Set(listed)].filter((file) => !file.startsWith(`${CACHE}/`) && existsSync(path.join(root, file)));
@@ -524,7 +525,13 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
     .filter((file) => file.startsWith(PUBLIC) && /\.(?:ts|mts|cts|tsx)$/.test(file))
     .sort()
     .map((file) => `${file} is TypeScript under public/, which serves code as written`);
-  for (const line of [...publicTypeScript, ...importProblems(root, files), ...strictListProblems(root, files)]) {
+  const lines = [
+    ...cacheProblems(root),
+    ...publicTypeScript,
+    ...importProblems(root, files),
+    ...strictListProblems(root, files),
+  ];
+  for (const line of lines) {
     console.log(line);
     problems++;
   }
@@ -533,14 +540,24 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
   return different > 0 || outputsDifferent > 0 || problems > 0 ? 1 : 0;
 }
 
-/** The merge base checked out at CACHE/<sha> through a scratch index, so the repo's own index stays as it is. A folder
- * already there is reused; a new one is written as <sha>.partial and renamed once complete. */
+/** One line when CACHE is committed: the file checks skip it, and the base build would reuse a committed <sha>
+ * folder instead of checking the base out. */
+function cacheProblems(root: string): string[] {
+  const committed = nulList(git(["ls-files", "-z", "--", `${CACHE}/`], root));
+  if (committed.length > 0) {
+    return [`${CACHE}/ has ${committed.length} committed files, which no check compares; take ${CACHE}/ out of git`];
+  }
+  return [];
+}
+
+/** The merge base checked out at CACHE/<sha> through a scratch index kept inside it, so the repo's own index stays as
+ * it is. A folder already there is reused; a new one is written as <sha>.partial and renamed once complete. */
 function checkoutBase(root: string, sha: string): string {
   const dir = path.join(root, CACHE, sha);
   if (existsSync(dir)) return dir;
   const partial = `${dir}.partial`;
   mkdirSync(partial, { recursive: true });
-  const env = { ...process.env, GIT_INDEX_FILE: `${dir}.index` };
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(partial, ".port-check-index") };
   git(["read-tree", sha], root, env);
   git(["checkout-index", "--all", "--force", `--prefix=${partial.split(path.sep).join("/")}/`], root, env);
   renameSync(partial, dir);
@@ -577,6 +594,8 @@ function runBuild(dir: string): Promise<string | undefined> {
     child.stderr.on("data", (chunk: Uint8Array) => (log += decode(chunk)));
     child.on("error", (error) => resolve(`  ${error.message}`));
     child.on("close", (code) => {
+      // The second of slack: some file systems keep mtimes in whole seconds, so a marker written just after `started`
+      // can read up to a second older.
       const stale = OUTPUT_MARKERS.filter((marker) => {
         const file = path.join(dir, OUTPUT, marker);
         return !existsSync(file) || statSync(file).mtimeMs < started - 1000;
