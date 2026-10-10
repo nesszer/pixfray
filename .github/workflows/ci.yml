@@ -30,6 +30,8 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run check
+      # port-check's own tests, kept out of check for speed: they build small fixture repos.
+      - run: bun run test:port
       # A port branch must change no runtime code (docs/DEVELOPMENT.md): head_ref names a pull request's branch,
       # ref_name a pushed branch.
       - if: startsWith(github.head_ref, 'port/') || startsWith(github.ref_name, 'port/')

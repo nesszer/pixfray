@@ -65,9 +65,10 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
   Type-only imports say `import type` (`verbatimModuleSyntax`).
 - Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`, `.d.ts` included) is listed in `files` in
   `tsconfig.strict.json`. Two are checked by another program instead: `cloudflare.config.ts` by
-  `tsconfig.node.json` and `types/browser.d.ts` by `tsconfig.web.json`. `bun run check` enforces
-  this through `node scripts/port-check.ts --strict-list` in `tests/port-check.test.mjs`, which
-  reads every tracked and untracked file that git doesn't ignore.
+  `tsconfig.node.json` and `types/browser.d.ts` by `tsconfig.web.json`. `bun run typecheck` (so
+  `bun run check`) enforces this by ending with `node scripts/port-check.ts --strict-list`, which
+  reads every tracked and untracked file that git doesn't ignore and prints
+  `tsconfig.strict.json covers every TypeScript file`, or one line per file it misses.
 - Each `any`, `as` cast or `!` assertion says why in a comment on that line or the line above.
 - `types/lib-guards.d.ts` lets `Number.isInteger` narrow `unknown` to `number`, so a port needs no
   added `typeof` check, which would change the runtime code. The guard names a branded number, so
@@ -113,16 +114,21 @@ A port pull request changes types only, from a `port/<name>` branch:
      new path in code that ships.
    - `public/` is served as written, so it keeps its paths and its bytes. A code file under
      `public/` that is renamed or moved in or out fails as
-     `<base> -> <head> changes a path under public/`, and a `.ts`, `.mts`, `.cts` or `.tsx` file
-     under `public/` fails. Every changed file there compares byte for byte, comments and renamed
-     paths included, as `<path> differs (line N; public/ is served as written)`, and a new file
-     there fails as `<path> is new and ships`.
+     `<base> -> <head> changes a path under public/, which serves code as written`, and a `.ts`,
+     `.mts`, `.cts` or `.tsx` file there fails as
+     `<path> is TypeScript under public/, which serves code as written`. Every changed file there
+     compares byte for byte, comments and renamed paths included, as
+     `<path> differs (line N; public/ is served as written)`, `(binary; ...)` when either side
+     holds a NUL byte, or `(in bytes that decode the same; ...)`; a new file there fails as
+     `<path> is new and ships`.
    - A `tsconfig*.json` outside `public/` prints
      `allowed: <path> (the build diff compares what the build makes with it)` and is not counted:
      the build diff below sees what it changes. Without `cloudflare.config.ts` nothing builds, and
-     the reason reads `no build config reads it`. One case fails: a `tsconfig.json` new at the repo
-     root, because the base build runs inside the repo and would read it too; add it in a change
-     of its own.
+     the reason reads `no build config reads it`. One case fails, and counts as compared and
+     different: a `tsconfig.json` new at the repo root, because the base build runs inside the
+     repo and would read it too. It prints `tsconfig.json is new at the repo root, where the base
+     build would read it too, so the build diff cannot see what it changes; add it in a change of
+     its own` (one line).
    - Other files fail closed, with two exceptions. Files that don't ship print
      `allowed: <path> (<reason>, does not ship)` and are not counted: Markdown outside `public/`
      (documentation) and `.coderabbit.yaml` (review config).
@@ -130,8 +136,9 @@ A port pull request changes types only, from a `port/<name>` branch:
      `allowed: <path> (only renamed paths changed)`, when its diff disappears once every code path
      on a head line that names a moved file is read as the base path: `./` and `../` paths from
      the file's folder, and `/` and other paths from the repo root. A `?query` or `#hash` after
-     the path is kept as it is. Any other change fails at its first differing line; binary
-     files compare byte for byte.
+     the path is kept as it is. Any other change fails at its first differing line, as
+     `<path> differs (line N)` with both lines; a file with a NUL byte prints
+     `<path> differs (binary)`.
    - Imports at head. Every relative static import, re-export and literal dynamic `import()`
      (a quoted string or a template with no `${}`) in every code file at head, changed or not,
      must name a file at head, or the check prints
@@ -145,29 +152,41 @@ A port pull request changes types only, from a `port/<name>` branch:
      `bunx cf build`, offline, at the same time. Every file under `.cloudflare/output/` must match:
      JavaScript with its comments removed (the Worker bundle keeps `//#region <path>` and JSDoc,
      which name old paths) and every other file byte for byte. A client chunk whose content hash
-     changed pairs with the one file of the same name on the other side. A difference prints as
-     `.cloudflare/output/<file> differs (line N)` with both lines, or
-     `.cloudflare/output/<file> is only in the base build` (or the head). A build that fails, or
-     exits 0 without writing `v0/config.json` and `v0/workers/default/worker.config.json`,
-     prints `the head build failed (bunx cf build):` (or the base) and the last 12 lines of its
-     output.
+     changed pairs with the one file of the same name on the other side, and is labelled
+     `.cloudflare/output/<base file> -> <head name>`. A difference prints as
+     `.cloudflare/output/<file> differs (line N)` with both lines (`(base line X, head line Y)`
+     when the lines differ, `end of file` past the last line, `(binary)` for a file with a NUL
+     byte), or as `.cloudflare/output/<file> is only in the base build` (or `head build`).
+   - A failed build prints `the head build failed (bunx cf build):`, or
+     `the base build failed (bunx cf build in .port-check/<sha>):`, then one indented block. For
+     a non-zero exit, that is up to the last 12 lines of its output, without colors, stack frames
+     or blank lines. For an exit 0 that left an output marker missing or older than the run, it
+     is one line naming only those markers:
+     `  exited 0 without writing .cloudflare/output/v0/config.json, .cloudflare/output/v0/workers/default/worker.config.json`.
+     When `bunx` cannot start, it is the error message. Builds that cannot be set up at all print
+     `the builds could not start: <error>`.
      The base build loads the repo's `node_modules`, which is sound because a change to
      `package.json` or `bun.lock` already fails the file checks.
    - `.port-check/` is git-ignored and grows by one folder per merge base (about 17 MB for this
-     repo, built output included); port-check reuses a folder and never deletes one. The tests
-     leave their build repos there too, as `.port-check/test-*` (about 1.6 MB each). Recycle old
-     folders by hand.
+     repo, built output included), with git's scratch index for the checkout inside it;
+     port-check reuses a folder and never deletes one. Recycle old folders by hand. A committed
+     `.port-check/` fails as
+     `.port-check/ has N committed files, which no check compares; take .port-check/ out of git`.
    - It prints the first differing line of each file with its source line at base and at head
      (`head has no runtime code` when the head strips to nothing), then
      `N files compared, M different`, then `; B build output files compared, D different` when it
      built (`; the build failed` when a build failed). N counts every changed, moved and new file
-     it compared: gone, ambiguous, don't-ship and `tsconfig*.json` files and code moved in or out
-     of `public/` are not counted. `, K other problems` follows for unpaired and ambiguous files,
-     `public/` paths and TypeScript, import and strict-list failures and failed builds. It exits 1
-     on any difference or problem. A branch that adds runtime code, such as a new script, fails it
-     by design: that belongs in a `ts/` branch.
+     it compared: gone, ambiguous, don't-ship and allowed `tsconfig*.json` files and code moved in
+     or out of `public/` are not counted. `, K other problems` follows for unpaired and ambiguous
+     files, `public/` paths and TypeScript, a committed `.port-check/`, import and strict-list
+     failures and failed builds. It exits 1 on any difference or problem. A branch that adds
+     runtime code, such as a new script, fails it by design: that belongs in a `ts/` branch.
 
-   CI runs it on every push to a `port/` branch and every pull request from one.
+   CI runs it on every push to a `port/` branch and every pull request from one. Its own tests
+   are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of `bun run check`
+   because they build small fixture repos in the OS temp folder (about 30 s). CI runs them on
+   every pull request and every push; run them after changing `scripts/port-check.ts`,
+   `scripts/port-rename.ts` or `scripts/lib/port.ts`.
 
 A bug the port uncovers (a missing check, a wrong default) gets its own pull request.
 
@@ -195,6 +214,7 @@ Changes reach `main` through a pull request:
 `bun run test:all` runs:
 
 - `bun run check` (format, lint, types and the unit tests; `bun run test:unit` on its own),
+- `bun run test:port` (port-check's and port-rename's own tests),
 - both builds and the workerd upload test,
 - the browser tests,
 - a local end-to-end duel against a `cf dev` it starts on port 5199 with its own state folder.

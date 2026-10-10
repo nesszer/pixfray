@@ -1,12 +1,20 @@
 // scripts/port-check.ts and scripts/port-rename.ts against small git repos: each test commits a base on main, changes
 // it on a branch, and checks the exact report and exit code. The tests run at once, since each spends about a second
-// waiting on git and node. The repos live in the OS temp folder and are not removed (files are never deleted by script
-// here; see AGENTS.md), so a test that needs a file gone moves it out of the repo. The repos that port-check builds live
-// in this repo's git-ignored .port-check/ instead, so `bunx cf build` loads this repo's node_modules; recycle
-// .port-check/test-* by hand.
+// waiting on git and node, and the build tests about ten. Every repo lives in the OS temp folder and is not removed
+// (files are never deleted by script here; see AGENTS.md), so a test that needs a file gone moves it out of the repo.
+// `bun run test:port` runs this file; `bun run check` leaves it out to stay fast.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
@@ -15,7 +23,7 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
-const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SCRIPT = path.join(ROOT, "scripts", "port-check.ts");
 const RENAME = path.join(ROOT, "scripts", "port-rename.ts");
 const OXLINT = path.join(ROOT, "node_modules", "oxlint", "bin", "oxlint");
@@ -72,59 +80,78 @@ function strictList(...files) {
   return `// Fixture: JSONC with a comment and a trailing comma.\n{ "files": [${files.map((f) => `"${f}"`).join(", ")},] }\n`;
 }
 
-/** This repo's files that `bunx cf build` reads, copied into each build fixture. */
-const BUILD_FILES = [
-  "package.json",
-  "bun.lock",
-  "vite.config.js",
-  "cloudflare.config.ts",
-  "site.config.js",
-  "tsconfig.json",
-  "tsconfig.base.json",
-  "tsconfig.node.json",
-  "tsconfig.web.json",
-  "tsconfig.worker.json",
-];
+/** The Cloudflare Vite plugin, imported by its full URL: a build fixture has no node_modules of its own. */
+const PLUGIN = import.meta.resolve("@cloudflare/vite-plugin");
 const PAGE = '<!doctype html><title>x</title><script type="module" src="/src/main.js"></script>\n';
 
-/** A repo that `bunx cf build` builds with this repo's build configs: the five pages vite.config.js names, a Worker at
- * the entrypoint cloudflare.config.ts names, and a public/ overlay, then `files` (a null entry leaves a file out). It
- * lives under this repo's .port-check/, so the builds load this repo's node_modules without an install. */
+/** A build fixture's cloudflare.config.ts, with its Worker at `entry`. */
+function cloudflareConfig(entry = "./server/worker.js") {
+  return `export default {\n  worker: { name: "fixture", compatibilityDate: "2026-09-25", entrypoint: "${entry}", assets: { notFoundHandling: "404-page" } },\n};\n`;
+}
+
+/** A repo that `bunx cf build` builds with its own minimal configs: a page, a Worker at the entrypoint
+ * cloudflare.config.ts names and a public/ overlay, then `files` (a null entry leaves a file out). cf reads the empty
+ * bun.lock to pick bunx, and the package.json to check the plugin and Vite are declared; both load from this repo's
+ * node_modules (see BUILD_ENV). */
 async function buildRepo(files) {
-  mkdirSync(path.join(ROOT, ".port-check"), { recursive: true });
-  const dir = mkdtempSync(path.join(ROOT, ".port-check", "test-"));
   const all = {
-    ...Object.fromEntries(BUILD_FILES.map((file) => [file, readFileSync(path.join(ROOT, file))])),
+    "package.json": `${JSON.stringify({ private: true, type: "module", devDependencies: { "@cloudflare/vite-plugin": "beta", vite: "8.3.0" } })}\n`,
+    "bun.lock": "",
+    "vite.config.js": `import { cloudflare } from "${PLUGIN}";\nexport default { plugins: [cloudflare()] };\n`,
+    "cloudflare.config.ts": cloudflareConfig(),
     ".gitignore": "node_modules/\n.cloudflare/\n.wrangler/\n.port-check/\n",
     "tsconfig.strict.json": strictList(),
+    "tsconfig.node.json": '{ "include": ["vite.config.js", "cloudflare.config.ts"] }\n',
     "index.html": PAGE,
-    "admin/index.html": PAGE,
-    "admin/dev/index.html": PAGE,
-    "start/index.html": PAGE,
-    "intro/index.html": PAGE,
     "src/main.js": 'console.log("page");\n',
     "server/worker.js": 'export default { fetch() { return new Response("ok"); } };\n',
     "public/overlay.html": '<script type="module" src="./overlay.js"></script>\n',
     "public/overlay.js": "// The overlay.\nexport const overlay = 1;\n",
     ...files,
   };
-  return repo(Object.fromEntries(Object.entries(all).filter(([, text]) => text !== null)), dir);
+  return repo(Object.fromEntries(Object.entries(all).filter(([, text]) => text !== null)));
 }
 
-/** A build fixture's Worker entrypoint in cloudflare.config.ts, switched to `entry`. */
-function entrypoint(entry) {
-  const config = readFileSync(path.join(ROOT, "cloudflare.config.ts"), "utf8");
-  assert.ok(config.includes('entrypoint: "./server/worker.js"'), "cloudflare.config.ts names another entrypoint");
-  return config.replace('entrypoint: "./server/worker.js"', `entrypoint: "${entry}"`);
+/** A folder holding a `cf` that builds for real in the base checkout (under .port-check/) and, at head, exits 0
+ * having written nothing: `cf` for Linux, `cf.cmd` for Windows. */
+function fakeCf() {
+  const dir = mkdtempSync(path.join(tmpdir(), "pixfray-fake-cf-"));
+  const real = path.join(ROOT, "node_modules", "cf", "bin", "cf");
+  write(dir, {
+    cf: [
+      "#!/usr/bin/env node",
+      'const { spawnSync } = require("node:child_process");',
+      'if (!process.cwd().includes(".port-check")) process.exit(0);',
+      `const result = spawnSync(process.execPath, [${JSON.stringify(real)}, ...process.argv.slice(2)], { stdio: "inherit" });`,
+      "process.exit(result.status ?? 1);",
+      "",
+    ].join("\n"),
+    "cf.cmd": '@node "%~dp0cf" %*\r\n',
+  });
+  chmodSync(path.join(dir, "cf"), 0o755);
+  return dir;
 }
+
+/** `env` with `dirs` put first on its PATH, whatever case Windows gave the key. */
+function withPath(env, ...dirs) {
+  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
+  return { ...env, [key]: [...dirs, env[key]].join(path.delimiter) };
+}
+
+/** bunx finds cf and Vite on PATH once a fixture's own node_modules/.bin has nothing: this repo's, by path. */
+const BUILD_ENV = withPath(ENV, path.join(ROOT, "node_modules", ".bin"));
 
 /** Runs a script in `dir`. A non-zero exit rejects with an error that carries the same stdout and stderr. */
 async function node(dir, ...args) {
-  const result = await run(process.execPath, args, { cwd: dir, env: ENV }).catch((error) => error);
+  return nodeWith(ENV, dir, ...args);
+}
+
+async function nodeWith(env, dir, ...args) {
+  const result = await run(process.execPath, args, { cwd: dir, env }).catch((error) => error);
   return { status: typeof result.code === "number" ? result.code : 0, stdout: result.stdout, stderr: result.stderr };
 }
 
-const portCheck = (dir) => node(dir, SCRIPT, "--base", "main");
+const portCheck = (dir, env = BUILD_ENV) => nodeWith(env, dir, SCRIPT, "--base", "main");
 
 describe("port-check", { concurrency: true }, () => {
   test("annotations, comments and type-only code strip to the same JavaScript", async () => {
@@ -568,17 +595,17 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("with a build config, a changed tsconfig is left to the build diff, and a new root tsconfig.json fails", async () => {
-    const dir = await buildRepo({ "tsconfig.json": null });
+    const dir = await buildRepo({ "tsconfig.web.json": '{ "include": ["src/**/*.js"] }\n' });
     write(dir, {
-      "tsconfig.json": readFileSync(path.join(ROOT, "tsconfig.json")),
-      "tsconfig.web.json": `// Browser code.\n${readFileSync(path.join(ROOT, "tsconfig.web.json"), "utf8")}`,
+      "tsconfig.json": '{ "files": [], "references": [{ "path": "./tsconfig.web.json" }] }\n',
+      "tsconfig.web.json": '// Browser code.\n{ "include": ["src/**/*.js"] }\n',
     });
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
         "tsconfig.json is new at the repo root, where the base build would read it too, so the build diff cannot see what it changes; add it in a change of its own",
         "allowed: tsconfig.web.json (the build diff compares what the build makes with it)",
-        "1 files compared, 1 different; 12 build output files compared, 0 different",
+        "1 files compared, 1 different; 8 build output files compared, 0 different",
         "",
       ].join("\n"),
       stderr: "",
@@ -633,7 +660,7 @@ describe("port-check", { concurrency: true }, () => {
         ".cloudflare/output/v0/workers/default/bundle/index.js differs (line 2)",
         "  base: globalThis.sideLoaded = true;",
         "  head: var Thing = class {",
-        "2 files compared, 0 different; 12 build output files compared, 1 different",
+        "2 files compared, 0 different; 8 build output files compared, 1 different",
         "",
       ].join("\n"),
       stderr: "",
@@ -645,14 +672,14 @@ describe("port-check", { concurrency: true }, () => {
     await git(dir, "mv", "server/worker.js", "server/worker.ts");
     write(dir, {
       "server/worker.ts": 'export default { fetch(): Response { return new Response("ok"); } };\n',
-      "cloudflare.config.ts": entrypoint("./server/worker.ts"),
+      "cloudflare.config.ts": cloudflareConfig("./server/worker.ts"),
       "tsconfig.strict.json": strictList("server/worker.ts"),
     });
     assert.deepEqual(await portCheck(dir), {
       status: 0,
       stdout: [
         "allowed: tsconfig.strict.json (the build diff compares what the build makes with it)",
-        "2 files compared, 0 different; 12 build output files compared, 0 different",
+        "2 files compared, 0 different; 8 build output files compared, 0 different",
         "",
       ].join("\n"),
       stderr: "",
@@ -691,6 +718,66 @@ describe("port-check", { concurrency: true }, () => {
       [],
       "the tail is indented, without stack frames or colors",
     );
+  });
+
+  test("a build that exits 0 without writing its output markers fresh fails, naming each", async () => {
+    const dir = await buildRepo({});
+    // A marker left by an earlier build, older than this run, and a missing one.
+    write(dir, { ".cloudflare/output/v0/config.json": "{}\n" });
+    utimesSync(path.join(dir, ".cloudflare/output/v0/config.json"), new Date(2020, 0, 1), new Date(2020, 0, 1));
+    assert.deepEqual(await portCheck(dir, withPath(BUILD_ENV, fakeCf())), {
+      status: 1,
+      stdout: [
+        "the head build failed (bunx cf build):",
+        "  exited 0 without writing .cloudflare/output/v0/config.json, .cloudflare/output/v0/workers/default/worker.config.json",
+        "0 files compared, 0 different; the build failed, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a base that does not build fails the check, naming its checkout", async () => {
+    const dir = await buildRepo({
+      "server/worker.js": null,
+      "server/worker.ts": 'export default { fetch(): Response { return new Response("ok"); } };\n',
+      "server/tsconfig.json": '{ "extends": "./missing.json" }\n',
+      "cloudflare.config.ts": cloudflareConfig("./server/worker.ts"),
+      "tsconfig.strict.json": strictList("server/worker.ts"),
+    });
+    write(dir, { "server/tsconfig.json": "{}\n" });
+    const sha = (await git(dir, "rev-parse", "main")).trim();
+    const { status, stdout, stderr } = await portCheck(dir);
+    const lines = stdout.split("\n");
+    assert.deepEqual(
+      { status, stderr, first: lines.slice(0, 2), last: lines.slice(-2) },
+      {
+        status: 1,
+        stderr: "",
+        first: [
+          "allowed: server/tsconfig.json (the build diff compares what the build makes with it)",
+          `the base build failed (bunx cf build in .port-check/${sha}):`,
+        ],
+        last: ["0 files compared, 0 different; the build failed, 1 other problems", ""],
+      },
+    );
+    assert.match(lines.at(-3) ?? "", /^ {2}\s*Tsconfig not found .*missing\.json$/);
+  });
+
+  test("a committed .port-check/ fails, since no check compares what is in it", async () => {
+    const dir = await repo({ "tsconfig.strict.json": strictList() });
+    write(dir, { ".port-check/0123abc/server/worker.js": "export default {};\n" });
+    await git(dir, "add", "-A");
+    await git(dir, "commit", "-q", "-m", "cache");
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        ".port-check/ has 1 committed files, which no check compares; take .port-check/ out of git",
+        "0 files compared, 0 different, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
   });
 
   test("a file under public/ compares byte for byte: a comment edit, a new comment-only module and a renamed path fail", async () => {
@@ -841,7 +928,7 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
-  test("--strict-list fails each TypeScript file no program checks, and passes on this repo", async () => {
+  test("--strict-list fails each TypeScript file no program checks", async () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList("a.ts"),
       "tsconfig.node.json": '{ "include": ["vite.config.js"] }\n',
@@ -858,11 +945,6 @@ describe("port-check", { concurrency: true }, () => {
         "server/foo.ts is not in tsconfig.strict.json",
         "",
       ].join("\n"),
-      stderr: "",
-    });
-    assert.deepEqual(await node(ROOT, SCRIPT, "--strict-list"), {
-      status: 0,
-      stdout: "tsconfig.strict.json covers every TypeScript file\n",
       stderr: "",
     });
   });

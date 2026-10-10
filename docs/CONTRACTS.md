@@ -525,15 +525,15 @@ Use SQLite DOs only, and nothing outside Cloudflare Free.
 ## 9. Tests and build
 
 ```
-bun run check              # format:check + lint + typecheck + test:unit (pre-commit hook, CI, deploy.yml);
-                           # test:unit runs port-check --strict-list: every TypeScript file in tsconfig.strict.json,
-                           # except cloudflare.config.ts (tsconfig.node.json) and types/browser.d.ts (tsconfig.web.json)
+bun run check              # format:check + lint + typecheck + test:unit (pre-commit hook, CI, deploy.yml)
 gitleaks git --config .gitleaks.toml --redact .   # secret scan; CI scans the whole history on every push
 bun run audit              # bun audit --audit-level=high; CI fails on a high or critical advisory
 bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
 bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), tsconfig.strict.json (strict:
-                           # the TypeScript files plus site.config.js)
+                           # the TypeScript files plus site.config.js); then port-check --strict-list: every
+                           # TypeScript file in tsconfig.strict.json, except cloudflare.config.ts
+                           # (tsconfig.node.json) and types/browser.d.ts (tsconfig.web.json)
 bun run port-check         # node scripts/port-check.ts --base origin/main: pairs and compares every changed file,
                            # checks relative imports at head (docs/DEVELOPMENT.md); exits 1 on a difference or
                            # problem, 2 on bad usage; CI runs it on pushes to and PRs from port/ branches;
@@ -543,11 +543,14 @@ bun run port-check         # node scripts/port-check.ts --base origin/main: pair
                            # to that build diff, except a new root tsconfig.json, which fails; in tests/, scripts/,
                            # cloudflare.config.ts and vite.config.js a string naming a moved file's new path
                            # passes; public/ is served as written: its code keeps its path and stays JavaScript,
-                           # and every file there compares byte for byte
+                           # and every file there compares byte for byte; a committed .port-check/ fails
 node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
                                         # refuses files under public/ and never rewrites one: it lists each
                                         # line there that names a renamed file as file:line
 bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.mjs"
+bun run test:port          # node --test tests/port/port-check.test.mjs: port-check and port-rename against fixture
+                           # repos in the OS temp folder (the build tests run bunx cf build); not in check, for
+                           # speed; CI runs it on every pull request and every push
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test
 bunx cf dev                # local only; reads .dev.vars. Never deploy from a lane.
