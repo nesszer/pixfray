@@ -205,8 +205,12 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
   function pointerOn(f, e) {
     if (!f) return null;
     const r = canvas.getBoundingClientRect();
+    // setFromCamera reads only .x and .y, so a plain object stands in for the Vector2.
     ray.setFromCamera(
-      { x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 },
+      /** @type {THREE.Vector2} */ ({
+        x: ((e.clientX - r.left) / r.width) * 2 - 1,
+        y: -((e.clientY - r.top) / r.height) * 2 + 1,
+      }),
       camera,
     );
     f.group.updateWorldMatrix(true, false);
