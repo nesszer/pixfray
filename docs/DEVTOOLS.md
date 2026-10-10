@@ -14,8 +14,10 @@ scripted duels, and an alt account that types in real Twitch chat. Production ha
 - The token can't change production: promote, hotfix and rollback to production return 403
   `owner_session_required`; only the owner signed in with Twitch can run them. It also can't save build
   files (`package.json`, `package-lock.json`, `bun.lock`, `bunfig.toml`, `.npmrc`, `site.config.js`,
-  `site.config.ts`, `cloudflare.config.ts`, `vite.config.{js,mjs,cjs,ts,mts,cts}`, `tsconfig.json` and
-  `tsconfig.<name>.json`, `types/`, `scripts/`): `code/save` returns 403 `build_file`, reading them still works.
+  `site.config.ts`, `cloudflare.config.ts`, `vite.config.{js,mjs,cjs,ts,mts,cts}`,
+  `postcss.config.{js,mjs,cjs,ts,mts,cts}`, `.postcssrc`, `.postcssrc.{json,yaml,yml,js,cjs,mjs,ts,cts,mts}`,
+  `wrangler.{json,jsonc,toml}`, `tsconfig.json`, `tsconfig.<name>.json`, `types/`, `scripts/`): `code/save`
+  returns 403 `build_file`, reading them still works.
 - The token lives in `~/.pixfray/secrets.test.json` (outside the repo) next to the Twitch app credentials, so the
   normal test deploy uploads it:
   `bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.test.json`. `cf deploy` uploads every key in the secrets file, so the production file
