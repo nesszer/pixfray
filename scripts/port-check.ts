@@ -4,17 +4,30 @@
 // JavaScript with oxc and compared. A file pairs with the same path; a code file gone at head pairs with a new code file
 // of the same name (the path's base name without its code extension), first in the same folder, then anywhere in the
 // repo. A name that more than one gone or new file shares fails instead of guessing. A gone file with no pair fails;
-// a new code file with no pair passes only when it strips to no runtime code. A code file under public/ keeps its path
-// and stays JavaScript, because public/ is served as written. A tsconfig passes only when its compilerOptions, with
-// `extends` followed, stay the same: Vite compiles TypeScript with them. Other changed files fail unless they don't
-// ship (UNSHIPPED) or their only change names a moved code file's new path. Every relative import at head must name a
-// file at head, and none may re-export only inline types. `--strict-list` checks only the strict list.
+// a new code file with no pair passes only when it strips to no runtime code. Files under public/ are served as
+// written, so they keep their paths, stay JavaScript and compare byte for byte. In tests, scripts and the two build
+// configs (NON_SHIPPING), a string literal naming a moved code file's new path reads as the old path. Other changed
+// files fail unless they don't ship (UNSHIPPED) or their only change names a moved code file's new path. Every relative
+// import at head must name a file at head, and none may re-export only inline types.
+//
+// Then the build is the ground truth: when cloudflare.config.ts exists, the base and the working tree are each built
+// with `bunx cf build` and every file under .cloudflare/output must match, JavaScript with comments removed and other
+// files byte for byte. That covers what the file checks cannot see, such as a tsconfig that changes how Vite compiles
+// TypeScript. `--strict-list` checks only the strict list.
 // Usage: node scripts/port-check.ts --base origin/main | node scripts/port-check.ts --strict-list
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { transformWithOxc } from "vite";
-import { replaceSpans, scanModule, splitSpecifier, type Specifier } from "./lib/port.ts";
+import {
+  PUBLIC,
+  replaceSpans,
+  scanModule,
+  splitSpecifier,
+  stringLiterals,
+  type Span,
+  type Specifier,
+} from "./lib/port.ts";
 
 const STRICT_CONFIG = "tsconfig.strict.json";
 
@@ -58,11 +71,34 @@ const UNSHIPPED: [RegExp, string][] = [
 /** A tsconfig the build reads. One under public/ is served as a file instead, so it compares like any shipped file. */
 const TSCONFIG = /^(?!public\/)(?:.*\/)?tsconfig[^/]*\.json$/;
 
-/** The tsconfig keys that only choose which files tsc checks. */
-const FILE_LISTS = ["files", "include", "exclude"];
+/** Code that never ships: tests, scripts and the build configs. Their string literals may name a moved file's new
+ * path (a test reading `src/ui.ts`, the Worker entrypoint in cloudflare.config.ts). */
+const NON_SHIPPING = /^(?:tests\/|scripts\/|cloudflare\.config\.ts$|vite\.config\.js$)/;
 
-/** Served as written: Vite copies public/ to the build unchanged. */
-const PUBLIC = "public/";
+/** The build config: when the base or the head has it, both are built and their output compared. */
+const BUILD_CONFIG = "cloudflare.config.ts";
+
+/** What the build deploys. `.cloudflare/types` is left out: cf writes it once and never refreshes it, and it does
+ * not deploy. */
+const OUTPUT = ".cloudflare/output";
+
+/** Files every finished build writes under OUTPUT; a build that exits 0 without writing them fresh failed. */
+const OUTPUT_MARKERS = ["v0/config.json", "v0/workers/default/worker.config.json"];
+
+/** Where the base is checked out and built, one folder per commit, git-ignored. port-check reuses a folder and never
+ * deletes one; recycle old ones by hand. */
+const CACHE = ".port-check";
+
+/** Keeps the builds off the network: with a lockfile cf runs Bun's vite, without one npx, and either would try a
+ * registry for a missing package instead of failing. */
+const OFFLINE = {
+  npm_config_offline: "true",
+  NPM_CONFIG_REGISTRY: "http://127.0.0.1:9",
+  BUN_CONFIG_REGISTRY: "http://127.0.0.1:9",
+};
+
+/** A content hash Rolldown adds to a client chunk name: `main-B9j2uYmk.js`. */
+const CHUNK_HASH = /-[\w-]{8}(?=\.[^/.]+$)/;
 
 /** A path in a non-code file that names a code file: `./x.js`, `../x.js`, `/x.js` or `dir/x.js`. */
 const CODE_PATH = /(?<![\w.@/-])(?:\.{1,2}\/|\/)?(?:[\w@.-]+\/)*[\w@-][\w@.-]*\.[cm]?[jt]sx?(?![\w/-]|\.\w)/g;
@@ -80,8 +116,15 @@ type Unit =
 /** A file stripped to the JavaScript it runs as, with the source line of each stripped line (0 where unknown). */
 type Runtime = { lines: string[]; sourceLines: number[] };
 
-function git(args: string[], cwd: string): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+/** git's output. Its stderr is captured, never passed through: a failure surfaces as the thrown error. */
+function git(args: string[], cwd: string, env?: NodeJS.ProcessEnv): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+    ...(env ? { env } : {}),
+  });
 }
 
 /** NUL-separated git output (`-z`) as a list, without the empty tail. */
@@ -99,10 +142,11 @@ function stem(file: string): string {
   return path.posix.basename(file, path.posix.extname(file));
 }
 
-/** Files in the working tree, tracked or untracked but not ignored. */
+/** Files in the working tree, tracked or untracked but not ignored, without port-check's own CACHE (a branch from
+ * before .gitignore named it would otherwise list every base copy). */
 function headFiles(root: string): string[] {
   const listed = nulList(git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root));
-  return [...new Set(listed)].filter((file) => existsSync(path.join(root, file)));
+  return [...new Set(listed)].filter((file) => !file.startsWith(`${CACHE}/`) && existsSync(path.join(root, file)));
 }
 
 /** A JSONC file (a tsconfig) as an object: comments and trailing commas are dropped outside strings before parsing. A
@@ -141,62 +185,6 @@ function tsconfigEntries(root: string, config: string): Set<string> {
     if (Array.isArray(list)) for (const entry of list) entries.add(path.posix.normalize(String(entry)));
   }
   return entries;
-}
-
-/** A tsconfig as the build reads it: each relative `extends` merged in first, then the file's own keys, with
- * compilerOptions merged option by option, and without `extends` and the file lists. `read` gives a file's text, or
- * undefined when it is missing; a missing `file` reads as `{}`, so a new or gone tsconfig compares against nothing. */
-function resolvedTsconfig(
-  read: (file: string) => string | undefined,
-  file: string,
-  from: readonly string[] = [],
-): Record<string, unknown> {
-  const text = read(file);
-  const parent = from.at(-1);
-  if (text === undefined && parent === undefined) return {};
-  if (text === undefined || from.includes(file)) throw new Error(`${parent} extends ${file}, which cannot be read`);
-  const own = parseJsonc(text);
-  const extended: unknown = own["extends"];
-  let merged: Record<string, unknown> = {};
-  for (const layer of [...(extended === undefined ? [] : [extended].flat()), own]) {
-    let options: Record<string, unknown>;
-    if (layer === own) options = own;
-    else if (typeof layer === "string" && /^\.{1,2}\//.test(layer)) {
-      const target = path.posix.join(path.posix.dirname(file), layer.endsWith(".json") ? layer : `${layer}.json`);
-      options = resolvedTsconfig(read, target, [...from, file]);
-    } else throw new Error(`${file} extends ${String(layer)}, which port-check cannot follow`);
-    const compilerOptions = { ...asObject(merged["compilerOptions"]), ...asObject(options["compilerOptions"]) };
-    merged = { ...merged, ...options, compilerOptions };
-  }
-  for (const key of ["extends", ...FILE_LISTS]) delete merged[key];
-  return merged;
-}
-
-/** JSON with object keys sorted, so equal values print the same. */
-function canonical(value: unknown): string | undefined {
-  return JSON.stringify(value, (_key, item: unknown) =>
-    typeof item === "object" && item !== null && !Array.isArray(item)
-      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => (a < b ? -1 : 1)))
-      : item,
-  );
-}
-
-/** The keys, as `compilerOptions.<name>` for an option, whose resolved value differs between two tsconfigs. */
-function tsconfigChanges(base: Record<string, unknown>, head: Record<string, unknown>): string[] {
-  const keys = (a: object, b: object) => [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
-  const changes: string[] = [];
-  for (const key of keys(base, head)) {
-    if (key !== "compilerOptions") {
-      if (canonical(base[key]) !== canonical(head[key])) changes.push(key);
-      continue;
-    }
-    const before = asObject(base[key]);
-    const after = asObject(head[key]);
-    for (const option of keys(before, after)) {
-      if (canonical(before[option]) !== canonical(after[option])) changes.push(`compilerOptions.${option}`);
-    }
-  }
-  return changes;
 }
 
 /** One line per TypeScript file in the working tree that no strict program checks. */
@@ -287,8 +275,14 @@ function mappedLines(mappings: string): number[] {
 
 /** The JavaScript a file runs as. Comments are blanked, keeping their line breaks so lines keep their numbers, except
  * bundler annotations; types are stripped by oxc the way Vite and Node strip them. CRLF reads as LF, as it does in
- * template literals at runtime. `specifier` rewrites each relative import path in the stripped code. */
-async function runtimeCode(file: string, source: string, specifier: (value: string) => string): Promise<Runtime> {
+ * template literals at runtime. `specifier` rewrites each relative import path in the stripped code; with `literals`,
+ * also every other string literal it changes, keeping its quotes. */
+async function runtimeCode(
+  file: string,
+  source: string,
+  specifier: (value: string) => string,
+  literals = false,
+): Promise<Runtime> {
   const ext = codeExtension(file) ?? ".js";
   const code = source.replace(/\r\n/g, "\n");
   const { comments } = scanModule(file, code);
@@ -302,8 +296,16 @@ async function runtimeCode(file: string, source: string, specifier: (value: stri
     typescript: { onlyRemoveTypeImports: true },
   });
   const strippedName = file.slice(0, -ext.length) + STRIPPED[ext];
-  const { specifiers } = scanModule(strippedName, stripped);
-  const runtime = replaceSpans(stripped, specifiers, ({ value }) => JSON.stringify(specifier(value)));
+  const edits = new Map<number, Span & { text: string }>();
+  for (const literal of literals ? stringLiterals(strippedName, stripped) : []) {
+    const mapped = specifier(literal.value);
+    const quote = stripped[literal.start] ?? '"';
+    if (mapped !== literal.value) edits.set(literal.start, { ...literal, text: quote + mapped + quote });
+  }
+  for (const item of scanModule(strippedName, stripped).specifiers) {
+    edits.set(item.start, { ...item, text: JSON.stringify(specifier(item.value)) });
+  }
+  const runtime = replaceSpans(stripped, [...edits.values()], ({ text }) => text);
   return { lines: runtime.split("\n"), sourceLines: mappedLines(map?.mappings ?? "") };
 }
 
@@ -343,13 +345,58 @@ function movesPublic(base: string, head: string): boolean {
   return base !== head && (base.startsWith(PUBLIC) || head.startsWith(PUBLIC));
 }
 
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, index) => byte === b[index]);
+}
+
+function decode(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+/** Compares a file byte for byte and prints its first differing line. `rewrite`, when given, maps each head line
+ * first, and a file that matches only after it prints as allowed. `why` is added to the difference line. Returns true
+ * when the file differs. */
+function compareBytes(
+  label: string,
+  base: Uint8Array,
+  head: Uint8Array,
+  rewrite?: (line: string) => string,
+  why = "",
+): boolean {
+  if (sameBytes(base, head)) return false;
+  if (base.includes(0) || head.includes(0)) {
+    console.log(`${label} differs (binary${why})`);
+    return true;
+  }
+  const baseLines = decode(base).split("\n");
+  const headLines = decode(head).split("\n");
+  const index = firstDifference(baseLines, rewrite ? headLines.map(rewrite) : headLines);
+  if (index === -1 && rewrite) {
+    console.log(`allowed: ${label} (only renamed paths changed)`);
+    return false;
+  }
+  if (index === -1) console.log(`${label} differs (in bytes that decode the same${why})`);
+  else {
+    console.log(`${label} differs (line ${index + 1}${why})`);
+    showDifference(baseLines[index], headLines[index]);
+  }
+  return true;
+}
+
 async function checkPort(root: string, baseRef: string, files: readonly string[]): Promise<number> {
   const mergeBase = git(["merge-base", baseRef, "HEAD"], root).trim();
   const baseFiles = nulList(git(["ls-tree", "-r", "-z", "--name-only", mergeBase], root));
-  const baseSet = new Set(baseFiles);
   const changed = new Set(nulList(git(["diff", "--name-only", "--no-renames", "-z", mergeBase], root)));
   const units = pairFiles(baseFiles, files, changed);
   units.sort((a, b) => (key(a) < key(b) ? -1 : 1));
+  // The builds run while the files are compared. `files` was listed first, so the build's output is not in it.
+  const building = baseFiles.includes(BUILD_CONFIG) || files.includes(BUILD_CONFIG);
+  const builds = building
+    ? buildBoth(root, mergeBase).catch((error: unknown) => ({
+        base: "",
+        failures: [`the builds could not start: ${error instanceof Error ? error.message : String(error)}`],
+      }))
+    : undefined;
 
   // A head path of a moved file maps to its base path, so a path that names it compares as one naming the base file.
   const movedFrom = new Map<string, string>();
@@ -373,11 +420,12 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
     const baseTarget = movedFrom.get(target.slice(lead.length));
     return baseTarget === undefined ? written : lead + baseTarget + suffix;
   };
-  const readBase = (file: string) => (baseSet.has(file) ? git(["show", `${mergeBase}:${file}`], root) : undefined);
-  const readHead = (file: string) => {
-    const full = path.join(root, file);
-    return existsSync(full) ? readFileSync(full, "utf8") : undefined;
-  };
+  const readBase = (file: string) =>
+    execFileSync("git", ["show", `${mergeBase}:${file}`], {
+      cwd: root,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   const same = () => (value: string) => value;
 
   let compared = 0;
@@ -390,22 +438,18 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
       continue;
     }
     if (TSCONFIG.test(key(unit))) {
-      const config = key(unit);
-      let changes: string[];
-      try {
-        changes = tsconfigChanges(resolvedTsconfig(readBase, config), resolvedTsconfig(readHead, config));
-      } catch (error) {
-        changes = [`what port-check cannot read (${error instanceof Error ? error.message : String(error)})`];
-      }
-      if (changes.length === 0) {
-        console.log(`allowed: ${config} (compiler options unchanged, does not ship)`);
+      // The base build runs inside the repo, under CACHE, and Vite reads the nearest tsconfig.json above a file. With
+      // none in the base, it would find the head's at the repo root, and both builds would compile alike.
+      if (building && unit.kind === "new" && unit.head === "tsconfig.json") {
+        compared++;
+        different++;
+        console.log(
+          "tsconfig.json is new at the repo root, where the base build would read it too, so the build diff cannot see what it changes; add it in a change of its own",
+        );
         continue;
       }
-      compared++;
-      different++;
-      console.log(
-        `${config} changes ${changes.join(", ")}, which the build reads; only files, include and exclude may change`,
-      );
+      const why = building ? "the build diff compares what the build makes with it" : "no build config reads it";
+      console.log(`allowed: ${key(unit)} (${why})`);
       continue;
     }
     if (unit.kind === "compare" && movesPublic(unit.base, unit.head)) {
@@ -426,34 +470,20 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
     compared++;
     const label = unit.kind === "new" || unit.base === unit.head ? unit.head : `${unit.base} -> ${unit.head}`;
     try {
-      if (codeExtension(unit.head) === undefined) {
+      const shipsAsWritten = unit.head.startsWith(PUBLIC);
+      if (codeExtension(unit.head) === undefined || shipsAsWritten) {
         if (unit.kind === "new") {
           different++;
           console.log(`${label} is new and ships`);
           continue;
         }
-        const base = execFileSync("git", ["show", `${mergeBase}:${unit.base}`], {
-          cwd: root,
-          maxBuffer: 64 * 1024 * 1024,
-        });
         const head = readFileSync(path.join(root, unit.head));
-        if (base.length === head.length && base.every((byte, index) => byte === head[index])) continue;
-        if (base.includes(0) || head.includes(0)) {
-          different++;
-          console.log(`${label} differs (binary)`);
-          continue;
-        }
-        const baseLines = new TextDecoder().decode(base).split("\n");
-        const headLines = new TextDecoder().decode(head).split("\n");
-        const rewritten = headLines.map((line) => line.replace(CODE_PATH, asBase(unit.head, unit.head)));
-        const index = firstDifference(baseLines, rewritten);
-        if (index === -1) {
-          console.log(`allowed: ${label} (only renamed paths changed)`);
-          continue;
-        }
-        different++;
-        console.log(`${label} differs (line ${index + 1})`);
-        showDifference(baseLines[index], headLines[index]);
+        const differs = shipsAsWritten
+          ? compareBytes(label, readBase(unit.base), head, undefined, "; public/ is served as written")
+          : compareBytes(label, readBase(unit.base), head, (line) =>
+              line.replace(CODE_PATH, asBase(unit.head, unit.head)),
+            );
+        if (differs) different++;
         continue;
       }
       const headSource = readFileSync(path.join(root, unit.head), "utf8");
@@ -465,8 +495,8 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
         console.log(`${label} is new and has runtime code (head ${sourceLine(head, first)})`);
         continue;
       }
-      const base = await runtimeCode(unit.base, git(["show", `${mergeBase}:${unit.base}`], root), same());
-      const head = await runtimeCode(unit.head, headSource, asBase(unit.head, unit.base));
+      const base = await runtimeCode(unit.base, decode(readBase(unit.base)), same());
+      const head = await runtimeCode(unit.head, headSource, asBase(unit.head, unit.base), NON_SHIPPING.test(unit.head));
       const index = firstDifference(base.lines, head.lines);
       if (index === -1) continue;
       different++;
@@ -477,6 +507,19 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
       console.log(`${label} could not be compared: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  let buildSummary = "";
+  let outputsDifferent = 0;
+  if (builds) {
+    const { base, failures } = await builds;
+    for (const failure of failures) console.log(failure);
+    problems += failures.length;
+    if (failures.length > 0) buildSummary = "; the build failed";
+    else {
+      const outputs = compareOutputs(base, root);
+      outputsDifferent = outputs.different;
+      buildSummary = `; ${outputs.compared} build output files compared, ${outputs.different} different`;
+    }
+  }
   const publicTypeScript = files
     .filter((file) => file.startsWith(PUBLIC) && /\.(?:ts|mts|cts|tsx)$/.test(file))
     .sort()
@@ -485,10 +528,173 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
     console.log(line);
     problems++;
   }
-  console.log(
-    `${compared} files compared, ${different} different${problems > 0 ? `, ${problems} other problems` : ""}`,
-  );
-  return different > 0 || problems > 0 ? 1 : 0;
+  const others = problems > 0 ? `, ${problems} other problems` : "";
+  console.log(`${compared} files compared, ${different} different${buildSummary}${others}`);
+  return different > 0 || outputsDifferent > 0 || problems > 0 ? 1 : 0;
+}
+
+/** The merge base checked out at CACHE/<sha> through a scratch index, so the repo's own index stays as it is. A folder
+ * already there is reused; a new one is written as <sha>.partial and renamed once complete. */
+function checkoutBase(root: string, sha: string): string {
+  const dir = path.join(root, CACHE, sha);
+  if (existsSync(dir)) return dir;
+  const partial = `${dir}.partial`;
+  mkdirSync(partial, { recursive: true });
+  const env = { ...process.env, GIT_INDEX_FILE: `${dir}.index` };
+  git(["read-tree", sha], root, env);
+  git(["checkout-index", "--all", "--force", `--prefix=${partial.split(path.sep).join("/")}/`], root, env);
+  renameSync(partial, dir);
+  return dir;
+}
+
+/** Builds the merge base (checked out under CACHE) and the working tree at once. Resolves to the base folder and one
+ * report block per failed build. The base folder has no node_modules, so its build loads the repo's packages from
+ * above it. That is sound: a change to package.json or bun.lock already fails the file checks, so both builds would
+ * install the same packages. */
+async function buildBoth(root: string, mergeBase: string): Promise<{ base: string; failures: string[] }> {
+  const base = checkoutBase(root, mergeBase);
+  const [baseError, headError] = await Promise.all([runBuild(base), runBuild(root)]);
+  const failures: string[] = [];
+  if (baseError !== undefined) {
+    failures.push(`the base build failed (bunx cf build in ${CACHE}/${mergeBase}):\n${baseError}`);
+  }
+  if (headError !== undefined) failures.push(`the head build failed (bunx cf build):\n${headError}`);
+  return { base, failures };
+}
+
+/** Runs `bunx cf build` in `dir`, offline. Resolves to undefined when it built, else to the end of what it printed.
+ * Its exit code alone is not trusted: the OUTPUT_MARKERS must also be there, written by this run. */
+function runBuild(dir: string): Promise<string | undefined> {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn("bunx", ["cf", "build"], {
+      cwd: dir,
+      env: { ...process.env, ...OFFLINE },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let log = "";
+    child.stdout.on("data", (chunk: Uint8Array) => (log += decode(chunk)));
+    child.stderr.on("data", (chunk: Uint8Array) => (log += decode(chunk)));
+    child.on("error", (error) => resolve(`  ${error.message}`));
+    child.on("close", (code) => {
+      const stale = OUTPUT_MARKERS.filter((marker) => {
+        const file = path.join(dir, OUTPUT, marker);
+        return !existsSync(file) || statSync(file).mtimeMs < started - 1000;
+      });
+      if (code === 0 && stale.length === 0) resolve(undefined);
+      else if (code === 0) resolve(`  exited 0 without writing ${stale.map((file) => `${OUTPUT}/${file}`).join(", ")}`);
+      else resolve(errorTail(log));
+    });
+  });
+}
+
+/** The end of a failed build's output, indented: the error, without colors, stack frames or bare braces. */
+function errorTail(log: string): string {
+  const lines = log
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "" && !/^\s+at /.test(line))
+    .filter((line) => !/^\s*(?:errors: \[Getter\/Setter\]|\})\s*$/.test(line));
+  return lines
+    .slice(-12)
+    .map((line) => `  ${line.trimEnd()}`)
+    .join("\n");
+}
+
+/** Files under a build's OUTPUT, as sorted paths relative to it with `/`. */
+function outputFiles(dir: string): string[] {
+  const out = path.join(dir, OUTPUT);
+  return readdirSync(out, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.relative(out, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+    .sort();
+}
+
+/** A build output file as the lines it compares by, each with its line number. JavaScript loses its comments, and
+ * the spaces before each, except bundler annotations: the Worker bundle keeps `//#region <source path>` and JSDoc,
+ * which name a moved file's old path. A line that held only comments is dropped. Other files keep every line. */
+function outputLines(file: string, text: string): { lines: string[]; numbers: number[] } {
+  let code = text;
+  if (/\.m?js$/.test(file)) {
+    try {
+      const spans = scanModule(file, text)
+        .comments.filter(({ start, end }) => !ANNOTATION.test(text.slice(start, end)))
+        .map(({ start, end }) => {
+          let from = start;
+          while (from > 0 && (text[from - 1] === " " || text[from - 1] === "\t")) from--;
+          return { start: from, end };
+        });
+      code = replaceSpans(text, spans, ({ start, end }) => text.slice(start, end).replace(/[^\n]/g, ""));
+    } catch {
+      // Output oxc cannot parse compares as written.
+    }
+  }
+  const original = text.split("\n");
+  const lines: string[] = [];
+  const numbers: number[] = [];
+  code.split("\n").forEach((line, index) => {
+    if (line === "" && original[index] !== "") return;
+    lines.push(line);
+    numbers.push(index + 1);
+  });
+  return { lines, numbers };
+}
+
+/** Compares the base build's OUTPUT with the working tree's and prints each difference. A file pairs with the same
+ * path, else with the one file on the other side whose name differs only in its content hash (a chunk whose content
+ * changed), so the report shows what changed inside it. */
+function compareOutputs(baseDir: string, headDir: string): { compared: number; different: number } {
+  const baseList = outputFiles(baseDir);
+  const headList = outputFiles(headDir);
+  const inHead = new Set(headList);
+  const inBase = new Set(baseList);
+  const entries: { base?: string; head?: string }[] = baseList
+    .filter((file) => inHead.has(file))
+    .map((file) => ({ base: file, head: file }));
+  let onlyBase = baseList.filter((file) => !inHead.has(file));
+  let onlyHead = headList.filter((file) => !inBase.has(file));
+  const unhashed = (file: string) => file.replace(CHUNK_HASH, "");
+  for (const file of onlyBase) {
+    const bases = onlyBase.filter((other) => unhashed(other) === unhashed(file));
+    const [head, ...more] = onlyHead.filter((other) => unhashed(other) === unhashed(file));
+    if (unhashed(file) === file || bases.length !== 1 || head === undefined || more.length > 0) continue;
+    entries.push({ base: file, head });
+    onlyBase = onlyBase.filter((other) => other !== file);
+    onlyHead = onlyHead.filter((other) => other !== head);
+  }
+  for (const file of onlyBase) entries.push({ base: file });
+  for (const file of onlyHead) entries.push({ head: file });
+  const sortKey = (entry: { base?: string; head?: string }) => entry.base ?? entry.head ?? "";
+  entries.sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : 1));
+  let different = 0;
+  for (const { base, head } of entries) {
+    if (head === undefined || base === undefined) {
+      different++;
+      console.log(`${OUTPUT}/${base ?? head} is only in the ${head === undefined ? "base" : "head"} build`);
+      continue;
+    }
+    const before = readFileSync(path.join(baseDir, OUTPUT, base));
+    const after = readFileSync(path.join(headDir, OUTPUT, head));
+    if (sameBytes(before, after)) continue;
+    const label = base === head ? `${OUTPUT}/${head}` : `${OUTPUT}/${base} -> ${path.posix.basename(head)}`;
+    if (before.includes(0) || after.includes(0)) {
+      different++;
+      console.log(`${label} differs (binary)`);
+      continue;
+    }
+    const was = outputLines(base, decode(before));
+    const now = outputLines(head, decode(after));
+    const index = firstDifference(was.lines, now.lines);
+    if (index === -1) continue;
+    different++;
+    const at = ({ numbers }: { numbers: number[] }) => {
+      const number = numbers[index];
+      return number === undefined ? "end of file" : `line ${number}`;
+    };
+    console.log(`${label} differs (${at(was) === at(now) ? at(was) : `base ${at(was)}, head ${at(now)}`})`);
+    showDifference(was.lines[index], now.lines[index]);
+  }
+  return { compared: entries.length, different };
 }
 
 /** The first index where two line lists differ, or -1 when they are equal. */

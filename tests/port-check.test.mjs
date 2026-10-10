@@ -1,7 +1,9 @@
 // scripts/port-check.ts and scripts/port-rename.ts against small git repos: each test commits a base on main, changes
 // it on a branch, and checks the exact report and exit code. The tests run at once, since each spends about a second
 // waiting on git and node. The repos live in the OS temp folder and are not removed (files are never deleted by script
-// here; see AGENTS.md), so a test that needs a file gone moves it out of the repo.
+// here; see AGENTS.md), so a test that needs a file gone moves it out of the repo. The repos that port-check builds live
+// in this repo's git-ignored .port-check/ instead, so `bunx cf build` loads this repo's node_modules; recycle
+// .port-check/test-* by hand.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
@@ -42,14 +44,16 @@ function moveOut(dir, file) {
   renameSync(path.join(dir, file), `${dir}-${file.replaceAll("/", "-")}`);
 }
 
-/** A repo with `files` committed on main and a port branch checked out. */
-async function repo(files) {
-  const dir = mkdtempSync(path.join(tmpdir(), "pixfray-port-check-"));
-  const outside = await git(dir, "rev-parse", "--show-toplevel").then(
-    (top) => `inside ${top.trim()}`,
-    (error) => (/not a git repository/.test(error.stderr) ? "outside" : error.stderr),
-  );
-  assert.equal(outside, "outside", "the temp folder is inside a git repo");
+/** A repo with `files` committed on main and a port branch checked out, in a new temp folder or in `dir`. */
+async function repo(files, dir) {
+  if (dir === undefined) {
+    dir = mkdtempSync(path.join(tmpdir(), "pixfray-port-check-"));
+    const outside = await git(dir, "rev-parse", "--show-toplevel").then(
+      (top) => `inside ${top.trim()}`,
+      (error) => (/not a git repository/.test(error.stderr) ? "outside" : error.stderr),
+    );
+    assert.equal(outside, "outside", "the temp folder is inside a git repo");
+  }
   await git(dir, "init", "-q", "-b", "main");
   assert.equal(
     realpathSync((await git(dir, "rev-parse", "--show-toplevel")).trim()),
@@ -66,6 +70,52 @@ async function repo(files) {
 
 function strictList(...files) {
   return `// Fixture: JSONC with a comment and a trailing comma.\n{ "files": [${files.map((f) => `"${f}"`).join(", ")},] }\n`;
+}
+
+/** This repo's files that `bunx cf build` reads, copied into each build fixture. */
+const BUILD_FILES = [
+  "package.json",
+  "bun.lock",
+  "vite.config.js",
+  "cloudflare.config.ts",
+  "site.config.js",
+  "tsconfig.json",
+  "tsconfig.base.json",
+  "tsconfig.node.json",
+  "tsconfig.web.json",
+  "tsconfig.worker.json",
+];
+const PAGE = '<!doctype html><title>x</title><script type="module" src="/src/main.js"></script>\n';
+
+/** A repo that `bunx cf build` builds with this repo's build configs: the five pages vite.config.js names, a Worker at
+ * the entrypoint cloudflare.config.ts names, and a public/ overlay, then `files` (a null entry leaves a file out). It
+ * lives under this repo's .port-check/, so the builds load this repo's node_modules without an install. */
+async function buildRepo(files) {
+  mkdirSync(path.join(ROOT, ".port-check"), { recursive: true });
+  const dir = mkdtempSync(path.join(ROOT, ".port-check", "test-"));
+  const all = {
+    ...Object.fromEntries(BUILD_FILES.map((file) => [file, readFileSync(path.join(ROOT, file))])),
+    ".gitignore": "node_modules/\n.cloudflare/\n.wrangler/\n.port-check/\n",
+    "tsconfig.strict.json": strictList(),
+    "index.html": PAGE,
+    "admin/index.html": PAGE,
+    "admin/dev/index.html": PAGE,
+    "start/index.html": PAGE,
+    "intro/index.html": PAGE,
+    "src/main.js": 'console.log("page");\n',
+    "server/worker.js": 'export default { fetch() { return new Response("ok"); } };\n',
+    "public/overlay.html": '<script type="module" src="./overlay.js"></script>\n',
+    "public/overlay.js": "// The overlay.\nexport const overlay = 1;\n",
+    ...files,
+  };
+  return repo(Object.fromEntries(Object.entries(all).filter(([, text]) => text !== null)), dir);
+}
+
+/** A build fixture's Worker entrypoint in cloudflare.config.ts, switched to `entry`. */
+function entrypoint(entry) {
+  const config = readFileSync(path.join(ROOT, "cloudflare.config.ts"), "utf8");
+  assert.ok(config.includes('entrypoint: "./server/worker.js"'), "cloudflare.config.ts names another entrypoint");
+  return config.replace('entrypoint: "./server/worker.js"', `entrypoint: "${entry}"`);
 }
 
 /** Runs a script in `dir`. A non-zero exit rejects with an error that carries the same stdout and stderr. */
@@ -405,7 +455,6 @@ describe("port-check", { concurrency: true }, () => {
       "web/overlay.js": "export const overlay = 1;\n",
       "index.html": '<body>\n<script type="module" src="/src/main.js"></script>\n</body>\n',
       "web/overlay.html": '<script type="module" src="./overlay.js"></script>\n',
-      "public/_headers": "# Mirrors src/main.js and web/overlay.js.\n/*\n  X-Frame-Options: DENY\n",
       "package.json": '{ "scripts": { "main": "node src/main.js" } }\n',
       "docs/notes.md": "Start in src/main.js.\n",
       ".coderabbit.yaml": "reviews: {}\n",
@@ -415,7 +464,6 @@ describe("port-check", { concurrency: true }, () => {
     write(dir, {
       "index.html": '<body>\n<script type="module" src="/src/main.ts"></script>\n</body>\n',
       "web/overlay.html": '<script type="module" src="./overlay.ts"></script>\n',
-      "public/_headers": "# Mirrors src/main.ts and web/overlay.ts.\n/*\n  X-Frame-Options: DENY\n",
       "package.json": '{ "scripts": { "main": "node src/main.ts" } }\n',
       "docs/notes.md": "Start in src/main.ts, the entry point.\n",
       ".coderabbit.yaml": "reviews: { profile: chill }\n",
@@ -429,10 +477,9 @@ describe("port-check", { concurrency: true }, () => {
         "allowed: docs/notes.md (documentation, does not ship)",
         "allowed: index.html (only renamed paths changed)",
         "allowed: package.json (only renamed paths changed)",
-        "allowed: public/_headers (only renamed paths changed)",
-        "allowed: tsconfig.strict.json (compiler options unchanged, does not ship)",
+        "allowed: tsconfig.strict.json (no build config reads it)",
         "allowed: web/overlay.html (only renamed paths changed)",
-        "7 files compared, 0 different",
+        "6 files compared, 0 different",
         "",
       ].join("\n"),
       stderr: "",
@@ -488,7 +535,7 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
-  test("a tsconfig change fails when its compiler options change, and a tsconfig under public/ ships", async () => {
+  test("without a build config, a tsconfig change is allowed, and a tsconfig under public/ compares byte for byte", async () => {
     const dir = await repo({
       "tsconfig.base.json": '{ "compilerOptions": { "target": "esnext", "verbatimModuleSyntax": true } }\n',
       "tsconfig.strict.json":
@@ -497,8 +544,9 @@ describe("port-check", { concurrency: true }, () => {
       "public/tsconfig.json": '{ "compilerOptions": {} }\n',
     });
     write(dir, {
+      "tsconfig.json": '{ "files": [], "references": [{ "path": "./tsconfig.web.json" }] }\n',
       "tsconfig.strict.json":
-        '{\n  "extends": "./tsconfig.base.json",\n  "compilerOptions": { "strict": true, "verbatimModuleSyntax": false, "useDefineForClassFields": false },\n  "files": [],\n}\n',
+        '{\n  "extends": "./tsconfig.base.json",\n  "compilerOptions": { "strict": true, "useDefineForClassFields": false },\n  "files": [],\n}\n',
       "tsconfig.web.json":
         '// Browser code.\n{ "extends": "./tsconfig.base.json", "include": ["src/**/*.js", "public/*.js"], "exclude": ["dist"] }\n',
       "public/tsconfig.json": '{ "compilerOptions": { "strict": true } }\n',
@@ -506,33 +554,213 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
-        "public/tsconfig.json differs (line 1)",
+        "public/tsconfig.json differs (line 1; public/ is served as written)",
         '  base: { "compilerOptions": {} }',
         '  head: { "compilerOptions": { "strict": true } }',
-        "tsconfig.strict.json changes compilerOptions.useDefineForClassFields, compilerOptions.verbatimModuleSyntax, which the build reads; only files, include and exclude may change",
-        "allowed: tsconfig.web.json (compiler options unchanged, does not ship)",
-        "2 files compared, 2 different",
+        "allowed: tsconfig.json (no build config reads it)",
+        "allowed: tsconfig.strict.json (no build config reads it)",
+        "allowed: tsconfig.web.json (no build config reads it)",
+        "1 files compared, 1 different",
         "",
       ].join("\n"),
       stderr: "",
     });
   });
 
-  test("a compiler option changed in an extended tsconfig fails each changed tsconfig that inherits it", async () => {
-    const dir = await repo({
-      "tsconfig.base.json": '{ "compilerOptions": { "target": "esnext" } }\n',
-      "tsconfig.strict.json": '{ "extends": "./tsconfig.base.json", "files": [] }\n',
-    });
+  test("with a build config, a changed tsconfig is left to the build diff, and a new root tsconfig.json fails", async () => {
+    const dir = await buildRepo({ "tsconfig.json": null });
     write(dir, {
-      "tsconfig.base.json": '{ "compilerOptions": { "target": "es2020" } }\n',
-      "tsconfig.strict.json": '{ "extends": "./tsconfig.base.json", "files": ["a.ts"] }\n',
-      "a.ts": "export type A = string;\n",
+      "tsconfig.json": readFileSync(path.join(ROOT, "tsconfig.json")),
+      "tsconfig.web.json": `// Browser code.\n${readFileSync(path.join(ROOT, "tsconfig.web.json"), "utf8")}`,
     });
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
-        "tsconfig.base.json changes compilerOptions.target, which the build reads; only files, include and exclude may change",
-        "tsconfig.strict.json changes compilerOptions.target, which the build reads; only files, include and exclude may change",
+        "tsconfig.json is new at the repo root, where the base build would read it too, so the build diff cannot see what it changes; add it in a change of its own",
+        "allowed: tsconfig.web.json (the build diff compares what the build makes with it)",
+        "1 files compared, 1 different; 12 build output files compared, 0 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a nested tsconfig that changes how the build compiles a port fails at the build diff", async () => {
+    const dir = await buildRepo({
+      "server/side.js": "globalThis.sideLoaded = true;\nexport class Shape {}\n",
+      "server/thing.js": [
+        'import { Shape } from "./side.js";',
+        "",
+        "export class Thing {",
+        "  /** @type {number} */",
+        "  size;",
+        "  /** @type {Shape} */",
+        "  shape;",
+        "  /** @param {Shape} shape */",
+        "  constructor(shape) {",
+        "    this.shape = shape;",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+      "server/worker.js":
+        'import { Thing } from "./thing.js";\nexport default { fetch() { return new Response(String(new Thing(1).size)); } };\n',
+    });
+    await git(dir, "mv", "server/thing.js", "server/thing.ts");
+    write(dir, {
+      "server/thing.ts": [
+        'import { Shape } from "./side.js";',
+        "",
+        "export class Thing {",
+        "  size: number;",
+        "  shape: Shape;",
+        "  constructor(shape: Shape) {",
+        "    this.shape = shape;",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+      "server/worker.js":
+        'import { Thing } from "./thing.ts";\nexport default { fetch() { return new Response(String(new Thing(1).size)); } };\n',
+      "server/tsconfig.json": '{ "include": ["*.ts"] }\n',
+      "tsconfig.strict.json": strictList("server/thing.ts"),
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "allowed: server/tsconfig.json (the build diff compares what the build makes with it)",
+        "allowed: tsconfig.strict.json (the build diff compares what the build makes with it)",
+        ".cloudflare/output/v0/workers/default/bundle/index.js differs (line 2)",
+        "  base: globalThis.sideLoaded = true;",
+        "  head: var Thing = class {",
+        "2 files compared, 0 different; 12 build output files compared, 1 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("porting the Worker entry passes once cloudflare.config.ts names the new path", async () => {
+    const dir = await buildRepo({});
+    await git(dir, "mv", "server/worker.js", "server/worker.ts");
+    write(dir, {
+      "server/worker.ts": 'export default { fetch(): Response { return new Response("ok"); } };\n',
+      "cloudflare.config.ts": entrypoint("./server/worker.ts"),
+      "tsconfig.strict.json": strictList("server/worker.ts"),
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 0,
+      stdout: [
+        "allowed: tsconfig.strict.json (the build diff compares what the build makes with it)",
+        "2 files compared, 0 different; 12 build output files compared, 0 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a build that fails fails the check with the end of its output", async () => {
+    const dir = await buildRepo({});
+    await git(dir, "mv", "server/worker.js", "server/worker.ts");
+    write(dir, {
+      "server/worker.ts": 'export default { fetch(): Response { return new Response("ok"); } };\n',
+      "server/tsconfig.json": '{ "extends": "./missing.json" }\n',
+      "tsconfig.strict.json": strictList("server/worker.ts"),
+    });
+    const { status, stdout, stderr } = await portCheck(dir);
+    const lines = stdout.split("\n");
+    // The tail holds the build's timing and this machine's paths, so its last error line is matched, not pinned.
+    assert.deepEqual(
+      { status, stderr, first: lines.slice(0, 3), last: lines.slice(-2) },
+      {
+        status: 1,
+        stderr: "",
+        first: [
+          "allowed: server/tsconfig.json (the build diff compares what the build makes with it)",
+          "allowed: tsconfig.strict.json (the build diff compares what the build makes with it)",
+          "the head build failed (bunx cf build):",
+        ],
+        last: ["1 files compared, 0 different; the build failed, 1 other problems", ""],
+      },
+    );
+    assert.match(lines.at(-3) ?? "", /^ {2}\s*Tsconfig not found .*missing\.json$/);
+    const tail = lines.slice(3, -2);
+    assert.ok(tail.length <= 12, `the tail has ${tail.length} lines`);
+    assert.deepEqual(
+      tail.filter((line) => !line.startsWith("  ") || /^\s+at |\x1b\[/.test(line)),
+      [],
+      "the tail is indented, without stack frames or colors",
+    );
+  });
+
+  test("a file under public/ compares byte for byte: a comment edit, a new comment-only module and a renamed path fail", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList(),
+      "src/main.js": "export const main = 1;\n",
+      "public/overlay.js": "// The overlay.\nexport const overlay = 1;\n",
+      "public/_headers": "# Mirrors src/main.js.\n/*\n  X-Frame-Options: DENY\n",
+    });
+    await git(dir, "mv", "src/main.js", "src/main.ts");
+    write(dir, {
+      "src/main.ts": "export const main: number = 1;\n",
+      "public/overlay.js": "// The OBS overlay.\nexport const overlay = 1;\n",
+      "public/x.js": "// Reserved for the next duel effect.\n",
+      "public/_headers": "# Mirrors src/main.ts.\n/*\n  X-Frame-Options: DENY\n",
+      "tsconfig.strict.json": strictList("src/main.ts"),
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "public/_headers differs (line 1; public/ is served as written)",
+        "  base: # Mirrors src/main.js.",
+        "  head: # Mirrors src/main.ts.",
+        "public/overlay.js differs (line 1; public/ is served as written)",
+        "  base: // The overlay.",
+        "  head: // The OBS overlay.",
+        "public/x.js is new and ships",
+        "allowed: tsconfig.strict.json (no build config reads it)",
+        "4 files compared, 3 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a test or script may update a string naming a ported file, and any other string change fails", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList(),
+      "src/ui.js": "export const ui = 1;\n",
+      "src/files.js": 'export const FILES = ["src/ui.js"];\n',
+      "tests/ui.test.mjs":
+        'import { readFileSync } from "node:fs";\nconst text = readFileSync("src/ui.js", "utf8");\nif (!text.includes("ui")) throw new Error("ui");\n',
+    });
+    await git(dir, "mv", "src/ui.js", "src/ui.ts");
+    write(dir, {
+      "src/ui.ts": "export const ui: number = 1;\n",
+      "tests/ui.test.mjs":
+        'import { readFileSync } from "node:fs";\nconst text = readFileSync("src/ui.ts", "utf8");\nif (!text.includes("ui")) throw new Error("ui");\n',
+      "tsconfig.strict.json": strictList("src/ui.ts"),
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 0,
+      stdout: "allowed: tsconfig.strict.json (no build config reads it)\n2 files compared, 0 different\n",
+      stderr: "",
+    });
+    write(dir, {
+      "src/files.js": 'export const FILES = ["src/ui.ts"];\n',
+      "tests/ui.test.mjs":
+        'import { readFileSync } from "node:fs";\nconst text = readFileSync("src/ui.ts", "latin1");\nif (!text.includes("ui")) throw new Error("ui");\n',
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "src/files.js differs (base line 1, head line 1)",
+        '  base: export const FILES = ["src/ui.js"];',
+        '  head: export const FILES = ["src/ui.ts"];',
+        "tests/ui.test.mjs differs (base line 2, head line 2)",
+        '  base: const text = readFileSync("src/ui.js", "utf8");',
+        '  head: const text = readFileSync("src/ui.js", "latin1");',
+        "allowed: tsconfig.strict.json (no build config reads it)",
         "3 files compared, 2 different",
         "",
       ].join("\n"),
@@ -540,17 +768,19 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
-  test("a code file under public/ fails when renamed, moved out or turned into TypeScript", async () => {
+  test("a code file under public/ fails when renamed, moved in or out, or turned into TypeScript", async () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList(),
       "public/hats.js": "export const HATS = [];\n",
       "public/fx.js": "export const fx = 1;\n",
       "public/overlay.js":
         'import { HATS } from "./hats.js";\nimport { fx } from "./fx.js";\nexport const n = HATS.length + fx;\n',
+      "src/glow.js": "export const glow = 1;\n",
     });
     await git(dir, "mv", "public/hats.js", "public/hats.ts");
     mkdirSync(path.join(dir, "src/served"), { recursive: true });
     await git(dir, "mv", "public/fx.js", "src/served/fx.js");
+    await git(dir, "mv", "src/glow.js", "public/glow.js");
     write(dir, {
       "public/hats.ts": "export const HATS: string[] = [];\n",
       "public/overlay.js":
@@ -560,14 +790,15 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
+        "src/glow.js -> public/glow.js changes a path under public/, which serves code as written",
         "public/hats.js -> public/hats.ts changes a path under public/, which serves code as written",
-        "public/overlay.js differs (base line 1, head line 1)",
+        "public/overlay.js differs (line 1; public/ is served as written)",
         '  base: import { HATS } from "./hats.js";',
         '  head: import { HATS } from "./hats.ts";',
         "public/fx.js -> src/served/fx.js changes a path under public/, which serves code as written",
-        "allowed: tsconfig.strict.json (compiler options unchanged, does not ship)",
+        "allowed: tsconfig.strict.json (no build config reads it)",
         "public/hats.ts is TypeScript under public/, which serves code as written",
-        "1 files compared, 1 different, 3 other problems",
+        "1 files compared, 1 different, 4 other problems",
         "",
       ].join("\n"),
       stderr: "",
@@ -580,6 +811,12 @@ describe("port-check", { concurrency: true }, () => {
       status: 2,
       stdout: "",
       stderr: "port-check: no-such-ref is not a commit\n",
+    });
+    // A tree resolves but is not a commit: git's own complaint about it must not reach the terminal.
+    assert.deepEqual(await node(dir, SCRIPT, "--base", "HEAD^{tree}"), {
+      status: 2,
+      stdout: "",
+      stderr: "port-check: HEAD^{tree} is not a commit\n",
     });
   });
 
@@ -594,7 +831,7 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
-        "public/_headers differs (line 2)",
+        "public/_headers differs (line 2; public/ is served as written)",
         "  base: ...ata: https://static-cdn.jtvnw.net; connect-src 'self' wss://a.example",
         "  head: ...ata: https://static-cdn.jtvnw.net; connect-src 'self' wss://b.example",
         "1 files compared, 1 different",
@@ -710,5 +947,31 @@ describe("port-rename", () => {
       stderr: "public/hats.js: files under public/ are served as written, so they stay JavaScript\n",
     });
     assert.equal(readFileSync(path.join(dir, "public/hats.js"), "utf8"), "export const HATS = [];\n");
+  });
+
+  test("leaves every byte under public/ as it is and lists each mention there as file:line", async () => {
+    const overlay = '// Same shape as src/ui.js.\nexport const SOURCE = "src/ui.js";\nexport const n = 1;\n';
+    const page = "<!-- Mirrors src/ui.js. -->\r\n<p>overlay</p>\r\n";
+    const dir = await repo({
+      "src/ui.js": "export const ui = 1;\n",
+      "public/overlay.js": overlay,
+      "public/overlay.html": page,
+      "docs/notes.md": "The picker is src/ui.js.\n",
+    });
+    assert.deepEqual(await node(dir, RENAME, "src/ui.js"), {
+      status: 0,
+      stdout: [
+        "src/ui.js -> src/ui.ts",
+        "updated docs/notes.md",
+        "note: public/overlay.html:1 names a renamed file; left as is, since public/ is served as written",
+        "note: public/overlay.js:1 names a renamed file; left as is, since public/ is served as written",
+        "note: public/overlay.js:2 names a renamed file; left as is, since public/ is served as written",
+        'Next: annotate the .ts files, add them to tsconfig.strict.json "files", run node scripts/port-check.ts --base origin/main',
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    assert.equal(readFileSync(path.join(dir, "public/overlay.js"), "utf8"), overlay);
+    assert.equal(readFileSync(path.join(dir, "public/overlay.html"), "utf8"), page);
   });
 });

@@ -1,5 +1,9 @@
-// Shared by scripts/port-check.ts and scripts/port-rename.ts: where a module's relative import paths and comments are.
+// Shared by scripts/port-check.ts and scripts/port-rename.ts: the public/ folder, and where a module's relative import
+// paths, comments and string literals are.
 import { parseSync } from "vite";
+
+/** Served as written: Vite copies public/ to the build unchanged, and the build's `?v=` hash covers its .js bytes. */
+export const PUBLIC = "public/";
 
 /** A span of source text: `start` and `end` are UTF-16 offsets, the same as String#slice. */
 export type Span = { start: number; end: number };
@@ -39,6 +43,36 @@ export function scanModule(filename: string, code: string): { specifiers: Specif
   specifiers.sort((a, b) => a.start - b.start);
   const comments = parsed.comments.map(({ start, end }) => ({ start, end }));
   return { specifiers, comments };
+}
+
+/** Every string literal and template literal without `${}` in a module, with its value. A template literal with a
+ * backslash is left out: its raw text is not its value. Throws on a syntax error, like scanModule. */
+export function stringLiterals(filename: string, code: string): (Span & { value: string })[] {
+  const parsed = parseSync(filename, code);
+  const firstError = parsed.errors[0];
+  if (firstError) throw new Error(`${filename}: ${firstError.message}`);
+  const found: (Span & { value: string })[] = [];
+  const visit = (node: unknown): void => {
+    if (typeof node !== "object" || node === null) return;
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    if ("type" in node && "start" in node && "end" in node) {
+      const { type, start, end } = node;
+      if (typeof start === "number" && typeof end === "number") {
+        if (type === "Literal" && "value" in node && typeof node.value === "string") {
+          found.push({ start, end, value: node.value });
+        } else if (type === "TemplateLiteral" && "expressions" in node && Array.isArray(node.expressions)) {
+          const raw = code.slice(start + 1, end - 1);
+          if (node.expressions.length === 0 && !raw.includes("\\")) found.push({ start, end, value: raw });
+        }
+      }
+    }
+    for (const value of Object.values(node)) visit(value);
+  };
+  visit(parsed.program);
+  return found.sort((a, b) => a.start - b.start);
 }
 
 /** A specifier split into the file path and the query or hash after it (`./u.js?v=1` is `./u.js` and `?v=1`). */

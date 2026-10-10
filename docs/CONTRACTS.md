@@ -537,11 +537,16 @@ bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), tsc
 bun run port-check         # node scripts/port-check.ts --base origin/main: pairs and compares every changed file,
                            # checks relative imports at head (docs/DEVELOPMENT.md); exits 1 on a difference or
                            # problem, 2 on bad usage; CI runs it on pushes to and PRs from port/ branches;
-                           # a tsconfig*.json outside public/ may change only files, include and exclude
-                           # (resolved compilerOptions, through extends, must be equal at base and head);
-                           # code under public/ keeps its path and stays JavaScript, as Vite serves it as written
+                           # then builds the merge base (in .port-check/<sha>/, git-ignored, never deleted by the
+                           # tool) and the working tree with bunx cf build and compares every .cloudflare/output
+                           # file (JS without comments, the rest byte for byte); tsconfig*.json changes are left
+                           # to that build diff, except a new root tsconfig.json, which fails; in tests/, scripts/,
+                           # cloudflare.config.ts and vite.config.js a string naming a moved file's new path
+                           # passes; public/ is served as written: its code keeps its path and stays JavaScript,
+                           # and every file there compares byte for byte
 node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
-                                        # refuses files under public/
+                                        # refuses files under public/ and never rewrites one: it lists each
+                                        # line there that names a renamed file as file:line
 bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.mjs"
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test

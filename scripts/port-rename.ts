@@ -2,12 +2,13 @@
 // Relative imports and exports that resolve to a renamed file get the .ts extension; repo paths in docs, configs and
 // code comments are rewritten, and in a code comment next to the file its bare name too. Rewritten files are saved
 // with LF line endings. Mentions left in code strings are listed, not changed: they are runtime values for the porter
-// to decide on. Files under public/ are refused: they are served as written, so a .ts there would reach browsers
-// unstripped. Usage: node scripts/port-rename.ts <file.js> [more files]
+// to decide on. Files under public/ are refused as arguments and never rewritten: they are served as written, so a .ts
+// there would reach browsers unstripped, and any byte changed there changes the build's `?v=` hash. Each mention there
+// is listed as file:line instead. Usage: node scripts/port-rename.ts <file.js> [more files]
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { replaceSpans, scanModule, splitSpecifier, type Span } from "./lib/port.ts";
+import { PUBLIC, replaceSpans, scanModule, splitSpecifier, type Span } from "./lib/port.ts";
 
 const CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const SKIP =
@@ -75,7 +76,7 @@ function main(): number {
   const renames: Rename[] = [];
   for (const arg of args) {
     const from = path.relative(root, path.resolve(arg)).split(path.sep).join("/");
-    if (from.startsWith("public/")) {
+    if (from.startsWith(PUBLIC)) {
       console.error(`${arg}: files under public/ are served as written, so they stay JavaScript`);
       return 2;
     }
@@ -108,14 +109,24 @@ function main(): number {
     const text = raw.replace(/\r\n/g, "\n");
     let next = text;
     let imports = 0;
+    let stillNamed: number[] = [];
     if (CODE.test(file)) {
       const result = rewriteCode(file, original, text, renames);
       next = result.code;
       imports = result.imports;
-      for (const line of result.stillNamed) console.log(`note: ${file}:${line} names a renamed file in code; check it`);
+      stillNamed = result.stillNamed;
     } else {
       next = rewriteMentions(text, renames);
     }
+    if (file.startsWith(PUBLIC)) {
+      const after = next.split("\n");
+      const lines = text.split("\n").flatMap((line, index) => (line === after[index] ? [] : [index + 1]));
+      for (const line of [...new Set([...lines, ...stillNamed])].sort((a, b) => a - b)) {
+        console.log(`note: ${file}:${line} names a renamed file; left as is, since public/ is served as written`);
+      }
+      continue;
+    }
+    for (const line of stillNamed) console.log(`note: ${file}:${line} names a renamed file in code; check it`);
     if (next === text && !(renamedTo.has(original) && raw !== text)) continue;
     writeFileSync(full, next);
     console.log(`updated ${file}${imports > 0 ? ` (${imports} import${imports === 1 ? "" : "s"})` : ""}`);

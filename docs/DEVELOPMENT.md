@@ -81,7 +81,11 @@ A port pull request changes types only, from a `port/<name>` branch:
    every code extension (`.d.ts` included) at the `.ts` path, keeping any `?query` or `#hash`, and
    updates the repo path in docs, configs and comments. It lists the code strings that still name
    the old path; they are runtime values, so decide on them in their own change. It refuses files
-   under `public/`, which Vite serves as written, so they stay JavaScript.
+   under `public/`, which Vite serves as written, so they stay JavaScript, and it never rewrites a
+   file there: each line under `public/` that names a renamed file prints as
+   `note: <file>:<line> names a renamed file; left as is, since public/ is served as written`.
+   Any byte changed there changes what browsers load (and the build's `?v=` hash), so update those
+   lines in a change of their own.
 2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json`.
 3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) checks every file that
    differs between the working tree and where the branch left `main`. Code files are `.js`, `.mjs`,
@@ -102,18 +106,27 @@ A port pull request changes types only, from a `port/<name>` branch:
      (`webpackChunkName:`) and `turbopackIgnore:`. A relative import path at head is read as the
      path the base file would write to reach the base version of the same target, so a moved
      importer or a renamed target is not a difference, while `./b.mjs` changed to `./b.js` is.
-   - `public/` keeps its paths. A code file under `public/` that is renamed or moved in or out
-     fails as `<base> -> <head> changes a path under public/`, and a `.ts`, `.mts`, `.cts` or
-     `.tsx` file under `public/` fails, because Vite copies that folder as written.
-   - A `tsconfig*.json` outside `public/` passes, as
-     `allowed: <path> (compiler options unchanged, does not ship)`, only when its compilerOptions,
-     resolved through relative `extends`, are equal at base and head; `files`, `include` and
-     `exclude` may change, and any other change fails and names the keys, because Vite reads those
-     options when it builds `.ts` files.
+   - Strings in code that doesn't ship. In `tests/`, `scripts/`, `cloudflare.config.ts` and
+     `vite.config.js`, a string literal naming a moved code file is read the same way, so a test
+     that reads `"src/ui.ts"` or the Worker `entrypoint: "./server/worker.ts"` passes once it names
+     the new path. Any other change in those files still fails, and so does a string naming the
+     new path in code that ships.
+   - `public/` is served as written, so it keeps its paths and its bytes. A code file under
+     `public/` that is renamed or moved in or out fails as
+     `<base> -> <head> changes a path under public/`, and a `.ts`, `.mts`, `.cts` or `.tsx` file
+     under `public/` fails. Every changed file there compares byte for byte, comments and renamed
+     paths included, as `<path> differs (line N; public/ is served as written)`, and a new file
+     there fails as `<path> is new and ships`.
+   - A `tsconfig*.json` outside `public/` prints
+     `allowed: <path> (the build diff compares what the build makes with it)` and is not counted:
+     the build diff below sees what it changes. Without `cloudflare.config.ts` nothing builds, and
+     the reason reads `no build config reads it`. One case fails: a `tsconfig.json` new at the repo
+     root, because the base build runs inside the repo and would read it too; add it in a change
+     of its own.
    - Other files fail closed, with two exceptions. Files that don't ship print
      `allowed: <path> (<reason>, does not ship)` and are not counted: Markdown outside `public/`
      (documentation) and `.coderabbit.yaml` (review config).
-     A shipped text file (`package.json`, HTML, `public/_headers`) passes, as
+     A shipped text file outside `public/` (`package.json`, HTML) passes, as
      `allowed: <path> (only renamed paths changed)`, when its diff disappears once every code path
      on a head line that names a moved file is read as the base path: `./` and `../` paths from
      the file's folder, and `/` and other paths from the repo root. A `?query` or `#hash` after
@@ -127,12 +140,32 @@ A port pull request changes types only, from a `port/<name>` branch:
      (`export { type A } from "./a.ts"`) fails as well: oxc strips it to `export {} from`, which
      Node still loads, so write `export type { A } from`. The import form, `import { type A } from`,
      fails `bun run lint` (`typescript/no-import-type-side-effects`).
+   - The build diff is the ground truth. When `cloudflare.config.ts` is at base or head, the merge
+     base is checked out to `.port-check/<sha>/` and both it and the working tree are built with
+     `bunx cf build`, offline, at the same time. Every file under `.cloudflare/output/` must match:
+     JavaScript with its comments removed (the Worker bundle keeps `//#region <path>` and JSDoc,
+     which name old paths) and every other file byte for byte. A client chunk whose content hash
+     changed pairs with the one file of the same name on the other side. A difference prints as
+     `.cloudflare/output/<file> differs (line N)` with both lines, or
+     `.cloudflare/output/<file> is only in the base build` (or the head). A build that fails, or
+     exits 0 without writing `v0/config.json` and `v0/workers/default/worker.config.json`,
+     prints `the head build failed (bunx cf build):` (or the base) and the last 12 lines of its
+     output.
+     The base build loads the repo's `node_modules`, which is sound because a change to
+     `package.json` or `bun.lock` already fails the file checks.
+   - `.port-check/` is git-ignored and grows by one folder per merge base (about 17 MB for this
+     repo, built output included); port-check reuses a folder and never deletes one. The tests
+     leave their build repos there too, as `.port-check/test-*` (about 1.6 MB each). Recycle old
+     folders by hand.
    - It prints the first differing line of each file with its source line at base and at head
      (`head has no runtime code` when the head strips to nothing), then
-     `N files compared, M different`. N counts every changed, moved and new file, except gone,
-     ambiguous and don't-ship ones. `, K other problems` follows for unpaired, ambiguous, import and
-     strict-list failures. It exits 1 on any of them. A branch that adds runtime code, such as a
-     new script, fails it by design: that belongs in a `ts/` branch.
+     `N files compared, M different`, then `; B build output files compared, D different` when it
+     built (`; the build failed` when a build failed). N counts every changed, moved and new file
+     it compared: gone, ambiguous, don't-ship and `tsconfig*.json` files and code moved in or out
+     of `public/` are not counted. `, K other problems` follows for unpaired and ambiguous files,
+     `public/` paths and TypeScript, import and strict-list failures and failed builds. It exits 1
+     on any difference or problem. A branch that adds runtime code, such as a new script, fails it
+     by design: that belongs in a `ts/` branch.
 
    CI runs it on every push to a `port/` branch and every pull request from one.
 
