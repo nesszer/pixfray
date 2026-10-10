@@ -78,8 +78,10 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
 A port pull request changes types only, from a `port/<name>` branch:
 
 1. `node scripts/port-rename.ts server/<name>.js` renames the file to `.ts`, points its importers of
-   every code extension (`.d.ts` included) at the `.ts` path and updates the repo path in docs, configs and comments. It lists the code strings
-   that still name the old path; they are runtime values, so decide on them in their own change.
+   every code extension (`.d.ts` included) at the `.ts` path, keeping any `?query` or `#hash`, and
+   updates the repo path in docs, configs and comments. It lists the code strings that still name
+   the old path; they are runtime values, so decide on them in their own change. It refuses files
+   under `public/`, which Vite serves as written, so they stay JavaScript.
 2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json`.
 3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) checks every file that
    differs between the working tree and where the branch left `main`. Code files are `.js`, `.mjs`,
@@ -87,7 +89,7 @@ A port pull request changes types only, from a `port/<name>` branch:
    it prints the usage line and exits 2.
    - Pairing. A file pairs with the same path. A code file gone at head pairs with a new code file
      of the same name, the base name without its code extension: first in the same folder
-     (`server/a.js` and `server/a.ts`), then anywhere in the repo (`public/overlay.js` and
+     (`server/a.js` and `server/a.ts`), then anywhere in the repo (`src/overlay.js` and
      `src/served/overlay.js`). git's rename detection is not used. When more than one gone or new
      file shares a name, the check fails and names them instead of guessing; move or rename such
      files in separate steps. A port keeps each file's name.
@@ -100,17 +102,26 @@ A port pull request changes types only, from a `port/<name>` branch:
      (`webpackChunkName:`) and `turbopackIgnore:`. A relative import path at head is read as the
      path the base file would write to reach the base version of the same target, so a moved
      importer or a renamed target is not a difference, while `./b.mjs` changed to `./b.js` is.
+   - `public/` keeps its paths. A code file under `public/` that is renamed or moved in or out
+     fails as `<base> -> <head> changes a path under public/`, and a `.ts`, `.mts`, `.cts` or
+     `.tsx` file under `public/` fails, because Vite copies that folder as written.
+   - A `tsconfig*.json` outside `public/` passes, as
+     `allowed: <path> (compiler options unchanged, does not ship)`, only when its compilerOptions,
+     resolved through relative `extends`, are equal at base and head; `files`, `include` and
+     `exclude` may change, and any other change fails and names the keys, because Vite reads those
+     options when it builds `.ts` files.
    - Other files fail closed, with two exceptions. Files that don't ship print
      `allowed: <path> (<reason>, does not ship)` and are not counted: Markdown outside `public/`
-     (documentation), `tsconfig*.json` (type-check config) and `.coderabbit.yaml` (review config).
+     (documentation) and `.coderabbit.yaml` (review config).
      A shipped text file (`package.json`, HTML, `public/_headers`) passes, as
      `allowed: <path> (only renamed paths changed)`, when its diff disappears once every code path
      on a head line that names a moved file is read as the base path: `./` and `../` paths from
-     the file's folder, `/` paths from the repo root or `public/` (Vite serves both at `/`), and
-     other paths from the repo root. Any other change fails at its first differing line; binary
+     the file's folder, and `/` and other paths from the repo root. A `?query` or `#hash` after
+     the path is kept as it is. Any other change fails at its first differing line; binary
      files compare byte for byte.
-   - Imports at head. Every relative static import, re-export and literal dynamic `import()` in
-     every code file at head, changed or not, must name a file at head, or the check prints
+   - Imports at head. Every relative static import, re-export and literal dynamic `import()`
+     (a quoted string or a template with no `${}`) in every code file at head, changed or not,
+     must name a file at head, or the check prints
      `<file> line N imports <path>, which does not exist at head`. That catches an importer left
      on `./ranklog.js` after the rename. A re-export of inline types only
      (`export { type A } from "./a.ts"`) fails as well: oxc strips it to `export {} from`, which
@@ -118,8 +129,8 @@ A port pull request changes types only, from a `port/<name>` branch:
      fails `bun run lint` (`typescript/no-import-type-side-effects`).
    - It prints the first differing line of each file with its source line at base and at head
      (`head has no runtime code` when the head strips to nothing), then
-     `N files compared, M different`. N counts every changed, moved and new file, except gone, ambiguous and
-     don't-ship ones. `, K other problems` follows for unpaired, ambiguous, import and
+     `N files compared, M different`. N counts every changed, moved and new file, except gone,
+     ambiguous and don't-ship ones. `, K other problems` follows for unpaired, ambiguous, import and
      strict-list failures. It exits 1 on any of them. A branch that adds runtime code, such as a
      new script, fails it by design: that belongs in a `ts/` branch.
 

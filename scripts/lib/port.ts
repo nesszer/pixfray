@@ -8,8 +8,9 @@ export type Span = { start: number; end: number };
  * `export { type A } from`, which oxc strips but Node keeps as `export {} from`, loading the module. */
 export type Specifier = Span & { value: string; inlineTypes: boolean };
 
-/** Relative specifiers (`./`, `../`) of every static import, export-from and string-literal dynamic import, in order,
- * plus every comment. Throws on a syntax error, because a file that does not parse cannot be compared or rewritten. */
+/** Relative specifiers (`./`, `../`) of every static import, export-from and dynamic import of a string literal or a
+ * template literal without `${}`, in order, plus every comment. Throws on a syntax error, because a file that does
+ * not parse cannot be compared or rewritten. */
 export function scanModule(filename: string, code: string): { specifiers: Specifier[]; comments: Span[] } {
   const parsed = parseSync(filename, code);
   const firstError = parsed.errors[0];
@@ -30,13 +31,20 @@ export function scanModule(filename: string, code: string): { specifiers: Specif
   for (const { start, end, inlineTypes } of sources) {
     const raw = code.slice(start, end);
     const quote = raw[0];
-    if ((quote !== '"' && quote !== "'") || raw.at(-1) !== quote || raw.length < 2) continue;
+    if ((quote !== '"' && quote !== "'" && quote !== "`") || raw.at(-1) !== quote || raw.length < 2) continue;
     const value = raw.slice(1, -1);
+    if (quote === "`" && value.includes("${")) continue;
     if (value.startsWith("./") || value.startsWith("../")) specifiers.push({ value, start, end, inlineTypes });
   }
   specifiers.sort((a, b) => a.start - b.start);
   const comments = parsed.comments.map(({ start, end }) => ({ start, end }));
   return { specifiers, comments };
+}
+
+/** A specifier split into the file path and the query or hash after it (`./u.js?v=1` is `./u.js` and `?v=1`). */
+export function splitSpecifier(value: string): { file: string; suffix: string } {
+  const at = value.search(/[?#]/);
+  return at === -1 ? { file: value, suffix: "" } : { file: value.slice(0, at), suffix: value.slice(at) };
 }
 
 /** Replaces each span with the text `replace` returns for it; spans must not overlap. */

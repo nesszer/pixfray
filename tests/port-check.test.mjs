@@ -4,7 +4,7 @@
 // here; see AGENTS.md), so a test that needs a file gone moves it out of the repo.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
@@ -141,15 +141,15 @@ describe("port-check", { concurrency: true }, () => {
   test("files moved to another folder pair by name, with their importers' paths followed", async () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList("src/served/overlay.ts"),
-      "public/chat.js": "export const say = (text) => text.trim();\n",
-      "public/overlay.js":
+      "web/chat.js": "export const say = (text) => text.trim();\n",
+      "web/overlay.js":
         'import { say } from "./chat.js";\nimport { clamp } from "../server/game.js";\nexport const hello = say(" hi ") + clamp(1);\n',
       "server/game.js": "export const clamp = (n) => Math.max(0, n);\n",
-      "tests/overlay.test.mjs": 'import { hello } from "../public/overlay.js";\nconsole.log(hello);\n',
+      "tests/overlay.test.mjs": 'import { hello } from "../web/overlay.js";\nconsole.log(hello);\n',
     });
     mkdirSync(path.join(dir, "src/served"), { recursive: true });
-    await git(dir, "mv", "public/chat.js", "src/served/chat.js");
-    await git(dir, "mv", "public/overlay.js", "src/served/overlay.ts");
+    await git(dir, "mv", "web/chat.js", "src/served/chat.js");
+    await git(dir, "mv", "web/overlay.js", "src/served/overlay.ts");
     write(dir, {
       "src/served/overlay.ts":
         'import { say } from "./chat.js";\nimport { clamp } from "../../server/game.js";\nexport const hello: string = say(" hi ") + clamp(1);\n',
@@ -340,7 +340,8 @@ describe("port-check", { concurrency: true }, () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList("u.ts", "n.ts"),
       "u.js": "export const half = (n) => n / 2;\n",
-      "m.js": 'import { half } from "./u.js";\nexport const one = half(2);\n',
+      "m.js":
+        'import { half } from "./u.js";\nexport const one = half(2);\nexport const lazy = () => import(`./u.js`);\n',
       "n.js": 'export const two = 2;\nexport { half } from "./u.js";\nexport const load = () => import("./u.js");\n',
     });
     await git(dir, "mv", "u.js", "u.ts");
@@ -354,9 +355,10 @@ describe("port-check", { concurrency: true }, () => {
       status: 1,
       stdout: [
         "m.js line 1 imports ./u.js, which does not exist at head",
+        "m.js line 3 imports ./u.js, which does not exist at head",
         "n.ts line 2 imports ./u.js, which does not exist at head",
         "n.ts line 3 imports ./u.js, which does not exist at head",
-        "2 files compared, 0 different, 3 other problems",
+        "2 files compared, 0 different, 4 other problems",
         "",
       ].join("\n"),
       stderr: "",
@@ -398,26 +400,26 @@ describe("port-check", { concurrency: true }, () => {
 
   test("files that don't ship are allowed, and shipped text whose only change is a renamed path passes", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("src/main.ts", "public/overlay.ts"),
+      "tsconfig.strict.json": strictList("src/main.ts", "web/overlay.ts"),
       "src/main.js": "export const main = 1;\n",
-      "public/overlay.js": "export const overlay = 1;\n",
+      "web/overlay.js": "export const overlay = 1;\n",
       "index.html": '<body>\n<script type="module" src="/src/main.js"></script>\n</body>\n',
-      "public/overlay.html": '<script type="module" src="./overlay.js"></script>\n',
-      "public/_headers": "# Mirrors src/main.js and public/overlay.js.\n/*\n  X-Frame-Options: DENY\n",
+      "web/overlay.html": '<script type="module" src="./overlay.js"></script>\n',
+      "public/_headers": "# Mirrors src/main.js and web/overlay.js.\n/*\n  X-Frame-Options: DENY\n",
       "package.json": '{ "scripts": { "main": "node src/main.js" } }\n',
       "docs/notes.md": "Start in src/main.js.\n",
       ".coderabbit.yaml": "reviews: {}\n",
     });
     await git(dir, "mv", "src/main.js", "src/main.ts");
-    await git(dir, "mv", "public/overlay.js", "public/overlay.ts");
+    await git(dir, "mv", "web/overlay.js", "web/overlay.ts");
     write(dir, {
       "index.html": '<body>\n<script type="module" src="/src/main.ts"></script>\n</body>\n',
-      "public/overlay.html": '<script type="module" src="./overlay.ts"></script>\n',
-      "public/_headers": "# Mirrors src/main.ts and public/overlay.ts.\n/*\n  X-Frame-Options: DENY\n",
+      "web/overlay.html": '<script type="module" src="./overlay.ts"></script>\n',
+      "public/_headers": "# Mirrors src/main.ts and web/overlay.ts.\n/*\n  X-Frame-Options: DENY\n",
       "package.json": '{ "scripts": { "main": "node src/main.ts" } }\n',
       "docs/notes.md": "Start in src/main.ts, the entry point.\n",
       ".coderabbit.yaml": "reviews: { profile: chill }\n",
-      "tsconfig.strict.json": strictList("src/main.ts", "public/overlay.ts", "types/extra.d.ts"),
+      "tsconfig.strict.json": strictList("src/main.ts", "web/overlay.ts", "types/extra.d.ts"),
       "types/extra.d.ts": "export type Extra = string;\n",
     });
     assert.deepEqual(await portCheck(dir), {
@@ -428,8 +430,8 @@ describe("port-check", { concurrency: true }, () => {
         "allowed: index.html (only renamed paths changed)",
         "allowed: package.json (only renamed paths changed)",
         "allowed: public/_headers (only renamed paths changed)",
-        "allowed: public/overlay.html (only renamed paths changed)",
-        "allowed: tsconfig.strict.json (type-check config, does not ship)",
+        "allowed: tsconfig.strict.json (compiler options unchanged, does not ship)",
+        "allowed: web/overlay.html (only renamed paths changed)",
         "7 files compared, 0 different",
         "",
       ].join("\n"),
@@ -479,6 +481,122 @@ describe("port-check", { concurrency: true }, () => {
         "k.js -> k.ts differs (base line 1, head has no runtime code)",
         "  base: export const K = 1;",
         "  head: export {};",
+        "1 files compared, 1 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a tsconfig change fails when its compiler options change, and a tsconfig under public/ ships", async () => {
+    const dir = await repo({
+      "tsconfig.base.json": '{ "compilerOptions": { "target": "esnext", "verbatimModuleSyntax": true } }\n',
+      "tsconfig.strict.json":
+        '// Strict.\n{ "extends": "./tsconfig.base.json", "compilerOptions": { "strict": true }, "files": [] }\n',
+      "tsconfig.web.json": '{ "extends": "./tsconfig.base.json", "include": ["src/**/*.js"] }\n',
+      "public/tsconfig.json": '{ "compilerOptions": {} }\n',
+    });
+    write(dir, {
+      "tsconfig.strict.json":
+        '{\n  "extends": "./tsconfig.base.json",\n  "compilerOptions": { "strict": true, "verbatimModuleSyntax": false, "useDefineForClassFields": false },\n  "files": [],\n}\n',
+      "tsconfig.web.json":
+        '// Browser code.\n{ "extends": "./tsconfig.base.json", "include": ["src/**/*.js", "public/*.js"], "exclude": ["dist"] }\n',
+      "public/tsconfig.json": '{ "compilerOptions": { "strict": true } }\n',
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "public/tsconfig.json differs (line 1)",
+        '  base: { "compilerOptions": {} }',
+        '  head: { "compilerOptions": { "strict": true } }',
+        "tsconfig.strict.json changes compilerOptions.useDefineForClassFields, compilerOptions.verbatimModuleSyntax, which the build reads; only files, include and exclude may change",
+        "allowed: tsconfig.web.json (compiler options unchanged, does not ship)",
+        "2 files compared, 2 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a compiler option changed in an extended tsconfig fails each changed tsconfig that inherits it", async () => {
+    const dir = await repo({
+      "tsconfig.base.json": '{ "compilerOptions": { "target": "esnext" } }\n',
+      "tsconfig.strict.json": '{ "extends": "./tsconfig.base.json", "files": [] }\n',
+    });
+    write(dir, {
+      "tsconfig.base.json": '{ "compilerOptions": { "target": "es2020" } }\n',
+      "tsconfig.strict.json": '{ "extends": "./tsconfig.base.json", "files": ["a.ts"] }\n',
+      "a.ts": "export type A = string;\n",
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "tsconfig.base.json changes compilerOptions.target, which the build reads; only files, include and exclude may change",
+        "tsconfig.strict.json changes compilerOptions.target, which the build reads; only files, include and exclude may change",
+        "3 files compared, 2 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a code file under public/ fails when renamed, moved out or turned into TypeScript", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList(),
+      "public/hats.js": "export const HATS = [];\n",
+      "public/fx.js": "export const fx = 1;\n",
+      "public/overlay.js":
+        'import { HATS } from "./hats.js";\nimport { fx } from "./fx.js";\nexport const n = HATS.length + fx;\n',
+    });
+    await git(dir, "mv", "public/hats.js", "public/hats.ts");
+    mkdirSync(path.join(dir, "src/served"), { recursive: true });
+    await git(dir, "mv", "public/fx.js", "src/served/fx.js");
+    write(dir, {
+      "public/hats.ts": "export const HATS: string[] = [];\n",
+      "public/overlay.js":
+        'import { HATS } from "./hats.ts";\nimport { fx } from "../src/served/fx.js";\nexport const n = HATS.length + fx;\n',
+      "tsconfig.strict.json": strictList("public/hats.ts"),
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "public/hats.js -> public/hats.ts changes a path under public/, which serves code as written",
+        "public/overlay.js differs (base line 1, head line 1)",
+        '  base: import { HATS } from "./hats.js";',
+        '  head: import { HATS } from "./hats.ts";',
+        "public/fx.js -> src/served/fx.js changes a path under public/, which serves code as written",
+        "allowed: tsconfig.strict.json (compiler options unchanged, does not ship)",
+        "public/hats.ts is TypeScript under public/, which serves code as written",
+        "1 files compared, 1 different, 3 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a --base that names no commit is bad usage, reported in one line", async () => {
+    const dir = await repo({ "tsconfig.strict.json": strictList() });
+    assert.deepEqual(await node(dir, SCRIPT, "--base", "no-such-ref"), {
+      status: 2,
+      stdout: "",
+      stderr: "port-check: no-such-ref is not a commit\n",
+    });
+  });
+
+  test("a long line that differs late is shown around its first difference", async () => {
+    const csp = (src) =>
+      `  Content-Security-Policy: default-src 'self'; ${"img-src 'self' data: https://static-cdn.jtvnw.net; ".repeat(3)}connect-src 'self' ${src}\n`;
+    const dir = await repo({
+      "tsconfig.strict.json": strictList(),
+      "public/_headers": `/*\n${csp("wss://a.example")}`,
+    });
+    write(dir, { "public/_headers": `/*\n${csp("wss://b.example")}` });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "public/_headers differs (line 2)",
+        "  base: ...ata: https://static-cdn.jtvnw.net; connect-src 'self' wss://a.example",
+        "  head: ...ata: https://static-cdn.jtvnw.net; connect-src 'self' wss://b.example",
         "1 files compared, 1 different",
         "",
       ].join("\n"),
@@ -558,5 +676,39 @@ describe("port-rename", () => {
       ].join("\n"),
       stderr: "",
     });
+  });
+
+  test("follows template-literal and query-string imports, and port-check reads them back as the base paths", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("u.ts"),
+      "u.js": "export const u = 1;\n",
+      "m.js":
+        'export const a = () => import(`./u.js`);\nexport const b = () => import("./u.js?v=1#top");\nexport const c = (x) => import(`./${x}.js`);\n',
+    });
+    assert.deepEqual(await node(dir, RENAME, "u.js"), {
+      status: 0,
+      stdout: [
+        "u.js -> u.ts",
+        "updated m.js (2 imports)",
+        'Next: annotate the .ts files, add them to tsconfig.strict.json "files", run node scripts/port-check.ts --base origin/main',
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    assert.equal(
+      readFileSync(path.join(dir, "m.js"), "utf8"),
+      'export const a = () => import(`./u.ts`);\nexport const b = () => import("./u.ts?v=1#top");\nexport const c = (x) => import(`./${x}.js`);\n',
+    );
+    assert.deepEqual(await portCheck(dir), { status: 0, stdout: "2 files compared, 0 different\n", stderr: "" });
+  });
+
+  test("refuses a file under public/, which is served as written", async () => {
+    const dir = await repo({ "public/hats.js": "export const HATS = [];\n" });
+    assert.deepEqual(await node(dir, RENAME, "public/hats.js"), {
+      status: 2,
+      stdout: "",
+      stderr: "public/hats.js: files under public/ are served as written, so they stay JavaScript\n",
+    });
+    assert.equal(readFileSync(path.join(dir, "public/hats.js"), "utf8"), "export const HATS = [];\n");
   });
 });

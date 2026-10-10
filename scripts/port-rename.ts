@@ -2,11 +2,12 @@
 // Relative imports and exports that resolve to a renamed file get the .ts extension; repo paths in docs, configs and
 // code comments are rewritten, and in a code comment next to the file its bare name too. Rewritten files are saved
 // with LF line endings. Mentions left in code strings are listed, not changed: they are runtime values for the porter
-// to decide on. Usage: node scripts/port-rename.ts <file.js> [more files]
+// to decide on. Files under public/ are refused: they are served as written, so a .ts there would reach browsers
+// unstripped. Usage: node scripts/port-rename.ts <file.js> [more files]
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { replaceSpans, scanModule, type Span } from "./lib/port.ts";
+import { replaceSpans, scanModule, splitSpecifier, type Span } from "./lib/port.ts";
 
 const CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const SKIP =
@@ -42,9 +43,10 @@ function rewriteCode(file: string, parseAs: string, code: string, renames: reado
   const edits: (Span & { text: string })[] = [];
   let imports = 0;
   for (const specifier of specifiers) {
-    if (!byPath.has(path.posix.join(dir, specifier.value))) continue;
+    const { file: target, suffix } = splitSpecifier(specifier.value);
+    if (!byPath.has(path.posix.join(dir, target))) continue;
     const quote = code[specifier.start] ?? '"';
-    edits.push({ ...specifier, text: `${quote}${specifier.value.replace(/\.m?js$/, ".ts")}${quote}` });
+    edits.push({ ...specifier, text: `${quote}${target.replace(/\.m?js$/, ".ts")}${suffix}${quote}` });
     imports++;
   }
   for (const comment of comments) {
@@ -73,6 +75,10 @@ function main(): number {
   const renames: Rename[] = [];
   for (const arg of args) {
     const from = path.relative(root, path.resolve(arg)).split(path.sep).join("/");
+    if (from.startsWith("public/")) {
+      console.error(`${arg}: files under public/ are served as written, so they stay JavaScript`);
+      return 2;
+    }
     const to = from.replace(/\.m?js$/, ".ts");
     if (to === from || !tracked.has(from)) {
       console.error(`${arg}: not a tracked .js or .mjs file`);
