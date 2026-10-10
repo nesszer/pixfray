@@ -12,6 +12,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cookies, users } from "./seed-local.mjs";
 import { enforceCsp } from "./csp-helper.mjs";
+import { defaultConfig } from "../server/game.js";
 
 // The duel script below counts hits for the first preset (strike 10 every 3 s, heavy 25 every 8 s, heal 15 every 10 s).
 // Step 2 pins it: with the shipped defaults (strike 20, heavy 35) the first !attack ends the duel, and the loop expects a second.
@@ -19,12 +20,6 @@ const DUEL_BALANCE = {
   strike: { damage: 10, cooldownMs: 3000 },
   heavy: { damage: 25, cooldownMs: 8000 },
   heal: { amount: 15, cooldownMs: 10000 },
-};
-// The shipped defaults (DEFAULT_CONFIG.abilities in server/game.js), put back at the end of the run.
-const SHIPPED_BALANCE = {
-  strike: { damage: 20, cooldownMs: 2000 },
-  heavy: { damage: 35, cooldownMs: 5000 },
-  heal: { amount: 15, cooldownMs: 12000 },
 };
 
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
@@ -487,12 +482,18 @@ try {
 
   // Restore the default balance so reruns start from the same rules.
   const v = (await api("/api/admin/" + ch, { cookie: cookies.owner })).data.configVersion;
+  const shipped = defaultConfig();
   await api("/api/admin/" + ch, {
     cookie: cookies.owner,
     method: "POST",
     body: {
       action: "config",
-      patch: { maxHp: 100, inactivityMs: 45000, quickDuel: true, abilities: SHIPPED_BALANCE },
+      patch: {
+        maxHp: shipped.maxHp,
+        inactivityMs: shipped.inactivityMs,
+        quickDuel: shipped.quickDuel,
+        abilities: shipped.abilities,
+      },
       baseVersion: v,
       note: "e2e: restore defaults",
     },
