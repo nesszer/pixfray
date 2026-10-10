@@ -809,7 +809,7 @@ function applyMood(C) {
     a = MOODS[i],
     b = MOODS[i + 1];
   scene.fog.color.copy(a.fog).lerp(b.fog, f);
-  scene.fog.density = mixN(a.fogD, b.fogD, f) * FOG;
+  /** @type {THREE.FogExp2} */ (scene.fog).density = mixN(a.fogD, b.fogD, f) * FOG;
   for (const m of clouds.mats) {
     m.uniforms.uDeep.value.copy(scene.fog.color);
     m.uniforms.uLit.value.copy(a.cloud).lerp(b.cloud, f);
@@ -1431,9 +1431,9 @@ try {
       culled.push(o);
       o.frustumCulled = false;
     }
-    if (o.isInstancedMesh && o.count === 0) {
+    if (/** @type {THREE.InstancedMesh} */ (o).isInstancedMesh && /** @type {THREE.InstancedMesh} */ (o).count === 0) {
       empty.push(o);
-      o.count = 1;
+      /** @type {THREE.InstancedMesh} */ (o).count = 1;
     }
   });
   renderer.setRenderTarget(rt);

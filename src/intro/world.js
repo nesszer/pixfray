@@ -238,7 +238,7 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
     make(nonRing, topMat, (t, i, mesh) => {
       m4.makeScale(1, capH, 1).setPosition(t.x, t.y - capH / 2, t.z);
       mesh.setMatrixAt(i, m4);
-      mesh.setColorAt(i, col.setRGB(...t.color, THREE.SRGBColorSpace));
+      mesh.setColorAt(i, col.setRGB(.../** @type {[number, number, number]} */ (t.color), THREE.SRGBColorSpace));
     }),
   );
   group.add(
@@ -739,7 +739,7 @@ export function buildHoard({ radius = 1.6, cell = 0.14 } = {}) {
     mesh.setColorAt(
       i,
       c.gem
-        ? col.setRGB(...c.gem, THREE.SRGBColorSpace)
+        ? col.setRGB(.../** @type {[number, number, number]} */ (c.gem), THREE.SRGBColorSpace)
         : col.setRGB(0.95, 0.68 + c.s * 0.12, 0.25 + c.s * 0.1, THREE.SRGBColorSpace),
     ),
   );

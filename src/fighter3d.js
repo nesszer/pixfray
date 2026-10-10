@@ -206,7 +206,10 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     if (!f) return null;
     const r = canvas.getBoundingClientRect();
     ray.setFromCamera(
-      { x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 },
+      /** @type {THREE.Vector2} */ ({
+        x: ((e.clientX - r.left) / r.width) * 2 - 1,
+        y: -((e.clientY - r.top) / r.height) * 2 + 1,
+      }),
       camera,
     );
     f.group.updateWorldMatrix(true, false);

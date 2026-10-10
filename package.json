@@ -34,6 +34,7 @@
     "@cloudflare/workers-types": "5.20261001.1",
     "@playwright/test": "1.63.0",
     "@types/node": "22.20.4",
+    "@types/three": "0.186.0",
     "cf": "1.0.0-beta.9",
     "oxfmt": "0.71.0",
     "oxlint": "1.86.0",
