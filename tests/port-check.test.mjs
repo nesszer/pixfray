@@ -460,11 +460,12 @@ describe("port-check", { concurrency: true }, () => {
     });
     const probe = path.join(mkdtempSync(path.join(tmpdir(), "pixfray-lint-probe-")), "probe.ts");
     writeFileSync(probe, 'import { type Y } from "./x.ts";\nexport const p: Y = 1;\n');
-    const lint = await node(ROOT, OXLINT, "-c", path.join(ROOT, ".oxlintrc.json"), probe);
+    // An explicit format: oxlint switches to GitHub annotations when it runs in Actions.
+    const lint = await node(ROOT, OXLINT, "-f", "unix", "-c", path.join(ROOT, ".oxlintrc.json"), probe);
     assert.equal(lint.status, 1);
     assert.equal(
       lint.stdout.split("\n")[0],
-      `${probe.replaceAll("\\", "/")}:1:1: error typescript(no-import-type-side-effects): TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. help: Convert this to a top-level type qualifier to properly remove the entire import.`,
+      `${probe.replaceAll("\\", "/")}:1:1: TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. [Error/typescript(no-import-type-side-effects)]`,
     );
   });
 
