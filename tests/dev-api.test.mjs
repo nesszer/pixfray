@@ -965,7 +965,9 @@ test("code editor request validation happens before GitHub is called", async (t)
     "vite.config.js",
     "vite.config.ts",
     "vite.config.mjs",
+    "vite.config.cjs",
     "vite.config.mts",
+    "vite.config.cts",
     "site.config.ts",
     "tsconfig.json",
     "tsconfig.strict.json",
@@ -1004,7 +1006,10 @@ test("the editor saves TypeScript source files, which are not build files", asyn
     );
     assert.deepEqual([r.status, r.body.path], [200, path], path);
   }
-  assert.equal(calls.filter((c) => c.method === "PUT").length, sources.length);
+  assert.deepEqual(
+    calls.filter((c) => c.method === "PUT").map((c) => decodeURIComponent(c.url).split("/contents/")[1].split("?")[0]),
+    sources,
+  );
 });
 
 test("the dev token can deploy the test site but not production", async (t) => {
