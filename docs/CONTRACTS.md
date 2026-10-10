@@ -470,6 +470,7 @@ Viewer sprites (server/sprites.js):
 | giveMaxPerStream | 100 | 0 to 10000 (dollars one viewer can give per stream) |
 | giveMinDuels | 5 | 0 to 1000 (finished duels before a viewer can give) |
 | reminderMin | 0 | 0 (off) or 10 to 240 (the PixFray bot posts the `!fray` line plus a command list every this many minutes while Twitch says the channel is live; only while the bot reads the channel's chat. The first one is a full interval after it's turned on. The room learns the bot and broadcaster ids from the bot's commands, in `bot_reminder`) |
+| botEnabled | true | boolean (off: the bot ignores every command and posts nothing, and chatters still walk on the overlay; `!fray off` and `!fray on` from the broadcaster or a mod set it) |
 | petPriceCommon, petPriceUncommon, petPriceRare, petPriceEpic, petPriceLegendary | 10, 25, 60, 140, 300 | 1 to 100000 (dollars per pet of that tier) |
 | hatPricePerWin | 3 | 0 to 1000 (a locked hat costs this times the wins it needs; 0 = hats aren't sold) |
 | recolorPrice, petColorPrice, accessoryPrice, trailPrice, effectPrice, tauntPrice, titlePrice | 20, 15, 25, 40, 50, 10, 15 | 1 to 100000 (dollars per item of that kind) |
@@ -478,7 +479,7 @@ Viewer sprites (server/sprites.js):
 | abilities.heavy | `{damage:35, cooldownMs:5000}` | same as strike |
 | abilities.heal | `{amount:15, cooldownMs:12000}` | amount 1 to 1000, cooldownMs 250 to 600000 |
 
-Values must be integers (except `enabled`, `quickDuel`, `streakBonus` and `giveEnabled`, which are booleans, and `announce`, which is text). Unknown fields are rejected, except `relayLeaseMs`,
+Values must be integers (except `enabled`, `quickDuel`, `streakBonus`, `giveEnabled` and `botEnabled`, which are booleans, and `announce`, which is text). Unknown fields are rejected, except `relayLeaseMs`,
 which belonged to the removed chat relay and which older history versions still carry; it is ignored (and dropped when a config is read) so those versions can still be rolled back. A patch may contain any
 subset of fields. Versioning works like this:
 - The first preset was strike 10 / heavy 25 / heal 15 with `inactivityMs` 60000. A channel still at `configVersion` 1 with exactly that config moves to the current defaults when its room loads; a channel whose config was edited keeps its values.
