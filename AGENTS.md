@@ -12,10 +12,10 @@ before relying on memory. Don't guess commands, flags or file locations: they ar
 
 | Task | Command |
 |---|---|
-| Install | `bun install` (Bun runs packages and scripts; the tools run on Node 22.18+) |
-| Dev server | `bun run dev`, then http://127.0.0.1:5173 (`.dev.vars` holds throwaway local values only) |
+| Install | `bun install` (Bun runs packages and scripts; tools run on Node 22.18+) |
+| Dev server | `bun run dev`, then http://127.0.0.1:5173 (`.dev.vars` holds throwaway local values) |
 | Before every commit | `bun run check` (format, lint, types, unit tests; the pre-commit hook runs it plus gitleaks) |
-| Unit tests only | `bun run test:unit` |
+| Unit tests | `bun run test:unit`; port tools: `bun run test:port` |
 | Smoke test | `bun run test` (needs the dev server running) |
 | Everything | `bun run test:all` (unit, builds, workerd upload, browser tests, local end-to-end duel) |
 | Deploy to staging | `bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.test.json` |
@@ -38,7 +38,7 @@ It is not wrangler: never `wrangler deploy` or `--env`.
 - **Real Twitch chat:** post only while that channel is offline. Check
   `curl -s https://decapi.me/twitch/uptime/<login>` (it must say offline) right before posting. `bun run test:live`
   refuses on its own.
-- **Every behavior change gets a unit test** in `tests/*.test.mjs` and a doc update: routes, rules and config in
+- **Every behavior change gets a unit test** in `tests/` and a doc update: routes, rules and config in
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
 - **Strict TypeScript.** New and ported code is `.ts` with `.ts` imports. A port PR changes no runtime code
   (`bun run port-check`). Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).

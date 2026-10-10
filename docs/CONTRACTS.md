@@ -538,19 +538,21 @@ bun run port-check         # node scripts/port-check.ts --base origin/main: pair
                            # checks relative imports at head (docs/DEVELOPMENT.md); exits 1 on a difference or
                            # problem, 2 on bad usage; CI runs it on pushes to and PRs from port/ branches;
                            # then builds the merge base (in .port-check/<sha>/, git-ignored, never deleted by the
-                           # tool) and the working tree with bunx cf build and compares every .cloudflare/output
+                           # tool, refused when it no longer holds the base tree) and the working tree with
+                           # bunx cf build, offline, and compares every .cloudflare/output
                            # file (JS without comments, the rest byte for byte); tsconfig*.json changes are left
                            # to that build diff, except a new root tsconfig.json, which fails; in tests/, scripts/,
                            # cloudflare.config.ts and vite.config.js a string naming a moved file's new path
                            # passes; public/ is served as written: its code keeps its path and stays JavaScript,
-                           # and every file there compares byte for byte; a committed .port-check/ fails
+                           # and every file there compares byte for byte; bytes that change but decode the same
+                           # fail; a path committed at .port-check in any letter case fails and skips the builds
 node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
                                         # refuses files under public/ and never rewrites one: it lists each
                                         # line there that names a renamed file as file:line
-bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.mjs"
+bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.{mjs,ts}"
 bun run test:port          # node --test tests/port/port-check.test.mjs: port-check and port-rename against fixture
                            # repos in the OS temp folder (the build tests run bunx cf build); not in check, for
-                           # speed; CI runs it on every pull request and every push
+                           # speed; CI runs it next to bun run check
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test
 bunx cf dev                # local only; reads .dev.vars. Never deploy from a lane.

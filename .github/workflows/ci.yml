@@ -1,5 +1,5 @@
 # Format, lint, type checks, unit tests, a production build, a dependency audit and a secret scan for every push to
-# main, live-fix/, hotfix/ and port/ branches and every pull request. No secrets, no deploys.
+# main, live-fix/, hotfix/ and port/ branches and every pull request to main. No secrets, no deploys.
 name: CI
 on:
   pull_request:

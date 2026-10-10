@@ -136,9 +136,12 @@ A port pull request changes types only, from a `port/<name>` branch:
      `allowed: <path> (only renamed paths changed)`, when its diff disappears once every code path
      on a head line that names a moved file is read as the base path: `./` and `../` paths from
      the file's folder, and `/` and other paths from the repo root. A `?query` or `#hash` after
-     the path is kept as it is. Any other change fails at its first differing line, as
-     `<path> differs (line N)` with both lines; a file with a NUL byte prints
-     `<path> differs (binary)`.
+     the path is kept as it is. Both sides must be valid UTF-8, since invalid bytes all decode to
+     the same character and equal text would hide them. Any other change fails at its first
+     differing line, as `<path> differs (line N)` with both lines; a file with a NUL byte prints
+     `<path> differs (binary)`, and one whose bytes changed but decode to the same text prints
+     `<path> differs (in bytes that decode the same)`. A byte order mark added or dropped is a
+     change on line 1.
    - Imports at head. Every relative static import, re-export and literal dynamic `import()`
      (a quoted string or a template with no `${}`) in every code file at head, changed or not,
      must name a file at head, or the check prints
@@ -155,38 +158,54 @@ A port pull request changes types only, from a `port/<name>` branch:
      changed pairs with the one file of the same name on the other side, and is labelled
      `.cloudflare/output/<base file> -> <head name>`. A difference prints as
      `.cloudflare/output/<file> differs (line N)` with both lines (`(base line X, head line Y)`
-     when the line numbers differ, `end of file` past the last line, `(binary)` for a file with a NUL
-     byte), or as `.cloudflare/output/<file> is only in the base build` (or `head build`).
+     when the line numbers differ, `end of file` past the last line, `(binary)` for a file with a
+     NUL byte, `(in bytes that decode the same)` for one that is not valid UTF-8 and reads the same
+     as text), or as `.cloudflare/output/<file> is only in the base build` (or `head build`).
    - A failed build prints `the head build failed (bunx cf build):`, or
      `the base build failed (bunx cf build in .port-check/<sha>):`, then one indented block. For
      a non-zero exit, that is up to the last 12 lines of its output, without colors, stack frames,
-     blank lines or bare braces. For an exit 0 that left an output marker missing or older than the run, it
-     is one line naming only those markers:
+     blank lines or bare braces. A non-zero exit fails even when the output markers are fresh. For
+     an exit 0 that left an output marker missing or older than the run, it is one line naming only
+     those markers:
      `  exited 0 without writing .cloudflare/output/v0/config.json, .cloudflare/output/v0/workers/default/worker.config.json`.
-     When `bunx` cannot start, it is the error message. Builds that cannot be set up at all print
-     `the builds could not start: <error>`.
+     When `bunx` cannot start, it is the error message. Both builds run with
+     `npm_config_offline=true` and `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_REGISTRY` set to
+     `http://127.0.0.1:9`, so a missing package fails instead of downloading. Builds that cannot
+     be set up at all print `the builds could not start: <error>`.
      The base build loads the repo's `node_modules`, which is sound because a change to
      `package.json` or `bun.lock` already fails the file checks.
    - `.port-check/` is git-ignored and grows by one folder per merge base (about 17 MB for this
      repo, built output included), with git's scratch index for the checkout inside it;
-     port-check reuses a folder and never deletes one. Recycle old folders by hand. A committed
-     `.port-check/` fails as
-     `.port-check/ has N committed files, which no check compares; take .port-check/ out of git`.
+     port-check reuses a folder and never deletes one. Recycle old folders by hand. Before either
+     build runs, it reads the base tree back into that index and hashes the folder (about 0.3 s):
+     a file changed, missing or extra, outside the build's own `.cloudflare/` and `.wrangler/`,
+     stops both builds with
+     `the builds could not start: .port-check/<sha> does not hold the base commit (changed or missing: <paths>; not in the base: <paths>); move that folder out of the repo and rerun`
+     (up to three paths each, then `and N more`). It refuses instead of rebuilding, because
+     rebuilding would mean deleting the extra files. A path git tracks at `.port-check` in any
+     letter case (a file, a folder or a symlink; on Windows `.Port-Check/<sha>/x` lands inside the
+     checkout) skips both builds and prints
+     `.port-check (in any letter case) is where port-check checks out the base, and git tracks N paths there that no check compares (<first path> and N-1 more); take them out of git`.
    - It prints the first differing line of each file with its source line at base and at head
      (`head has no runtime code` when the head strips to nothing), then
      `N files compared, M different`, then `; B build output files compared, D different` when it
-     built (`; the build failed` when a build failed). N counts every changed, moved and new file
+     built (`; the build failed` when a build failed, `; the builds did not run` when a committed
+     or mismatched `.port-check` stopped them). N counts every changed, moved and new file
      it compared: gone, ambiguous, don't-ship and allowed `tsconfig*.json` files and code moved in
      or out of `public/` are not counted. `, K other problems` follows for unpaired and ambiguous
-     files, `public/` paths and TypeScript, a committed `.port-check/`, import and strict-list
-     failures and failed builds. It exits 1 on any difference or problem. A branch that adds
-     runtime code, such as a new script, fails it by design: that belongs in a `ts/` branch.
+     files, `public/` paths and TypeScript, a committed or mismatched `.port-check`, import and
+     strict-list failures and failed builds. It exits 1 on any difference or problem. A branch
+     that adds runtime code, such as a new script, fails it by design: that belongs in a `ts/`
+     branch.
 
-   CI runs it on every push to a `port/` branch and every pull request from one. Its own tests
-   are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of `bun run check`
-   because they build small fixture repos in the OS temp folder (20 to 30 s). CI runs them on
-   every pull request and every push; run them after changing `scripts/port-check.ts`,
-   `scripts/port-rename.ts` or `scripts/lib/port.ts`.
+   CI runs it on every push to a `port/` branch and every pull request from one to `main`. Its
+   own tests are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of
+   `bun run check` because they build small fixture repos in the OS temp folder (20 to 30 s).
+   CI runs them next to `bun run check`, on pull requests to `main` and pushes to `main`,
+   `live-fix/`, `hotfix/` and `port/` branches; run them after changing
+   `scripts/port-check.ts`, `scripts/port-rename.ts` or `scripts/lib/port.ts`. Each build
+   fixture gets its own `node_modules/.bin` shims that run this repo's cf and Vite by absolute
+   path, so no `node_modules` above the temp folder can stand in for them.
 
 A bug the port uncovers (a missing check, a wrong default) gets its own pull request.
 

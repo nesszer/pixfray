@@ -89,13 +89,27 @@ function cloudflareConfig(entry = "./server/worker.js") {
   return `export default {\n  worker: { name: "fixture", compatibilityDate: "2026-09-25", entrypoint: "${entry}", assets: { notFoundHandling: "404-page" } },\n};\n`;
 }
 
+/** The versions this repo declares, so a build fixture's package.json asks for what node_modules holds. */
+const DEV_DEPENDENCIES = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).devDependencies;
+
+/** This repo's cf and Vite entry scripts, which a build fixture's shims run (see binShims). */
+const CF_BIN = path.join(ROOT, "node_modules", "cf", "bin", "cf");
+const VITE_BIN = path.join(ROOT, "node_modules", "vite", "bin", "vite.js");
+
 /** A repo that `bunx cf build` builds with its own minimal configs: a page, a Worker at the entrypoint
  * cloudflare.config.ts names and a public/ overlay, then `files` (a null entry leaves a file out). cf reads the empty
- * bun.lock to pick bunx, and the package.json to check the plugin and Vite are declared; both load from this repo's
- * node_modules (see BUILD_ENV). */
-async function buildRepo(files) {
+ * bun.lock to pick bunx, and the package.json to check the plugin and Vite are declared; both run from this repo's
+ * node_modules through the fixture's shims (binShims), with `headCf` passed on. */
+async function buildRepo(files, headCf) {
   const all = {
-    "package.json": `${JSON.stringify({ private: true, type: "module", devDependencies: { "@cloudflare/vite-plugin": "beta", vite: "8.3.0" } })}\n`,
+    "package.json": `${JSON.stringify({
+      private: true,
+      type: "module",
+      devDependencies: {
+        "@cloudflare/vite-plugin": DEV_DEPENDENCIES["@cloudflare/vite-plugin"],
+        vite: DEV_DEPENDENCIES.vite,
+      },
+    })}\n`,
     "bun.lock": "",
     "vite.config.js": `import { cloudflare } from "${PLUGIN}";\nexport default { plugins: [cloudflare()] };\n`,
     "cloudflare.config.ts": cloudflareConfig(),
@@ -109,37 +123,42 @@ async function buildRepo(files) {
     "public/overlay.js": "// The overlay.\nexport const overlay = 1;\n",
     ...files,
   };
-  return repo(Object.fromEntries(Object.entries(all).filter(([, text]) => text !== null)));
-}
-
-/** A folder holding a `cf` that builds for real in the base checkout (under .port-check/) and, at head, exits 0
- * having written nothing: `cf` for Linux, `cf.cmd` for Windows. */
-function fakeCf() {
-  const dir = mkdtempSync(path.join(tmpdir(), "pixfray-fake-cf-"));
-  const real = path.join(ROOT, "node_modules", "cf", "bin", "cf");
-  write(dir, {
-    cf: [
-      "#!/usr/bin/env node",
-      'const { spawnSync } = require("node:child_process");',
-      'if (!process.cwd().includes(".port-check")) process.exit(0);',
-      `const result = spawnSync(process.execPath, [${JSON.stringify(real)}, ...process.argv.slice(2)], { stdio: "inherit" });`,
-      "process.exit(result.status ?? 1);",
-      "",
-    ].join("\n"),
-    "cf.cmd": '@node "%~dp0cf" %*\r\n',
-  });
-  chmodSync(path.join(dir, "cf"), 0o755);
+  const dir = await repo(Object.fromEntries(Object.entries(all).filter(([, text]) => text !== null)));
+  binShims(dir, headCf);
   return dir;
 }
 
-/** `env` with `dirs` put first on its PATH, whatever case Windows gave the key. */
-function withPath(env, ...dirs) {
-  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
-  return { ...env, [key]: [...dirs, env[key]].join(path.delimiter) };
+/** Writes the fixture's node_modules/.bin (git-ignored): `cf` and `vite` run this repo's entry scripts with this Node,
+ * both by absolute path, as a sh script for Linux and a .cmd for Windows. bunx takes the nearest node_modules/.bin,
+ * the base checkout under .port-check/ included, so neither PATH nor a node_modules above the temp folder can swap
+ * them. `headCf`, when given, is a script body that runs instead of cf at head, with `build()` running the real cf and
+ * returning its exit code; the base always builds for real. */
+function binShims(dir, headCf) {
+  const bin = path.join(dir, "node_modules", ".bin");
+  const shim = (name, script) => {
+    write(bin, {
+      [name]: `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
+      [`${name}.cmd`]: `@"${process.execPath}" "${script}" %*\r\n`,
+    });
+    chmodSync(path.join(bin, name), 0o755);
+  };
+  shim("vite", VITE_BIN);
+  if (headCf === undefined) {
+    shim("cf", CF_BIN);
+    return;
+  }
+  const fake = path.join(bin, "fake-cf.mjs");
+  write(bin, {
+    "fake-cf.mjs": [
+      'import { spawnSync } from "node:child_process";',
+      `const build = () => spawnSync(process.execPath, [${JSON.stringify(CF_BIN)}, ...process.argv.slice(2)], { stdio: "inherit" }).status ?? 1;`,
+      'if (process.cwd().includes(".port-check")) process.exit(build());',
+      headCf,
+      "",
+    ].join("\n"),
+  });
+  shim("cf", fake);
 }
-
-/** bunx finds cf and Vite on PATH once a fixture's own node_modules/.bin has nothing: this repo's, by path. */
-const BUILD_ENV = withPath(ENV, path.join(ROOT, "node_modules", ".bin"));
 
 /** Runs a script in `dir`. A non-zero exit rejects with an error that carries the same stdout and stderr. */
 async function node(dir, ...args) {
@@ -151,7 +170,7 @@ async function nodeWith(env, dir, ...args) {
   return { status: typeof result.code === "number" ? result.code : 0, stdout: result.stdout, stderr: result.stderr };
 }
 
-const portCheck = (dir, env = BUILD_ENV) => nodeWith(env, dir, SCRIPT, "--base", "main");
+const portCheck = (dir) => nodeWith(ENV, dir, SCRIPT, "--base", "main");
 
 describe("port-check", { concurrency: true }, () => {
   test("annotations, comments and type-only code strip to the same JavaScript", async () => {
@@ -721,11 +740,11 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a build that exits 0 without writing its output markers fresh fails, naming each", async () => {
-    const dir = await buildRepo({});
+    const dir = await buildRepo({}, "process.exit(0);");
     // A marker left by an earlier build, older than this run, and a missing one.
     write(dir, { ".cloudflare/output/v0/config.json": "{}\n" });
     utimesSync(path.join(dir, ".cloudflare/output/v0/config.json"), new Date(2020, 0, 1), new Date(2020, 0, 1));
-    assert.deepEqual(await portCheck(dir, withPath(BUILD_ENV, fakeCf())), {
+    assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
         "the head build failed (bunx cf build):",
@@ -766,18 +785,212 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a committed .port-check/ fails, since no check compares what is in it", async () => {
     const dir = await repo({ "tsconfig.strict.json": strictList() });
-    write(dir, { ".port-check/0123abc/server/worker.js": "export default {};\n" });
+    write(dir, {
+      ".port-check/0123abc/server/worker.js": "export default {};\n",
+      ".port-check/0123abc/index.html": PAGE,
+    });
     await git(dir, "add", "-A");
     await git(dir, "commit", "-q", "-m", "cache");
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
-        ".port-check/ has 1 committed files, which no check compares; take .port-check/ out of git",
+        ".port-check (in any letter case) is where port-check checks out the base, and git tracks 2 paths there that no check compares (.port-check/0123abc/index.html and 1 more); take them out of git",
         "0 files compared, 0 different, 1 other problems",
         "",
       ].join("\n"),
       stderr: "",
     });
+  });
+
+  test("a cache committed in another letter case fails and the builds don't run: on Windows it lands in the base checkout", async () => {
+    const dir = await buildRepo({});
+    const sha = (await git(dir, "rev-parse", "main")).trim();
+    write(dir, {
+      [`.Port-Check/${sha}/server/worker.js`]: 'export default { fetch() { return new Response("forged"); } };\n',
+    });
+    // .gitignore names .port-check/, which Windows reads as naming .Port-Check/ too.
+    await git(dir, "add", "-f", "--", ".Port-Check");
+    await git(dir, "commit", "-q", "-m", "forged cache");
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        `.port-check (in any letter case) is where port-check checks out the base, and git tracks 1 path there that no check compares (.Port-Check/${sha}/server/worker.js); take it out of git`,
+        "0 files compared, 0 different; the builds did not run, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a reused base checkout that no longer holds the base commit is refused before either build runs", async () => {
+    const dir = await buildRepo({});
+    const sha = (await git(dir, "rev-parse", "main")).trim();
+    const cache = path.join(dir, ".port-check", sha);
+    const env = { ...ENV, GIT_INDEX_FILE: path.join(cache, ".port-check-index") };
+    // Check the base out as port-check does, edit it by hand, then stage the edits in its scratch index, so only
+    // reading the base tree back into that index shows them.
+    mkdirSync(cache, { recursive: true });
+    await run("git", ["read-tree", sha], { cwd: dir, env });
+    await run("git", ["checkout-index", "--all", `--prefix=${cache.split(path.sep).join("/")}/`], { cwd: dir, env });
+    write(cache, {
+      "server/worker.js": 'export default { fetch() { return new Response("edited"); } };\n',
+      "server/tsconfig.json": '{ "include": ["*.ts"] }\n',
+      ".cloudflare/output/v0/config.json": "{}\n",
+      ".wrangler/cache/cf.json": "{}\n",
+    });
+    moveOut(cache, "index.html");
+    await run("git", ["add", "-A", "--", "server", "index.html"], {
+      cwd: cache,
+      env: { ...env, GIT_WORK_TREE: cache },
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        `the builds could not start: .port-check/${sha} does not hold the base commit (changed or missing: index.html, server/worker.js; not in the base: server/tsconfig.json); move that folder out of the repo and rerun`,
+        "0 files compared, 0 different; the builds did not run, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a fresh base checkout is checked too: files left in its .partial folder are refused", async () => {
+    const dir = await buildRepo({});
+    const sha = (await git(dir, "rev-parse", "main")).trim();
+    const extra = (name) => [`.port-check/${sha}.partial/server/${name}`, "export const extra = 1;\n"];
+    write(dir, Object.fromEntries(["a.js", "b.js", "c.js", "d.js"].map(extra)));
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        `the builds could not start: .port-check/${sha} does not hold the base commit (not in the base: server/a.js, server/b.js, server/c.js and 1 more); move that folder out of the repo and rerun`,
+        "0 files compared, 0 different; the builds did not run, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("text whose bytes change but decode the same fails instead of passing as a renamed path, and so does a BOM", async () => {
+    const latin1 = (text) => Buffer.from(text, "latin1");
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("src/main.ts"),
+      "src/main.js": "export const main = 1;\n",
+      "index.html": latin1('<script type="module" src="/src/main.js"></script>\n<p>caf\xe9</p>\n'),
+      "notes.txt": latin1("caf\xe9\n"),
+      "data.txt": "plain\n",
+    });
+    await git(dir, "mv", "src/main.js", "src/main.ts");
+    write(dir, {
+      // A renamed path and, on another line, one invalid UTF-8 byte swapped for another.
+      "index.html": latin1('<script type="module" src="/src/main.ts"></script>\n<p>caf\xe8</p>\n'),
+      "notes.txt": latin1("caf\xe8\n"),
+      "data.txt": "\ufeffplain\n",
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "data.txt differs (line 1)",
+        "  base: plain",
+        "  head: plain", // the head line starts with the BOM, which the display trims
+        "index.html differs (in bytes that decode the same)",
+        "notes.txt differs (in bytes that decode the same)",
+        "4 files compared, 3 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a Markdown file under public/ ships, so a change to it fails", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList(),
+      "public/notes.md": "Duel rules.\n",
+      "docs/notes.md": "Docs.\n",
+    });
+    write(dir, { "public/notes.md": "Duel rules, revised.\n", "docs/notes.md": "Docs, revised.\n" });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "allowed: docs/notes.md (documentation, does not ship)",
+        "public/notes.md differs (line 1; public/ is served as written)",
+        "  base: Duel rules.",
+        "  head: Duel rules, revised.",
+        "1 files compared, 1 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("build output whose bytes change but decode the same fails", async () => {
+    // At head, cf builds for real, then swaps one invalid UTF-8 byte for another in each .txt it wrote.
+    const flip = [
+      'import { readdirSync, readFileSync, writeFileSync } from "node:fs";',
+      "const status = build();",
+      'for (const entry of readdirSync(".cloudflare/output", { recursive: true, withFileTypes: true })) {',
+      '  if (!entry.isFile() || !entry.name.endsWith(".txt")) continue;',
+      "  const file = `${entry.parentPath}/${entry.name}`;",
+      "  writeFileSync(file, readFileSync(file).map((byte) => (byte === 0xe9 ? 0xe8 : byte)));",
+      "}",
+      "process.exit(status);",
+    ].join("\n");
+    const dir = await buildRepo({ "public/cafe.txt": Buffer.from("caf\xe9\n", "latin1") }, flip);
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        ".cloudflare/output/v0/workers/default/assets/cafe.txt differs (in bytes that decode the same)",
+        "0 files compared, 0 different; 9 build output files compared, 1 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("cf builds offline: npm and Bun get no registry to fetch from", async () => {
+    const printEnv = [
+      'for (const key of ["npm_config_offline", "NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"]) {',
+      "  console.log(`${key}=${process.env[key]}`);",
+      "}",
+      "process.exit(1);",
+    ].join("\n");
+    const dir = await buildRepo({}, printEnv);
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "the head build failed (bunx cf build):",
+        "  npm_config_offline=true",
+        "  NPM_CONFIG_REGISTRY=http://127.0.0.1:9",
+        "  BUN_CONFIG_REGISTRY=http://127.0.0.1:9",
+        "0 files compared, 0 different; the build failed, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a build that writes its output fresh but exits non-zero fails", async () => {
+    const dir = await buildRepo(
+      {},
+      ["const status = build();", "console.log(`built with status ${status}, then exits 1`);", "process.exit(1);"].join(
+        "\n",
+      ),
+    );
+    const { status, stdout, stderr } = await portCheck(dir);
+    const lines = stdout.split("\n");
+    // The tail holds the build's timing and this machine's paths, so only its last line is pinned.
+    assert.deepEqual(
+      { status, stderr, first: lines[0], last: lines.slice(-3) },
+      {
+        status: 1,
+        stderr: "",
+        first: "the head build failed (bunx cf build):",
+        last: [
+          "  built with status 0, then exits 1",
+          "0 files compared, 0 different; the build failed, 1 other problems",
+          "",
+        ],
+      },
+    );
   });
 
   test("a file under public/ compares byte for byte: a comment edit, a new comment-only module and a renamed path fail", async () => {

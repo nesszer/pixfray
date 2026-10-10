@@ -15,6 +15,7 @@
 // files byte for byte. That covers what the file checks cannot see, such as a tsconfig that changes how Vite compiles
 // TypeScript. `--strict-list` checks only the strict list.
 // Usage: node scripts/port-check.ts --base origin/main | node scripts/port-check.ts --strict-list
+import { isUtf8 } from "node:buffer";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
@@ -85,9 +86,15 @@ const OUTPUT = ".cloudflare/output";
 /** Files every finished build writes under OUTPUT; a build that exits 0 without writing them fresh failed. */
 const OUTPUT_MARKERS = ["v0/config.json", "v0/workers/default/worker.config.json"];
 
-/** Where the base is checked out and built, one folder per commit, git-ignored. port-check reuses a folder and never
- * deletes one; recycle old ones by hand. */
+/** Where the base is checked out and built, one folder per commit, git-ignored. port-check reuses a folder once it
+ * proves the folder still holds the base commit (verifyBase), and never deletes one; recycle old ones by hand. */
 const CACHE = ".port-check";
+
+/** The scratch index inside each CACHE/<sha> folder: it checks the base out, then proves the folder still matches. */
+const CACHE_INDEX = ".port-check-index";
+
+/** What the build writes inside the base folder, so verifyBase leaves it out. */
+const BUILD_WRITES = [".cloudflare", ".wrangler"];
 
 /** Keeps the builds off the network: with a lockfile cf runs Bun's vite, without one npx, and either would try a
  * registry for a missing package instead of failing. */
@@ -142,12 +149,15 @@ function stem(file: string): string {
   return path.posix.basename(file, path.posix.extname(file));
 }
 
-/** Files in the working tree, tracked or untracked but not ignored, without port-check's own CACHE: where .gitignore
- * does not name it, the base copies there would pair with the head's files. A committed CACHE fails on its own
- * (cacheProblems). */
+/** Files in the working tree, tracked or untracked but not ignored, without port-check's own CACHE in any letter case
+ * (Windows and macOS read `.Port-Check` as the same folder): where .gitignore does not name it, the base copies there
+ * would pair with the head's files. A committed CACHE fails on its own (cacheProblems). */
 function headFiles(root: string): string[] {
   const listed = nulList(git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root));
-  return [...new Set(listed)].filter((file) => !file.startsWith(`${CACHE}/`) && existsSync(path.join(root, file)));
+  return [...new Set(listed)].filter((file) => {
+    const lower = file.toLowerCase();
+    return lower !== CACHE && !lower.startsWith(`${CACHE}/`) && existsSync(path.join(root, file));
+  });
 }
 
 /** A JSONC file (a tsconfig) as an object: comments and trailing commas are dropped outside strings before parsing. A
@@ -350,13 +360,16 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((byte, index) => byte === b[index]);
 }
 
+/** UTF-8 text with a leading BOM kept, so adding or dropping one is a difference. Valid UTF-8 decodes one way only;
+ * invalid bytes all decode to U+FFFD, so callers check isUtf8 before treating equal text as equal bytes. */
 function decode(bytes: Uint8Array): string {
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(bytes);
 }
 
 /** Compares a file byte for byte and prints its first differing line. `rewrite`, when given, maps each head line
- * first, and a file that matches only after it prints as allowed. `why` is added to the difference line. Returns true
- * when the file differs. */
+ * first, and a file that matches only after it prints as allowed, if both sides are valid UTF-8: only then do equal
+ * texts mean the renamed paths explain every changed byte. `why` is added to the difference line. Returns true when
+ * the file differs. */
 function compareBytes(
   label: string,
   base: Uint8Array,
@@ -372,7 +385,7 @@ function compareBytes(
   const baseLines = decode(base).split("\n");
   const headLines = decode(head).split("\n");
   const index = firstDifference(baseLines, rewrite ? headLines.map(rewrite) : headLines);
-  if (index === -1 && rewrite) {
+  if (index === -1 && rewrite && isUtf8(base) && isUtf8(head)) {
     console.log(`allowed: ${label} (only renamed paths changed)`);
     return false;
   }
@@ -390,14 +403,18 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
   const changed = new Set(nulList(git(["diff", "--name-only", "--no-renames", "-z", mergeBase], root)));
   const units = pairFiles(baseFiles, files, changed);
   units.sort((a, b) => (key(a) < key(b) ? -1 : 1));
-  // The builds run while the files are compared. `files` was listed first, so the build's output is not in it.
+  // The builds run while the files are compared. `files` was listed first, so the build's output is not in it. A
+  // committed CACHE would stand in for the base checkout, so the builds don't run at all.
+  const cache = cacheProblems(root);
   const building = baseFiles.includes(BUILD_CONFIG) || files.includes(BUILD_CONFIG);
-  const builds = building
-    ? buildBoth(root, mergeBase).catch((error: unknown) => ({
-        base: "",
-        failures: [`the builds could not start: ${error instanceof Error ? error.message : String(error)}`],
-      }))
-    : undefined;
+  const builds =
+    building && cache.length === 0
+      ? buildBoth(root, mergeBase).catch((error: unknown) => ({
+          base: "",
+          failures: [`the builds could not start: ${error instanceof Error ? error.message : String(error)}`],
+          started: false,
+        }))
+      : undefined;
 
   // A head path of a moved file maps to its base path, so a path that names it compares as one naming the base file.
   const movedFrom = new Map<string, string>();
@@ -511,26 +528,21 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
   let buildSummary = "";
   let outputsDifferent = 0;
   if (builds) {
-    const { base, failures } = await builds;
+    const { base, failures, started } = await builds;
     for (const failure of failures) console.log(failure);
     problems += failures.length;
-    if (failures.length > 0) buildSummary = "; the build failed";
+    if (failures.length > 0) buildSummary = started ? "; the build failed" : "; the builds did not run";
     else {
       const outputs = compareOutputs(base, root);
       outputsDifferent = outputs.different;
       buildSummary = `; ${outputs.compared} build output files compared, ${outputs.different} different`;
     }
-  }
+  } else if (building) buildSummary = "; the builds did not run";
   const publicTypeScript = files
     .filter((file) => file.startsWith(PUBLIC) && /\.(?:ts|mts|cts|tsx)$/.test(file))
     .sort()
     .map((file) => `${file} is TypeScript under public/, which serves code as written`);
-  const lines = [
-    ...cacheProblems(root),
-    ...publicTypeScript,
-    ...importProblems(root, files),
-    ...strictListProblems(root, files),
-  ];
+  const lines = [...cache, ...publicTypeScript, ...importProblems(root, files), ...strictListProblems(root, files)];
   for (const line of lines) {
     console.log(line);
     problems++;
@@ -540,35 +552,68 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
   return different > 0 || outputsDifferent > 0 || problems > 0 ? 1 : 0;
 }
 
-/** One line when CACHE is committed: the file checks skip it, and the base build would reuse a committed <sha>
- * folder instead of checking the base out. */
+/** One line when git tracks anything at CACHE, in any letter case: a file, a folder or a symlink. The file checks skip
+ * it, and the base build would read it instead of a checkout of the base: on a disk that ignores case,
+ * `.Port-Check/<sha>/x` lands inside `.port-check/<sha>/`. */
 function cacheProblems(root: string): string[] {
-  const committed = nulList(git(["ls-files", "-z", "--", `${CACHE}/`], root));
-  if (committed.length > 0) {
-    return [`${CACHE}/ has ${committed.length} committed files, which no check compares; take ${CACHE}/ out of git`];
-  }
-  return [];
+  const committed = nulList(git(["ls-files", "-z", "--", `:(icase)${CACHE}`], root));
+  if (committed.length === 0) return [];
+  const count = committed.length === 1 ? "1 path" : `${committed.length} paths`;
+  const more = committed.length === 1 ? "" : ` and ${committed.length - 1} more`;
+  const them = committed.length === 1 ? "it" : "them";
+  return [
+    `${CACHE} (in any letter case) is where port-check checks out the base, and git tracks ${count} there that no check compares (${committed[0]}${more}); take ${them} out of git`,
+  ];
 }
 
 /** The merge base checked out at CACHE/<sha> through a scratch index kept inside it, so the repo's own index stays as
- * it is. A folder already there is reused; a new one is written as <sha>.partial and renamed once complete. */
+ * it is. A folder already there is reused; a new one is written as <sha>.partial and renamed once complete. Either way
+ * verifyBase proves it holds the base before it builds. */
 function checkoutBase(root: string, sha: string): string {
   const dir = path.join(root, CACHE, sha);
-  if (existsSync(dir)) return dir;
-  const partial = `${dir}.partial`;
-  mkdirSync(partial, { recursive: true });
-  const env = { ...process.env, GIT_INDEX_FILE: path.join(partial, ".port-check-index") };
-  git(["read-tree", sha], root, env);
-  git(["checkout-index", "--all", "--force", `--prefix=${partial.split(path.sep).join("/")}/`], root, env);
-  renameSync(partial, dir);
+  if (!existsSync(dir)) {
+    const partial = `${dir}.partial`;
+    mkdirSync(partial, { recursive: true });
+    const env = { ...process.env, GIT_INDEX_FILE: path.join(partial, CACHE_INDEX) };
+    git(["read-tree", sha], root, env);
+    git(["checkout-index", "--all", "--force", `--prefix=${partial.split(path.sep).join("/")}/`], root, env);
+    renameSync(partial, dir);
+  }
+  verifyBase(dir, sha);
   return dir;
+}
+
+/** Throws unless `dir` holds exactly the tree of commit `sha`, besides what the build writes there (BUILD_WRITES):
+ * no file changed or missing and none extra. A reused folder could hold a hand edit, or a file committed in another
+ * letter case. It refuses rather than rebuilds, since rebuilding would mean deleting the extra files. Reading the tree
+ * into the scratch index and hashing every file costs about 0.3 s on PixFray's base. */
+function verifyBase(dir: string, sha: string): void {
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(dir, CACHE_INDEX), GIT_WORK_TREE: dir };
+  git(["read-tree", sha], dir, env);
+  git(["update-index", "-q", "--refresh"], dir, env);
+  const changed = nulList(git(["diff-files", "--name-only", "-z"], dir, env));
+  const skip = [...BUILD_WRITES, CACHE_INDEX].map((name) => `:!${name}`);
+  const extra = nulList(git(["ls-files", "--others", "-z", "--", ".", ...skip], dir, env));
+  if (changed.length === 0 && extra.length === 0) return;
+  const list = (paths: string[]) =>
+    paths.slice(0, 3).join(", ") + (paths.length > 3 ? ` and ${paths.length - 3} more` : "");
+  const found = [
+    ...(changed.length > 0 ? [`changed or missing: ${list(changed)}`] : []),
+    ...(extra.length > 0 ? [`not in the base: ${list(extra)}`] : []),
+  ];
+  throw new Error(
+    `${CACHE}/${sha} does not hold the base commit (${found.join("; ")}); move that folder out of the repo and rerun`,
+  );
 }
 
 /** Builds the merge base (checked out under CACHE) and the working tree at once. Resolves to the base folder and one
  * report block per failed build. The base folder has no node_modules, so its build loads the repo's packages from
  * above it. That is sound: a change to package.json or bun.lock already fails the file checks, so both builds would
  * install the same packages. */
-async function buildBoth(root: string, mergeBase: string): Promise<{ base: string; failures: string[] }> {
+async function buildBoth(
+  root: string,
+  mergeBase: string,
+): Promise<{ base: string; failures: string[]; started: boolean }> {
   const base = checkoutBase(root, mergeBase);
   const [baseError, headError] = await Promise.all([runBuild(base), runBuild(root)]);
   const failures: string[] = [];
@@ -576,7 +621,7 @@ async function buildBoth(root: string, mergeBase: string): Promise<{ base: strin
     failures.push(`the base build failed (bunx cf build in ${CACHE}/${mergeBase}):\n${baseError}`);
   }
   if (headError !== undefined) failures.push(`the head build failed (bunx cf build):\n${headError}`);
-  return { base, failures };
+  return { base, failures, started: true };
 }
 
 /** Runs `bunx cf build` in `dir`, offline. Resolves to undefined when it built, else to the end of what it printed.
@@ -704,8 +749,12 @@ function compareOutputs(baseDir: string, headDir: string): { compared: number; d
     const was = outputLines(base, decode(before));
     const now = outputLines(head, decode(after));
     const index = firstDifference(was.lines, now.lines);
-    if (index === -1) continue;
+    if (index === -1 && isUtf8(before) && isUtf8(after)) continue;
     different++;
+    if (index === -1) {
+      console.log(`${label} differs (in bytes that decode the same)`);
+      continue;
+    }
     const at = ({ numbers }: { numbers: number[] }) => {
       const number = numbers[index];
       return number === undefined ? "end of file" : `line ${number}`;
