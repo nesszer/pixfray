@@ -1,10 +1,11 @@
-// Type checking for plain JavaScript (`bun run typecheck`): one project per runtime, because the Worker, the browser
-// and Node each have their own globals. Nothing is emitted; the files stay .js.
+// Type checking (`bun run typecheck`): one loose project per runtime for the JavaScript, because the Worker, the
+// browser and Node each have their own globals, and tsconfig.strict.json for the TypeScript files. Nothing is emitted.
 {
   "files": [],
   "references": [
     { "path": "./tsconfig.worker.json" },
     { "path": "./tsconfig.web.json" },
-    { "path": "./tsconfig.node.json" }
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.strict.json" }
   ]
 }

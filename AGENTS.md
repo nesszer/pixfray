@@ -30,7 +30,7 @@ It is not wrangler: never `wrangler deploy` or `--env`.
 - **Changes land by pull request.** Push a branch and open a PR to `main`; CI and CodeRabbit review it. Fix or
   answer every finding, then squash-merge (docs/DEVELOPMENT.md).
 - **Secrets stay out of the repo.** Deploy secrets live in `~/.pixfray/secrets.json` (production) and
-  `~/.pixfray/secrets.test.json` (the same plus `DEV_TOOLS_TOKEN`; `cf deploy` uploads every key in the file). Never copy them into
+  `~/.pixfray/secrets.test.json` (the same plus `DEV_TOOLS_TOKEN`; `cf deploy` uploads every key). Never copy them into
   `.dev.vars`, a test, a doc, a commit or command output. `.gitleaks.toml` allowlists only `.dev.vars`.
 - **Cloudflare Free only:** SQLite Durable Objects, no paid products.
 - **`site.config.js` is the only place** for the owner, built-in channels, domains, Worker names and the bot account.
@@ -40,8 +40,8 @@ It is not wrangler: never `wrangler deploy` or `--env`.
   refuses on its own.
 - **Every behavior change gets a unit test** in `tests/*.test.mjs` and a doc update: routes, rules and config in
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
-- **Plain JavaScript, type checked.** Code stays `.js`; when `tsc` can't infer something, describe it with JSDoc
-  rather than silencing the check (docs/DEVELOPMENT.md).
+- **Strict TypeScript.** New and ported code is `.ts` with `.ts` imports. A port PR changes no runtime code
+  (`bun run port-check`). Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
 - **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.mjs`. Don't set `HEADLESS=1`.
 - **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in
   `public/dashboard.css` (tokens, classes, one gold accent, lock-on selection) and the patterns reviews keep catching.
@@ -104,6 +104,6 @@ Each one has happened here. Check for it by name before calling work done.
 
 ## Changing this file
 
-Add a rule when an agent makes the same mistake twice or a review catches something it should have known. Put it in
+Add a rule when an agent repeats a mistake or a review catches what it should have known. Put it in
 the narrowest place that enforces it: a test or code check first, this file when it is judgment. Name new failure
 patterns in the list above. Keep this file under 8 KB and the index pointing at real files.
