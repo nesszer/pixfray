@@ -42,6 +42,7 @@ const config = {
   giveMaxPerStream: 100,
   giveMinDuels: 5,
   reminderMin: 0,
+  botEnabled: true,
   petPriceCommon: 30,
   petPriceUncommon: 75,
   petPriceRare: 180,

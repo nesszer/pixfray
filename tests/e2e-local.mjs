@@ -12,6 +12,16 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cookies, users } from "./seed-local.mjs";
 import { enforceCsp } from "./csp-helper.mjs";
+import { defaultConfig } from "../server/game.js";
+
+// The duel script below counts hits for the first preset (strike 10 every 3 s, heavy 25 every 8 s, heal 15 every 10 s).
+// Step 2 pins it: with the shipped defaults (strike 20, heavy 35) the first !attack ends the duel, and the loop expects a second.
+const DUEL_BALANCE = {
+  strike: { damage: 10, cooldownMs: 3000 },
+  heavy: { damage: 25, cooldownMs: 8000 },
+  heal: { amount: 15, cooldownMs: 10000 },
+};
+
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const ch = "nesszerra";
 const shots = fileURLToPath(new URL("../screenshots", import.meta.url));
@@ -164,7 +174,7 @@ try {
   assert.equal(noOrigin.status, 403, "mutation without Origin is refused");
   log("profiles saved for alice and bob; cross-origin POST refused");
 
-  // 2. Admin config with optimistic version: maxHp 60, inactivity 10 s. A stale baseVersion gets 409.
+  // 2. Admin config with optimistic version: maxHp 60, inactivity 10 s, DUEL_BALANCE. A stale baseVersion gets 409.
   const admin = await api("/api/admin/" + ch, { cookie: cookies.owner });
   assert.equal(admin.status, 200);
   const baseVersion = admin.data.configVersion;
@@ -173,7 +183,7 @@ try {
     method: "POST",
     body: {
       action: "config",
-      patch: { maxHp: 60, inactivityMs: 10000, quickDuel: false },
+      patch: { maxHp: 60, inactivityMs: 10000, quickDuel: false, abilities: DUEL_BALANCE },
       baseVersion,
       note: "e2e: short HP duels",
     },
@@ -293,6 +303,7 @@ try {
   const duel1 = s.duels.find((x) => x.status === "active");
   assert.ok(duel1);
   assert.equal(duel1.rules.maxHp, 60);
+  assert.deepEqual(duel1.rules.abilities, DUEL_BALANCE, "duel 1 runs on the pinned balance");
   await overlay.waitForFunction(
     () => window.__arenaDebug().duels.filter((x) => x.status === "active").length === 1,
     null,
@@ -471,12 +482,18 @@ try {
 
   // Restore the default balance so reruns start from the same rules.
   const v = (await api("/api/admin/" + ch, { cookie: cookies.owner })).data.configVersion;
+  const shipped = defaultConfig();
   await api("/api/admin/" + ch, {
     cookie: cookies.owner,
     method: "POST",
     body: {
       action: "config",
-      patch: { maxHp: 100, inactivityMs: 45000, quickDuel: true },
+      patch: {
+        maxHp: shipped.maxHp,
+        inactivityMs: shipped.inactivityMs,
+        quickDuel: shipped.quickDuel,
+        abilities: shipped.abilities,
+      },
       baseVersion: v,
       note: "e2e: restore defaults",
     },
