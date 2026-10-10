@@ -64,8 +64,9 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
 - New and ported files are `.ts`, import local files with the `.ts` extension and use only syntax
   that strips to JavaScript (no `enum`, `namespace` or parameter properties; `erasableSyntaxOnly`).
   Type-only imports say `import type` (`verbatimModuleSyntax`).
-- Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`, `.d.ts` included) is listed in `files` in
-  `tsconfig.strict.json`. Two are checked by another program instead: `cloudflare.config.ts` by
+- Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`) is listed in `files` in
+  `tsconfig.strict.json`; a `.d.ts` file there fails (below), so new types go in `.ts` files. Two
+  are checked by another program instead: `cloudflare.config.ts` by
   `tsconfig.node.json` and `types/browser.d.ts` by `tsconfig.web.json`. `bun run typecheck` (so
   `bun run check`) enforces this by ending with `node scripts/port-check.ts --strict-list`, which
   reads every tracked and untracked file that git doesn't ignore and prints
