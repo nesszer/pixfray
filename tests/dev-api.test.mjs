@@ -964,6 +964,8 @@ test("code editor request validation happens before GitHub is called", async (t)
     "cloudflare.config.ts",
     "vite.config.js",
     "vite.config.ts",
+    "vite.config.mjs",
+    "vite.config.mts",
     "site.config.ts",
     "tsconfig.json",
     "tsconfig.strict.json",
@@ -985,13 +987,14 @@ test("the editor saves TypeScript source files, which are not build files", asyn
       [200, { object: { sha: "b".repeat(40) } }],
     ],
     [
-      ["PUT", /\/contents\/(server\/game|src\/admin)\.ts$/],
+      ["PUT", /\/contents\//],
       [200, { content: { sha: "c".repeat(40) }, commit: { sha: "d".repeat(40) } }],
     ],
   ]);
   const f = environment(GITHUB),
     owner = await cookieFor(f, true);
-  for (const path of ["server/game.ts", "src/admin.ts"]) {
+  const sources = ["server/game.ts", "src/admin.ts", "src/types.ts", "server/types.ts", "typescript-notes.md"];
+  for (const path of sources) {
     const r = await call(
       f,
       "/api/dev/code/save",
@@ -1001,7 +1004,7 @@ test("the editor saves TypeScript source files, which are not build files", asyn
     );
     assert.deepEqual([r.status, r.body.path], [200, path], path);
   }
-  assert.equal(calls.filter((c) => c.method === "PUT").length, 2);
+  assert.equal(calls.filter((c) => c.method === "PUT").length, sources.length);
 });
 
 test("the dev token can deploy the test site but not production", async (t) => {
