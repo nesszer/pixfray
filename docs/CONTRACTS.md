@@ -545,7 +545,8 @@ bun run port-check         # node scripts/port-check.ts --base origin/main: pair
                            # cloudflare.config.ts and vite.config.js a string naming a moved file's new path
                            # passes; public/ is served as written: its code keeps its path and stays JavaScript,
                            # and every file there compares byte for byte; bytes that change but decode the same
-                           # fail; a path committed at .port-check in any letter case fails and skips the builds
+                           # fail; a path committed at .port-check in any letter case fails and skips the builds,
+                           # and so does anything in .port-check/ besides <sha> and <sha>.partial folders
 node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
                                         # refuses files under public/ and never rewrites one: it lists each
                                         # line there that names a renamed file as file:line

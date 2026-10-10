@@ -103,8 +103,10 @@ to `production` for a second confirmation. The jobs already use `environment: <t
 - `AUTH_SECRET`, `INTERNAL_SECRET` and the Twitch secrets must already be set on each Worker.
   `scripts/release.mjs` checks that the uploaded version has `AUTH_SECRET` and `INTERNAL_SECRET`,
   and refuses to move traffic if either is missing.
-- `.github/workflows/ci.yml` runs on every push to `main` and every pull request: `bun run check`,
-  `bunx cf build` without credentials, `bun run audit` and a gitleaks scan of the whole history.
+- `.github/workflows/ci.yml` runs on pull requests to `main` and on pushes to `main`, `live-fix/`,
+  `hotfix/` and `port/` branches: `bun run check`, `bun run test:port`, `bun run port-check` (on
+  `port/` branches only), `bunx cf build` without credentials, `bun run audit` and a gitleaks scan of
+  the whole history.
 
 ## Security limits
 

@@ -34,8 +34,9 @@ bun run dev
 ## Format, lint and types
 
 `bun run check` runs everything below plus the unit tests. The pre-commit hook runs it, and CI
-(`.github/workflows/ci.yml`) runs it on every push to `main` and every pull request, next to a
-gitleaks scan of the whole history and `bun run audit`. The deploy workflow runs it before uploading a version.
+(`.github/workflows/ci.yml`) runs it on pull requests to `main` and on pushes to `main`, `live-fix/`,
+`hotfix/` and `port/` branches, next to `bun run test:port`, a gitleaks scan of the whole history and
+`bun run audit`. The deploy workflow runs it before uploading a version.
 
 - `bun run format` formats the code with [oxfmt](https://oxc.rs/docs/guide/usage/formatter) (`.oxfmtrc.json`,
   120 columns); `bun run format:check` only reports. HTML, Markdown and `public/assets` are left alone.
@@ -172,8 +173,13 @@ A port pull request changes types only, from a `port/<name>` branch:
      `npm_config_offline=true` and `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_REGISTRY` set to
      `http://127.0.0.1:9`, so a missing package fails instead of downloading. Builds that cannot
      be set up at all print `the builds could not start: <error>`.
-     The base build loads the repo's `node_modules`, which is sound because a change to
-     `package.json` or `bun.lock` already fails the file checks.
+     The base checkout has no `node_modules` of its own, so its build loads the repo's from above
+     `.port-check/`, which is sound because a change to `package.json` or `bun.lock` already fails
+     the file checks. Anything else in `.port-check/` would load first (bunx runs the nearest
+     `node_modules/.bin/cf`, and Node and Vite read the nearest `node_modules` and config files),
+     so any entry there other than a `<sha>` or `<sha>.partial` folder stops both builds with
+     `the builds could not start: .port-check holds <names>, which the base build would load from above its checkout; only base checkouts (<sha> folders) belong there, so move the rest out and rerun`
+     (up to three names, then `and N more`).
    - `.port-check/` is git-ignored and grows by one folder per merge base (about 17 MB for this
      repo, built output included), with git's scratch index for the checkout inside it;
      port-check reuses a folder and never deletes one. Recycle old folders by hand. Before either
@@ -186,6 +192,8 @@ A port pull request changes types only, from a `port/<name>` branch:
      letter case (a file, a folder or a symlink; on Windows `.Port-Check/<sha>/x` lands inside the
      checkout) skips both builds and prints
      `.port-check (in any letter case) is where port-check checks out the base, and git tracks N paths there that no check compares (<first path> and N-1 more); take them out of git`.
+     Only ASCII letters fold: a `k` written as the Kelvin sign (U+212A) makes an ordinary folder,
+     which is compared like any other.
    - It prints the first differing line of each file with its source line at base and at head
      (`head has no runtime code` when the head strips to nothing), then
      `N files compared, M different`, then `; B build output files compared, D different` when it
@@ -200,12 +208,15 @@ A port pull request changes types only, from a `port/<name>` branch:
 
    CI runs it on every push to a `port/` branch and every pull request from one to `main`. Its
    own tests are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of
-   `bun run check` because they build small fixture repos in the OS temp folder (20 to 30 s).
+   `bun run check` because they build small fixture repos in the OS temp folder (20 to 30 s on a
+   fast machine, about 70 s on CI).
    CI runs them next to `bun run check`, on pull requests to `main` and pushes to `main`,
    `live-fix/`, `hotfix/` and `port/` branches; run them after changing
    `scripts/port-check.ts`, `scripts/port-rename.ts` or `scripts/lib/port.ts`. Each build
    fixture gets its own `node_modules/.bin` shims that run this repo's cf and Vite by absolute
-   path, so no `node_modules` above the temp folder can stand in for them.
+   path, and the tests drop every `node_modules/.bin` from `PATH` (`bun run` adds the repo's), so
+   nothing else can stand in for them. They set `NODE_DISABLE_COMPILE_CACHE=1`, so Vite leaves no
+   compile cache in the temp folder.
 
 A bug the port uncovers (a missing check, a wrong default) gets its own pull request.
 
