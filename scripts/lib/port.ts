@@ -4,8 +4,9 @@ import { parseSync } from "vite";
 /** A span of source text: `start` and `end` are UTF-16 offsets, the same as String#slice. */
 export type Span = { start: number; end: number };
 
-/** A relative import or export source. The span covers the string literal including its quotes. */
-export type Specifier = Span & { value: string };
+/** A relative import or export source. The span covers the string literal including its quotes. `inlineTypes` marks
+ * `export { type A } from`, which oxc strips but Node keeps as `export {} from`, loading the module. */
+export type Specifier = Span & { value: string; inlineTypes: boolean };
 
 /** Relative specifiers (`./`, `../`) of every static import, export-from and string-literal dynamic import, in order,
  * plus every comment. Throws on a syntax error, because a file that does not parse cannot be compared or rewritten. */
@@ -13,21 +14,27 @@ export function scanModule(filename: string, code: string): { specifiers: Specif
   const parsed = parseSync(filename, code);
   const firstError = parsed.errors[0];
   if (firstError) throw new Error(`${filename}: ${firstError.message}`);
-  const spans: Span[] = [];
-  for (const entry of parsed.module.staticImports) spans.push(entry.moduleRequest);
-  for (const entry of parsed.module.staticExports) {
-    for (const item of entry.entries) if (item.moduleRequest) spans.push(item.moduleRequest);
+  const sources: (Span & { inlineTypes: boolean })[] = [];
+  for (const node of parsed.program.body) {
+    if (node.type === "ImportDeclaration" || node.type === "ExportAllDeclaration") {
+      sources.push({ ...node.source, inlineTypes: false });
+    } else if (node.type === "ExportNamedDeclaration" && node.source) {
+      const { exportKind, specifiers } = node;
+      const inlineTypes =
+        exportKind === "value" && specifiers.length > 0 && specifiers.every((item) => item.exportKind === "type");
+      sources.push({ ...node.source, inlineTypes });
+    }
   }
-  for (const entry of parsed.module.dynamicImports) spans.push(entry.moduleRequest);
-  const byStart = new Map<number, Specifier>();
-  for (const { start, end } of spans) {
+  for (const entry of parsed.module.dynamicImports) sources.push({ ...entry.moduleRequest, inlineTypes: false });
+  const specifiers: Specifier[] = [];
+  for (const { start, end, inlineTypes } of sources) {
     const raw = code.slice(start, end);
     const quote = raw[0];
     if ((quote !== '"' && quote !== "'") || raw.at(-1) !== quote || raw.length < 2) continue;
     const value = raw.slice(1, -1);
-    if (value.startsWith("./") || value.startsWith("../")) byStart.set(start, { value, start, end });
+    if (value.startsWith("./") || value.startsWith("../")) specifiers.push({ value, start, end, inlineTypes });
   }
-  const specifiers = [...byStart.values()].sort((a, b) => a.start - b.start);
+  specifiers.sort((a, b) => a.start - b.start);
   const comments = parsed.comments.map(({ start, end }) => ({ start, end }));
   return { specifiers, comments };
 }

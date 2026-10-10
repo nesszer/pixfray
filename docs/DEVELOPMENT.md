@@ -71,34 +71,57 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
 - Each `any`, `as` cast or `!` assertion says why in a comment on that line or the line above.
 - `types/lib-guards.d.ts` lets `Number.isInteger` narrow `unknown` to `number`, so a port needs no
   added `typeof` check, which would change the runtime code. The guard names a branded number, so
-  the false branch of `number | undefined` stays `number | undefined`.
+  the false branch of `number | undefined` stays `number | undefined`. Inside
+  `if (Number.isInteger(u))`, `let c = u` infers the branded type, so `c = c + 1` fails; write
+  `let c: number = u`.
 
 A port pull request changes types only, from a `port/<name>` branch:
 
-1. `node scripts/port-rename.ts server/<name>.js` renames the file to `.ts`, points its importers at
-   the `.ts` path and updates the repo path in docs, configs and comments. It lists the code strings
+1. `node scripts/port-rename.ts server/<name>.js` renames the file to `.ts`, points its importers of
+   every code extension (`.d.ts` included) at the `.ts` path and updates the repo path in docs, configs and comments. It lists the code strings
    that still name the old path; they are runtime values, so decide on them in their own change.
 2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json`.
-3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) compares every code file
-   (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`) that differs between the working
-   tree and where the branch left `main`:
-   - Pairing. A file pairs with the same path. A file gone at head pairs with a new file of the
-     same name, the base name without its code extension: first in the same folder
+3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) checks every file that
+   differs between the working tree and where the branch left `main`. Code files are `.js`, `.mjs`,
+   `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` and `.tsx`. Run without `--base <ref>` or `--strict-list`,
+   it prints the usage line and exits 2.
+   - Pairing. A file pairs with the same path. A code file gone at head pairs with a new code file
+     of the same name, the base name without its code extension: first in the same folder
      (`server/a.js` and `server/a.ts`), then anywhere in the repo (`public/overlay.js` and
      `src/served/overlay.js`). git's rename detection is not used. When more than one gone or new
      file shares a name, the check fails and names them instead of guessing; move or rename such
      files in separate steps. A port keeps each file's name.
-   - A gone file with no pair fails. A new file with no pair passes only when it strips to no
-     runtime code (types only, such as `server/env.ts`).
-   - Comparing. Both versions are stripped to JavaScript with oxc, with comments removed except
-     bundler annotations (`/*#__PURE__*/`, `/* @vite-ignore */`, `webpack...:`), which stay.
-     A relative import path at head is read as the path the base file would write to reach the
-     base version of the same target, so a moved importer or a renamed target is not a
-     difference, while `./b.mjs` changed to `./b.js` is.
-   - It prints the first differing line of each file with its source line at base and at head,
-     then `N files compared, M different` (with `, K other problems` for unpaired, ambiguous and
-     strict-list failures), and exits 1 on any of them. A branch that adds runtime code, such as
-     a new script, fails it by design: that belongs in a `ts/` branch.
+   - A gone file with no pair fails. A new code file with no pair passes only when it strips to no
+     runtime code (types only, such as `server/env.ts`). A new file of any other kind that ships
+     fails as `<path> is new and ships`.
+   - Comparing code. Both versions are stripped to JavaScript with oxc, with comments removed
+     except bundler annotations that start the comment, which stay: `#__NAME__` and `@__NAME__`
+     (`/*#__PURE__*/`, `/* @__NO_SIDE_EFFECTS__ */`), `@vite-ignore`, `webpack...:`
+     (`webpackChunkName:`) and `turbopackIgnore:`. A relative import path at head is read as the
+     path the base file would write to reach the base version of the same target, so a moved
+     importer or a renamed target is not a difference, while `./b.mjs` changed to `./b.js` is.
+   - Other files fail closed, with two exceptions. Files that don't ship print
+     `allowed: <path> (<reason>, does not ship)` and are not counted: Markdown outside `public/`
+     (documentation), `tsconfig*.json` (type-check config) and `.coderabbit.yaml` (review config).
+     A shipped text file (`package.json`, HTML, `public/_headers`) passes, as
+     `allowed: <path> (only renamed paths changed)`, when its diff disappears once every code path
+     on a head line that names a moved file is read as the base path: `./` and `../` paths from
+     the file's folder, `/` paths from the repo root or `public/` (Vite serves both at `/`), and
+     other paths from the repo root. Any other change fails at its first differing line; binary
+     files compare byte for byte.
+   - Imports at head. Every relative static import, re-export and literal dynamic `import()` in
+     every code file at head, changed or not, must name a file at head, or the check prints
+     `<file> line N imports <path>, which does not exist at head`. That catches an importer left
+     on `./ranklog.js` after the rename. A re-export of inline types only
+     (`export { type A } from "./a.ts"`) fails as well: oxc strips it to `export {} from`, which
+     Node still loads, so write `export type { A } from`. The import form, `import { type A } from`,
+     fails `bun run lint` (`typescript/no-import-type-side-effects`).
+   - It prints the first differing line of each file with its source line at base and at head
+     (`head has no runtime code` when the head strips to nothing), then
+     `N files compared, M different`. N counts every changed, moved and new file, except gone, ambiguous and
+     don't-ship ones. `, K other problems` follows for unpaired, ambiguous, import and
+     strict-list failures. It exits 1 on any of them. A branch that adds runtime code, such as a
+     new script, fails it by design: that belongs in a `ts/` branch.
 
    CI runs it on every push to a `port/` branch and every pull request from one.
 

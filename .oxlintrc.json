@@ -17,7 +17,9 @@
     "typescript/require-array-sort-compare": "off",
     "typescript/no-base-to-string": "off",
     // Only the Worker must await or hand every promise to waitUntil (see the server override below).
-    "typescript/no-floating-promises": "off"
+    "typescript/no-floating-promises": "off",
+    // `import { type A } from` strips to `import {} from`, which Node still loads; write `import type { A } from`.
+    "typescript/no-import-type-side-effects": "error"
   },
   "overrides": [
     {

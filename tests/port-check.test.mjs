@@ -16,6 +16,7 @@ const run = promisify(execFile);
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = path.join(ROOT, "scripts", "port-check.ts");
 const RENAME = path.join(ROOT, "scripts", "port-rename.ts");
+const OXLINT = path.join(ROOT, "node_modules", "oxlint", "bin", "oxlint");
 
 // The pre-commit hook runs these tests with GIT_DIR and GIT_INDEX_FILE pointing at the PixFray repo. Passed on, they
 // would make `git init` in a temp folder re-initialize that repo as bare and commit the fixtures into it.
@@ -78,7 +79,8 @@ const portCheck = (dir) => node(dir, SCRIPT, "--base", "main");
 describe("port-check", { concurrency: true }, () => {
   test("annotations, comments and type-only code strip to the same JavaScript", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("sum.ts"),
+      "tsconfig.strict.json": strictList("pair.ts", "sum.ts"),
+      "pair.ts": "export type Pair = [number, number];\n",
       "sum.ts": "// Adds two numbers.\nconst ZERO = 0;\nexport function sum(a, b) {\n  return a + b + ZERO;\n}\n",
     });
     write(dir, {
@@ -234,6 +236,7 @@ describe("port-check", { concurrency: true }, () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList(),
       "app.js": 'import { LIMIT } from "./config.js";\nexport const cap = LIMIT * 2;\n',
+      "config.js": "export const LIMIT = 10;\n",
       "legacy.cjs": "module.exports = { retries: 3 };\n",
       "tests/app.test.mjs": 'import { cap } from "../app.js";\nif (cap !== 20) throw new Error("cap");\n',
     });
@@ -333,6 +336,155 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
+  test("a relative import of a file that is not at head fails, naming the importer, line and path", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("u.ts", "n.ts"),
+      "u.js": "export const half = (n) => n / 2;\n",
+      "m.js": 'import { half } from "./u.js";\nexport const one = half(2);\n',
+      "n.js": 'export const two = 2;\nexport { half } from "./u.js";\nexport const load = () => import("./u.js");\n',
+    });
+    await git(dir, "mv", "u.js", "u.ts");
+    await git(dir, "mv", "n.js", "n.ts");
+    write(dir, {
+      "u.ts": "export const half = (n: number): number => n / 2;\n",
+      "n.ts":
+        'export const two: number = 2;\nexport { half } from "./u.js";\nexport const load = (): Promise<unknown> => import("./u.js");\n',
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "m.js line 1 imports ./u.js, which does not exist at head",
+        "n.ts line 2 imports ./u.js, which does not exist at head",
+        "n.ts line 3 imports ./u.js, which does not exist at head",
+        "2 files compared, 0 different, 3 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("changed, new and gone files that ship fail, naming each", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList(),
+      "index.html": '<body>\n<script type="module" src="/src/main.js"></script>\n</body>\n',
+      "src/main.js": "export const main = 1;\n",
+      "data.json": '{ "cap": 50 }\n',
+      "old.css": "b { color: red; }\n",
+    });
+    write(dir, {
+      "index.html":
+        '<body>\n<script type="module" src="/src/main.js"></script>\n<script type="module" src="/src/extra.js"></script>\n</body>\n',
+      "data.json": '{ "cap": 60 }\n',
+      "new.css": "i { color: blue; }\n",
+    });
+    moveOut(dir, "old.css");
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "data.json differs (line 1)",
+        '  base: { "cap": 50 }',
+        '  head: { "cap": 60 }',
+        "index.html differs (line 3)",
+        "  base: </body>",
+        '  head: <script type="module" src="/src/extra.js"></script>',
+        "new.css is new and ships",
+        "old.css is gone at head and no new file pairs with it",
+        "3 files compared, 3 different, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("files that don't ship are allowed, and shipped text whose only change is a renamed path passes", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("src/main.ts", "public/overlay.ts"),
+      "src/main.js": "export const main = 1;\n",
+      "public/overlay.js": "export const overlay = 1;\n",
+      "index.html": '<body>\n<script type="module" src="/src/main.js"></script>\n</body>\n',
+      "public/overlay.html": '<script type="module" src="./overlay.js"></script>\n',
+      "public/_headers": "# Mirrors src/main.js and public/overlay.js.\n/*\n  X-Frame-Options: DENY\n",
+      "package.json": '{ "scripts": { "main": "node src/main.js" } }\n',
+      "docs/notes.md": "Start in src/main.js.\n",
+      ".coderabbit.yaml": "reviews: {}\n",
+    });
+    await git(dir, "mv", "src/main.js", "src/main.ts");
+    await git(dir, "mv", "public/overlay.js", "public/overlay.ts");
+    write(dir, {
+      "index.html": '<body>\n<script type="module" src="/src/main.ts"></script>\n</body>\n',
+      "public/overlay.html": '<script type="module" src="./overlay.ts"></script>\n',
+      "public/_headers": "# Mirrors src/main.ts and public/overlay.ts.\n/*\n  X-Frame-Options: DENY\n",
+      "package.json": '{ "scripts": { "main": "node src/main.ts" } }\n',
+      "docs/notes.md": "Start in src/main.ts, the entry point.\n",
+      ".coderabbit.yaml": "reviews: { profile: chill }\n",
+      "tsconfig.strict.json": strictList("src/main.ts", "public/overlay.ts", "types/extra.d.ts"),
+      "types/extra.d.ts": "export type Extra = string;\n",
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 0,
+      stdout: [
+        "allowed: .coderabbit.yaml (review config, does not ship)",
+        "allowed: docs/notes.md (documentation, does not ship)",
+        "allowed: index.html (only renamed paths changed)",
+        "allowed: package.json (only renamed paths changed)",
+        "allowed: public/_headers (only renamed paths changed)",
+        "allowed: public/overlay.html (only renamed paths changed)",
+        "allowed: tsconfig.strict.json (type-check config, does not ship)",
+        "7 files compared, 0 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a re-export of inline types only fails, and oxlint fails the import form", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("x.ts", "m.ts"),
+      "x.js": "export const X = 1;\n",
+      "m.js": "export const m = 1;\n",
+    });
+    await git(dir, "mv", "x.js", "x.ts");
+    await git(dir, "mv", "m.js", "m.ts");
+    write(dir, {
+      "x.ts": "export type Y = number;\nexport const X: Y = 1;\n",
+      "m.ts": 'export { type Y } from "./x.ts";\nexport const m: number = 1;\n',
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "m.ts line 1 re-exports only inline types from ./x.ts, which Node still loads; write export type { ... }",
+        "2 files compared, 0 different, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    const probe = path.join(mkdtempSync(path.join(tmpdir(), "pixfray-lint-probe-")), "probe.ts");
+    writeFileSync(probe, 'import { type Y } from "./x.ts";\nexport const p: Y = 1;\n');
+    const lint = await node(ROOT, OXLINT, "-c", path.join(ROOT, ".oxlintrc.json"), probe);
+    assert.equal(lint.status, 1);
+    assert.equal(
+      lint.stdout.split("\n")[0],
+      `${probe.replaceAll("\\", "/")}:1:1: error typescript(no-import-type-side-effects): TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. help: Convert this to a top-level type qualifier to properly remove the entire import.`,
+    );
+  });
+
+  test("a port left with types only says the head has no runtime code", async () => {
+    const dir = await repo({ "tsconfig.strict.json": strictList("k.ts"), "k.js": "export const K = 1;\n" });
+    await git(dir, "mv", "k.js", "k.ts");
+    write(dir, { "k.ts": "export type K = number;\n" });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "k.js -> k.ts differs (base line 1, head has no runtime code)",
+        "  base: export const K = 1;",
+        "  head: export {};",
+        "1 files compared, 1 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
   test("--strict-list fails each TypeScript file no program checks, and passes on this repo", async () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList("a.ts"),
@@ -373,6 +525,33 @@ describe("port-rename", () => {
         "server/rank.js -> server/rank.ts",
         "updated docs/notes.md",
         "updated server/main.js (1 import)",
+        'Next: annotate the .ts files, add them to tsconfig.strict.json "files", run node scripts/port-check.ts --base origin/main',
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("rewrites importers of every code extension, declaration files included", async () => {
+    const dir = await repo({
+      "server/rank.js": "export const START = 1000;\n",
+      "server/a.mts": 'import { START } from "./rank.js";\nexport const a = START;\n',
+      "server/b.cjs": 'module.exports = () => import("./rank.js");\n',
+      "server/c.jsx": 'import { START } from "./rank.js";\nexport const C = () => <b>{START}</b>;\n',
+      "server/d.tsx": 'import { START } from "./rank.js";\nexport const D = () => <i>{START}</i>;\n',
+      "server/e.cts": 'module.exports = () => import("./rank.js");\n',
+      "types/rank.d.ts": 'export type { START } from "../server/rank.js";\n',
+    });
+    assert.deepEqual(await node(dir, RENAME, "server/rank.js"), {
+      status: 0,
+      stdout: [
+        "server/rank.js -> server/rank.ts",
+        "updated server/a.mts (1 import)",
+        "updated server/b.cjs (1 import)",
+        "updated server/c.jsx (1 import)",
+        "updated server/d.tsx (1 import)",
+        "updated server/e.cts (1 import)",
+        "updated types/rank.d.ts (1 import)",
         'Next: annotate the .ts files, add them to tsconfig.strict.json "files", run node scripts/port-check.ts --base origin/main',
         "",
       ].join("\n"),

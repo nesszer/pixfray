@@ -526,14 +526,17 @@ Use SQLite DOs only, and nothing outside Cloudflare Free.
 
 ```
 bun run check              # format:check + lint + typecheck + test:unit (pre-commit hook, CI, deploy.yml);
-                           # test:unit runs port-check --strict-list: every TypeScript file in tsconfig.strict.json
+                           # test:unit runs port-check --strict-list: every TypeScript file in tsconfig.strict.json,
+                           # except cloudflare.config.ts (tsconfig.node.json) and types/browser.d.ts (tsconfig.web.json)
 gitleaks git --config .gitleaks.toml --redact .   # secret scan; CI scans the whole history on every push
 bun run audit              # bun audit --audit-level=high; CI fails on a high or critical advisory
 bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
-bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), tsconfig.strict.json (TS)
-bun run port-check         # node scripts/port-check.ts --base origin/main: pairs and compares every changed
-                           # code file (docs/DEVELOPMENT.md); CI runs it on pushes to and PRs from port/ branches
+bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), tsconfig.strict.json (strict:
+                           # the TypeScript files plus site.config.js)
+bun run port-check         # node scripts/port-check.ts --base origin/main: pairs and compares every changed file,
+                           # checks relative imports at head (docs/DEVELOPMENT.md); exits 1 on a difference or
+                           # problem, 2 on bad usage; CI runs it on pushes to and PRs from port/ branches
 node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths
 bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.mjs"
 bunx cf build              # production build ("Build complete"; ignore the Docker error)

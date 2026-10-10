@@ -8,7 +8,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { replaceSpans, scanModule, type Span } from "./lib/port.ts";
 
-const CODE = /\.(?:m?js|ts)$/;
+const CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const SKIP =
   /^(?:bun\.lock|public\/assets\/.*)$|\.(?:png|jpe?g|gif|webp|ico|woff2?|ttf|otf|glb|bin|zip|mp3|ogg|wav|pdf)$/i;
 
@@ -94,7 +94,7 @@ function main(): number {
   const renamedTo = new Map(renames.map((rename) => [rename.from, rename.to]));
   for (const original of [...tracked].sort()) {
     const file = renamedTo.get(original) ?? original;
-    if (SKIP.test(file) || file.endsWith(".d.ts")) continue;
+    if (SKIP.test(file)) continue;
     const full = path.join(root, file);
     if (!existsSync(full)) continue;
     const raw = readFileSync(full, "utf8");
