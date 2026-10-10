@@ -137,7 +137,29 @@ async function buildRepo(files, headCf) {
   };
   const dir = await repo(Object.fromEntries(Object.entries(all).filter(([, text]) => text !== null)));
   binShims(dir, headCf);
+  buildDirs.add(dir);
   return dir;
+}
+
+/** Fixture repos from buildRepo. port-check runs two Vite builds in each, so at most BUILD_SLOTS of these run at once:
+ * all 16 together took the 16 GB CI runner down, where 12 had passed. */
+const buildDirs = new Set();
+const BUILD_SLOTS = 6;
+let freeSlots = BUILD_SLOTS;
+/** @type {(() => void)[]} */
+const waitingForSlot = [];
+
+/** Runs `job` once a build slot is free, and frees it (or hands it to the next waiter) when `job` settles. */
+async function inBuildSlot(job) {
+  if (freeSlots > 0) freeSlots -= 1;
+  else await new Promise((resolve) => waitingForSlot.push(resolve));
+  try {
+    return await job();
+  } finally {
+    const next = waitingForSlot.shift();
+    if (next) next();
+    else freeSlots += 1;
+  }
 }
 
 /** Writes the fixture's node_modules/.bin (git-ignored): `cf` and `vite` run this repo's entry scripts with this Node,
@@ -178,7 +200,8 @@ async function node(dir, ...args) {
 }
 
 async function nodeWith(env, dir, ...args) {
-  const result = await run(process.execPath, args, { cwd: dir, env }).catch((error) => error);
+  const start = () => run(process.execPath, args, { cwd: dir, env }).catch((error) => error);
+  const result = await (buildDirs.has(dir) ? inBuildSlot(start) : start());
   return { status: typeof result.code === "number" ? result.code : 0, stdout: result.stdout, stderr: result.stderr };
 }
 

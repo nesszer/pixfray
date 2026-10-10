@@ -208,7 +208,7 @@ A port pull request changes types only, from a `port/<name>` branch:
 
    CI runs it on every push to a `port/` branch and every pull request from one to `main`. Its
    own tests are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of
-   `bun run check` because they build small fixture repos in the OS temp folder (20 to 30 s on a
+   `bun run check` because they build small fixture repos in the OS temp folder (about 35 s on a
    fast machine, about 70 s on CI).
    CI runs them next to `bun run check`, on pull requests to `main` and pushes to `main`,
    `live-fix/`, `hotfix/` and `port/` branches; run them after changing
@@ -216,7 +216,8 @@ A port pull request changes types only, from a `port/<name>` branch:
    fixture gets its own `node_modules/.bin` shims that run this repo's cf and Vite by absolute
    path, and the tests drop every `node_modules/.bin` from `PATH` (`bun run` adds the repo's), so
    nothing else can stand in for them. They set `NODE_DISABLE_COMPILE_CACHE=1`, so Vite leaves no
-   compile cache in the temp folder.
+   compile cache in the temp folder. At most six fixtures build at once (two Vite builds each):
+   all sixteen together took the 16 GB CI runner down.
 
 A bug the port uncovers (a missing check, a wrong default) gets its own pull request.
 
