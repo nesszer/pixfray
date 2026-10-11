@@ -1,4 +1,4 @@
-/* Custom character uploader (src/served/upload.js). Uses the page stylesheet's design tokens, with fallbacks. */
+/* Custom character uploader (public/upload.js). Uses the design tokens from the page stylesheet, with fallbacks. */
 .upload {
   display: grid;
   gap: var(--space-4, 16px);
