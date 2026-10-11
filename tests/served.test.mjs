@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { linkServed, servedSources, servedVersion, stripServed } from "../scripts/lib/served.ts";
-import { overlayVersionFromHtml, overlayVersionFromUrl } from "../src/served/overlay.js";
+import { overlayVersionFromHtml, overlayVersionFromUrl } from "../src/served/overlay.ts";
 
 const NAMES = ["overlay", "hats", "arena-client"];
 

@@ -1,7 +1,7 @@
 // Arena client: server times are shifted into the local clock, so a PC with a wrong clock still plays fresh events.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createArenaClient } from "../src/served/arena-client.js";
+import { createArenaClient } from "../src/served/arena-client.ts";
 
 function harness() {
   globalThis.location = { protocol: "https:", host: "test.example" };

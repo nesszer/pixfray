@@ -1,6 +1,6 @@
 // After `cf build`: the served modules (src/served/, vite.config.js served-modules) are at the output root under their
 // URL names and load each other, and overlay.html loads the overlay, with ?v=<one 10-hex hash>, so OBS's browser never
-// keeps an old overlay module after a deploy. The overlay reloads itself when that hash changes (src/served/overlay.js).
+// keeps an old overlay module after a deploy. The overlay reloads itself when that hash changes (src/served/overlay.ts).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";

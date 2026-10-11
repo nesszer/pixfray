@@ -143,7 +143,7 @@ A port pull request changes types only, from a `port/<name>` branch:
    - Pairing. A file pairs with the same path. A code file gone at head pairs with a new code file
      of the same name, the base name without its code extension: first in the same folder
      (`server/a.js` and `server/a.ts`), then anywhere in the repo (`src/overlay.js` and
-     `src/served/overlay.js`). git's rename detection is not used. When more than one gone or new
+     `src/served/overlay.ts`). git's rename detection is not used. When more than one gone or new
      file shares a name, the check fails and names them instead of guessing; move or rename such
      files in separate steps. A port keeps each file's name.
    - A gone file with no pair fails. A new code file with no pair passes only when it strips to no

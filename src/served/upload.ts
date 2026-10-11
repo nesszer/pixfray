@@ -29,7 +29,34 @@ import {
   drawAtlas,
   uploadBody,
   formatBytes,
-} from "./atlas.js";
+} from "./atlas.ts";
+import type { AtlasPlan, Slot } from "./atlas.ts";
+
+type AttrValue = string | number | boolean | null | undefined | EventListener;
+type Child = Node | string | number | false | null | undefined;
+/** A PNG read from a file: an ImageBitmap, or a canvas when one PNG was scaled down to fit. */
+type Picked = { name: string; w: number; h: number; image: ImageBitmap | HTMLCanvasElement };
+type Usage = { count: number; limit?: number; bytes?: number };
+type Item = { id: string; label?: string; bytes?: number };
+type UploadContext = {
+  channel?: string | undefined;
+  usage?: Usage | null;
+  limits?: { [key: string]: unknown } | null;
+  items?: Item[] | null;
+  refresh?: () => unknown;
+};
+type LimitKey = "maxFrames" | "frameSize" | "maxAtlasBytes" | "maxCharacters";
+type UploadState = {
+  mode: string;
+  single: Picked | null;
+  slots: Record<Slot, Picked[]>;
+  readProblems: string[];
+  plan: AtlasPlan | null;
+  atlas: HTMLCanvasElement | null;
+  blob: Blob | null;
+  previewSlot: Slot;
+  busy: boolean;
+};
 
 const SLOT_LABELS = { idle: "Idle", walk: "Walk", attack: "Attack", ko: "Knockout" };
 const SLOT_HINTS = {
@@ -39,12 +66,16 @@ const SLOT_HINTS = {
   ko: "Played when knocked out. Without it the overlay fades the character.",
 };
 
-function h(tag, attrs = {}, ...children) {
+function h<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  attrs: { [name: string]: AttrValue } = {},
+  ...children: (Child | Child[])[]
+): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === undefined || v === null || v === false) continue;
     if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
-    else if (k === "class") el.className = v;
+    else if (k === "class") el.className = v as string; // as: callers pass the class as a string
     else if (v === true) el.setAttribute(k, "");
     else el.setAttribute(k, String(v));
   }
@@ -52,14 +83,15 @@ function h(tag, attrs = {}, ...children) {
     if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : String(c));
   return el;
 }
-const naturalSort = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
-const createCanvas = (w, h) => Object.assign(document.createElement("canvas"), { width: w, height: h });
-const toBlob = (canvas) =>
-  new Promise((ok, fail) =>
+const naturalSort = (a: { name: string }, b: { name: string }) =>
+  a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+const createCanvas = (w: number, h: number) => Object.assign(document.createElement("canvas"), { width: w, height: h });
+const toBlob = (canvas: HTMLCanvasElement) =>
+  new Promise<Blob>((ok, fail) =>
     canvas.toBlob((b) => (b ? ok(b) : fail(new Error("Could not encode the atlas as PNG"))), "image/png"),
   );
-const toBase64 = (blob) =>
-  new Promise((ok, fail) => {
+const toBase64 = (blob: Blob) =>
+  new Promise<string>((ok, fail) => {
     const r = new FileReader();
     r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, ""));
     r.onerror = () => fail(r.error);
@@ -70,24 +102,27 @@ const toBase64 = (blob) =>
  * @param {string} path
  * @param {{ method?: string, body?: unknown }} [opts]
  */
-async function api(path, { method = "GET", body } = {}) {
+async function api(path: string, { method = "GET", body }: { method?: string; body?: unknown } = {}) {
   try {
+    // as: an undefined body sends none; RequestInit under exactOptionalPropertyTypes only allows leaving it out
     const res = await fetch(path, {
       method,
       credentials: "same-origin",
       headers: body ? { "Content-Type": "application/json" } : {},
       body: body ? JSON.stringify(body) : undefined,
-    });
+    } as RequestInit);
     let data = null;
     try {
       data = await res.json();
     } catch {}
     return { ok: res.ok, status: res.status, data };
-  } catch (error) {
+  } catch (error: any) {
+    // any: whatever fetch threw; ?. reads its message when it has one
     return { ok: false, status: 0, data: { error: "Network error: " + (error?.message || error) } };
   }
 }
-const errorText = (r) => (r.data && (r.data.error || r.data.reason)) || "HTTP " + r.status;
+const errorText = (r: Awaited<ReturnType<typeof api>>) =>
+  (r.data && (r.data.error || r.data.reason)) || "HTTP " + r.status;
 
 function ensureStyles() {
   if (document.querySelector("link[data-upload-css]")) return;
@@ -97,9 +132,9 @@ function ensureStyles() {
 }
 
 // Reads PNG files into {name, w, h, image}. Rejects anything whose bytes are not a PNG, whatever its extension.
-async function readPngFiles(files) {
-  const out = [],
-    problems = [];
+async function readPngFiles(files: FileList | File[]) {
+  const out: Picked[] = [],
+    problems: string[] = [];
   for (const file of [...files].sort(naturalSort)) {
     const head = new Uint8Array(await file.slice(0, 32).arrayBuffer());
     const info = pngInfo(head);
@@ -116,16 +151,16 @@ async function readPngFiles(files) {
   return { frames: out, problems };
 }
 
-export async function mountUpload(root, ctx = {}) {
+export async function mountUpload(root: Element, ctx: UploadContext = {}) {
   ensureStyles();
   const channel = ctx.channel;
   if (!channel) return null;
-  const limits = { ...LIMITS };
-  for (const k of ["maxFrames", "frameSize", "maxAtlasBytes", "maxCharacters"])
+  const limits: Record<LimitKey, number> & Omit<typeof LIMITS, LimitKey> = { ...LIMITS };
+  for (const k of ["maxFrames", "frameSize", "maxAtlasBytes", "maxCharacters"] satisfies LimitKey[])
     if (Number.isFinite(ctx.limits?.[k])) limits[k] = Math.min(limits[k], ctx.limits[k]);
   let usage = ctx.usage || null,
     items = Array.isArray(ctx.items) ? ctx.items : null;
-  const state = {
+  const state: UploadState = {
     mode: "frames",
     single: null,
     slots: { idle: [], walk: [], attack: [], ko: [] },
@@ -314,7 +349,7 @@ export async function mountUpload(root, ctx = {}) {
     deleteSelect.disabled = deleteButton.disabled = !list.length;
     deleteBox.hidden = !list.length; // nothing to remove yet
   }
-  function groups() {
+  function groups(): Partial<Record<Slot, Picked[]>> {
     if (state.mode === "single") return state.single ? { idle: [state.single] } : {};
     return state.slots;
   }
@@ -362,7 +397,7 @@ export async function mountUpload(root, ctx = {}) {
   }
   function renderPreviewButtons() {
     const anims = state.plan?.animations || {};
-    const slots = state.mode === "single" ? ["idle", "walk", "attack", "ko"] : ANIMATION_SLOTS;
+    const slots = state.mode === "single" ? (["idle", "walk", "attack", "ko"] satisfies Slot[]) : ANIMATION_SLOTS;
     if (!slots.includes(state.previewSlot)) state.previewSlot = "walk";
     previewButtons.replaceChildren(
       ...slots.map((s) =>
@@ -430,14 +465,15 @@ export async function mountUpload(root, ctx = {}) {
   }
 
   // Preview loop. Missing animations show the effect the overlay uses instead.
-  function tick(now) {
+  function tick(now: number) {
     if (destroyed) return;
     if (!root.isConnected) {
       destroy();
       return;
     }
     raf = requestAnimationFrame(tick);
-    const c = previewCanvas.getContext("2d"),
+    // a canvas element always has a 2D context
+    const c = previewCanvas.getContext("2d")!,
       W = previewCanvas.width,
       H = previewCanvas.height;
     c.clearRect(0, 0, W, H);
@@ -449,7 +485,8 @@ export async function mountUpload(root, ctx = {}) {
     const slot = state.previewSlot,
       own = plan.animations[slot];
     const list = own || (slot === "walk" ? plan.frames : plan.animations.idle || plan.frames);
-    const frame = list[Math.floor((now / 1000) * fps) % list.length];
+    // planAtlas fills animations and frames only with non-empty lists, so the index is in range
+    const frame = list[Math.floor((now / 1000) * fps) % list.length]!;
     const scale = Math.min((H - 24) / frame.h, (W - 24) / frame.w, 3);
     const dw = Math.round(frame.w * scale),
       dh = Math.round(frame.h * scale);
@@ -482,7 +519,7 @@ export async function mountUpload(root, ctx = {}) {
   }
 
   // ---- events ----
-  function setMode(mode) {
+  function setMode(mode: string) {
     state.mode = mode;
     singleBox.hidden = mode !== "single";
     framesBox.hidden = mode !== "frames";
@@ -498,10 +535,10 @@ export async function mountUpload(root, ctx = {}) {
     if (frames[0]) {
       const f = frames[0],
         fit = fitSingle(f.w, f.h, limits.frameSize);
-      let image = f.image;
+      let image: ImageBitmap | HTMLCanvasElement = f.image;
       if (fit.scale < 1) {
         const c = createCanvas(fit.w, fit.h);
-        const g = c.getContext("2d");
+        const g = c.getContext("2d")!; // a new canvas element always has a 2D context
         g.imageSmoothingEnabled = true;
         g.imageSmoothingQuality = "high";
         g.drawImage(f.image, 0, 0, fit.w, fit.h);
@@ -517,14 +554,15 @@ export async function mountUpload(root, ctx = {}) {
     }
     repack();
   });
+  // slotInputs and slotCounts hold an entry for every slot (built from ANIMATION_SLOTS above)
   for (const s of ANIMATION_SLOTS)
-    slotInputs[s].addEventListener("change", async () => {
-      const { frames, problems: bad } = await readPngFiles(slotInputs[s].files || []);
+    slotInputs[s]!.addEventListener("change", async () => {
+      const { frames, problems: bad } = await readPngFiles(slotInputs[s]!.files || []);
       state.slots[s] = frames;
       state.readProblems = state.readProblems
         .filter((p) => !p.startsWith("[" + s + "] "))
         .concat(bad.map((p) => "[" + s + "] " + p));
-      slotCounts[s].textContent = frames.length
+      slotCounts[s]!.textContent = frames.length
         ? frames.length + " file" + (frames.length === 1 ? "" : "s") + ": " + frames.map((f) => f.name).join(", ")
         : "";
       repack();
@@ -538,7 +576,8 @@ export async function mountUpload(root, ctx = {}) {
     renderProblems();
     setStatus(status, "Saving…", "");
     try {
-      const body = uploadBody(state.plan, {
+      // plan is set with blob in repack, and blob was checked above
+      const body = uploadBody(state.plan!, {
         label: nameInput.value,
         fps: Number(fpsInput.value),
         mode: state.mode,
@@ -555,7 +594,8 @@ export async function mountUpload(root, ctx = {}) {
       renderUsage();
       renderDelete();
       await ctx.refresh?.();
-    } catch (error) {
+    } catch (error: any) {
+      // any: whatever was thrown; ?. reads its message when it has one
       setStatus(status, "Not saved: " + (error?.message || error), "error");
     } finally {
       state.busy = false;
@@ -614,12 +654,13 @@ export async function mountUpload(root, ctx = {}) {
   };
 }
 
-function setStatus(node, message, kind) {
+function setStatus(node: HTMLElement, message: string, kind: string) {
   node.textContent = message || "";
   node.className = "status" + (kind ? " " + kind : "");
 }
 
 // Standalone use: <div data-upload-root data-channel="<login>"></div><script type="module" src="/upload.js"></script>
 if (typeof document !== "undefined") {
-  for (const el of document.querySelectorAll("[data-upload-root]")) mountUpload(el, { channel: el.dataset.channel });
+  for (const el of document.querySelectorAll<HTMLElement>("[data-upload-root]"))
+    mountUpload(el, { channel: el.dataset.channel });
 }
