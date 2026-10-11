@@ -13,98 +13,20 @@ import {
   TITLES,
 } from "./cosmetics.ts";
 import type { ChatMessage, ModerationEvent } from "./chat.ts";
-import type { Json, JsonRecord, SnapshotMeta } from "./arena-client.ts";
+import { isObject, parseCosmeticSettings, parseDemoMessage, parseLook, warnOnce } from "./parse.ts";
+import type {
+  ArenaChat,
+  ArenaConfig,
+  ArenaDuel,
+  ArenaEvent,
+  ArenaProfile,
+  ArenaSnapshot,
+  CosmeticSettings,
+  LooksMessage,
+  Rating,
+} from "./parse.ts";
 import type { Frame, Head } from "./hats.ts";
 
-// The arena's payloads as this overlay reads them. They mirror server/model.ts (Snapshot, Player, Duel, GameLogEvent)
-// with only the fields read here, plus the few the demo writes. Nothing checks them yet: startArena casts the client's
-// unchecked JSON to them, and TS20 replaces those casts with parsers.
-type Rating = { before?: number; after?: number; delta?: number };
-type ArenaProfile = {
-  userId?: string | undefined;
-  username?: string | undefined;
-  displayName?: string | undefined;
-  registered?: boolean | undefined;
-  avatar?: string | undefined;
-  color?: string | undefined;
-  hat?: string | undefined;
-  pet?: string | undefined;
-  petTier?: string | undefined;
-  defaultAbility?: string | undefined;
-  recolor?: string | undefined;
-  petColor?: string | undefined;
-  accessory?: string | undefined;
-  trail?: string | undefined;
-  winEffect?: string | undefined;
-  taunt?: string | undefined;
-  title?: string | undefined;
-  elo?: number | undefined;
-  lastSeen?: number | undefined;
-  respawnAt?: number | undefined;
-  // lookOf copies LOOK_FIELDS by name
-  [field: string]: unknown;
-};
-type ArenaDuel = {
-  id: string;
-  a: string;
-  b: string;
-  status: string;
-  hp: Record<string, number>;
-  rules?: { maxHp?: number };
-  ratings?: Record<string, Rating> | null;
-  /** Rolls replayed so far (replays only). */
-  rolls?: number;
-  // The demo writes these like the server; not read here.
-  round?: number;
-  winnerId?: string;
-  flawless?: boolean;
-  decision?: string;
-};
-type ArenaEvent = {
-  id?: string;
-  type: string;
-  at?: number | undefined;
-  duelId?: string;
-  a?: string;
-  b?: string;
-  declinedBy?: string;
-  round?: number;
-  hp?: Record<string, number>;
-  userId?: string;
-  targetId?: string;
-  die?: number;
-  counter?: boolean;
-  miss?: boolean;
-  ability?: string;
-  amount?: number;
-  crit?: boolean;
-  finisher?: boolean;
-  winnerId?: string;
-  loserId?: string;
-  respawnAt?: number;
-  unrated?: string;
-  ratings?: Record<string, Rating>;
-  decision?: string;
-  flawless?: boolean;
-  reason?: string;
-  /** How often a player_respawned event has waited for a replay (set by the overlay). */
-  tries?: number;
-};
-type ArenaChat = { connected?: boolean; lastSeen?: number; status?: string };
-type ArenaConfig = { maxHp?: number; announce?: string; maxOnStream?: number };
-type ArenaSnapshot = {
-  chat?: ArenaChat | null;
-  config?: ArenaConfig;
-  build?: string;
-  paused?: boolean;
-  revision?: number;
-  players?: ArenaProfile[];
-  duels?: ArenaDuel[];
-  // The demo writes these like the server; not read here.
-  channel?: string;
-  events?: ArenaEvent[];
-};
-type LooksMessage = { reset?: boolean; looks: Record<string, ArenaProfile | null> };
 /** A character catalog entry (assets/characters.json, /api/catalog) as addSprite reads it. */
 type CatalogItem = {
   url?: unknown;
@@ -404,11 +326,12 @@ async function start() {
   const fxOn = params.get("fx") !== "off"; // fx=off: no hit glow, sparks or knockout push-in
   const status = document.querySelector<HTMLElement>("#status");
   const storageKey = "mini-chat:cosmetics:" + channel;
-  let settings = Object.create(null);
+  // as: Object.create(null) has no prototype, so a login like "__proto__" is a plain key
+  let settings = Object.create(null) as CosmeticSettings;
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
-    if (saved && typeof saved === "object" && !Array.isArray(saved))
-      settings = Object.assign(Object.create(null), saved);
+    const saved = parseCosmeticSettings(localStorage.getItem(storageKey));
+    if (saved.ok) settings = saved.value;
+    else warnOnce("the saved chat looks", saved.error);
   } catch {
     /* OBS may disable local storage. */
   }
@@ -679,7 +602,7 @@ async function start() {
       lane: Math.random() * 28,
       y: 0,
       vy: 0,
-      avatar: sprites.has(saved.avatar) ? saved.avatar : ids[Math.floor(Math.random() * ids.length)],
+      avatar: saved.avatar && sprites.has(saved.avatar) ? saved.avatar : ids[Math.floor(Math.random() * ids.length)],
       color: sanitizeColor(saved.color) || "#a78bfa",
       chatColor: null,
       lastJump: 0,
@@ -735,9 +658,12 @@ async function start() {
         headers: { accept: "application/json" },
       });
       if (!response.ok) throw new Error("Looks HTTP " + response.status);
-      const data = await response.json();
+      const data: unknown = await response.json();
       for (const login of batch) {
-        const look = data && typeof data[login] === "object" ? data[login] : null;
+        const entry = isObject(data) ? data[login] : null;
+        const parsed = entry == null ? null : parseLook(entry);
+        if (parsed && !parsed.ok) warnOnce("a saved look", parsed.error);
+        const look = parsed?.value;
         savedLooks.set(login, { at: Date.now(), look: look ? { ...look, username: login, registered: true } : null });
       }
       for (const p of players.values()) if (batch.includes(p.key)) wearLook(p);
@@ -1992,8 +1918,10 @@ async function start() {
     drawing = true;
   if (demo)
     addEventListener("message", (e) => {
-      if (e.origin !== location.origin || typeof e.data?.demoPaused !== "boolean") return;
-      demoPaused = e.data.demoPaused;
+      if (e.origin !== location.origin) return; // another site's message: not for the demo
+      const message = parseDemoMessage(e.data);
+      if (!message.ok) return warnOnce("a demo message", message.error);
+      demoPaused = message.value.demoPaused;
       if (!demoPaused && !drawing) {
         drawing = true;
         lastFrame = performance.now();
@@ -2487,16 +2415,16 @@ async function start() {
     arenaClient = createArenaClient({
       channel,
       role: "overlay",
-      // as: the client hands over the server's JSON unchecked; TS20 parses it into these types here
-      onSnapshot: acceptArenaSnapshot as (snapshot: JsonRecord, meta: SnapshotMeta) => void,
-      // as: unchecked JSON, as above
-      onEvent: queueArenaEvent as (event: Json) => void,
-      // as: unchecked JSON, as above
-      onLooks: acceptLooks as (message: JsonRecord) => void,
+      onSnapshot: acceptArenaSnapshot,
+      onEvent: queueArenaEvent,
+      onLooks: acceptLooks,
+      // the new build id sits inside the frames this client can't read, so ask the page for its version instead
+      onDrop() {
+        if (ownVersion) buildChanged = true;
+      },
       onStatus(event) {
         arenaTransport = event.state || "offline";
-        // as: unchecked JSON, as above
-        if (event.chat) arenaChat = event.chat as ArenaChat;
+        if (event.chat) arenaChat = event.chat;
         updateStatus(event.message || "");
       },
     });

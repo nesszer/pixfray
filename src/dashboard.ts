@@ -30,6 +30,31 @@ import site from "../site.config.js";
 import type { Fighter3D, Look } from "./fighter3d.ts";
 import type { voxThumb as voxThumbFn, voxAll as voxAllFn } from "./voxthumb.ts";
 import type { Stat, Stats } from "../server/upgrades.ts";
+import type { CosmeticKind } from "../server/cosmetics.ts";
+import {
+  parseAnswer,
+  parseBought,
+  parseDraft,
+  parseLeaderboard,
+  parseProfileOrNone,
+  parseProfileSaved,
+  parseSession,
+  parseShop,
+  parseStateConfig,
+  parseAccess,
+} from "./parse.ts";
+import type {
+  Build,
+  LeaderRow,
+  Owned,
+  Profile,
+  Session,
+  Shop,
+  ShopItem,
+  ShopPet,
+  StateConfig as Config,
+} from "./parse.ts";
+import { warnOnce } from "./served/parse.ts";
 skyBackdrop();
 applyChannel();
 
@@ -37,21 +62,6 @@ applyChannel();
 // The shapes this page reads from the API (docs/CONTRACTS.md section 2), with only the fields it uses.
 /** A catalog character (ui.ts's sprite entry) plus the words and owner the picker shows. */
 type CatalogEntry = NonNullable<Parameters<typeof addSprite>[1]> & { label?: string; custom?: boolean; owner?: string };
-/** A shop pet: ui.ts's pet plus its price, tier and stat boost. */
-type ShopPet = NonNullable<NonNullable<Parameters<typeof addSprite>[2]>["pet"]> & {
-  id: string;
-  label: string;
-  price?: number;
-  tier: string;
-  boost?: Partial<Stats>;
-};
-type ShopItem = { id: string; label: string; price?: number };
-type Shop = {
-  pets: ShopPet[];
-  items?: Partial<Record<KindKey, ShopItem[]>>;
-  hatPricePerWin?: number;
-  slots?: { prices?: number[]; max?: number };
-};
 /** The profile field each cosmetic kind wears. */
 type LookField = "recolor" | "petColor" | "accessory" | "trail" | "winEffect" | "taunt" | "title";
 type KindKey = keyof typeof KINDS;
@@ -59,21 +69,6 @@ type Kind = (typeof KINDS)[KindKey];
 /** What a picker tile or a Buy button is for: a cosmetic kind, a hat or a pet (and a build slot for Buy). */
 type ItemKind = KindKey | "hat" | "pet";
 type BuyKind = ItemKind | "slot";
-/** A saved build or profile, from the API or a stored draft. loadoutOf reads hat, pet, stats and the look fields
- * through str() and effectiveStats(), so they stay unknown; avatar, color and defaultAbility are strings when set. */
-type Build = { avatar?: string; color?: string; defaultAbility?: string; [field: string]: unknown };
-type Owned = { pets: string[]; hats: string[]; slots: number } & Record<KindKey, string[]>;
-type Profile = Build & {
-  wins: number;
-  losses: number;
-  bonus?: number;
-  elo: number;
-  dollars: number;
-  streak?: number;
-  build?: number;
-  builds?: (Build | null)[];
-  owned?: Partial<Owned>;
-};
 /** The loadout being edited (loadoutOf). */
 type Loadout = {
   avatar: string;
@@ -83,29 +78,6 @@ type Loadout = {
   hat: string;
   pet: string;
 } & Record<LookField, string>;
-type Session = { user?: { id: string; login: string; displayName?: string } | null; configured?: boolean };
-type Config = {
-  initialElo: number;
-  challengeTimeoutMs: number;
-  rematchDelayMs: number;
-  checkinPoints?: number;
-  winDollars?: number;
-  lossDollars?: number;
-  giveEnabled?: boolean;
-  giveMaxPerStream?: number;
-  giveMinDuels?: number;
-  quickDuel?: boolean;
-};
-type LeaderRow = {
-  userId: string;
-  username: string;
-  displayName?: string;
-  color: string;
-  avatar: string;
-  elo: number;
-  wins: number;
-  losses: number;
-};
 /** A channel's top fighter on the /play/ picker (server/worker.ts PickerData). */
 type TopRow = { username: string; displayName?: string; elo: number; avatar: string };
 type PickerChannel = { login: string; top: TopRow[]; catalog?: CatalogEntry[] };
@@ -146,7 +118,10 @@ const KINDS = {
   effect: { field: "winEffect", look: "sample", none: "No win effect", noun: "win effect" },
   taunt: { field: "taunt", look: "text", none: "No taunt", noun: "taunt" },
   title: { field: "title", look: "text", none: "No title", noun: "title" },
-} satisfies Record<string, { field: LookField; look: "char" | "pet" | "sample" | "text"; none: string; noun: string }>;
+} satisfies Record<
+  CosmeticKind,
+  { field: LookField; look: "char" | "pet" | "sample" | "text"; none: string; noun: string }
+>;
 const LOOK_FIELDS = Object.values(KINDS).map((k) => k.field);
 // as unknown as Owned: Object.fromEntries types its keys as string; they are the KINDS keys
 const emptyOwned = () =>
@@ -321,7 +296,7 @@ const TIER_NAMES: Record<string, string> = {
 };
 const canShop = () => Boolean(state.session?.user && state.profile) && !state.off;
 const signedIn = () => Boolean(state.session?.user);
-const money = (n: number | undefined) => "$" + (n || 0);
+const money = (n: number | null | undefined) => "$" + (n || 0);
 
 // What the fighter owns: hats unlocked by wins count as owned, and "none" always is.
 function owns(kind: ItemKind, id: string) {
@@ -482,11 +457,15 @@ async function buy(
   }
   btn.disabled = true;
   setStatus(out, "Buying…");
-  const r = await api("/api/shop/" + CHANNEL, { method: "POST", body: { kind, id: item, price } });
+  const r = parseAnswer(
+    await api("/api/shop/" + CHANNEL, { method: "POST", body: { kind, id: item, price } }),
+    parseBought,
+    "a purchase",
+  );
   if (r.data?.error === "price_changed") {
     // A mod changed the price after this page loaded: show the new prices and let the viewer decide again.
-    const shop = await api("/api/shop/" + CHANNEL);
-    if (shop.ok && Array.isArray(shop.data?.pets)) state.shop = shop.data;
+    const shop = parseAnswer(await api("/api/shop/" + CHANNEL), parseShop, "the shop");
+    if (shop.ok) state.shop = shop.data;
     renderAll();
     setStatus(out, "Not bought: the price changed to $" + r.data.price + ". Check it and buy again.", "error");
     return;
@@ -575,7 +554,7 @@ function tile({
   visual: Node | null;
   tag?: string | null;
   tier?: string | undefined;
-  price?: number | undefined;
+  price?: number | null | undefined; // null: not for sale (server/cosmetics.ts cosmeticPrice)
   buyLabel?: string;
   out: Element;
   onPick: (id: string) => void;
@@ -1418,12 +1397,15 @@ function stashDraft() {
 }
 function restoreDraft() {
   // A draft this page stored (stashDraft); the checks below still treat each field as untrusted.
-  let saved: { d?: Build; withProfile?: boolean; at: number } | null = null;
+  let text = null;
   try {
-    saved = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || "null");
+    text = sessionStorage.getItem(DRAFT_KEY);
     sessionStorage.removeItem(DRAFT_KEY);
   } catch {}
-  if (!signedIn() || !saved?.d || typeof saved.d !== "object" || !(Date.now() - saved.at < DRAFT_MS)) return false;
+  const draft = parseDraft(text);
+  if (!draft.ok) warnOnce("the stored draft", draft.error);
+  const saved = draft.value;
+  if (!signedIn() || !saved || !(Date.now() - saved.at < DRAFT_MS)) return false;
   const d = loadoutOf(saved.d);
   // Upgrade points come from the saved fighter, unless the draft was made on it (an expired session).
   if (!(saved.withProfile && state.profile)) d.stats = copy(state.d).stats;
@@ -1636,8 +1618,8 @@ function renderPodium(rows: LeaderRow[]) {
 }
 
 async function loadLeaderboard() {
-  const r = await api("/api/leaderboard/" + CHANNEL);
-  if (r.ok && Array.isArray(r.data)) {
+  const r = parseAnswer(await api("/api/leaderboard/" + CHANNEL), parseLeaderboard, "the leaderboard");
+  if (r.ok) {
     state.leaderboard = r.data;
     renderLeaderboard();
   } else
@@ -1679,7 +1661,11 @@ form.addEventListener("submit", async (event) => {
   }
   saveBtn.disabled = true;
   setStatus(status, "Saving…");
-  const r = await api("/api/profile/" + CHANNEL, { method: "POST", body });
+  const r = parseAnswer(
+    await api("/api/profile/" + CHANNEL, { method: "POST", body }),
+    parseProfileSaved,
+    "the saved profile",
+  );
   saveBtn.disabled = false;
   if (r.status === 401) {
     state.session = { ...state.session, user: null };
@@ -1731,10 +1717,10 @@ function showOff(off: string) {
 async function init() {
   renderSwatches();
   const calls = Promise.all([
-    api("/api/session"),
+    api("/api/session").then((r) => parseAnswer(r, parseSession, "the session")),
     api("/api/catalog/" + CHANNEL),
-    api("/api/state/" + CHANNEL),
-    api("/api/shop/" + CHANNEL),
+    api("/api/state/" + CHANNEL).then((r) => parseAnswer(r, parseStateConfig, "the channel config")),
+    api("/api/shop/" + CHANNEL).then((r) => parseAnswer(r, parseShop, "the shop")),
   ]);
   // The static character list isn't rate-limited like /api, so the fighter and the grid draw before the channel data arrives.
   const early = await api("/assets/characters.json");
@@ -1746,15 +1732,15 @@ async function init() {
   }
   const [session, catalog, live, shop] = await calls;
   state.loading = false;
-  let list = shop.ok && Array.isArray(shop.data?.pets) ? shop.data : null;
+  let list = shop.ok ? shop.data : null;
   if (!list) {
-    const pets = await api("/api/pets/" + CHANNEL);
-    list = pets.ok && Array.isArray(pets.data?.pets) ? pets.data : null;
+    const pets = parseAnswer(await api("/api/pets/" + CHANNEL), parseShop, "the pet list");
+    list = pets.ok ? pets.data : null;
   } // pets still work without the shop list
   state.shop = list;
   state.session = session.ok ? session.data : null;
   if (catalog.ok && Array.isArray(catalog.data) && catalog.data.length) state.catalog = catalog.data; // else the static list stays
-  state.config = live.ok ? live.data?.config : null;
+  state.config = live.ok ? live.data : null;
   // the intro's main button offers this channel next time (src/intro/back.ts)
   if (live.ok)
     try {
@@ -1772,9 +1758,12 @@ async function init() {
   renderCharacters();
   renderCommands();
   if (signedIn()) {
-    const [profile, access] = await Promise.all([api("/api/profile/" + CHANNEL), api("/api/access/" + CHANNEL)]);
+    const [profile, access] = await Promise.all([
+      api("/api/profile/" + CHANNEL).then((r) => parseAnswer(r, parseProfileOrNone, "the profile")),
+      api("/api/access/" + CHANNEL).then((r) => parseAnswer(r, parseAccess, "the access check")),
+    ]);
     state.profile = profile.ok ? profile.data : null;
-    ($("#admin-link") as HTMLAnchorElement).hidden = !(access.ok && access.data?.canManage); // element type from the page HTML
+    ($("#admin-link") as HTMLAnchorElement).hidden = !(access.ok && access.data.canManage); // element type from the page HTML
   }
   applyProfile(state.profile);
   if (signedIn())
@@ -1789,7 +1778,10 @@ async function init() {
 }
 // The viewer removed their approved sprite: the server put fighters wearing it back on the default character.
 async function reloadCharacters() {
-  const [catalog, profile] = await Promise.all([api("/api/catalog/" + CHANNEL), api("/api/profile/" + CHANNEL)]);
+  const [catalog, profile] = await Promise.all([
+    api("/api/catalog/" + CHANNEL),
+    api("/api/profile/" + CHANNEL).then((r) => parseAnswer(r, parseProfileOrNone, "the profile")),
+  ]);
   if (catalog.ok && Array.isArray(catalog.data) && catalog.data.length) state.catalog = catalog.data;
   if (profile.ok) state.profile = profile.data;
   applyProfile(state.profile);
@@ -1805,9 +1797,12 @@ async function pickChannel() {
   for (const el of [$("#fighter") as HTMLElement | null, $("body > .page") as HTMLElement | null])
     if (el) el.hidden = true;
   ($("#pick") as HTMLElement).hidden = false; // element type from the page HTML
-  const [session, list] = await Promise.all([api("/api/session"), api("/api/picker")]);
+  const [session, list] = await Promise.all([
+    api("/api/session").then((r) => parseAnswer(r, parseSession, "the session")),
+    api("/api/picker"),
+  ]);
   // Signing in happens on a channel's page, so the picker shows only who is already signed in.
-  if (session.ok && session.data?.user) renderWho($("#who") as HTMLDivElement, session.data, signOut); // element type from the page HTML
+  if (session.ok && session.data.user) renderWho($("#who") as HTMLDivElement, session.data, signOut); // element type from the page HTML
   else ($("#who") as HTMLDivElement).replaceChildren(); // element type from the page HTML
   // one request brings every channel's top fighters and the looks they wear (server/worker.ts picker())
   const picked: PickerChannel[] =

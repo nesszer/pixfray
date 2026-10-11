@@ -2,6 +2,8 @@
  * Read-only Twitch IRC transport. No login secrets and no chat-send API.
  * Chat identity comes exclusively from Twitch tags, never command arguments.
  */
+import { warnOnce } from "./parse.ts";
+
 const IRC_URL = "wss://irc-ws.chat.twitch.tv:443";
 const tagEscapes: Record<string, string> = { s: " ", ":": ";", r: "\r", n: "\n", "\\": "\\" };
 
@@ -107,7 +109,11 @@ export function connectChat(
   }
   function handle(line: string, activeSocket: WebSocket) {
     const item = parseIRCLine(line);
-    if (!item) return;
+    if (!item) {
+      // a line that isn't IRC at all; an IRC command this file doesn't handle is no reason to warn
+      if (line.trim()) warnOnce("a Twitch chat line", "not an IRC message");
+      return;
+    }
     if (item.command === "PING") {
       activeSocket.send("PONG :" + (item.trailing ?? item.params.join(" ")) + "\r\n");
       return;

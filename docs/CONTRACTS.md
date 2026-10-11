@@ -218,6 +218,13 @@ Deduplicate events by `id`. All `ms` times are server clock. `src/served/arena-c
 sees them, so a streaming PC whose clock is off still plays fresh events (the overlay drops events
 older than 10 s).
 
+Clients parse every frame before using it (`src/served/parse.ts` on the overlay, `parseAdminSnapshot` in `src/parse.ts`
+on the mod page). A frame that isn't JSON or has a top-level field of the wrong type is dropped whole and the page
+keeps its last good state; a player, duel or event with a field of the wrong type is dropped from its list. Each kind
+of drop logs one `console.warn` per page load. Fields a client doesn't read pass through unchecked. A dropped snapshot
+makes the overlay fetch its own page again (at most every 30 s), so a server that sends a shape an old overlay
+can't read still reloads that overlay to the new code.
+
 Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.ts`):
 
 ```
@@ -530,6 +537,19 @@ export async function handleRoomDeveloper(room, request, {path, channel}) // DO:
 export function ensureDeveloperSchema(sql)
 export function logRoomError(room, error, context)                     // never throws
 export async function logWorkerError(env, error, context)              // never throws
+```
+
+Browser input is parsed once where it arrives, in the style of `server/parse.ts` (each parser returns
+`{ok:true, value}` or `{ok:false, error}`):
+
+```ts
+// src/served/parse.ts (Lane B, served as /parse.js): the /api/live socket and /api/state, /api/looks,
+// the overlay's saved chat looks in localStorage and the demo's postMessage
+export function parseArenaSnapshot(value), parseLooksMessage(value), parseLook(value), parseCosmeticSettings(text),
+  parseDemoMessage(value), keepGood(list, kind, parse), warnOnce(kind, error)
+// src/parse.ts (Lane B, bundled into the pages): /api/session, /api/access, the fighter page's profile, shop, state
+// config, leaderboard and stored draft, the mod page's /api/admin and snapshots, the owner page's lists
+export function parseAnswer(r, parse, kind)  // an ok answer whose body fails -> {ok:false, data:{error: UNREADABLE}}
 ```
 
 `roomFetch` adds the internal secret and channel headers. `room.ctx.storage.sql` is the DO's SQLite.

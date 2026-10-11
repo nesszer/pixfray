@@ -7,7 +7,7 @@ import path from "node:path";
 import { servedSources } from "../scripts/lib/served.ts";
 const out = ".cloudflare/output/v0/workers/default/assets";
 const names = servedSources().map((m) => m.name);
-for (const name of ["overlay", "chat", "arena-client", "hats", "pets", "cosmetics", "atlas", "upload"])
+for (const name of ["overlay", "chat", "arena-client", "parse", "hats", "pets", "cosmetics", "atlas", "upload"])
   assert.ok(names.includes(name), `src/served/ holds ${name}`);
 const files = [...names.map((name) => name + ".js"), ...fs.readdirSync("public").filter((f) => f.endsWith(".html"))];
 const refs: { f: string; name: string; v: string | undefined }[] = [];
