@@ -1,5 +1,7 @@
+// @ts-check
 // One place to run your own copy of PixFray: who owns the site, which channels are built in, and where it deploys.
 // cloudflare.config.ts, the Worker (server/) and the pages (src/) all read it. docs/SELF_HOSTING.md walks through it.
+/** @type {import("./types/site.ts").SiteConfig} */
 export default {
   owner: { login: "nesszerra", twitchId: "445610108" }, // the only account that opens /admin/dev
   builtinChannels: ["nesszerra", "miolafff"], // always on; others sign up on /start

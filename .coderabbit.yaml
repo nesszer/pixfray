@@ -37,7 +37,12 @@ reviews:
         Pages and the OBS overlay follow DESIGN.md: tokens from public/dashboard.css only (no new hex, size,
         radius or spacing), one gold .btn-primary per screen, lock-on corner brackets for selection, pixel art
         drawn with image-rendering: pixelated at whole-pixel scale, no horizontal overflow at 390 px, and nothing
-        on the overlay but fighters, nameplates, bubbles and duel effects. Code stays .js with JSDoc types.
+        on the overlay but fighters, nameplates, bubbles and duel effects.
+    - path: "**/*.{ts,mts,cts,tsx}"
+      instructions: >-
+        Strict TypeScript (tsconfig.strict.json lists each new or ported file) with .ts import paths and erasable syntax
+        only. A pull request from a port/ branch changes no runtime code; port-check proves it in CI. Flag every
+        any, as cast or ! assertion without a reason in a comment on that line or the line above.
     - path: "tests/**"
       instructions: >-
         node:test unit tests. Browser tests must use chromeOptions() from tests/chrome.mjs (headed, GPU flags),
@@ -58,7 +63,7 @@ reviews:
         mode: warning
         instructions: >-
           If the pull request changes behavior in server/, src/ or public/ (not only formatting, comments or
-          types), it must also change or add a test in tests/*.test.mjs and update the matching doc in docs/
+          types), it must also change or add a test in tests/*.test.{mjs,ts} and update the matching doc in docs/
           (CONTRACTS.md for routes, rules and config; STREAMER_SETUP.md or DUELS.md for what a streamer sees).
           Pass if both are present or the change has no behavior effect.
       - name: Config lives in site.config.js

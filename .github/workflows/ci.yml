@@ -1,11 +1,11 @@
 # Format, lint, type checks, unit tests, a production build, a dependency audit and a secret scan for every push to
-# main and every pull request. No secrets, no deploys.
+# main, live-fix/, hotfix/ and port/ branches and every pull request to main. No secrets, no deploys.
 name: CI
 on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "live-fix/**", "hotfix/**"]
+    branches: [main, "live-fix/**", "hotfix/**", "port/**"]
 
 permissions:
   contents: read
@@ -15,18 +15,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Full history, so port-check can find where the branch left main.
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+      # Node runs the .ts scripts with no flags; pinned to the version they are checked on.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22.22"
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run check
+      # port-check's own tests, kept out of check for speed: they build small fixture repos.
+      - run: bun run test:port
+      # A port branch must change no runtime code (docs/DEVELOPMENT.md): head_ref names a pull request's branch,
+      # ref_name a pushed branch.
+      - if: startsWith(github.head_ref, 'port/') || startsWith(github.ref_name, 'port/')
+        run: bun run port-check
       - run: bunx cf build
       # Fails on a high or critical advisory in any installed package.
       - run: bun run audit

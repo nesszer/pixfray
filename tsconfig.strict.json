@@ -1,0 +1,21 @@
+// Strict TypeScript. Every new or ported .ts file is listed here, one entry per file; scripts/port-check.ts fails a
+// branch that changes a .ts file missing from this list.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "types": ["@cloudflare/workers-types", "node"],
+    "checkJs": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "files": [
+    "types/lib-guards.ts",
+    "types/site.ts",
+    "site.config.js",
+    "scripts/lib/port.ts",
+    "scripts/port-check.ts",
+    "scripts/port-rename.ts"
+  ]
+}
