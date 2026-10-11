@@ -474,6 +474,31 @@ test("sign-out clears the session and leaves the page where it is (the page relo
   assert.match(must(r.headers.get("Set-Cookie")), /mini_session=;.*Max-Age=0/);
   assert.equal(f.entries.has("session:" + (await digest("1".repeat(64)))), false);
 });
+test("sign-out reads only the cookie named mini_session, not one that ends in it", async () => {
+  const f = environment(),
+    cookie = await signedIn(f),
+    other = "2".repeat(64);
+  f.entries.set("session:" + (await digest(other)), { user: { id: "9", login: "other", displayName: "Other" } });
+  const r = await worker.fetch(req("/auth/logout", "POST", {}, "xmini_session=" + other + "; " + cookie), f.env);
+  assert.equal(r.status, 200);
+  assert.equal(f.entries.has("session:" + (await digest("1".repeat(64)))), false, "the real session is gone");
+  assert.equal(f.entries.has("session:" + (await digest(other))), true, "the look-alike cookie's session stays");
+});
+test("an auth route that throws gets the Worker's error answer, not a rejected fetch", async () => {
+  const f = environment(),
+    cookie = await signedIn(f);
+  // Object.assign swaps in a throwing store without restating the binding's full type
+  Object.assign(f.env.AUTH, {
+    get: () => ({
+      fetch: async () => {
+        throw new Error("auth store down");
+      },
+    }),
+  });
+  const r = await worker.fetch(req("/auth/logout", "POST", {}, cookie), f.env);
+  assert.equal(r.status, 503);
+  assert.deepEqual(await r.json(), { error: "Service unavailable; check owner diagnostics" });
+});
 test("pages: / is the intro, /?channel= the fighter page, /play/ the picker, and /intro/ moves to /", async () => {
   const f = environment();
   // a fake asset binding that echoes the path it was asked for

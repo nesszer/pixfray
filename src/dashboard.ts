@@ -32,6 +32,7 @@ import type { voxThumb as voxThumbFn, voxAll as voxAllFn } from "./voxthumb.ts";
 import type { Stat, Stats } from "../server/upgrades.ts";
 import type { CosmeticKind } from "../server/cosmetics.ts";
 import {
+  acceptedUnreadable,
   parseAnswer,
   parseBought,
   parseDraft,
@@ -1673,6 +1674,14 @@ form.addEventListener("submit", async (event) => {
     setStatus(
       status,
       "Your session expired. Sign in again to save. Your changes come back after you sign in.",
+      "error",
+    );
+    return;
+  }
+  if (acceptedUnreadable(r)) {
+    setStatus(
+      status,
+      "Your profile may have saved, but this page couldn't read the answer. Reload the page to check.",
       "error",
     );
     return;

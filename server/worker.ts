@@ -523,7 +523,7 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
       return json({ error: "Invalid dev token" }, 401);
     if (mutating && !dev && request.headers.get("Origin") !== url.origin)
       return json({ error: "Same-origin request required" }, 403);
-    if (path.startsWith("/auth/")) return handleAuth(request, env);
+    if (path.startsWith("/auth/")) return await handleAuth(request, env);
     if (path === "/robots.txt" || path === "/sitemap.xml") return seoFile(url, path);
     if (!path.startsWith("/api/")) return channelPageRedirect(env, url) || (await page(request, env, url));
     // Public health check: up or not, nothing else. Version and Twitch setup are in the owner's /api/dev/diagnostics (worker.version, worker.twitchConfigured).

@@ -215,8 +215,8 @@ export function readableColor(hex: string, minContrast = NAME_MIN_CONTRAST) {
   return "#" + out.map((v) => v.toString(16).padStart(2, "0")).join("");
 }
 
-// The overlay's own code version: vite.config.js (versionPublicModules) writes ?v=<hash of public/*.js> on the overlay's
-// script URL in the built overlay.html, so the hash changes only when overlay code changes, not on every deploy.
+// The overlay's own code version: vite.config.ts (servedBuild) writes ?v=<hash of the served modules> on the overlay's
+// script URL in the built overlay.html, so the hash changes only when served code changes, not on every deploy.
 export const overlayVersionFromUrl = (url: string) => {
   try {
     return (new URL(url).searchParams.get("v") || "").match(/^[0-9a-f]{6,64}$/i)?.[0] || "";
@@ -1920,6 +1920,7 @@ async function start() {
     addEventListener("message", (e) => {
       if (e.origin !== location.origin) return; // another site's message: not for the demo
       const message = parseDemoMessage(e.data);
+      if (!message) return; // not the demo's message (an extension's, say)
       if (!message.ok) return warnOnce("a demo message", message.error);
       demoPaused = message.value.demoPaused;
       if (!demoPaused && !drawing) {

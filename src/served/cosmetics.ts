@@ -1,5 +1,5 @@
 // Cosmetics drawn on stream (overlay.ts) and in the website preview (src/ui.ts). Looks only, no stat changes.
-// The lists, prices and ownership live in server/cosmetics.ts; the ids here must match (tests/channel.test.mjs).
+// The lists, prices and ownership live in server/cosmetics.ts; the ids here must match (tests/cosmetics.test.ts).
 import { headFor } from "./hats.ts";
 import type { Frame, Head } from "./hats.ts";
 

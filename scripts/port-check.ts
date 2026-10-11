@@ -94,7 +94,7 @@ const TSCONFIG = /^(?!public\/)(?:.*\/)?tsconfig[^/]*\.json$/;
 
 /** Code that never ships: tests, scripts and the build configs. Their string literals may name a moved file's new
  * path (a test reading `src/ui.ts`, the Worker entrypoint in cloudflare.config.ts). */
-const NON_SHIPPING = /^(?:tests\/|scripts\/|cloudflare\.config\.ts$|vite\.config\.js$)/;
+const NON_SHIPPING = /^(?:tests\/|scripts\/|cloudflare\.config\.ts$|vite\.config\.(?:js|ts)$)/;
 
 /** The build config: when the base or the head has it, both are built and their output compared. */
 const BUILD_CONFIG = "cloudflare.config.ts";

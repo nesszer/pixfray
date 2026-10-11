@@ -29,7 +29,9 @@ fighter (saving and buying stay closed).
   or missing, gets the error that route already gives when that upstream fails (the rows below), never a crash or a
   coerced value. A valid answer behaves as before.
 - Auth uses the `mini_session` cookie (HttpOnly), set by `/auth/callback`. It and its AuthStore `session:<hash>` record
-  last 30 days (`SESSION_S` in server/auth.ts), so viewers stay signed in between streams; signing out ends it.
+  last 30 days (`SESSION_S` in server/auth.ts), so viewers stay signed in between streams; signing out ends it. Only
+  a cookie named exactly `mini_session` counts, when reading the session and when signing out: one whose name ends in
+  it (`xmini_session`) is ignored.
 - Every response carries `Strict-Transport-Security: max-age=31536000; includeSubDomains` on https. Pages get a
   Content-Security-Policy with `script-src 'self'` plus Cloudflare's Web Analytics beacon (no inline script, no eval) and `frame-ancestors 'none'`; the overlay
   has the same without the beacon or `frame-ancestors` (OBS and the /start demo load it), and sends `Cache-Control: no-transform` so
@@ -44,7 +46,7 @@ fighter (saving and buying stay closed).
   channel's own account), `moderator` (Helix moderator check, needs the stored broadcaster token) and
   `canManage = owner || broadcaster || moderator`.
 - Unknown errors return 503 `{error:"Service unavailable; check owner diagnostics"}` and are
-  logged for the developer page.
+  logged for the developer page. That includes an error inside `/auth/*` (AuthStore down during sign-out, say).
 
 ## 2. HTTP routes
 
@@ -329,7 +331,8 @@ Bot replies and status (room table `bot_status`, one row):
 - The Worker sends the room's replies with Helix Send Chat Message, then posts
   `{results:[{sent, reason}]}` (10 max) to the room's internal `POST /bot-sent`. The room counts
   sent and dropped replies; a drop is logged as a `warn` "bot reply dropped: <reason>" with the
-  reason in words (`botDropText` in server/eventsub.ts: duplicate, slow mode, 429, ...). Reminder
+  reason in words (`botDropText` in server/eventsub.ts: duplicate, slow mode, 429, ...; any other reason, such as
+  `constructor`, reads as itself). Reminder
   posts do the same as "bot reminder sent" / "bot reminder dropped: ...".
 - Replies the room holds back are logged as `warn` "bot reply held back: <reason>", at most once a
   minute per reason: `reply_limit` (command replies stop at 14 in 30 s; the last 4 of the cap of 18 are kept for the bot's own result and expired-challenge lines), `unknown_subscription` (a message
@@ -547,9 +550,12 @@ Browser input is parsed once where it arrives, in the style of `server/parse.ts`
 // the overlay's saved chat looks in localStorage and the demo's postMessage
 export function parseArenaSnapshot(value), parseLooksMessage(value), parseLook(value), parseCosmeticSettings(text),
   parseDemoMessage(value), keepGood(list, kind, parse), warnOnce(kind, error)
+// parseDemoMessage answers null for a message with no demoPaused field (a browser extension's), which the demo
+// ignores without a warning; one with a demoPaused that isn't true or false still warns once
 // src/parse.ts (Lane B, bundled into the pages): /api/session, /api/access, the fighter page's profile, shop, state
 // config, leaderboard and stored draft, the mod page's /api/admin and snapshots, the owner page's lists
 export function parseAnswer(r, parse, kind)  // an ok answer whose body fails -> {ok:false, data:{error: UNREADABLE}}
+export function acceptedUnreadable(r)        // true for that case (a 2xx it couldn't read): the write may have gone through
 ```
 
 `roomFetch` adds the internal secret and channel headers. `room.ctx.storage.sql` is the DO's SQLite.
