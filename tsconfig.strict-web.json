@@ -23,6 +23,7 @@
     "src/intro/back.ts",
     "src/intro/sound.ts",
     "src/ui.ts",
+    "src/parse.ts",
     "src/start.ts",
     "src/sprite-maker.ts",
     "src/spritify.ts",

@@ -1,43 +1,20 @@
 // Owner page (/admin/dev/, Lane E). Owner-only page over /api/dev/* (server/developer.ts). No framework.
 // T names the element the page HTML holds at that selector; every selector here is in admin/dev/index.html.
+import {
+  parseAnswer,
+  parseChannels,
+  parseLogs,
+  parseProgress,
+  parseRuns,
+  parseSession,
+  parseSettings,
+  parseVersions,
+} from "./parse.ts";
+import type { Channel, Channels, Progress, TargetVersions } from "./parse.ts";
 const $ = (s: string) => document.querySelector(s);
-// The /api/dev/* answers this page reads; api() data is any until TS20, so these name only the fields it uses.
-type Progress = {
-  source?: string;
-  overlays: number;
-  duelModuleOff?: boolean;
-  duelCommands?: boolean;
-  rejectedAt: number;
-  lastCommandAt: number;
-  lastChatAt: number;
-  commandsWorking: number;
-  commands: number;
-};
-type Channel = {
-  login: string;
-  pausedAt?: number | null;
-  pausedBy?: string;
-  review?: { reasons: string[]; at: number };
-};
-type Channels = { max: number; builtin: string[]; channels: Channel[]; progressBatch?: number };
-// One target's entry in the /api/dev/versions body (server/developer.ts versions()).
-type TargetVersions = {
-  deployments: { createdOn: string; message?: string; versions: { versionId: string; percentage: number }[] }[];
-  versions: { id: string; number?: number; tag?: string; createdOn?: string }[];
-  error?: string;
-};
+// The /api/dev/* answers the page lists from are parsed where they arrive (src/parse.ts); the smaller ones (diagnostics,
+// code tree, save, pr, restore) are read with the shapes below or checked where they are read.
 type Integration = { configured?: boolean; repo?: string; missing?: string[]; versionMetadata?: boolean };
-type Run = {
-  createdAt: string;
-  url: string;
-  title?: string;
-  id: number;
-  branch?: string;
-  conclusion?: string | null;
-  status: string;
-};
-type ConfigVersion = { version: number; at: number; actorName?: string; actorId?: string; note?: string };
-type LogRow = { at: number; source: string; message: string; context?: unknown };
 type SourceLabels = Record<string, string | undefined>;
 type ApiResult = Awaited<ReturnType<typeof api>>;
 const S: {
@@ -77,7 +54,7 @@ const LOGIN = "/auth/login?next=%2Fadmin%2Fdev%2F"; // come back here after sign
 async function api(
   path: string,
   { method = "GET", body }: { method?: string; body?: unknown } = {},
-  // data is any: the parsed JSON body, read per route below (typed per route in TS20, as in src/ui.ts)
+  // data is any: the parsed JSON body; the routes the page lists from go through parseAnswer (src/parse.ts)
 ): Promise<{ ok: boolean; status: number; data: any }> {
   const init: RequestInit & { headers: Record<string, string> } = {
     method,
@@ -100,7 +77,7 @@ async function api(
   } catch {}
   return { ok: r.ok, status: r.status, data };
 }
-// r.data is any: api()'s parsed body, untyped until TS20
+// r.data is any: an error body as the server sent it, read loosely
 const errorText = (r: { status: number; data: any }, fallback = "Request failed") =>
   r.data?.error || (r.status ? `${fallback} (HTTP ${r.status})` : fallback);
 // Tiny DOM builder; returns the element type of the tag, like h() in src/ui.ts.
@@ -167,14 +144,14 @@ async function busy(button: HTMLButtonElement, fn: () => Promise<unknown>) {
 
 // ---------- access ----------
 async function start() {
-  const s = await api("/api/session");
-  S.session = s.data;
+  const s = parseAnswer(await api("/api/session"), parseSession, "the session");
+  S.session = s.ok ? s.data : null;
   // element type from the page HTML
   const who = $("#who") as HTMLDivElement;
   who.replaceChildren();
-  if (s.data?.user)
+  if (s.ok && s.data.user)
     who.append(
-      h("span", {}, "Signed in as " + s.data.user.displayName),
+      h("span", {}, "Signed in as " + (s.data.user.displayName || s.data.user.login)),
       h("button", { class: "btn btn-small", type: "button", onclick: signOut }, "Sign out"),
     );
   // signed out: the gate holds the one sign-in button
@@ -446,12 +423,11 @@ function released(r: ApiResult, what: string) {
 ($("#rb-target") as HTMLSelectElement).addEventListener("change", fillVersions);
 
 async function loadRuns() {
-  const r = await api("/api/dev/runs");
+  const r = parseAnswer(await api("/api/dev/runs"), parseRuns, "the deploy runs");
   if (!r.ok) return rows("#runs", [], errorText(r, "Runs unavailable"), 4);
   rows(
     "#runs",
-    // /api/dev/runs body: the recent deploy workflow runs
-    (r.data as Run[]).map((x) =>
+    r.data.map((x) =>
       h(
         "tr",
         {},
@@ -474,16 +450,14 @@ async function loadRuns() {
   );
 }
 async function loadVersions() {
-  const r = await api("/api/dev/versions");
-  // /api/dev/versions body when ok
-  S.versions = r.ok ? (r.data as Record<string, TargetVersions>) : null;
+  const r = parseAnswer(await api("/api/dev/versions"), parseVersions, "the Worker versions");
+  S.versions = r.ok ? r.data : null;
   if (!r.ok) {
     rows("#deployments", [], errorText(r, "Versions unavailable"), 5);
     return fillVersions();
   }
   const list = [];
-  // /api/dev/versions body, keyed by target
-  for (const [target, v] of Object.entries(r.data as Record<string, TargetVersions>)) {
+  for (const [target, v] of Object.entries(r.data)) {
     const d = v.deployments[0];
     if (!d) {
       list.push(h("tr", {}, h("td", {}, target), h("td", { colspan: 4, class: "muted" }, v.error || "No deployments")));
@@ -620,7 +594,7 @@ function fillVersions() {
 
 // ---------- live settings ----------
 async function loadConfig() {
-  const r = await api("/api/dev/settings");
+  const r = parseAnswer(await api("/api/dev/settings"), parseSettings, "the live settings");
   if (!r.ok) return status("#config-status", errorText(r, "Could not load settings"), "error");
   S.config = r.data.config;
   S.configVersion = r.data.configVersion;
@@ -632,8 +606,7 @@ async function loadConfig() {
   ($("#history-title") as HTMLElement).textContent = "Config history (" + (r.data.history || []).length + " versions)";
   rows(
     "#history",
-    // /api/dev/settings body: the saved config versions
-    ((r.data.history || []) as ConfigVersion[]).map((x) =>
+    (r.data.history || []).map((x) =>
       h(
         "tr",
         {},
@@ -712,7 +685,7 @@ async function rollbackConfig(version: number) {
 
 // ---------- channels (server/channels.ts) ----------
 async function loadChannels() {
-  const r = await api("/api/dev/channels");
+  const r = parseAnswer(await api("/api/dev/channels"), parseChannels, "the channel list");
   if (!r.ok) return rows("#channels", [], errorText(r, "Channels unavailable"), 7);
   S.progress = {};
   renderChannels(r.data);
@@ -730,7 +703,11 @@ async function loadProgress(d: Channels, only?: string[]) {
     S.progressLoading = true;
   }
   for (let i = 0; i < logins.length; i += size) {
-    const r = await api("/api/dev/progress?logins=" + logins.slice(i, i + size).join(","));
+    const r = parseAnswer(
+      await api("/api/dev/progress?logins=" + logins.slice(i, i + size).join(",")),
+      parseProgress,
+      "the setup progress",
+    );
     if (run !== S.progressRun) return;
     if (r.ok) Object.assign(S.progress, r.data.progress);
     else status("#channel-status", errorText(r, "Could not read setup progress"), "error");
@@ -749,7 +726,11 @@ function channelAction(action: string, login: string, button: HTMLButtonElement,
   )
     return;
   return busy(button, async () => {
-    const r = await api("/api/dev/channels", { method: "POST", body: { action, login } });
+    const r = parseAnswer(
+      await api("/api/dev/channels", { method: "POST", body: { action, login } }),
+      parseChannels,
+      "the channel list",
+    );
     if (!r.ok) return status("#channel-status", errorText(r, "Could not change " + login), "error");
     status(
       "#channel-status",
@@ -1012,15 +993,18 @@ async function runRestore(button: HTMLButtonElement, undo: boolean) {
 async function loadLogs() {
   // element type from the page HTML
   const source = ($("#log-source") as HTMLSelectElement).value,
-    r = await api(
-      // element type from the page HTML
-      "/api/dev/logs?channel=" + ($("#log-channel") as HTMLSelectElement).value + (source ? "&source=" + source : ""),
+    r = parseAnswer(
+      await api(
+        // element type from the page HTML
+        "/api/dev/logs?channel=" + ($("#log-channel") as HTMLSelectElement).value + (source ? "&source=" + source : ""),
+      ),
+      parseLogs,
+      "the logs",
     );
   if (!r.ok) return rows("#logs", [], errorText(r, "Logs unavailable"), 4);
   rows(
     "#logs",
-    // /api/dev/logs body: the matching log rows
-    (r.data as LogRow[]).map((x) =>
+    r.data.map((x) =>
       h(
         "tr",
         {},

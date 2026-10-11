@@ -20,124 +20,23 @@ import {
 } from "./ui.ts";
 import { skyBackdrop } from "./scrub.ts";
 import site from "../site.config.js";
-// The bodies this page reads: GET /api/admin/:channel (server/channel.ts "/admin", with worker.ts seView), the live
-// snapshot, /api/session, /api/access, /api/leaderboard, /api/assets, /api/pets and /api/sprites. api() data is any
-// until TS20, so these name only the fields used here, and each place that keeps a body casts it once.
-type Config = {
-  enabled?: boolean;
-  maxDuels: number;
-  maxHp: number;
-  inactivityMs: number;
-  announce?: string;
-  maxOnStream?: number;
-  botEnabled?: boolean;
-  quickDuel?: boolean;
-  abilities?: Record<string, Record<string, number>>;
-};
-type ChatStatus = {
-  connected?: boolean;
-  source?: string;
-  status?: string;
-  subscriptionId?: string;
-  lastNotificationAt?: number;
-  lastSeen?: number;
-  lastRevocationReason?: string;
-};
-type Duel = {
-  id: string;
-  a: string;
-  b: string;
-  status: string;
-  rules?: { maxHp?: number };
-  expiresAt: number;
-  startedAt: number;
-  lastActionAt?: number;
-  hp?: Record<string, number>;
-  round?: number;
-};
-type Player = {
-  userId: string;
-  username: string;
-  displayName?: string;
-  color: string;
-  registered?: boolean;
-  respawnAt: number;
-  hp: number;
-  elo: number;
-  wins: number;
-  losses: number;
-  lastSeen: number;
-};
-// a /api/leaderboard/:channel?private=1 row
-type Fighter = {
-  userId: string;
-  username: string;
-  displayName?: string;
-  elo: number;
-  wins: number;
-  losses: number;
-  dollars?: number;
-};
-type HistoryRow = { version: number; config: Config; actorId: string; actorName?: string; at: number; note?: string };
-type Se = {
-  key: string;
-  names?: Record<string, string>;
-  origin?: string;
-  lastCommandAt: number;
-  rejectedAt: number;
-  seen?: Record<string, number>;
-  duelModuleOff?: boolean;
-  commands: { action: string; name: string; response: string }[];
-  timerText?: string;
-};
-type BotStatus = {
-  heardAt: number;
-  heard: string;
-  sentAt: number;
-  sent: number;
-  failedAt: number;
-  failed: number;
-  failedText: string;
-  heldAt: number;
-  heldReason: string;
-};
-type BotCommands = { commands: { name: string; reply: string }[]; counters: { name: string; value: number }[] };
-type Admin = {
-  revision: number;
-  config: Config;
-  configVersion: number;
-  duels: Duel[];
-  players: Player[];
-  history?: HistoryRow[];
-  chatStatus?: ChatStatus;
-  chat?: ChatStatus;
-  chatBot?: { login?: string; debug?: boolean } | null;
-  streamelements?: Se | null;
-  seOnly?: boolean;
-  botStatus?: BotStatus;
-  customUsage?: { count: number; limit?: number; bytes: number };
-  overlays: number;
-  modsReady?: boolean;
-  modsLapsed?: boolean;
-  checkinTestAllowed?: boolean;
-  checkinTest?: { until: number; by?: string } | null;
-  botCommands?: BotCommands;
-  channelState?: string;
-};
-type Snapshot = {
-  type?: string;
-  revision: number;
-  paused?: boolean;
-  chat?: ChatStatus;
-  config: Config;
-  configVersion: number;
-  round?: number;
-  players: Player[];
-  duels: Duel[];
-  events?: unknown;
-};
-type Session = { user?: { id: string; login: string; displayName: string } | null; configured?: boolean };
-type Access = { canManage?: boolean; owner?: boolean; broadcaster?: boolean; reason?: string; off?: string };
+import { parseAccess, parseAdmin, parseAdminSnapshot, parseAnswer, parseLeaderboard, parseSession } from "./parse.ts";
+import type {
+  Access,
+  Admin,
+  AdminConfig as Config,
+  AdminPlayer as Player,
+  BotCommands,
+  BotStatus,
+  ChatStatus,
+  LeaderRow as Fighter,
+  Se,
+  Session,
+} from "./parse.ts";
+import { isObject, warnOnce } from "./served/parse.ts";
+// GET /api/admin/:channel (server/channel.ts "/admin", with worker.ts seView), the live snapshot, /api/session,
+// /api/access and /api/leaderboard are parsed where they arrive (src/parse.ts). /api/assets, /api/pets and /api/sprites
+// are read with the shapes below, and each place that keeps one of those bodies casts it once.
 type CustomItem = {
   id: string;
   label?: string;
@@ -396,13 +295,12 @@ let proofLoaded = false;
 async function gateProof() {
   if (proofLoaded || BARE) return;
   proofLoaded = true;
-  const [st, lb] = await Promise.all([api("/api/state/" + CHANNEL), api("/api/leaderboard/" + CHANNEL + "?private=1")]);
+  const [st, lb] = await Promise.all([
+    api("/api/state/" + CHANNEL),
+    api("/api/leaderboard/" + CHANNEL + "?private=1").then((r) => parseAnswer(r, parseLeaderboard, "the leaderboard")),
+  ]);
   if (!st.ok && !lb.ok) return;
-  const ranked =
-    lb.ok && Array.isArray(lb.data)
-      ? // /api/leaderboard/:channel body
-        (lb.data as Fighter[]).filter((p) => p.wins + p.losses > 0).sort((a, b) => b.elo - a.elo)
-      : [];
+  const ranked = lb.ok ? lb.data.filter((p) => p.wins + p.losses > 0).sort((a, b) => b.elo - a.elo) : [];
   const parts = [];
   if (st.ok) parts.push(st.data.paused || st.data.config?.enabled === false ? "duels are paused" : "duels are running");
   if (lb.ok)
@@ -434,10 +332,9 @@ async function init() {
       ]),
     1500,
   );
-  const session = await api("/api/session");
+  const session = parseAnswer(await api("/api/session"), parseSession, "the session");
   clearTimeout(slow);
-  // /api/session body
-  S.session = session.ok ? (session.data as Session) : null;
+  S.session = session.ok ? session.data : null;
   // element type from the page HTML
   renderWho($("#who") as HTMLDivElement, S.session, signOut);
   if (!S.session)
@@ -468,9 +365,8 @@ async function init() {
   }
   // A signed-in streamer never sees the bare page: the Worker sends them to their own channel's controls (worker.ts ownAdmin).
   const login = S.session.user.login;
-  const access = await api("/api/access/" + CHANNEL);
-  // /api/access/:channel body
-  S.access = access.ok ? (access.data as Access) : null;
+  const access = parseAnswer(await api("/api/access/" + CHANNEL), parseAccess, "the access check");
+  S.access = access.ok ? access.data : null;
   if (!S.access?.canManage && BARE)
     return gate(
       "PixFray isn't on for " +
@@ -552,7 +448,7 @@ async function init() {
   mountUploads();
 }
 async function load() {
-  const r = await api("/api/admin/" + CHANNEL);
+  const r = parseAnswer(await api("/api/admin/" + CHANNEL), parseAdmin, "the arena state");
   if (r.status === 401 || r.status === 403)
     return gate("Your access changed: " + errorText(r) + ". Reload to check again.", [
       h("button", { class: "btn", type: "button", onclick: () => location.reload() }, "Reload"),
@@ -561,15 +457,13 @@ async function load() {
     setStatus(actionStatus, "Couldn't load the arena: " + errorText(r), "error");
     return false;
   }
-  // /api/admin/:channel body
-  S.admin = r.data as Admin;
+  S.admin = r.data;
   renderAll();
   return true;
 }
 async function loadLeaderboard() {
-  const r = await api("/api/leaderboard/" + CHANNEL + "?private=1");
-  // /api/leaderboard/:channel body
-  S.leaderboard = r.ok && Array.isArray(r.data) ? (r.data as Fighter[]) : [];
+  const r = parseAnswer(await api("/api/leaderboard/" + CHANNEL + "?private=1"), parseLeaderboard, "the leaderboard");
+  S.leaderboard = r.ok ? r.data : [];
   if (S.admin) {
     renderRanks();
     renderHistory();
@@ -580,7 +474,7 @@ async function loadLeaderboard() {
 function nameOf(id: string | undefined) {
   if (!id) return "—";
   if (id === "system") return "System";
-  if (S.session?.user?.id === id) return S.session.user.displayName + " (you)";
+  if (S.session?.user?.id === id) return (S.session.user.displayName || S.session.user.login) + " (you)";
   return S.names.get(id) || "Twitch user " + id;
 }
 function collectNames() {
@@ -977,7 +871,7 @@ function drawDuels() {
         d.status === "pending"
           ? Math.max(0, d.expiresAt - now)
           : // as above
-            Math.max(0, (d.lastActionAt || d.startedAt) + S.admin!.config.inactivityMs - now);
+            Math.max(0, (d.lastActionAt || d.startedAt || 0) + S.admin!.config.inactivityMs - now);
       return h(
         "tr",
         {},
@@ -2873,14 +2767,18 @@ function connectLive() {
     S.retry = 0;
   };
   ws.onmessage = (event) => {
-    let snap;
+    let frame: unknown;
     try {
-      // /api/live/:channel messages; only snapshots pass the check below
-      snap = JSON.parse(event.data) as Snapshot;
+      frame = JSON.parse(event.data);
     } catch {
-      return;
+      return warnOnce("an arena frame", "not JSON");
     }
-    if (snap?.type !== "snapshot" || !S.admin || snap.revision <= S.admin.revision) return;
+    // events and looks pushes also arrive here; this page reads only snapshots
+    if (!isObject(frame) || frame.type !== "snapshot") return;
+    const parsed = parseAdminSnapshot(frame);
+    if (!parsed.ok) return warnOnce("an arena snapshot", parsed.error);
+    const snap = parsed.value;
+    if (!S.admin || snap.revision <= S.admin.revision) return;
     const versionChanged = snap.configVersion !== S.admin.configVersion;
     Object.assign(S.admin, {
       revision: snap.revision,

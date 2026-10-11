@@ -49,7 +49,7 @@ function badField(value: JsonObject, fields: readonly string[], check: (v: unkno
  * Keeps the entries of a list that pass `parse`, warning once for `kind` when one fails. The list itself is returned
  * when every entry passes.
  */
-function keepGood<T>(list: unknown[], kind: string, parse: (item: unknown) => Parsed<T>): T[] {
+export function keepGood<T>(list: unknown[], kind: string, parse: (item: unknown) => Parsed<T>): T[] {
   const out: T[] = [];
   let dropped = "";
   for (const item of list) {
