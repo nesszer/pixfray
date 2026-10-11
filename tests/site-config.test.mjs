@@ -32,7 +32,7 @@ test("pages and browser scripts carry no hard-coded owner, channel or domain", a
     "src/dev.js",
     "src/ui.ts",
     "src/admin.js",
-    "src/dashboard.js",
+    "src/dashboard.ts",
     "src/setup.ts",
     "src/start.ts",
     "src/intro/main.ts",

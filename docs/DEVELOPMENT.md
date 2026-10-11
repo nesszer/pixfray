@@ -73,7 +73,7 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
   - `tsconfig.strict-web.json`: browser code (`src/`, and `types/dom.ts`). DOM types and
     `vite/client`, no Worker or Node types. A browser file that imports a server module pulls it
     into this program too, so such a module (today `server/upgrades.ts`, imported by
-    `src/dashboard.js`) must type-check with DOM types as well.
+    `src/dashboard.ts`) must type-check with DOM types as well.
 
   `types/lib-guards.ts`, `types/site.ts` and `site.config.js` are on both lists. A `.d.ts` file on
   either fails (below), so new types go in `.ts` files. Two TypeScript files are checked by
