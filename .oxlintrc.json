@@ -17,12 +17,24 @@
     "typescript/require-array-sort-compare": "off",
     "typescript/no-base-to-string": "off",
     // Only the Worker must await or hand every promise to waitUntil (see the server override below).
-    "typescript/no-floating-promises": "off"
+    "typescript/no-floating-promises": "off",
+    // `import { type A } from` strips to `import {} from`, which Node still loads; write `import type { A } from`.
+    "typescript/no-import-type-side-effects": "error",
+    // A TypeScript file is checked whole: no `// @ts-nocheck`, and a `@ts-ignore` or `@ts-expect-error` says why.
+    "typescript/ban-ts-comment": [
+      "error",
+      {
+        "ts-nocheck": true,
+        "ts-ignore": "allow-with-description",
+        "ts-expect-error": "allow-with-description",
+        "ts-check": false
+      }
+    ]
   },
   "overrides": [
     {
       // A promise the Worker drops can be cancelled when the response ends.
-      "files": ["server/**/*.js"],
+      "files": ["server/**/*.{js,ts}"],
       "rules": { "typescript/no-floating-promises": "error" }
     },
     {

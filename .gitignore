@@ -1,5 +1,7 @@
 node_modules/
 .cloudflare/
+# port-check builds the base here, one folder per commit; recycle old ones by hand
+.port-check/
 .wrangler/
 dist/
 .env*
