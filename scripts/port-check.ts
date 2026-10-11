@@ -695,8 +695,16 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
         console.log(`${label} is new and has runtime code (head ${sourceLine(head, first)})`);
         continue;
       }
-      const base = await runtimeCode(unit.base, decode(readBase(unit.base)), same());
-      const head = await runtimeCode(unit.head, headSource, asBase(unit.head, unit.base), NON_SHIPPING.test(unit.head));
+      const literals = NON_SHIPPING.test(unit.head);
+      // Strings naming a moved file read as its base path on both sides, so one that named the .ts path before the
+      // port matches whether the head kept it or not.
+      const base = await runtimeCode(
+        unit.base,
+        decode(readBase(unit.base)),
+        literals ? asBase(unit.base, unit.base) : same(),
+        literals,
+      );
+      const head = await runtimeCode(unit.head, headSource, asBase(unit.head, unit.base), literals);
       const index = firstDifference(base.lines, head.lines);
       if (index === -1) continue;
       different++;

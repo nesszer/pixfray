@@ -141,7 +141,9 @@ A port pull request changes types only, from a `port/<name>` branch:
    - Strings in code that doesn't ship. In `tests/`, `scripts/`, `cloudflare.config.ts` and
      `vite.config.js`, a string literal naming a moved code file is read the same way, so a test
      that reads `"src/ui.ts"` or the Worker `entrypoint: "./server/worker.ts"` passes once it names
-     the new path. Any other change in those files still fails, and so does a string naming the
+     the new path. The base file's strings are read the same way, so a string that already named
+     the new path before the port passes whether it is kept or not. Any other change in those
+     files still fails, and so does a string naming the
      new path in code that ships.
    - `public/` is served as written, so it keeps its paths and its bytes. A code file under
      `public/` that is renamed or moved in or out fails as
