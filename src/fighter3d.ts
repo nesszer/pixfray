@@ -1,5 +1,5 @@
 // The fighter page's 3D preview: the viewer's fighter rebuilt as voxels, standing in the intro's night arena.
-// Loaded lazily by dashboard.js; if WebGL is missing or the page runs slowly, the card keeps the 2D stage only.
+// Loaded lazily by dashboard.ts; if WebGL is missing or the page runs slowly, the card keeps the 2D stage only.
 // set({ body, pet }) takes canvases already drawn by ui.ts (hat, recolor and accessory included) and re-assembles
 // the voxels when the look changes. Drag turns the fighter; the cursor nudges its cubes aside.
 import * as THREE from "three";

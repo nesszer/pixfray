@@ -39,6 +39,9 @@
     "src/served/pets.ts",
     "src/served/cosmetics.ts",
     "src/served/upload.ts",
-    "src/served/overlay.ts"
+    "src/served/overlay.ts",
+    "src/dashboard.ts",
+    "src/admin.ts",
+    "src/dev.ts"
   ]
 }

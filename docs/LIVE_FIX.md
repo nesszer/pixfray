@@ -29,7 +29,7 @@ settings work without any of them.
    `release` job uploads a new version of `nesszerra-mini-chat-test` and sends it 100% of test traffic.
 3. **Check in OBS.** Point a test browser source at
    `https://staging.pixfray.xyz/overlay.html?channel=nesszerra&arena=1`. The overlay's code is in
-   `src/served/` (the owner page's own code is `src/dev.js`). An open overlay reloads itself between
+   `src/served/` (the owner page's own code is `src/dev.ts`). An open overlay reloads itself between
    duels once a deploy changes that code, so OBS needs no manual refresh.
 4. **Promote.** Enter the pull request number (use **Open pull request** first) and press
    **Promote to production**. The Worker squash-merges the PR, but only if its base is `main` and

@@ -20,32 +20,186 @@ import {
 } from "./ui.ts";
 import { skyBackdrop } from "./scrub.ts";
 import site from "../site.config.js";
+// The bodies this page reads: GET /api/admin/:channel (server/channel.ts "/admin", with worker.ts seView), the live
+// snapshot, /api/session, /api/access, /api/leaderboard, /api/assets, /api/pets and /api/sprites. api() data is any
+// until TS20, so these name only the fields used here, and each place that keeps a body casts it once.
+type Config = {
+  enabled?: boolean;
+  maxDuels: number;
+  maxHp: number;
+  inactivityMs: number;
+  announce?: string;
+  maxOnStream?: number;
+  botEnabled?: boolean;
+  quickDuel?: boolean;
+  abilities?: Record<string, Record<string, number>>;
+};
+type ChatStatus = {
+  connected?: boolean;
+  source?: string;
+  status?: string;
+  subscriptionId?: string;
+  lastNotificationAt?: number;
+  lastSeen?: number;
+  lastRevocationReason?: string;
+};
+type Duel = {
+  id: string;
+  a: string;
+  b: string;
+  status: string;
+  rules?: { maxHp?: number };
+  expiresAt: number;
+  startedAt: number;
+  lastActionAt?: number;
+  hp?: Record<string, number>;
+  round?: number;
+};
+type Player = {
+  userId: string;
+  username: string;
+  displayName?: string;
+  color: string;
+  registered?: boolean;
+  respawnAt: number;
+  hp: number;
+  elo: number;
+  wins: number;
+  losses: number;
+  lastSeen: number;
+};
+// a /api/leaderboard/:channel?private=1 row
+type Fighter = {
+  userId: string;
+  username: string;
+  displayName?: string;
+  elo: number;
+  wins: number;
+  losses: number;
+  dollars?: number;
+};
+type HistoryRow = { version: number; config: Config; actorId: string; actorName?: string; at: number; note?: string };
+type Se = {
+  key: string;
+  names?: Record<string, string>;
+  origin?: string;
+  lastCommandAt: number;
+  rejectedAt: number;
+  seen?: Record<string, number>;
+  duelModuleOff?: boolean;
+  commands: { action: string; name: string; response: string }[];
+  timerText?: string;
+};
+type BotStatus = {
+  heardAt: number;
+  heard: string;
+  sentAt: number;
+  sent: number;
+  failedAt: number;
+  failed: number;
+  failedText: string;
+  heldAt: number;
+  heldReason: string;
+};
+type BotCommands = { commands: { name: string; reply: string }[]; counters: { name: string; value: number }[] };
+type Admin = {
+  revision: number;
+  config: Config;
+  configVersion: number;
+  duels: Duel[];
+  players: Player[];
+  history?: HistoryRow[];
+  chatStatus?: ChatStatus;
+  chat?: ChatStatus;
+  chatBot?: { login?: string; debug?: boolean } | null;
+  streamelements?: Se | null;
+  seOnly?: boolean;
+  botStatus?: BotStatus;
+  customUsage?: { count: number; limit?: number; bytes: number };
+  overlays: number;
+  modsReady?: boolean;
+  modsLapsed?: boolean;
+  checkinTestAllowed?: boolean;
+  checkinTest?: { until: number; by?: string } | null;
+  botCommands?: BotCommands;
+  channelState?: string;
+};
+type Snapshot = {
+  type?: string;
+  revision: number;
+  paused?: boolean;
+  chat?: ChatStatus;
+  config: Config;
+  configVersion: number;
+  round?: number;
+  players: Player[];
+  duels: Duel[];
+  events?: unknown;
+};
+type Session = { user?: { id: string; login: string; displayName: string } | null; configured?: boolean };
+type Access = { canManage?: boolean; owner?: boolean; broadcaster?: boolean; reason?: string; off?: string };
+type CustomItem = {
+  id: string;
+  label?: string;
+  frames?: unknown[];
+  animations?: Record<string, unknown[]>;
+  bytes?: number;
+  createdAt: number;
+};
+type Pet = {
+  id: string;
+  label: string;
+  custom?: boolean;
+  url: string;
+  tier: string;
+  boost?: Record<string, number | undefined>;
+  price: number;
+};
+type Sprite = {
+  id: string;
+  label: string;
+  displayName?: string;
+  username?: string;
+  ai?: boolean;
+  createdAt: number;
+  reviewedBy?: string;
+  reviewedAt?: number;
+};
+type NumberField = { key: string; label: string; unit: string; min: number; max: number; ms?: true; bool?: never };
+type BoolField = { key: string; label: string; bool: true; hint: string; ms?: never; unit?: never };
+type Field = NumberField | BoolField;
+type KeyMoves = Record<string, number | undefined>;
+type Label = { key?: string; label: string; unit?: string; min?: number; max?: number; ms?: true; bool?: true };
 skyBackdrop();
 applyChannel();
 if (CHANNEL !== site.defaultChannel)
-  document.querySelector(".page-header .subtitle").textContent =
+  // element type from the page HTML
+  (document.querySelector(".page-header .subtitle") as HTMLParagraphElement).textContent =
     "For the " + CHANNEL + " broadcaster. Changes reach every OBS overlay right away.";
 // The bare /admin/ (no ?channel) is for anyone: it names no channel until sign-in shows whose controls these are.
 const BARE = !CHANNEL_PICKED;
 if (BARE) {
-  document.querySelector(".page-header h1").textContent = "PixFray mod controls";
-  document.querySelector(".page-header .subtitle").textContent =
+  // element type from the page HTML
+  (document.querySelector(".page-header h1") as HTMLHeadingElement).textContent = "PixFray mod controls";
+  // element type from the page HTML
+  (document.querySelector(".page-header .subtitle") as HTMLParagraphElement).textContent =
     "For streamers and their moderators. Changes reach every OBS overlay right away.";
 }
 const named = () => {
   if (BARE) {
-    document.querySelector(".page-header h1").textContent = "Duel controls for " + CHANNEL;
-    document.querySelector(".page-header .subtitle").textContent =
+    // element type from the page HTML
+    (document.querySelector(".page-header h1") as HTMLHeadingElement).textContent = "Duel controls for " + CHANNEL;
+    // element type from the page HTML
+    (document.querySelector(".page-header .subtitle") as HTMLParagraphElement).textContent =
       "For the broadcaster and moderators. Changes reach every OBS overlay right away.";
   }
 };
-const startLink = (primary) =>
+const startLink = (primary?: boolean) =>
   h("a", { class: primary ? "btn btn-primary" : "btn", href: "/start/" }, "Set up PixFray for your channel");
 
 const LIMITS = { maxCharacters: 24, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 // Editable config fields (docs/CONTRACTS.md section 7). `ms` fields are edited in seconds and sent as integer ms.
-/** @type {{ title: string, visible?: (config: any, admin: any) => boolean, fields: any[] }[]} */
-const GROUPS = [
+const GROUPS: { title: string; visible?: (config: Config, admin: Admin) => boolean; fields: Field[] }[] = [
   {
     title: "Health and duels",
     fields: [
@@ -148,11 +302,16 @@ const GROUPS = [
   },
 ];
 const FIELDS = GROUPS.flatMap((g) => g.fields);
-const LABELS = Object.fromEntries([...FIELDS.map((f) => [f.key, f]), ["enabled", { label: "Duels enabled" }]]);
-const get = (obj, key) => key.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
-const flatten = (config) =>
+const LABELS = Object.fromEntries<Label>([
+  ...FIELDS.map((f): [string, Label] => [f.key, f]),
+  ["enabled", { label: "Duels enabled" }],
+]);
+const get = (obj: unknown, key: string) =>
+  // each step reads one property of an object (or of anything else, which yields undefined as before)
+  key.split(".").reduce<unknown>((o, k) => (o == null ? undefined : (o as Record<string, unknown>)[k]), obj);
+const flatten = (config: Config | null | undefined) =>
   Object.fromEntries([...FIELDS.map((f) => [f.key, get(config, f.key)]), ["enabled", config?.enabled]]);
-const show = (key, v) =>
+const show = (key: string, v: unknown) =>
   v === undefined
     ? "—"
     : key === "enabled" || LABELS[key]?.bool
@@ -160,23 +319,37 @@ const show = (key, v) =>
         ? "on"
         : "off"
       : LABELS[key]?.ms
-        ? seconds(v)
-        : v + (LABELS[key]?.unit && LABELS[key].unit !== "s" ? " " + LABELS[key].unit : "");
+        ? // ms fields hold numbers
+          seconds(v as number)
+        : // a number, or text for a value the server sent as text
+          (v as number) + (LABELS[key]?.unit && LABELS[key].unit !== "s" ? " " + LABELS[key].unit : "");
 
-const S = { session: null, access: null, admin: null, leaderboard: [], names: new Map(), socket: null, retry: 0 };
-const actionStatus = $("#action-status"),
-  configStatus = $("#config-status");
+const S: {
+  session: Session | null;
+  access: Access | null;
+  admin: Admin | null;
+  leaderboard: Fighter[];
+  names: Map<string, string>;
+  socket: WebSocket | null;
+  retry: number;
+} = { session: null, access: null, admin: null, leaderboard: [], names: new Map(), socket: null, retry: 0 };
+// element type from the page HTML
+const actionStatus = $("#action-status") as HTMLParagraphElement,
+  // element type from the page HTML
+  configStatus = $("#config-status") as HTMLParagraphElement;
 const OPEN = new Set(["pending", "active"]);
 
 // ---------- tabs ----------
 // One panel at a time; the URL hash (#players, #rules, ...) keeps the tab across reloads and links.
-const TABS = [...document.querySelectorAll('[role="tab"]')];
-function selectTab(tab, focus = false) {
+// every tab on the page is a button
+const TABS = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+function selectTab(tab: HTMLElement, focus = false) {
   for (const t of TABS) {
     const on = t === tab;
     t.setAttribute("aria-selected", String(on));
     t.tabIndex = on ? 0 : -1;
-    document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+    // every tab's aria-controls names its panel on the page
+    document.getElementById(t.getAttribute("aria-controls")!)!.hidden = !on;
   }
   if (focus) tab.focus();
   const hash = "#" + tab.id.slice(4);
@@ -187,28 +360,35 @@ for (const t of TABS) {
   t.addEventListener("click", () => selectTab(t));
   t.addEventListener("keydown", (e) => {
     const i = TABS.indexOf(t),
-      next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TABS.length - 1 }[e.key];
+      // any other key finds no entry
+      next = ({ ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TABS.length - 1 } as KeyMoves)[e.key];
     if (next === undefined) return;
     e.preventDefault();
-    selectTab(TABS[(next + TABS.length) % TABS.length], true);
+    // TABS[...]!: the index wraps into the list
+    selectTab(TABS[(next + TABS.length) % TABS.length]!, true);
   });
 }
-selectTab(document.getElementById("tab-" + location.hash.slice(1)) || TABS[0]);
+// TABS[0]!: the page has five tabs
+selectTab(document.getElementById("tab-" + location.hash.slice(1)) || TABS[0]!);
 
 // ---------- loading and access ----------
 // Why the access check said no (server/auth.ts access), in words for the person at the gate.
-const GATE_REASONS = {
+const GATE_REASONS: Record<string, (() => string) | undefined> = {
   "Sign in with Twitch": () => "You're not signed in.",
   "Current Twitch moderator role required": () => "Your Twitch account isn't a moderator of " + CHANNEL + ".",
   "Broadcaster must connect moderator authorization": () =>
     CHANNEL +
     " hasn't connected mod access yet, so moderators can't sign in until they do it on their Stream setup page.",
 };
-function gate(text, actions = []) {
-  $("#gate").hidden = false;
-  $("#app").hidden = true;
-  $("#gate-text").textContent = text;
-  $("#gate-actions").replaceChildren(...actions);
+function gate(text: string, actions: Node[] = []) {
+  // element type from the page HTML
+  ($("#gate") as HTMLElement).hidden = false;
+  // element type from the page HTML
+  ($("#app") as HTMLDivElement).hidden = true;
+  // element type from the page HTML
+  ($("#gate-text") as HTMLParagraphElement).textContent = text;
+  // element type from the page HTML
+  ($("#gate-actions") as HTMLDivElement).replaceChildren(...actions);
   gateProof();
 }
 // the gate shows the arena these controls run, live: whether duels are on and who leads (public data only)
@@ -219,7 +399,10 @@ async function gateProof() {
   const [st, lb] = await Promise.all([api("/api/state/" + CHANNEL), api("/api/leaderboard/" + CHANNEL + "?private=1")]);
   if (!st.ok && !lb.ok) return;
   const ranked =
-    lb.ok && Array.isArray(lb.data) ? lb.data.filter((p) => p.wins + p.losses > 0).sort((a, b) => b.elo - a.elo) : [];
+    lb.ok && Array.isArray(lb.data)
+      ? // /api/leaderboard/:channel body
+        (lb.data as Fighter[]).filter((p) => p.wins + p.losses > 0).sort((a, b) => b.elo - a.elo)
+      : [];
   const parts = [];
   if (st.ok) parts.push(st.data.paused || st.data.config?.enabled === false ? "duels are paused" : "duels are running");
   if (lb.ok)
@@ -229,13 +412,16 @@ async function gateProof() {
             " ranked fighter" +
             (ranked.length === 1 ? "" : "s") +
             ", " +
-            (ranked[0].displayName || ranked[0].username) +
+            // ranked[0]!: the list isn't empty here
+            (ranked[0]!.displayName || ranked[0]!.username) +
             " leads at " +
-            ranked[0].elo +
+            // as above
+            ranked[0]!.elo +
             " Elo"
         : "no ranked duels yet",
     );
-  const p = $("#gate-proof");
+  // element type from the page HTML
+  const p = $("#gate-proof") as HTMLParagraphElement;
   p.textContent = "Right now in " + CHANNEL + "'s arena: " + parts.join("; ") + ".";
   p.hidden = false;
 }
@@ -250,8 +436,10 @@ async function init() {
   );
   const session = await api("/api/session");
   clearTimeout(slow);
-  S.session = session.ok ? session.data : null;
-  renderWho($("#who"), S.session, signOut);
+  // /api/session body
+  S.session = session.ok ? (session.data as Session) : null;
+  // element type from the page HTML
+  renderWho($("#who") as HTMLDivElement, S.session, signOut);
   if (!S.session)
     return gate("We can't check sign-in right now. Try again in a minute.", [
       h("button", { class: "btn btn-primary", type: "button", onclick: () => location.reload() }, "Try again"),
@@ -259,7 +447,8 @@ async function init() {
   if (!S.session.user) {
     if (S.session.configured === false)
       return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
-    $("#who").replaceChildren(); // one sign-in button: the gate's
+    // element type from the page HTML
+    ($("#who") as HTMLDivElement).replaceChildren(); // one sign-in button: the gate's
     // a word joiner keeps "?channel=" on one line on phones
     if (BARE)
       return gate(
@@ -280,7 +469,8 @@ async function init() {
   // A signed-in streamer never sees the bare page: the Worker sends them to their own channel's controls (worker.ts ownAdmin).
   const login = S.session.user.login;
   const access = await api("/api/access/" + CHANNEL);
-  S.access = access.ok ? access.data : null;
+  // /api/access/:channel body
+  S.access = access.ok ? (access.data as Access) : null;
   if (!S.access?.canManage && BARE)
     return gate(
       "PixFray isn't on for " +
@@ -299,7 +489,8 @@ async function init() {
   if (!S.access?.canManage) {
     const why = !access.ok
       ? "Twitch couldn't confirm moderators right now. Try again in a minute."
-      : GATE_REASONS[S.access?.reason]?.() || "";
+      : // a missing reason looks up "undefined", which isn't a key, as before
+        GATE_REASONS[S.access?.reason as string]?.() || "";
     return gate(
       (CHANNEL === site.defaultChannel
         ? "Only " + site.owner.login + " and current channel moderators can use mod controls"
@@ -310,21 +501,27 @@ async function init() {
     );
   }
   named();
-  $("#gate").hidden = true;
-  $("#app").hidden = false;
-  $("#dev-link").hidden = $("#dev-section").hidden = !S.access.owner;
-  $("#owner-chat").hidden = !S.access.owner || CHANNEL !== site.defaultChannel;
+  // element type from the page HTML
+  ($("#gate") as HTMLElement).hidden = true;
+  // element type from the page HTML
+  ($("#app") as HTMLDivElement).hidden = false;
+  // element type from the page HTML
+  ($("#dev-link") as HTMLAnchorElement).hidden = ($("#dev-section") as HTMLElement).hidden = !S.access.owner;
+  // element type from the page HTML
+  ($("#owner-chat") as HTMLDivElement).hidden = !S.access.owner || CHANNEL !== site.defaultChannel;
   await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets(), loadSprites()]);
   if (S.admin?.channelState !== "paused") connectLive();
   // Back from "Connect mod access" (/auth/login?connect=mods)
   const mods = new URLSearchParams(location.search).get("mods");
-  const MODS = {
+  const MODS: Record<string, string | undefined> = {
     connected: "Mod access is connected. Your Twitch moderators can sign in to this page now.",
     denied: "The Twitch permission was cancelled, so mod access isn't connected.",
     wrong_account: "Mod access has to be connected while signed in to Twitch as " + CHANNEL + ".",
   };
-  if (MODS[mods]) {
-    setStatus($("#check-status"), MODS[mods], mods === "connected" ? "ok" : "error");
+  // without ?mods= this looks up "null", which isn't a key, as before
+  if (MODS[mods as string]) {
+    // as above; element type from the page HTML
+    setStatus($("#check-status") as HTMLParagraphElement, MODS[mods as string], mods === "connected" ? "ok" : "error");
     const url = new URL(location.href);
     url.searchParams.delete("mods");
     history.replaceState(null, "", url.pathname + url.search + url.hash);
@@ -334,9 +531,16 @@ async function init() {
     const url = new URL(location.href);
     url.searchParams.delete("bot");
     history.replaceState(null, "", url.pathname + url.search + url.hash);
-    const c = S.admin?.chatStatus || {};
+    const c: ChatStatus = S.admin?.chatStatus || {};
     if (S.admin?.chatBot?.login && !(c.connected && c.source === "twitch"))
-      await chatAct("connectChat", $("#connect-chat"), false, $("#bot-status"));
+      await chatAct(
+        "connectChat",
+        // element type from the page HTML
+        $("#connect-chat") as HTMLButtonElement,
+        false,
+        // element type from the page HTML
+        $("#bot-status") as HTMLParagraphElement,
+      );
   }
   mountUploads();
 }
@@ -350,13 +554,15 @@ async function load() {
     setStatus(actionStatus, "Couldn't load the arena: " + errorText(r), "error");
     return false;
   }
-  S.admin = r.data;
+  // /api/admin/:channel body
+  S.admin = r.data as Admin;
   renderAll();
   return true;
 }
 async function loadLeaderboard() {
   const r = await api("/api/leaderboard/" + CHANNEL + "?private=1");
-  S.leaderboard = r.ok && Array.isArray(r.data) ? r.data : [];
+  // /api/leaderboard/:channel body
+  S.leaderboard = r.ok && Array.isArray(r.data) ? (r.data as Fighter[]) : [];
   if (S.admin) {
     renderRanks();
     renderHistory();
@@ -364,7 +570,7 @@ async function loadLeaderboard() {
 }
 
 // ---------- names ----------
-function nameOf(id) {
+function nameOf(id: string | undefined) {
   if (!id) return "—";
   if (id === "system") return "System";
   if (S.session?.user?.id === id) return S.session.user.displayName + " (you)";
@@ -376,12 +582,11 @@ function collectNames() {
 }
 
 // ---------- actions ----------
-/**
- * @param {string} action
- * @param {any} [payload]
- * @param {{ confirmText?: string, button?: HTMLButtonElement, done?: string }} [opts]
- */
-async function act(action, payload, { confirmText, button, done } = {}) {
+async function act(
+  action: string,
+  payload?: unknown,
+  { confirmText, button, done }: { confirmText?: string | undefined; button?: HTMLButtonElement; done?: string } = {},
+) {
   if (confirmText && !confirm(confirmText)) return null;
   if (button) button.disabled = true;
   setStatus(actionStatus, "Working…");
@@ -399,14 +604,19 @@ async function act(action, payload, { confirmText, button, done } = {}) {
   await loadLeaderboard();
   return r;
 }
-$("#toggle-duels").addEventListener("click", (e) => {
-  const enabled = !S.admin.config.enabled;
-  const open = S.admin.duels.filter((d) => OPEN.has(d.status)).length;
+// element type from the page HTML
+($("#toggle-duels") as HTMLButtonElement).addEventListener("click", (e) => {
+  // S.admin!: throws as before if load() failed (reported)
+  const enabled = !S.admin!.config.enabled;
+  // as above
+  const open = S.admin!.duels.filter((d) => OPEN.has(d.status)).length;
   act(
     "config",
-    { patch: { enabled }, baseVersion: S.admin.configVersion, note: enabled ? "duels enabled" : "duels paused" },
+    // as above
+    { patch: { enabled }, baseVersion: S.admin!.configVersion, note: enabled ? "duels enabled" : "duels paused" },
     {
-      button: e.currentTarget,
+      // the listener sits on this button
+      button: e.currentTarget as HTMLButtonElement,
       confirmText:
         !enabled && open
           ? "Pause duels? The " + open + " open duel" + (open === 1 ? "" : "s") + " will be cancelled without scoring."
@@ -416,9 +626,12 @@ $("#toggle-duels").addEventListener("click", (e) => {
   );
 });
 // Duel announcements live in the channel config: every open overlay picks the change up from its next snapshot.
-$("#announce").addEventListener("change", async (e) => {
-  const select = e.currentTarget,
-    status = $("#announce-status");
+// element type from the page HTML
+($("#announce") as HTMLSelectElement).addEventListener("change", async (e) => {
+  // the listener sits on this select
+  const select = e.currentTarget as HTMLSelectElement,
+    // element type from the page HTML
+    status = $("#announce-status") as HTMLParagraphElement;
   select.disabled = true;
   setStatus(status, "Saving…");
   const r = await api("/api/admin/" + CHANNEL, {
@@ -427,7 +640,8 @@ $("#announce").addEventListener("change", async (e) => {
       action: "config",
       payload: {
         patch: { announce: select.value },
-        baseVersion: S.admin.configVersion,
+        // S.admin!: throws as before if load() failed (reported)
+        baseVersion: S.admin!.configVersion,
         note: "announcements " + select.value,
       },
     },
@@ -435,7 +649,8 @@ $("#announce").addEventListener("change", async (e) => {
   select.disabled = false;
   if (!r.ok) {
     setStatus(status, "Couldn't save: " + errorText(r) + ".", "error");
-    select.value = S.admin.config.announce || "off";
+    // as above
+    select.value = S.admin!.config.announce || "off";
     return;
   }
   setStatus(
@@ -448,13 +663,17 @@ $("#announce").addEventListener("change", async (e) => {
   await load();
 });
 // The on-screen limit is channel config too, so open overlays apply it from their next snapshot.
-$("#cap").addEventListener("change", async (e) => {
-  const input = e.currentTarget,
-    status = $("#cap-status"),
+// element type from the page HTML
+($("#cap") as HTMLInputElement).addEventListener("change", async (e) => {
+  // the listener sits on this input
+  const input = e.currentTarget as HTMLInputElement,
+    // element type from the page HTML
+    status = $("#cap-status") as HTMLParagraphElement,
     value = Number(input.value);
   if (!Number.isInteger(value) || value < 15 || value > 100) {
     setStatus(status, "Pick a whole number from 15 to 100.", "error");
-    input.value = S.admin.config.maxOnStream || 50;
+    // S.admin!: throws as before if load() failed (reported); the DOM turns the number into text, as before
+    input.value = (S.admin!.config.maxOnStream || 50) as unknown as string;
     return;
   }
   input.disabled = true;
@@ -465,7 +684,8 @@ $("#cap").addEventListener("change", async (e) => {
       action: "config",
       payload: {
         patch: { maxOnStream: value },
-        baseVersion: S.admin.configVersion,
+        // S.admin!: as above
+        baseVersion: S.admin!.configVersion,
         note: "up to " + value + " on stream",
       },
     },
@@ -473,37 +693,51 @@ $("#cap").addEventListener("change", async (e) => {
   input.disabled = false;
   if (!r.ok) {
     setStatus(status, "Couldn't save: " + errorText(r) + ".", "error");
-    input.value = S.admin.config.maxOnStream || 50;
+    // as above
+    input.value = (S.admin!.config.maxOnStream || 50) as unknown as string;
     return;
   }
   setStatus(status, "Saved. Overlays show up to " + value + " characters within seconds.", "ok");
   await load();
 });
-$("#open-chat-setup").addEventListener("click", () => selectTab($("#tab-chat"), true));
-$("#reset-health").addEventListener("click", (e) =>
+// element type from the page HTML
+($("#open-chat-setup") as HTMLButtonElement).addEventListener("click", () =>
+  // element type from the page HTML
+  selectTab($("#tab-chat") as HTMLButtonElement, true),
+);
+// element type from the page HTML
+($("#reset-health") as HTMLButtonElement).addEventListener("click", (e) =>
   act("resetHealth", undefined, {
-    button: e.currentTarget,
+    // the listener sits on this button
+    button: e.currentTarget as HTMLButtonElement,
     confirmText: "Put every viewer in the arena back to full health?",
     done: "Everyone in the arena is back to full health.",
   }),
 );
-$("#reset-round").addEventListener("click", (e) =>
+// element type from the page HTML
+($("#reset-round") as HTMLButtonElement).addEventListener("click", (e) =>
   act("resetRound", undefined, {
-    button: e.currentTarget,
+    // the listener sits on this button
+    button: e.currentTarget as HTMLButtonElement,
     confirmText: "Cancel every open duel without scoring and restart rounds at 1?",
     done: "Open duels cancelled; rounds restart at 1.",
   }),
 );
 // Mod gift: dollars to one saved fighter (server/channel.ts giftDollars). Negative takes them back.
-$("#gift-form").addEventListener("submit", async (e) => {
+// element type from the page HTML
+($("#gift-form") as HTMLFormElement).addEventListener("submit", async (e) => {
   e.preventDefault();
-  const status = $("#gift-status"),
-    username = $("#gift-user").value.trim().replace(/^@/, ""),
-    amount = Number($("#gift-amount").value);
+  // element type from the page HTML
+  const status = $("#gift-status") as HTMLParagraphElement,
+    // element type from the page HTML
+    username = ($("#gift-user") as HTMLInputElement).value.trim().replace(/^@/, ""),
+    // element type from the page HTML
+    amount = Number(($("#gift-amount") as HTMLInputElement).value);
   if (!/^[a-z0-9_]{1,25}$/i.test(username)) return setStatus(status, "Type the viewer's Twitch name.", "error");
   if (!Number.isInteger(amount) || !amount || Math.abs(amount) > 10000)
     return setStatus(status, "Pick a whole number from -10000 to 10000, not 0.", "error");
-  const button = $("#gift-send");
+  // element type from the page HTML
+  const button = $("#gift-send") as HTMLButtonElement;
   button.disabled = true;
   setStatus(status, "Saving…");
   const r = await api("/api/admin/" + CHANNEL, {
@@ -528,19 +762,24 @@ $("#gift-form").addEventListener("submit", async (e) => {
       " now.",
     "ok",
   );
-  $("#gift-amount").value = "";
+  // element type from the page HTML
+  ($("#gift-amount") as HTMLInputElement).value = "";
   await loadLeaderboard();
 });
-$("#reset-all-ranks").addEventListener("click", (e) =>
+// element type from the page HTML
+($("#reset-all-ranks") as HTMLButtonElement).addEventListener("click", (e) =>
   act("resetAllRanks", undefined, {
-    button: e.currentTarget,
+    // the listener sits on this button
+    button: e.currentTarget as HTMLButtonElement,
     confirmText: "Reset Elo, wins and losses for every saved profile on " + CHANNEL + "? This can't be undone.",
     done: "All ranks reset.",
   }),
 );
-$("#reset-all").addEventListener("click", (e) =>
+// element type from the page HTML
+($("#reset-all") as HTMLButtonElement).addEventListener("click", (e) =>
   act("resetAll", undefined, {
-    button: e.currentTarget,
+    // the listener sits on this button
+    button: e.currentTarget as HTMLButtonElement,
     confirmText: "Remove every character from the arena and cancel all duels? Saved profiles and ranks stay.",
     done: "Arena cleared.",
   }),
@@ -549,41 +788,54 @@ $("#reset-all").addEventListener("click", (e) =>
 // ---------- rendering ----------
 function renderAll() {
   collectNames();
-  const a = S.admin,
+  // S.admin!: renderAll runs only after load() or a snapshot filled it
+  const a = S.admin!,
     c = a.config,
     open = a.duels.filter((d) => OPEN.has(d.status));
-  const chat = a.chatStatus || a.chat || {},
+  const chat: ChatStatus = a.chatStatus || a.chat || {},
     health = chatHealth();
   // resetting all ranks, a new StreamElements key and moving chat from another site are the broadcaster's (server/worker.ts)
-  for (const id of ["#reset-all-ranks", "#rotate-se"]) $(id).hidden = !mayBroadcast();
-  $("#meta").textContent =
+  // both ids are buttons in the page HTML
+  for (const id of ["#reset-all-ranks", "#rotate-se"]) ($(id) as HTMLButtonElement).hidden = !mayBroadcast();
+  // element type from the page HTML
+  ($("#meta") as HTMLParagraphElement).textContent =
     "Signed in as " +
-    ((S.access.owner && CHANNEL === site.defaultChannel) || S.access.broadcaster
+    // S.access!: init() confirmed access before anything renders
+    ((S.access!.owner && CHANNEL === site.defaultChannel) || S.access!.broadcaster
       ? "the broadcaster"
-      : S.access.owner
+      : // as above
+        S.access!.owner
         ? "the site owner"
         : "a moderator") +
     ".";
   const waiting = c.enabled && !health.ok;
-  $("#summary-title").textContent = !c.enabled
+  // element type from the page HTML
+  ($("#summary-title") as HTMLHeadingElement).textContent = !c.enabled
     ? "Duels are paused by a moderator"
     : waiting
       ? health.title
       : "Duels are live";
-  $("#summary-text").textContent = !c.enabled
+  // element type from the page HTML
+  ($("#summary-text") as HTMLParagraphElement).textContent = !c.enabled
     ? "Chat commands are ignored until duels are turned back on."
     : waiting
       ? health.text + (chat.lastRevocationReason ? " Twitch revoked access: " + chat.lastRevocationReason + "." : "")
       : open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena.";
-  const toggle = $("#toggle-duels");
+  // element type from the page HTML
+  const toggle = $("#toggle-duels") as HTMLButtonElement;
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
   // while chat is offline the fix is the main action: Connect chat right here where Twitch chat applies, else the Stream setup tab
-  const connectHere = waiting && !chat.connected && !$("#chat-box").hidden && !a.seOnly;
-  $("#summary-connect").hidden = !connectHere;
-  $("#open-chat-setup").hidden = !waiting;
-  $("#open-chat-setup").className = "btn" + (connectHere ? "" : " btn-primary");
+  // element type from the page HTML
+  const connectHere = waiting && !chat.connected && !($("#chat-box") as HTMLElement).hidden && !a.seOnly;
+  // element type from the page HTML
+  ($("#summary-connect") as HTMLButtonElement).hidden = !connectHere;
+  // element type from the page HTML
+  ($("#open-chat-setup") as HTMLButtonElement).hidden = !waiting;
+  // element type from the page HTML
+  ($("#open-chat-setup") as HTMLButtonElement).className = "btn" + (connectHere ? "" : " btn-primary");
   toggle.classList.toggle("btn-primary", !waiting);
-  $("#stats").replaceChildren(
+  // element type from the page HTML
+  ($("#stats") as HTMLDivElement).replaceChildren(
     stat(
       "Duels",
       !c.enabled ? "Paused" : waiting ? "Waiting" : "On",
@@ -594,8 +846,14 @@ function renderAll() {
     stat("Open duels", open.length + " / " + c.maxDuels),
     stat("In the arena", a.players.length),
   );
-  if (document.activeElement !== $("#announce")) $("#announce").value = a.config.announce || "off";
-  if (document.activeElement !== $("#cap")) $("#cap").value = a.config.maxOnStream || 50;
+  // element type from the page HTML
+  if (document.activeElement !== ($("#announce") as HTMLSelectElement))
+    // element type from the page HTML
+    ($("#announce") as HTMLSelectElement).value = a.config.announce || "off";
+  // element type from the page HTML
+  if (document.activeElement !== ($("#cap") as HTMLInputElement))
+    // element type from the page HTML; the DOM turns the number into text, as before
+    ($("#cap") as HTMLInputElement).value = (a.config.maxOnStream || 50) as unknown as string;
   renderDuels();
   renderPlayers();
   renderRanks();
@@ -611,9 +869,12 @@ function renderAll() {
 }
 // Where chat comes from and whether it works. StreamElements counts as working only once a command has
 // arrived with this site's key; choosing it as the source isn't enough. The Stream setup tab uses the same rules.
-function chatHealth() {
-  const a = S.admin,
-    c = a.chatStatus || a.chat || {},
+function chatHealth():
+  | { ok: false; label: string; value: string; note: string; title: string; text: string }
+  | { ok: true; label: string; value: string; note: string } {
+  // S.admin!: called from renderAll, as above
+  const a = S.admin!,
+    c: ChatStatus = a.chatStatus || a.chat || {},
     se = a.streamelements;
   const fix = " Finish step 3, Add the chat commands to StreamElements, on the Stream setup tab.";
   if (!c.connected)
@@ -660,7 +921,7 @@ function chatHealth() {
     note: last ? "last message " + timeAgo(last) : "no messages yet",
   };
 }
-function stat(label, value, cls, delta) {
+function stat(label: string, value: string | number, cls?: string, delta?: string) {
   const word = typeof value === "string" && !/\d/.test(value); // "Not connected" reads smaller than a number, on one line
   return h(
     "div",
@@ -670,7 +931,7 @@ function stat(label, value, cls, delta) {
     delta ? h("div", { class: "delta " + (cls || "") }, delta) : null,
   );
 }
-function hp(value, max, who) {
+function hp(value: number, max: number, who?: string) {
   const pct = Math.max(0, Math.min(100, Math.round((value / max) * 100)));
   return h(
     "span",
@@ -680,29 +941,36 @@ function hp(value, max, who) {
   );
 }
 // Snapshots rebuild the tables; put keyboard focus back on the same row's button afterwards.
-function keepFocus(tbody, render) {
+function keepFocus(tbody: HTMLElement, render: () => void) {
   const key = tbody.contains(document.activeElement)
-    ? /** @type {HTMLElement} */ (document.activeElement).dataset.key
+    ? // focus inside the table is on one of its elements
+      (document.activeElement as HTMLElement).dataset.key
     : null;
   render();
-  if (key) tbody.querySelector('[data-key="' + CSS.escape(key) + '"]')?.focus();
+  // the data-key carriers are buttons
+  if (key) tbody.querySelector<HTMLButtonElement>('[data-key="' + CSS.escape(key) + '"]')?.focus();
 }
-const empty = (cols, text) => h("tr", {}, h("td", { colspan: cols, class: "muted" }, text));
+const empty = (cols: number, text: string) => h("tr", {}, h("td", { colspan: cols, class: "muted" }, text));
 function renderDuels() {
-  keepFocus($("#duels tbody"), drawDuels);
+  // element type from the page HTML
+  keepFocus($("#duels tbody") as HTMLTableSectionElement, drawDuels);
 }
 function drawDuels() {
-  const tbody = $("#duels tbody"),
+  // element type from the page HTML
+  const tbody = $("#duels tbody") as HTMLTableSectionElement,
     now = Date.now();
-  const open = S.admin.duels.filter((d) => OPEN.has(d.status));
+  // S.admin!: the table renders only after load() filled it, and the timer checks it
+  const open = S.admin!.duels.filter((d) => OPEN.has(d.status));
   if (!open.length) return tbody.replaceChildren(empty(6, "No open duels. Viewers start one with !challenge @viewer."));
   tbody.replaceChildren(
     ...open.map((d) => {
-      const max = d.rules?.maxHp || S.admin.config.maxHp;
+      // S.admin!: as above
+      const max = d.rules?.maxHp || S.admin!.config.maxHp;
       const left =
         d.status === "pending"
           ? Math.max(0, d.expiresAt - now)
-          : Math.max(0, (d.lastActionAt || d.startedAt) + S.admin.config.inactivityMs - now);
+          : // as above
+            Math.max(0, (d.lastActionAt || d.startedAt) + S.admin!.config.inactivityMs - now);
       return h(
         "tr",
         {},
@@ -744,12 +1012,13 @@ function drawDuels() {
               type: "button",
               "data-key": "cancel:" + d.id,
               "aria-label": "Cancel duel " + nameOf(d.a) + " vs " + nameOf(d.b),
-              onclick: (e) =>
+              onclick: (e: Event) =>
                 act(
                   "cancelDuel",
                   { duelId: d.id },
                   {
-                    button: e.currentTarget,
+                    // the handler sits on this button
+                    button: e.currentTarget as HTMLButtonElement,
                     confirmText: "Cancel " + nameOf(d.a) + " vs " + nameOf(d.b) + " without scoring?",
                     done: "Duel cancelled without scoring.",
                   },
@@ -763,18 +1032,23 @@ function drawDuels() {
   );
 }
 function renderPlayers() {
-  keepFocus($("#players tbody"), drawPlayers);
+  // element type from the page HTML
+  keepFocus($("#players tbody") as HTMLTableSectionElement, drawPlayers);
 }
 function drawPlayers() {
-  const tbody = $("#players tbody"),
+  // element type from the page HTML
+  const tbody = $("#players tbody") as HTMLTableSectionElement,
     now = Date.now(),
-    max = S.admin.config.maxHp;
-  if (!S.admin.players.length)
+    // S.admin!: the table renders only after load() filled it
+    max = S.admin!.config.maxHp;
+  // as above
+  if (!S.admin!.players.length)
     return tbody.replaceChildren(
       empty(7, "Nobody is in the arena. Characters appear after a viewer's first chat message."),
     );
   tbody.replaceChildren(
-    ...S.admin.players.map((p) =>
+    // as above
+    ...S.admin!.players.map((p) =>
       h(
         "tr",
         {},
@@ -800,7 +1074,8 @@ function drawPlayers() {
               type: "button",
               "data-key": "remove:" + p.userId,
               "aria-label": "Remove " + (p.displayName || p.username),
-              onclick: (e) => removePlayer(p, e.currentTarget),
+              // the handler sits on this button
+              onclick: (e: Event) => removePlayer(p, e.currentTarget as HTMLButtonElement),
             },
             "Remove",
           ),
@@ -809,7 +1084,7 @@ function drawPlayers() {
     ),
   );
 }
-const removePlayer = (p, button) =>
+const removePlayer = (p: Player | Fighter, button: HTMLButtonElement) =>
   act(
     "removePlayer",
     { userId: p.userId },
@@ -820,10 +1095,12 @@ const removePlayer = (p, button) =>
     },
   );
 function renderRanks() {
-  keepFocus($("#ranks tbody"), drawRanks);
+  // element type from the page HTML
+  keepFocus($("#ranks tbody") as HTMLTableSectionElement, drawRanks);
 }
 function drawRanks() {
-  const tbody = $("#ranks tbody");
+  // element type from the page HTML
+  const tbody = $("#ranks tbody") as HTMLTableSectionElement;
   if (!S.leaderboard.length) return tbody.replaceChildren(empty(7, "No saved profiles yet."));
   tbody.replaceChildren(
     ...S.leaderboard.map((p, i) =>
@@ -849,12 +1126,13 @@ function drawRanks() {
                 type: "button",
                 "data-key": "rank:" + p.userId,
                 "aria-label": "Reset rank for " + (p.displayName || p.username),
-                onclick: (e) =>
+                onclick: (e: Event) =>
                   act(
                     "resetRank",
                     { userId: p.userId },
                     {
-                      button: e.currentTarget,
+                      // the handler sits on this button
+                      button: e.currentTarget as HTMLButtonElement,
                       confirmText: "Reset " + (p.displayName || p.username) + "'s Elo, wins and losses?",
                       done: "Rank reset.",
                     },
@@ -869,7 +1147,8 @@ function drawRanks() {
                 type: "button",
                 "data-key": "rank-remove:" + p.userId,
                 "aria-label": "Remove " + (p.displayName || p.username),
-                onclick: (e) => removePlayer(p, e.currentTarget),
+                // the handler sits on this button
+                onclick: (e: Event) => removePlayer(p, e.currentTarget as HTMLButtonElement),
               },
               "Remove",
             ),
@@ -884,28 +1163,34 @@ function drawRanks() {
 // The form remembers the version it was built from. Unsaved edits survive live updates; if someone else saves in
 // the meantime, the save is sent with the old baseVersion and the server answers 409 (handled below).
 let editedBase = 0,
-  editedConfig = null;
+  editedConfig: Config | null = null;
 function renderConfig() {
-  const box = $("#config-fields"),
-    config = S.admin.config;
+  // element type from the page HTML
+  const box = $("#config-fields") as HTMLDivElement,
+    // S.admin!: called from renderAll and the Discard button, both after load() filled it
+    config = S.admin!.config;
   if (box.childElementCount && formDirty()) {
-    if (editedBase !== S.admin.configVersion)
+    // as above
+    if (editedBase !== S.admin!.configVersion)
       setStatus(
         configStatus,
         "Version " +
-          S.admin.configVersion +
+          // as above
+          S.admin!.configVersion +
           " was saved by someone else while you were editing. Discard your changes to load it.",
         "error",
       );
     return;
   }
-  editedBase = S.admin.configVersion;
+  // as above
+  editedBase = S.admin!.configVersion;
   editedConfig = config;
   box.replaceChildren(
     ...GROUPS.map((g) =>
       h(
         "fieldset",
-        { class: "config-group", hidden: g.visible ? !g.visible(config, S.admin) : false },
+        // as above
+        { class: "config-group", hidden: g.visible ? !g.visible(config, S.admin!) : false },
         h("legend", {}, g.title),
         h(
           "div",
@@ -934,7 +1219,8 @@ function renderConfig() {
               min: f.ms ? f.min / 1000 : f.min,
               max: f.ms ? f.max / 1000 : f.max,
               step: f.ms ? 0.25 : 1,
-              value: String(f.ms ? value / 1000 : value),
+              // ms fields hold numbers
+              value: String(f.ms ? (value as number) / 1000 : value),
             });
             return h(
               "div",
@@ -950,8 +1236,9 @@ function renderConfig() {
   );
   syncConfigButtons();
 }
-function readField(input) {
-  const f = LABELS[input.dataset.key],
+function readField(input: HTMLInputElement): { value?: unknown; error?: string } {
+  // the inputs carry a FIELDS key in data-key (renderConfig), so the entry is a Field
+  const f = LABELS[input.dataset.key!] as Field,
     raw = input.value.trim(),
     n = Number(raw);
   if (f.bool) return { value: input.checked };
@@ -963,15 +1250,18 @@ function readField(input) {
   return { value };
 }
 function buildPatch() {
-  const patch = {},
-    errors = [];
-  for (const input of document.querySelectorAll("#config-fields input[data-key]")) {
-    const key = input.dataset.key,
+  const patch: Record<string, unknown> = {},
+    errors: string[] = [];
+  // the selector matches inputs, each with a data-key
+  for (const input of document.querySelectorAll<HTMLInputElement>("#config-fields input[data-key]")) {
+    // as above
+    const key = input.dataset.key!,
       r = readField(input);
     input.setCustomValidity(r.error || "");
     if (r.error) input.setAttribute("aria-invalid", "true");
     else input.removeAttribute("aria-invalid");
-    input.parentElement.classList.toggle("changed", !r.error && r.value !== get(editedConfig, key));
+    // each input sits in its field's div
+    input.parentElement!.classList.toggle("changed", !r.error && r.value !== get(editedConfig, key));
     if (r.error) {
       errors.push(r.error);
       continue;
@@ -979,8 +1269,10 @@ function buildPatch() {
     if (r.value === get(editedConfig, key)) continue;
     const path = key.split(".");
     let node = patch;
-    for (const part of path.slice(0, -1)) node = node[part] ||= {};
-    node[path.at(-1)] = r.value;
+    // each level is an object this loop made
+    for (const part of path.slice(0, -1)) node = (node[part] ||= {}) as Record<string, unknown>;
+    // split() returns at least one part
+    node[path.at(-1)!] = r.value;
   }
   return { patch, errors };
 }
@@ -991,55 +1283,74 @@ addEventListener("beforeunload", (e) => {
 function syncConfigButtons() {
   const { patch, errors } = buildPatch(),
     changed = Object.keys(patch).length > 0;
-  $("#config-save").disabled = !changed || errors.length > 0;
-  $("#config-save").className = "btn" + (changed && !errors.length ? " btn-primary" : "");
-  $("#config-discard").disabled = !changed;
-  const bar = $("#config-bar");
+  // element type from the page HTML
+  ($("#config-save") as HTMLButtonElement).disabled = !changed || errors.length > 0;
+  // element type from the page HTML
+  ($("#config-save") as HTMLButtonElement).className = "btn" + (changed && !errors.length ? " btn-primary" : "");
+  // element type from the page HTML
+  ($("#config-discard") as HTMLButtonElement).disabled = !changed;
+  // element type from the page HTML
+  const bar = $("#config-bar") as HTMLDivElement;
   bar.classList.toggle("dirty", changed);
   if (errors.length) setStatus(configStatus, errors[0], "error");
-  else if (editedBase === S.admin.configVersion)
+  // S.admin!: the form exists only after renderConfig, which needs it
+  else if (editedBase === S.admin!.configVersion)
     setStatus(
       configStatus,
-      changed ? "Unsaved changes. Saving creates version " + (S.admin.configVersion + 1) + "." : "",
+      // as above
+      changed ? "Unsaved changes. Saving creates version " + (S.admin!.configVersion + 1) + "." : "",
     );
   // The bar appears with the first edit; if it lands on the field being typed in, scroll that field above it.
   const field = document.activeElement;
-  if (changed && field && $("#config-fields").contains(field)) {
+  // element type from the page HTML
+  if (changed && field && ($("#config-fields") as HTMLDivElement).contains(field)) {
     const overlap = field.getBoundingClientRect().bottom + 12 - bar.getBoundingClientRect().top;
     if (overlap > 0) scrollBy(0, overlap);
   }
 }
-$("#config-form").addEventListener("input", syncConfigButtons);
-$("#config-discard").addEventListener("click", () => {
-  $("#config-fields").replaceChildren();
+// element type from the page HTML
+($("#config-form") as HTMLFormElement).addEventListener("input", syncConfigButtons);
+// element type from the page HTML
+($("#config-discard") as HTMLButtonElement).addEventListener("click", () => {
+  // element type from the page HTML
+  ($("#config-fields") as HTMLDivElement).replaceChildren();
   renderConfig();
 });
-const mergeConfig = (base, patch) => ({
+const mergeConfig = (base: Config, patch: Partial<Config>) => ({
   ...base,
   ...patch,
   abilities: Object.fromEntries(
     Object.entries(base.abilities || {}).map(([k, v]) => [k, { ...v, ...patch.abilities?.[k] }]),
   ),
 });
-$("#config-form").addEventListener("submit", async (event) => {
+// element type from the page HTML
+($("#config-form") as HTMLFormElement).addEventListener("submit", async (event) => {
   event.preventDefault();
   const { patch, errors } = buildPatch();
   if (errors.length || !Object.keys(patch).length) return;
-  const save = $("#config-save");
+  // element type from the page HTML
+  const save = $("#config-save") as HTMLButtonElement;
   save.disabled = true;
   setStatus(configStatus, "Saving…");
   const r = await api("/api/admin/" + CHANNEL, {
     method: "POST",
-    body: { action: "config", payload: { patch, baseVersion: editedBase, note: $("#config-note").value.trim() } },
+    body: {
+      action: "config",
+      // element type from the page HTML
+      payload: { patch, baseVersion: editedBase, note: ($("#config-note") as HTMLInputElement).value.trim() },
+    },
   });
   if (r.status === 409) {
-    const mine = diff(editedConfig, mergeConfig(editedConfig, patch));
-    $("#config-fields").replaceChildren();
+    // editedConfig!: the form was built from it; buildPatch nests dotted keys, so patch has Config's shape
+    const mine = diff(editedConfig, mergeConfig(editedConfig!, patch as Partial<Config>));
+    // element type from the page HTML
+    ($("#config-fields") as HTMLDivElement).replaceChildren();
     await load();
     setStatus(
       configStatus,
       "Not saved: someone else saved version " +
-        S.admin.configVersion +
+        // S.admin!: throws as before if that load() failed (reported)
+        S.admin!.configVersion +
         " first. The form now shows the current values. Your change was: " +
         mine +
         ".",
@@ -1052,12 +1363,15 @@ $("#config-form").addEventListener("submit", async (event) => {
     setStatus(configStatus, "Not saved: " + errorText(r), "error");
     return;
   }
-  $("#config-note").value = "";
-  $("#config-fields").replaceChildren();
+  // element type from the page HTML
+  ($("#config-note") as HTMLInputElement).value = "";
+  // element type from the page HTML
+  ($("#config-fields") as HTMLDivElement).replaceChildren();
   await load();
-  setStatus(configStatus, "Saved as version " + S.admin.configVersion + ".", "ok");
+  // S.admin!: as above
+  setStatus(configStatus, "Saved as version " + S.admin!.configVersion + ".", "ok");
 });
-function diff(prev, next) {
+function diff(prev: Config | null | undefined, next: Config) {
   if (!prev) return "Starting values";
   const a = flatten(prev),
     b = flatten(next);
@@ -1067,14 +1381,18 @@ function diff(prev, next) {
   return changes.length ? changes.join("; ") : "No value changes";
 }
 function renderHistory() {
-  const tbody = $("#history tbody"),
-    rows = S.admin.history || [];
-  $("#history-title").textContent =
+  // element type from the page HTML
+  const tbody = $("#history tbody") as HTMLTableSectionElement,
+    // S.admin!: called from renderAll and loadLeaderboard's S.admin check
+    rows = S.admin!.history || [];
+  // element type from the page HTML
+  ($("#history-title") as HTMLElement).textContent =
     "Version history (" + rows.length + (rows.length === 1 ? " version)" : " versions)");
   if (!rows.length) return tbody.replaceChildren(empty(6, "No saved versions yet. The first save is recorded here."));
   tbody.replaceChildren(
     ...rows.map((row, i) => {
-      const current = row.version === S.admin.configVersion;
+      // as above
+      const current = row.version === S.admin!.configVersion;
       return h(
         "tr",
         {},
@@ -1093,11 +1411,15 @@ function renderHistory() {
                 {
                   class: "btn btn-small",
                   type: "button",
-                  onclick: (e) =>
+                  onclick: (e: Event) =>
                     act(
                       "rollbackConfig",
                       { version: row.version },
-                      { button: e.currentTarget, done: "Restored v" + row.version + " as a new version." },
+                      {
+                        // the handler sits on this button
+                        button: e.currentTarget as HTMLButtonElement,
+                        done: "Restored v" + row.version + " as a new version.",
+                      },
                     ),
                 },
                 "Revert to v" + row.version,
@@ -1109,14 +1431,16 @@ function renderHistory() {
 }
 
 // ---------- custom characters ----------
-let customItems = null,
-  customLimits = null;
+let customItems: CustomItem[] | null = null,
+  customLimits: unknown = null;
 function renderUsage() {
-  const u = S.admin.customUsage || { count: 0, limit: LIMITS.maxCharacters, bytes: 0 };
+  // S.admin!: called from renderAll
+  const u = S.admin!.customUsage || { count: 0, limit: LIMITS.maxCharacters, bytes: 0 };
   const limit = u.limit || LIMITS.maxCharacters,
     budget = limit * LIMITS.maxAtlasBytes;
-  $("#usage-title").textContent = u.count + " of " + limit + " custom character slots used";
-  const bar = (label, value, max, text, key) => [
+  // element type from the page HTML
+  ($("#usage-title") as HTMLDivElement).textContent = u.count + " of " + limit + " custom character slots used";
+  const bar = (label: string, value: number, max: number, text: string, key: boolean) => [
     h("div", { class: "bar-label" }, label),
     h(
       "div",
@@ -1125,18 +1449,21 @@ function renderUsage() {
       h("b", {}, text),
     ),
   ];
-  $("#usage-bars").replaceChildren(
+  // element type from the page HTML
+  ($("#usage-bars") as HTMLDivElement).replaceChildren(
     ...bar("Atlas storage", u.bytes, budget, formatBytes(u.bytes) + " / " + formatBytes(budget), true),
   ); // the title already counts the slots
 }
 async function loadCustom() {
   const r = await api("/api/assets/" + CHANNEL);
-  const box = $("#custom-list");
+  // element type from the page HTML
+  const box = $("#custom-list") as HTMLDivElement;
   if (!r.ok) {
     box.replaceChildren(h("p", {}, "Couldn't list custom characters: " + errorText(r)));
     return;
   }
-  customItems = r.data.items || [];
+  // /api/assets/:channel body
+  customItems = (r.data.items || []) as CustomItem[];
   customLimits = r.data.limits || null;
   if (!customItems.length) {
     box.replaceChildren(
@@ -1187,28 +1514,42 @@ async function loadCustom() {
 }
 // ---------- custom pets ----------
 // Uploaded pets join the shop at their tier's price (server/pets.ts). Built-in pets are drawn in code and can't be removed.
-const TIER_LABELS = { common: "Common", uncommon: "Uncommon", rare: "Rare", epic: "Epic", legendary: "Legendary" };
-const boostLabel = (b) =>
+const TIER_LABELS: Record<string, string | undefined> = {
+  common: "Common",
+  uncommon: "Uncommon",
+  rare: "Rare",
+  epic: "Epic",
+  legendary: "Legendary",
+};
+const boostLabel = (b: Record<string, number | undefined> | undefined) =>
   b?.power && b.power === b.guard && b.power === b.luck
     ? "+" + b.power + " to all stats"
     : ["power", "guard", "luck"]
         .filter((k) => b?.[k])
-        .map((k) => "+" + b[k] + " " + k)
+        // b!: the filter kept only stats b has
+        .map((k) => "+" + b![k] + " " + k)
         .join(", ");
 // Viewer sprites (server/sprites.ts): approve or turn down what viewers sent; remove approved ones.
 async function loadSprites() {
   const r = await api("/api/sprites/" + CHANNEL),
-    pendingBox = $("#sprite-pending"),
-    liveBox = $("#sprite-live");
+    // element type from the page HTML
+    pendingBox = $("#sprite-pending") as HTMLDivElement,
+    // element type from the page HTML
+    liveBox = $("#sprite-live") as HTMLDivElement;
   if (!r.ok) {
     pendingBox.replaceChildren(h("p", { class: "muted small" }, "Couldn't list viewer sprites: " + errorText(r)));
     liveBox.replaceChildren();
     return;
   }
-  const { pending = [], live = [] } = r.data;
-  $("#sprite-count").textContent = "(" + pending.length + ")";
-  $("#tab-characters").textContent = pending.length ? "Characters (" + pending.length + ")" : "Characters";
-  const thumb = (x) =>
+  // /api/sprites/:channel body
+  const { pending = [], live = [] } = r.data as { pending?: Sprite[]; live?: Sprite[] };
+  // element type from the page HTML
+  ($("#sprite-count") as HTMLSpanElement).textContent = "(" + pending.length + ")";
+  // element type from the page HTML
+  ($("#tab-characters") as HTMLButtonElement).textContent = pending.length
+    ? "Characters (" + pending.length + ")"
+    : "Characters";
+  const thumb = (x: Sprite) =>
     h("img", {
       class: "sprite-thumb",
       src: "/api/sprites/" + CHANNEL + "/" + x.id,
@@ -1218,7 +1559,7 @@ async function loadSprites() {
       loading: "lazy",
     });
   // the login only when it isn't just the display name in other letter case
-  const who = (x) =>
+  const who = (x: Sprite) =>
     h(
       "td",
       {},
@@ -1227,8 +1568,17 @@ async function loadSprites() {
         ? [h("br"), h("span", { class: "muted small" }, x.username)]
         : []),
     );
-  const act = (x, action, text, cls = "btn btn-small") =>
-    h("button", { type: "button", class: cls, onclick: (e) => reviewSprite(x, action, e.currentTarget) }, text);
+  const act = (x: Sprite, action: "approve" | "reject" | "remove", text: string, cls = "btn btn-small") =>
+    h(
+      "button",
+      {
+        type: "button",
+        class: cls,
+        // the handler sits on this button
+        onclick: (e: Event) => reviewSprite(x, action, e.currentTarget as HTMLButtonElement),
+      },
+      text,
+    );
   pendingBox.replaceChildren(
     !pending.length
       ? h("p", { class: "muted small" }, "Nothing waiting.")
@@ -1323,7 +1673,7 @@ async function loadSprites() {
         ),
   );
 }
-async function reviewSprite(x, action, button) {
+async function reviewSprite(x: Sprite, action: "approve" | "reject" | "remove", button: HTMLButtonElement) {
   if (
     action === "remove" &&
     !confirm("Remove " + x.label + "? " + x.displayName + " goes back to the default character if they wear it.")
@@ -1338,7 +1688,8 @@ async function reviewSprite(x, action, button) {
     remove: x.label + " removed.",
   }[action];
   setStatus(
-    $("#sprite-review-status"),
+    // element type from the page HTML
+    $("#sprite-review-status") as HTMLParagraphElement,
     r.ok ? done : "Couldn't " + (action === "reject" ? "turn it down" : action) + ": " + errorText(r) + ".",
     r.ok ? "ok" : "error",
   );
@@ -1346,14 +1697,17 @@ async function reviewSprite(x, action, button) {
 }
 async function loadPets() {
   const r = await api("/api/pets/" + CHANNEL),
-    box = $("#pet-custom-list");
+    // element type from the page HTML
+    box = $("#pet-custom-list") as HTMLDivElement;
   if (!r.ok) {
     box.replaceChildren(h("p", { class: "muted small" }, "Couldn't list pets: " + errorText(r)));
     return;
   }
-  const custom = (r.data.pets || []).filter((p) => p.custom),
+  // /api/pets/:channel body
+  const custom = ((r.data.pets || []) as Pet[]).filter((p) => p.custom),
     max = r.data.limits?.maxPets || 24;
-  $("#pet-count").textContent = "(" + custom.length + " of " + max + ")";
+  // element type from the page HTML
+  ($("#pet-count") as HTMLSpanElement).textContent = "(" + custom.length + " of " + max + ")";
   if (!custom.length) {
     box.replaceChildren(h("p", { class: "muted small" }, "No custom pets yet. Viewers can buy the 14 built-in pets."));
     return;
@@ -1394,7 +1748,12 @@ async function loadPets() {
                 {},
                 h(
                   "button",
-                  { type: "button", class: "btn btn-small btn-danger", onclick: (e) => deletePet(p, e.currentTarget) },
+                  {
+                    type: "button",
+                    class: "btn btn-small btn-danger",
+                    // the handler sits on this button
+                    onclick: (e: Event) => deletePet(p, e.currentTarget as HTMLButtonElement),
+                  },
                   "Delete",
                 ),
               ),
@@ -1405,32 +1764,44 @@ async function loadPets() {
     ),
   );
 }
-async function deletePet(p, button) {
+async function deletePet(p: Pet, button: HTMLButtonElement) {
   if (!confirm("Delete " + p.label + "? Fighters who bought it lose it, and no dollars are refunded.")) return;
   button.disabled = true;
   const r = await api("/api/pets/" + CHANNEL + "/" + p.id, { method: "DELETE" });
   button.disabled = false;
   setStatus(
-    $("#pet-upload-status"),
+    // element type from the page HTML
+    $("#pet-upload-status") as HTMLParagraphElement,
     r.ok ? p.label + " deleted." : "Couldn't delete: " + errorText(r) + ".",
     r.ok ? "ok" : "error",
   );
   if (r.ok) loadPets();
 }
 function syncPetStats() {
-  const tier = $("#pet-tier").value;
-  $("#pet-stat-wrap").hidden = tier === "legendary";
-  $("#pet-stat2-wrap").hidden = tier !== "epic";
+  // element type from the page HTML
+  const tier = ($("#pet-tier") as HTMLSelectElement).value;
+  // element type from the page HTML
+  ($("#pet-stat-wrap") as HTMLDivElement).hidden = tier === "legendary";
+  // element type from the page HTML
+  ($("#pet-stat2-wrap") as HTMLDivElement).hidden = tier !== "epic";
 }
-$("#pet-tier").addEventListener("change", syncPetStats);
-$("#pet-form").addEventListener("submit", async (e) => {
+// element type from the page HTML
+($("#pet-tier") as HTMLSelectElement).addEventListener("change", syncPetStats);
+// element type from the page HTML
+($("#pet-form") as HTMLFormElement).addEventListener("submit", async (e) => {
   e.preventDefault();
-  const status = $("#pet-upload-status"),
-    file = $("#pet-file").files[0],
-    label = $("#pet-label").value.trim(),
-    tier = $("#pet-tier").value;
-  const stat = $("#pet-stat").value,
-    stat2 = $("#pet-stat2").value;
+  // element type from the page HTML
+  const status = $("#pet-upload-status") as HTMLParagraphElement,
+    // a file input always has a FileList; element type from the page HTML
+    file = ($("#pet-file") as HTMLInputElement).files![0],
+    // element type from the page HTML
+    label = ($("#pet-label") as HTMLInputElement).value.trim(),
+    // element type from the page HTML
+    tier = ($("#pet-tier") as HTMLSelectElement).value;
+  // element type from the page HTML
+  const stat = ($("#pet-stat") as HTMLSelectElement).value,
+    // element type from the page HTML
+    stat2 = ($("#pet-stat2") as HTMLSelectElement).value;
   if (!file) return setStatus(status, "Choose a PNG image.", "error");
   if (file.type !== "image/png") return setStatus(status, "The image must be a PNG.", "error");
   if (file.size > 65536) return setStatus(status, "The image is larger than 64 KB.", "error");
@@ -1442,21 +1813,24 @@ $("#pet-form").addEventListener("submit", async (e) => {
     fr.onerror = reject;
     fr.readAsDataURL(file);
   });
-  const button = $("#pet-upload");
+  // element type from the page HTML
+  const button = $("#pet-upload") as HTMLButtonElement;
   button.disabled = true;
   setStatus(status, "Uploading…");
   const r = await api("/api/pets/" + CHANNEL, { method: "POST", body: { label, tier, stat, stat2, image } });
   button.disabled = false;
   if (!r.ok) return setStatus(status, "Not uploaded: " + errorText(r) + ".", "error");
   setStatus(status, label + " is in the shop now.", "ok");
-  $("#pet-form").reset();
+  // element type from the page HTML
+  ($("#pet-form") as HTMLFormElement).reset();
   syncPetStats();
   loadPets();
 });
 
 // Lane D hook: src/served/upload.ts may export mountUpload(root, ctx). Probe first so a missing file stays quiet.
 async function mountUploads() {
-  const root = $("#upload-root");
+  // element type from the page HTML
+  const root = $("#upload-root") as HTMLDivElement;
   try {
     const probe = await fetch("/upload.js", { method: "HEAD" });
     if (!probe.ok || !/javascript/.test(probe.headers.get("Content-Type") || "")) return;
@@ -1467,7 +1841,8 @@ async function mountUploads() {
     root.classList.remove("mount"); // the uploader brings its own frame
     await mod.mountUpload(root, {
       channel: CHANNEL,
-      usage: S.admin.customUsage,
+      // S.admin!: throws into the catch below as before if load() failed (reported)
+      usage: S.admin!.customUsage,
       limits: customLimits || LIMITS,
       items: customItems || [],
       refresh: async () => {
@@ -1476,13 +1851,18 @@ async function mountUploads() {
     });
   } catch (error) {
     root.replaceChildren(
-      h("p", { class: "status error" }, "The upload tool failed to load: " + (error?.message || error)),
+      h(
+        "p",
+        { class: "status error" },
+        // anything can be thrown
+        "The upload tool failed to load: " + ((error as { message?: unknown } | null | undefined)?.message || error),
+      ),
     );
   }
 }
 
 // ---------- chat connection ----------
-const CHAT_STATUS = {
+const CHAT_STATUS: Record<string, string | undefined> = {
   enabled: "connected",
   webhook_callback_verification_pending: "waiting for Twitch to verify the webhook",
   pending: "waiting for Twitch to verify the webhook",
@@ -1495,17 +1875,22 @@ const CHAT_STATUS = {
 };
 let verifying = false; // "Twitch is verifying" note shown after Connect chat; replaced once the webhook is verified
 function renderChat() {
-  const c = S.admin.chatStatus || {};
+  // S.admin!: called from renderAll
+  const c: ChatStatus = S.admin!.chatStatus || {};
   if (verifying && c.connected) {
     verifying = false;
-    setStatus($("#chat-status"), "Chat connected. Duels are live.", "ok");
+    // element type from the page HTML
+    setStatus($("#chat-status") as HTMLParagraphElement, "Chat connected. Duels are live.", "ok");
   }
-  const parts = ["Status: " + (CHAT_STATUS[c.status] || c.status || "not connected") + "."];
+  // a missing status looks up "undefined", which isn't a key, as before
+  const parts = ["Status: " + (CHAT_STATUS[c.status as string] || c.status || "not connected") + "."];
   if (c.lastNotificationAt) parts.push("Last chat message " + timeAgo(c.lastNotificationAt) + ".");
   if (c.lastRevocationReason)
     parts.push("Last revocation: " + (CHAT_STATUS[c.lastRevocationReason] || c.lastRevocationReason) + ".");
-  const bot = S.admin.chatBot;
-  $("#chat-box").hidden = CHANNEL !== site.defaultChannel && !bot; // without the bot, other channels get chat through StreamElements only
+  // S.admin!: as above
+  const bot = S.admin!.chatBot;
+  // element type from the page HTML
+  ($("#chat-box") as HTMLElement).hidden = CHANNEL !== site.defaultChannel && !bot; // without the bot, other channels get chat through StreamElements only
   if (bot)
     parts.push(
       bot.login
@@ -1516,25 +1901,33 @@ function renderChat() {
     parts.push(
       `Debug: challenge @${bot.login} and it fights back, !fray spar makes it challenge you, and !fray e2e (you or a mod) plays every command once and posts which passed.`,
     );
-  if (S.admin.seOnly)
+  // as above
+  if (S.admin!.seOnly)
     parts.push("This site takes chat from StreamElements only; the first StreamElements command connects it.");
   else if (!c.connected) parts.push("Duels stay paused until chat is connected.");
-  $("#chat-actions").hidden = !!S.admin.seOnly;
-  if (S.admin.seOnly) $("#owner-chat").hidden = true;
-  $("#chat-text").textContent = parts.join(" ");
-  renderBotHealth(bot && c.source === "twitch" ? S.admin.botStatus : null);
-  $("#connect-chat").textContent = c.connected ? "Reconnect chat" : "Connect chat";
-  $("#disconnect-chat").disabled = !c.subscriptionId && !c.connected;
+  // as above; element type from the page HTML
+  ($("#chat-actions") as HTMLDivElement).hidden = !!S.admin!.seOnly;
+  // as above; element type from the page HTML
+  if (S.admin!.seOnly) ($("#owner-chat") as HTMLDivElement).hidden = true;
+  // element type from the page HTML
+  ($("#chat-text") as HTMLParagraphElement).textContent = parts.join(" ");
+  // as above
+  renderBotHealth(bot && c.source === "twitch" ? S.admin!.botStatus : null);
+  // element type from the page HTML
+  ($("#connect-chat") as HTMLButtonElement).textContent = c.connected ? "Reconnect chat" : "Connect chat";
+  // element type from the page HTML
+  ($("#disconnect-chat") as HTMLButtonElement).disabled = !c.subscriptionId && !c.connected;
 }
 // The PixFray bot's health (server/channel.ts botStatus): what it last heard and sent, and the last reply Twitch dropped
 // or the room held back. A drop newer than the last sent reply is a warning: the bot may be failing right now.
-const HELD_TEXT = {
+const HELD_TEXT: Record<string, string | undefined> = {
   reply_limit: "the cap of 18 replies per 30 seconds",
   cooldown: "a command cooldown",
   unknown_subscription: "a line from an old chat subscription",
 };
-function renderBotHealth(b) {
-  const box = $("#bot-health");
+function renderBotHealth(b: BotStatus | null | undefined) {
+  // element type from the page HTML
+  const box = $("#bot-health") as HTMLParagraphElement;
   box.hidden = !b;
   if (!b) return;
   const failing = b.failedAt > b.sentAt;
@@ -1557,7 +1950,13 @@ function renderBotHealth(b) {
   box.textContent = parts.join(" ");
   box.className = "small" + (failing ? " callout warning" : "");
 }
-async function chatAct(action, button, takeover = false, status = $("#chat-status")) {
+async function chatAct(
+  action: string,
+  button: HTMLButtonElement,
+  takeover = false,
+  // element type from the page HTML
+  status = $("#chat-status") as HTMLParagraphElement,
+) {
   if (
     action === "disconnectChat" &&
     !confirm("Disconnect Twitch chat? Duels pause and open duels are cancelled without scoring.")
@@ -1585,7 +1984,8 @@ async function chatAct(action, button, takeover = false, status = $("#chat-statu
     return chatAct(action, button, true, status);
   if (!r.ok) {
     const fix = r.data?.reconnect
-      ? S.access.owner
+      ? // S.access!: init() confirmed access before any chat button shows
+        S.access!.owner
         ? " Use Reconnect Twitch below."
         : " Ask " + site.owner.login + " to reconnect Twitch."
       : "";
@@ -1603,14 +2003,24 @@ async function chatAct(action, button, takeover = false, status = $("#chat-statu
   );
   await load();
 }
-$("#connect-chat").addEventListener("click", (e) => chatAct("connectChat", e.currentTarget));
-$("#summary-connect").addEventListener("click", (e) =>
-  chatAct("connectChat", e.currentTarget, false, $("#summary-status")),
+// element type from the page HTML
+($("#connect-chat") as HTMLButtonElement).addEventListener("click", (e) =>
+  // the listener sits on this button
+  chatAct("connectChat", e.currentTarget as HTMLButtonElement),
 );
-$("#disconnect-chat").addEventListener("click", (e) => chatAct("disconnectChat", e.currentTarget));
+// element type from the page HTML
+($("#summary-connect") as HTMLButtonElement).addEventListener("click", (e) =>
+  // the listener sits on this button; element type from the page HTML
+  chatAct("connectChat", e.currentTarget as HTMLButtonElement, false, $("#summary-status") as HTMLParagraphElement),
+);
+// element type from the page HTML
+($("#disconnect-chat") as HTMLButtonElement).addEventListener("click", (e) =>
+  // the listener sits on this button
+  chatAct("disconnectChat", e.currentTarget as HTMLButtonElement),
+);
 
 // ---------- StreamElements ----------
-const SE_LABELS = {
+const SE_LABELS: Record<string, string | undefined> = {
   challenge: "Challenge @viewer",
   accept: "Accept a challenge",
   decline: "Decline a challenge",
@@ -1629,15 +2039,21 @@ const SE_LABELS = {
   heal: "Heal",
 };
 function renderSe() {
-  const se = S.admin.streamelements,
-    c = S.admin.chatStatus || {};
+  // S.admin!: called from renderAll
+  const se = S.admin!.streamelements,
+    // as above
+    c: ChatStatus = S.admin!.chatStatus || {};
   const using = c.connected && c.source === "streamelements",
     twitch = c.connected && c.source === "twitch";
-  $("#use-se").textContent = using ? "StreamElements is the chat source" : "Use StreamElements";
-  $("#use-se").disabled = using || !se;
-  $("#copy-timer").disabled = !se;
+  // element type from the page HTML
+  ($("#use-se") as HTMLButtonElement).textContent = using ? "StreamElements is the chat source" : "Use StreamElements";
+  // element type from the page HTML
+  ($("#use-se") as HTMLButtonElement).disabled = using || !se;
+  // element type from the page HTML
+  ($("#copy-timer") as HTMLButtonElement).disabled = !se;
   // Test and production each have their own key, so commands copied from the other site never arrive here.
-  const health = $("#se-health"),
+  // element type from the page HTML
+  const health = $("#se-health") as HTMLParagraphElement,
     host = se?.origin ? new URL(se.origin).host : location.host;
   let warn = "",
     note = "";
@@ -1666,21 +2082,26 @@ function renderSe() {
     note = "Last StreamElements command reached " + host + " " + timeAgo(se.lastCommandAt) + ".";
   health.hidden = !(warn || note);
   health.className = warn
-    ? "callout warning small" + (se.rejectedAt > se.lastCommandAt ? " negative" : "")
+    ? // se!: a warning is set only when se is
+      "callout warning small" + (se!.rejectedAt > se!.lastCommandAt ? " negative" : "")
     : "small muted";
   health.textContent = warn || note;
-  $("#se-setup").hidden = !se; // no key on this site: an empty table and dead buttons only confuse
+  // element type from the page HTML
+  ($("#se-setup") as HTMLDivElement).hidden = !se; // no key on this site: an empty table and dead buttons only confuse
   if (!se) return;
-  const tbody = $("#se-table tbody");
+  // element type from the page HTML
+  const tbody = $("#se-table tbody") as HTMLTableSectionElement;
   if (tbody.dataset.key !== se.key || !tbody.children.length) drawSeTable(se, tbody); // otherwise keep unsaved name edits
-  for (const cell of tbody.querySelectorAll("[data-seen]")) {
-    const at = se.seen?.[cell.dataset.seen];
+  // the data-seen cells are tds
+  for (const cell of tbody.querySelectorAll<HTMLTableCellElement>("[data-seen]")) {
+    // the selector only matches cells with data-seen
+    const at = se.seen?.[cell.dataset.seen!];
     cell.replaceChildren(
       h("span", { class: at ? "badge positive" : "badge" }, at ? "Working · " + timeAgo(at) : "Not used yet"),
     );
   }
 }
-function drawSeTable(se, tbody) {
+function drawSeTable(se: Se, tbody: HTMLElement) {
   tbody.dataset.key = se.key;
   tbody.replaceChildren(
     ...se.commands.map((cmd) => {
@@ -1704,7 +2125,8 @@ function drawSeTable(se, tbody) {
       copy.addEventListener("click", () =>
         copyText(
           cmd.response,
-          $("#se-status"),
+          // element type from the page HTML
+          $("#se-status") as HTMLParagraphElement,
           "Copied the reply for " + input.value + ". Paste it as the response of that StreamElements command.",
         ),
       );
@@ -1717,7 +2139,7 @@ function drawSeTable(se, tbody) {
   );
 }
 // Copy to the clipboard; when the browser blocks it (no permission, or not focused), show the text in a box to copy by hand.
-async function copyText(text, status, done) {
+async function copyText(text: string, status: Element, done: string) {
   try {
     await navigator.clipboard.writeText(text);
     return setStatus(status, done, "ok");
@@ -1726,17 +2148,22 @@ async function copyText(text, status, done) {
   }
   setStatus(status, "Your browser blocked copying, so the text opened in a box to copy by hand.", "warning");
 }
-async function seAct(body, button, done) {
+async function seAct(body: Record<string, unknown>, button: HTMLButtonElement, done: string) {
   button.disabled = true;
   const r = await api("/api/admin/" + CHANNEL, { method: "POST", body });
   button.disabled = false;
-  if (!r.ok) return setStatus($("#se-status"), "That didn't work: " + errorText(r), "error");
-  setStatus($("#se-status"), done, "ok");
-  $("#se-table tbody").dataset.key = "";
+  // element type from the page HTML
+  if (!r.ok) return setStatus($("#se-status") as HTMLParagraphElement, "That didn't work: " + errorText(r), "error");
+  // element type from the page HTML
+  setStatus($("#se-status") as HTMLParagraphElement, done, "ok");
+  // element type from the page HTML
+  ($("#se-table tbody") as HTMLTableSectionElement).dataset.key = "";
   await load();
 }
-$("#use-se").addEventListener("click", (e) => {
-  const c = S.admin.chatStatus || {};
+// element type from the page HTML
+($("#use-se") as HTMLButtonElement).addEventListener("click", (e) => {
+  // S.admin!: throws as before if load() failed (reported)
+  const c: ChatStatus = S.admin!.chatStatus || {};
   if (
     c.connected &&
     c.source === "twitch" &&
@@ -1745,26 +2172,46 @@ $("#use-se").addEventListener("click", (e) => {
     )
   )
     return;
-  seAct({ action: "useStreamElements" }, e.currentTarget, "StreamElements is now the chat source. Duels are live.");
+  seAct(
+    { action: "useStreamElements" },
+    // the listener sits on this button
+    e.currentTarget as HTMLButtonElement,
+    "StreamElements is now the chat source. Duels are live.",
+  );
 });
-$("#save-se-names").addEventListener("click", (e) => {
+// element type from the page HTML
+($("#save-se-names") as HTMLButtonElement).addEventListener("click", (e) => {
   const names = Object.fromEntries(
-    [...document.querySelectorAll("#se-table input")].map((i) => [i.dataset.action, i.value.trim()]),
+    // the selector matches inputs
+    [...document.querySelectorAll<HTMLInputElement>("#se-table input")].map((i) => [i.dataset.action, i.value.trim()]),
   );
   seAct(
     { action: "setSeNames", names },
-    e.currentTarget,
+    // the listener sits on this button
+    e.currentTarget as HTMLButtonElement,
     "Names saved. Update the command names in StreamElements to match.",
   );
 });
-$("#copy-timer").addEventListener("click", async () => {
+// element type from the page HTML
+($("#copy-timer") as HTMLButtonElement).addEventListener("click", async () => {
   const text = S.admin?.streamelements?.timerText;
   if (!text) return;
-  await copyText(text, $("#se-status"), "Copied the timer message. Paste it as the message of a StreamElements timer.");
+  await copyText(
+    text,
+    // element type from the page HTML
+    $("#se-status") as HTMLParagraphElement,
+    "Copied the timer message. Paste it as the message of a StreamElements timer.",
+  );
 });
-$("#rotate-se").addEventListener("click", (e) => {
+// element type from the page HTML
+($("#rotate-se") as HTMLButtonElement).addEventListener("click", (e) => {
   if (!confirm("Make a new key? Every StreamElements command stops working until you paste the new replies.")) return;
-  seAct({ action: "rotateSeKey" }, e.currentTarget, "New key made. Copy every reply again into StreamElements.");
+  seAct(
+    { action: "rotateSeKey" },
+    // the listener sits on this button
+    e.currentTarget as HTMLButtonElement,
+    "New key made. Copy every reply again into StreamElements.",
+  );
 });
 
 // ---------- setup checklist ----------
@@ -1772,11 +2219,12 @@ $("#rotate-se").addEventListener("click", (e) => {
 // Sites with the PixFray bot (chatBot) ask for the bot instead of the StreamElements steps; a channel that still takes
 // chat from StreamElements keeps those steps and gets the bot as an optional switch.
 const DUEL_ACTIONS = ["challenge", "accept", "decline"];
-function setupSteps() {
-  const a = S.admin,
+function setupSteps(): { id: string; done: boolean | undefined; optional?: boolean | undefined; next?: string }[] {
+  // S.admin!: called from renderChecklist and the timer's S.admin check
+  const a = S.admin!,
     se = a.streamelements,
-    seen = se?.seen || {},
-    c = a.chatStatus || {};
+    seen: Record<string, number> = se?.seen || {},
+    c: ChatStatus = a.chatStatus || {};
   const twitch = c.connected && c.source === "twitch"; // Twitch chat directly: the StreamElements steps don't apply
   const viaSe = c.connected && c.source === "streamelements",
     seSteps = !a.chatBot || viaSe;
@@ -1801,13 +2249,16 @@ function setupSteps() {
 const broadcasterHere = () => !!S.access?.broadcaster || (!!S.access?.owner && CHANNEL === site.defaultChannel);
 // The bot step: the broadcaster allows the bot on Twitch (connect=bot) and comes back connected; a mod or the site owner
 // can connect it only once the broadcaster allowed it or made the bot a moderator.
-function renderBotStep(done) {
-  const a = S.admin,
+function renderBotStep(done: boolean | undefined) {
+  // S.admin!: called from renderChecklist
+  const a = S.admin!,
     bot = a.chatBot,
-    c = a.chatStatus || {},
+    c: ChatStatus = a.chatStatus || {},
     login = bot?.login || "";
-  const detail = $("#check-bot [data-detail]"),
-    actions = $("#bot-actions");
+  // element type from the page HTML
+  const detail = $("#check-bot [data-detail]") as HTMLParagraphElement,
+    // element type from the page HTML
+    actions = $("#bot-actions") as HTMLDivElement;
   if (!login) {
     detail.textContent =
       "The PixFray bot account isn't signed in on this site yet. " +
@@ -1876,7 +2327,15 @@ function renderBotStep(done) {
           class: "btn",
           type: "button",
           "data-step-action": "",
-          onclick: (e) => chatAct("connectChat", e.currentTarget, false, $("#bot-status")),
+          onclick: (e: Event) =>
+            chatAct(
+              "connectChat",
+              // the handler sits on this button
+              e.currentTarget as HTMLButtonElement,
+              false,
+              // element type from the page HTML
+              $("#bot-status") as HTMLParagraphElement,
+            ),
         },
         "Connect chat",
       ),
@@ -1884,22 +2343,28 @@ function renderBotStep(done) {
   }
 }
 function renderChecklist() {
-  const a = S.admin,
+  // S.admin!: called from renderAll
+  const a = S.admin!,
     se = a.streamelements,
-    c = a.chatStatus || {},
+    c: ChatStatus = a.chatStatus || {},
     twitch = c.connected && c.source === "twitch";
   const steps = setupSteps(),
     required = steps.filter((s) => !s.optional),
     done = required.filter((s) => s.done).length;
-  for (const li of document.querySelectorAll("#checklist > li")) li.hidden = !steps.some((s) => s.id === li.id);
+  // the selector matches list items
+  for (const li of document.querySelectorAll<HTMLLIElement>("#checklist > li"))
+    li.hidden = !steps.some((s) => s.id === li.id);
   for (const s of steps) {
-    const li = $("#" + s.id),
-      badge = li.querySelector("[data-badge]");
+    // each step id is an li on the page that holds a badge span
+    const li = $("#" + s.id) as HTMLLIElement,
+      // element type from the page HTML
+      badge = li.querySelector("[data-badge]") as HTMLSpanElement;
     badge.textContent = s.done ? "Done" : s.optional ? "Optional" : "To do";
     badge.className = "badge" + (s.done ? " positive" : s.optional ? "" : " warning");
   }
-  const detail = (id, text) => {
-    $("#" + id + " [data-detail]").textContent = text;
+  const detail = (id: string, text: string) => {
+    // each step holds a detail paragraph
+    ($("#" + id + " [data-detail]") as HTMLParagraphElement).textContent = text;
   };
   const n = a.overlays || 0;
   detail(
@@ -1908,7 +2373,8 @@ function renderChecklist() {
       ? n + " overlay" + (n === 1 ? " is" : "s are") + " connected right now."
       : "No overlay is open right now. It turns Done while OBS shows the overlay.",
   );
-  const box = $("#duel-module-off");
+  // element type from the page HTML
+  const box = $("#duel-module-off") as HTMLInputElement;
   if (document.activeElement !== box) box.checked = !!se?.duelModuleOff;
   box.disabled = !se;
   if (twitch) detail("check-commands", "Twitch chat is connected directly, so StreamElements commands aren't needed.");
@@ -1930,23 +2396,28 @@ function renderChecklist() {
     );
   }
   if (a.chatBot) renderBotStep(twitch);
-  $("#check-mods [data-detail]").replaceChildren(...modsDetail());
+  // element type from the page HTML
+  ($("#check-mods [data-detail]") as HTMLParagraphElement).replaceChildren(...modsDetail());
   if (a.modsLapsed && !a.modsReady) {
-    const b = $("#check-mods [data-badge]");
+    // element type from the page HTML
+    const b = $("#check-mods [data-badge]") as HTMLSpanElement;
     b.textContent = "Expired";
     b.className = "badge warning";
   }
-  $("#check-title").textContent =
+  // element type from the page HTML
+  ($("#check-title") as HTMLHeadingElement).textContent =
     done === required.length
       ? "Stream setup is done"
       : "Stream setup: " + done + " of " + required.length + " steps done";
   const next = required.find((s) => !s.done),
-    pointer = $("#setup-next");
+    // element type from the page HTML
+    pointer = $("#setup-next") as HTMLParagraphElement;
   // one primary button: the bot step's while it's the next step, otherwise Copy link
   const stepAction = $("#bot-actions [data-step-action]"),
     botNext = !!stepAction && next?.id === "check-bot";
   stepAction?.classList.toggle("btn-primary", botNext);
-  $("#copy").classList.toggle("btn-primary", !botNext);
+  // element type from the page HTML
+  ($("#copy") as HTMLButtonElement).classList.toggle("btn-primary", !botNext);
   pointer.hidden = !next;
   if (next)
     pointer.replaceChildren(
@@ -1955,7 +2426,7 @@ function renderChecklist() {
         "a",
         {
           href: "#chat",
-          onclick: (e) => {
+          onclick: (e: Event) => {
             e.preventDefault();
             goToStep(next.id);
           },
@@ -1967,7 +2438,8 @@ function renderChecklist() {
 }
 // Step 4 reads differently for the broadcaster (who can connect), the site owner looking at another channel, and a moderator.
 function modsDetail() {
-  const a = S.admin,
+  // S.admin!: called from renderChecklist
+  const a = S.admin!,
     ready = !!a.modsReady && !a.modsLapsed,
     lapsed = !!a.modsLapsed;
   if (ready) return ["Twitch moderators of " + CHANNEL + " can sign in and use this page."];
@@ -1993,14 +2465,18 @@ function modsDetail() {
         : "Ask " + CHANNEL + " to " + (lapsed ? "reconnect" : "connect") + " it."),
   ];
 }
-function goToStep(id) {
-  selectTab($("#tab-chat"));
-  const li = $("#" + id);
+function goToStep(id: string) {
+  // element type from the page HTML
+  selectTab($("#tab-chat") as HTMLButtonElement);
+  // each step id is an li on the page
+  const li = $("#" + id) as HTMLLIElement;
   li.scrollIntoView({ block: "center" });
   li.focus({ preventScroll: true });
 }
-$("#duel-module-off").addEventListener("change", async (e) => {
-  const box = e.currentTarget;
+// element type from the page HTML
+($("#duel-module-off") as HTMLInputElement).addEventListener("change", async (e) => {
+  // the listener sits on this checkbox
+  const box = e.currentTarget as HTMLInputElement;
   box.disabled = true;
   const r = await api("/api/admin/" + CHANNEL, {
     method: "POST",
@@ -2009,10 +2485,12 @@ $("#duel-module-off").addEventListener("change", async (e) => {
   box.disabled = false;
   if (!r.ok) {
     box.checked = !box.checked;
-    return setStatus($("#check-status"), "Couldn't save: " + errorText(r) + ".", "error");
+    // element type from the page HTML
+    return setStatus($("#check-status") as HTMLParagraphElement, "Couldn't save: " + errorText(r) + ".", "error");
   }
   setStatus(
-    $("#check-status"),
+    // element type from the page HTML
+    $("#check-status") as HTMLParagraphElement,
     box.checked ? "Saved: the Duel module is off." : "Saved: the Duel module step is open again.",
     "ok",
   );
@@ -2020,11 +2498,17 @@ $("#duel-module-off").addEventListener("change", async (e) => {
 });
 // ---------- check-in test mode: !checkin answers while offline for 15 minutes, saving nothing ----------
 function renderCheckinTest() {
-  $("#checkin-test").hidden = !S.admin.checkinTestAllowed;
-  const t = S.admin.checkinTest,
+  // S.admin!: called from renderAll and the toggle below; element type from the page HTML
+  ($("#checkin-test") as HTMLElement).hidden = !S.admin!.checkinTestAllowed;
+  // as above
+  const t = S.admin!.checkinTest,
     on = !!t && t.until > Date.now();
-  $("#checkin-test-title").textContent = on ? "!checkin test mode is on" : "Test !checkin while offline";
-  $("#checkin-test-text").replaceChildren(
+  // element type from the page HTML
+  ($("#checkin-test-title") as HTMLHeadingElement).textContent = on
+    ? "!checkin test mode is on"
+    : "Test !checkin while offline";
+  // element type from the page HTML
+  ($("#checkin-test-text") as HTMLParagraphElement).replaceChildren(
     on
       ? "Until " +
           new Date(t.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) +
@@ -2036,19 +2520,33 @@ function renderCheckinTest() {
       ? " answers while the stream is offline with a reply that starts [Test, not saved]. Nothing is saved: no points, no streak. While the stream is live, check-ins count as usual."
       : " answers while the stream is offline and shows what a viewer would get. Nothing is saved: no points, no streak.",
   );
-  $("#checkin-test-toggle").textContent = on ? "Turn test mode off" : "Turn on test mode for 15 minutes";
+  // element type from the page HTML
+  ($("#checkin-test-toggle") as HTMLButtonElement).textContent = on
+    ? "Turn test mode off"
+    : "Turn on test mode for 15 minutes";
 }
-$("#checkin-test-toggle").addEventListener("click", async (e) => {
-  const button = e.currentTarget,
-    on = !(S.admin.checkinTest && S.admin.checkinTest.until > Date.now());
+// element type from the page HTML
+($("#checkin-test-toggle") as HTMLButtonElement).addEventListener("click", async (e) => {
+  // the listener sits on this button; S.admin!: throws as before if load() failed (reported)
+  const button = e.currentTarget as HTMLButtonElement,
+    // as above
+    on = !(S.admin!.checkinTest && S.admin!.checkinTest.until > Date.now());
   button.disabled = true;
   const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: "checkinTest", value: on } });
   button.disabled = false;
-  if (!r.ok) return setStatus($("#checkin-test-status"), "Couldn't change it: " + errorText(r) + ".", "error");
-  S.admin.checkinTest = r.data.checkinTest;
+  if (!r.ok)
+    return setStatus(
+      // element type from the page HTML
+      $("#checkin-test-status") as HTMLParagraphElement,
+      "Couldn't change it: " + errorText(r) + ".",
+      "error",
+    );
+  // S.admin!: as above
+  S.admin!.checkinTest = r.data.checkinTest;
   renderCheckinTest();
   setStatus(
-    $("#checkin-test-status"),
+    // element type from the page HTML
+    $("#checkin-test-status") as HTMLParagraphElement,
     on ? "Test mode is on. Type !checkin in chat to try it." : "Test mode is off.",
     "ok",
   );
@@ -2057,7 +2555,7 @@ $("#checkin-test-toggle").addEventListener("click", async (e) => {
 // ---------- the bot's own text commands (server/botcommands.ts), shown while the PixFray bot reads chat ----------
 let editingCommand = "",
   shownCommands = "";
-const COMMAND_ERRORS = {
+const COMMAND_ERRORS: Record<string, string | undefined> = {
   command_name_taken: "PixFray already uses that name",
   command_exists: "that command already exists; edit it in the table",
   invalid_command_name: "use 1 to 24 letters, digits or _",
@@ -2066,20 +2564,30 @@ const COMMAND_ERRORS = {
   too_many_commands: "a channel can have 50 commands",
 };
 function renderBotCommands() {
-  const a = S.admin,
-    chat = a.chatStatus || a.chat || {},
-    data = a.botCommands || { commands: [], counters: [] };
-  $("#bot-commands").hidden = !(a.chatBot && chat.connected === true && chat.source !== "streamelements");
+  // S.admin!: called from renderAll and commandAction, after load()
+  const a = S.admin!,
+    chat: ChatStatus = a.chatStatus || a.chat || {},
+    data: BotCommands = a.botCommands || { commands: [], counters: [] };
+  // element type from the page HTML
+  ($("#bot-commands") as HTMLElement).hidden = !(
+    a.chatBot &&
+    chat.connected === true &&
+    chat.source !== "streamelements"
+  );
   const key = JSON.stringify(data);
   if (
     key === shownCommands ||
-    ($("#bot-commands").contains(document.activeElement) &&
-      document.activeElement.tagName === "INPUT" &&
-      document.activeElement.closest("#bot-counters"))
+    // element type from the page HTML
+    (($("#bot-commands") as HTMLElement).contains(document.activeElement) &&
+      // activeElement!: contains() just found it inside the section
+      document.activeElement!.tagName === "INPUT" &&
+      // as above
+      document.activeElement!.closest("#bot-counters"))
   )
     return;
   shownCommands = key;
-  $("#bot-commands-table tbody").replaceChildren(
+  // element type from the page HTML
+  ($("#bot-commands-table tbody") as HTMLTableSectionElement).replaceChildren(
     ...(data.commands.length
       ? data.commands.map((c) =>
           h(
@@ -2111,8 +2619,10 @@ function renderBotCommands() {
         )
       : [h("tr", {}, h("td", { colspan: "3", class: "muted" }, "No commands yet. Add one below."))]),
   );
-  $("#bot-counters").hidden = !data.counters.length;
-  $("#bot-counters-table tbody").replaceChildren(
+  // element type from the page HTML
+  ($("#bot-counters") as HTMLDivElement).hidden = !data.counters.length;
+  // element type from the page HTML
+  ($("#bot-counters-table tbody") as HTMLTableSectionElement).replaceChildren(
     ...data.counters.map((c) =>
       h(
         "tr",
@@ -2145,38 +2655,51 @@ function renderBotCommands() {
     ),
   );
 }
-function editCommand(name) {
-  const c = (S.admin.botCommands?.commands || []).find((x) => x.name === name);
+function editCommand(name: string | undefined) {
+  // S.admin!: the commands section shows only after renderBotCommands ran
+  const c = (S.admin!.botCommands?.commands || []).find((x) => x.name === name);
   editingCommand = c ? c.name : "";
-  $("#command-name").value = c ? c.name : "";
-  $("#command-reply").value = c ? c.reply : "";
-  $("#command-save").textContent = c ? "Save changes" : "Add command";
-  $("#command-cancel").hidden = !c;
-  if (c) $("#command-reply").focus();
+  // element type from the page HTML
+  ($("#command-name") as HTMLInputElement).value = c ? c.name : "";
+  // element type from the page HTML
+  ($("#command-reply") as HTMLInputElement).value = c ? c.reply : "";
+  // element type from the page HTML
+  ($("#command-save") as HTMLButtonElement).textContent = c ? "Save changes" : "Add command";
+  // element type from the page HTML
+  ($("#command-cancel") as HTMLButtonElement).hidden = !c;
+  // element type from the page HTML
+  if (c) ($("#command-reply") as HTMLInputElement).focus();
 }
-async function commandAction(action, payload, status) {
+async function commandAction(action: string, payload: Record<string, unknown>, status: Element) {
   const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action, payload } });
   if (!r.ok) {
     setStatus(status, "Couldn't save: " + (COMMAND_ERRORS[r.data?.error] || errorText(r)) + ".", "error");
     return false;
   }
-  S.admin.botCommands = r.data.botCommands;
+  // S.admin!: as in editCommand
+  S.admin!.botCommands = r.data.botCommands;
   renderBotCommands();
   return r.data;
 }
-$("#command-form").addEventListener("submit", async (e) => {
+// element type from the page HTML
+($("#command-form") as HTMLFormElement).addEventListener("submit", async (e) => {
   e.preventDefault();
-  const status = $("#command-status"),
-    name = $("#command-name").value.trim().toLowerCase().replace(/^!?/, "!"),
-    reply = $("#command-reply").value.trim();
+  // element type from the page HTML
+  const status = $("#command-status") as HTMLParagraphElement,
+    // element type from the page HTML
+    name = ($("#command-name") as HTMLInputElement).value.trim().toLowerCase().replace(/^!?/, "!"),
+    // element type from the page HTML
+    reply = ($("#command-reply") as HTMLInputElement).value.trim();
   if (!/^![a-z0-9_]{1,24}$/.test(name))
     return setStatus(status, "Name the command with 1 to 24 letters, digits or _, like !sens.", "error");
   if (!reply) return setStatus(status, "Type the reply the bot should send.", "error");
-  $("#command-save").disabled = true;
+  // element type from the page HTML
+  ($("#command-save") as HTMLButtonElement).disabled = true;
   setStatus(status, "Saving…");
   const was = editingCommand,
     saved = await commandAction("saveCommand", { name, reply, ...(was ? { oldName: was } : {}) }, status);
-  $("#command-save").disabled = false;
+  // element type from the page HTML
+  ($("#command-save") as HTMLButtonElement).disabled = false;
   if (!saved) return;
   editCommand("");
   if (saved.warning === "reply_may_be_cut")
@@ -2193,27 +2716,40 @@ $("#command-form").addEventListener("submit", async (e) => {
     );
   else setStatus(status, (was ? "Saved " : "Added ") + name + ". Type it in chat to try it.", "ok");
 });
-$("#command-cancel").addEventListener("click", () => {
+// element type from the page HTML
+($("#command-cancel") as HTMLButtonElement).addEventListener("click", () => {
   editCommand("");
-  setStatus($("#command-status"), "");
+  // element type from the page HTML
+  setStatus($("#command-status") as HTMLParagraphElement, "");
 });
-$("#bot-commands-table").addEventListener("click", async (e) => {
-  const edit = e.target.closest("[data-edit]"),
-    del = e.target.closest("[data-delete]");
+// element type from the page HTML
+($("#bot-commands-table") as HTMLTableElement).addEventListener("click", async (e) => {
+  // clicks come from elements in the table; the edit and delete carriers are buttons
+  const edit = (e.target as Element).closest<HTMLButtonElement>("[data-edit]"),
+    // as above
+    del = (e.target as Element).closest<HTMLButtonElement>("[data-delete]");
   if (edit) return editCommand(edit.dataset.edit);
   if (!del || !confirm("Delete " + del.dataset.delete + "? Its counter stays.")) return;
   del.disabled = true;
-  if (await commandAction("deleteCommand", { name: del.dataset.delete }, $("#command-status"))) {
+  if (
+    // element type from the page HTML
+    await commandAction("deleteCommand", { name: del.dataset.delete }, $("#command-status") as HTMLParagraphElement)
+  ) {
     if (editingCommand === del.dataset.delete) editCommand("");
-    setStatus($("#command-status"), "Deleted " + del.dataset.delete + ".", "ok");
+    // element type from the page HTML
+    setStatus($("#command-status") as HTMLParagraphElement, "Deleted " + del.dataset.delete + ".", "ok");
   } else del.disabled = false;
 });
-$("#bot-counters-table").addEventListener("click", async (e) => {
-  const button = e.target.closest("[data-save-counter]");
+// element type from the page HTML
+($("#bot-counters-table") as HTMLTableElement).addEventListener("click", async (e) => {
+  // clicks come from elements in the table; the save carriers are buttons
+  const button = (e.target as Element).closest<HTMLButtonElement>("[data-save-counter]");
   if (!button) return;
   const name = button.dataset.saveCounter,
-    value = Number($(`[data-counter="${name}"]`).value),
-    status = $("#counter-status");
+    // each counter's Save button has its input in the same row
+    value = Number(($(`[data-counter="${name}"]`) as HTMLInputElement).value),
+    // element type from the page HTML
+    status = $("#counter-status") as HTMLParagraphElement;
   if (!Number.isInteger(value) || value < 0 || value > 1e9)
     return setStatus(status, "Pick a whole number from 0 to 1000000000.", "error");
   button.disabled = true;
@@ -2224,20 +2760,28 @@ $("#bot-counters-table").addEventListener("click", async (e) => {
 
 // ---------- turning PixFray off (signed-up channels; the broadcaster or the owner, and only the owner undoes the owner's off) ----------
 const mayBroadcast = () => !!(S.access?.broadcaster || S.access?.owner);
-const mayPower = () => !!(S.access?.broadcaster || S.access?.owner) && ["on", "paused"].includes(S.admin?.channelState);
+const mayPower = () =>
+  // undefined is simply not in the list, as before
+  !!(S.access?.broadcaster || S.access?.owner) && ["on", "paused"].includes(S.admin?.channelState as string);
 function renderPower() {
-  const paused = S.admin.channelState === "paused",
-    toggle = $("#power-toggle");
-  $("#channel-power").hidden = !mayPower();
-  $("#power-title").textContent = paused ? "PixFray is off on " + CHANNEL : "Turn PixFray off";
-  $("#power-text").textContent = paused
+  // S.admin!: called from renderAll
+  const paused = S.admin!.channelState === "paused",
+    // element type from the page HTML
+    toggle = $("#power-toggle") as HTMLButtonElement;
+  // element type from the page HTML
+  ($("#channel-power") as HTMLElement).hidden = !mayPower();
+  // element type from the page HTML
+  ($("#power-title") as HTMLHeadingElement).textContent = paused ? "PixFray is off on " + CHANNEL : "Turn PixFray off";
+  // element type from the page HTML
+  ($("#power-text") as HTMLParagraphElement).textContent = paused
     ? "The overlay, the chat commands and the viewer page are stopped. Fighters and ranks are kept, so turning it back on picks up where it left off."
     : "Stops the overlay, the chat commands and the viewer page on " +
       CHANNEL +
       ". Fighters and ranks are kept, and you can turn it back on here at any time.";
   toggle.textContent = paused ? "Turn PixFray back on" : "Turn PixFray off";
   toggle.className = paused ? "btn btn-primary" : "btn btn-danger";
-  const note = $("#paused-note");
+  // element type from the page HTML
+  const note = $("#paused-note") as HTMLParagraphElement;
   note.hidden = !paused;
   if (paused)
     note.replaceChildren(
@@ -2247,10 +2791,12 @@ function renderPower() {
             "a",
             {
               href: "#chat",
-              onclick: (e) => {
+              onclick: (e: Event) => {
                 e.preventDefault();
-                selectTab($("#tab-chat"));
-                $("#channel-power").scrollIntoView({ block: "center" });
+                // element type from the page HTML
+                selectTab($("#tab-chat") as HTMLButtonElement);
+                // element type from the page HTML
+                ($("#channel-power") as HTMLElement).scrollIntoView({ block: "center" });
                 toggle.focus({ preventScroll: true });
               },
             },
@@ -2259,9 +2805,12 @@ function renderPower() {
         : CHANNEL + " can turn it back on.",
     );
 }
-$("#power-toggle").addEventListener("click", async (e) => {
-  const button = e.currentTarget,
-    pause = S.admin.channelState !== "paused";
+// element type from the page HTML
+($("#power-toggle") as HTMLButtonElement).addEventListener("click", async (e) => {
+  // the listener sits on this button; S.admin!: the section shows only once mayPower() saw S.admin
+  const button = e.currentTarget as HTMLButtonElement,
+    // as above
+    pause = S.admin!.channelState !== "paused";
   if (
     pause &&
     !confirm(
@@ -2277,9 +2826,12 @@ $("#power-toggle").addEventListener("click", async (e) => {
     body: { action: pause ? "pauseChannel" : "resumeChannel" },
   });
   button.disabled = false;
-  if (!r.ok) return setStatus($("#power-status"), "Couldn't change it: " + errorText(r) + ".", "error");
+  if (!r.ok)
+    // element type from the page HTML
+    return setStatus($("#power-status") as HTMLParagraphElement, "Couldn't change it: " + errorText(r) + ".", "error");
   setStatus(
-    $("#power-status"),
+    // element type from the page HTML
+    $("#power-status") as HTMLParagraphElement,
     pause
       ? "PixFray is off. Overlays and chat commands stop within a minute."
       : "PixFray is back on. Refresh the OBS source if the overlay stays empty.",
@@ -2291,7 +2843,13 @@ $("#power-toggle").addEventListener("click", async (e) => {
 
 // While setup is unfinished and on screen, refetch every 10 s so a new overlay or command turns its row to Done.
 setInterval(() => {
-  if (S.admin && !document.hidden && !$("#panel-chat").hidden && setupSteps().some((s) => !s.done && !s.optional))
+  if (
+    S.admin &&
+    !document.hidden &&
+    // element type from the page HTML
+    !($("#panel-chat") as HTMLDivElement).hidden &&
+    setupSteps().some((s) => !s.done && !s.optional)
+  )
     load();
 }, 10000);
 
@@ -2310,7 +2868,8 @@ function connectLive() {
   ws.onmessage = (event) => {
     let snap;
     try {
-      snap = JSON.parse(event.data);
+      // /api/live/:channel messages; only snapshots pass the check below
+      snap = JSON.parse(event.data) as Snapshot;
     } catch {
       return;
     }
