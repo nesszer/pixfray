@@ -1,5 +1,4 @@
 // Deploy flow: scripts/release.mjs logic against a fake Cloudflare API, and the workflow YAML files.
-// The YAML check uses Python's PyYAML (no YAML parser is installed in node_modules); it skips if absent.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -211,7 +210,7 @@ test("deploy workflow parses and exposes the inputs /api/dev dispatches", () => 
   ]);
   assert.deepEqual(inputs.operation.options, ["deploy", "rollback"]);
   assert.deepEqual(inputs.target.options, ["test", "production"]);
-  assert.deepEqual(Object.keys(wf.jobs).sort(), ["deploy", "rollback"]);
+  assert.deepEqual(Object.keys(wf.jobs).sort(), ["check", "release", "rollback"]);
   assert.deepEqual(wf.permissions, { contents: "read" });
   assert.match(wf["run-name"], /inputs\.request_id/);
   for (const job of Object.values(wf.jobs))
@@ -222,11 +221,42 @@ test("deploy workflow parses and exposes the inputs /api/dev dispatches", () => 
   const src = readFileSync(".github/workflows/deploy.yml", "utf8");
   assert.match(src, /node scripts\/release\.mjs deploy/);
   assert.match(src, /node scripts\/release\.mjs rollback/);
-  // a deploy runs the same checks as CI before it uploads anything
-  const steps = wf.jobs.deploy.steps.map((s) => s.run || "");
-  const check = steps.findIndex((r) => r === "bun run check");
-  assert.ok(check >= 0, "deploy runs bun run check");
-  assert.ok(check < steps.findIndex((r) => r.includes("release.mjs deploy")), "checks run before the upload");
+});
+
+test("deploy workflow keeps the Cloudflare token out of check and deploys the commit check verified", () => {
+  const wf = loadYaml(".github/workflows/deploy.yml");
+  const { check, release } = wf.jobs;
+  assert.deepEqual(
+    Object.keys(wf.jobs).filter((job) => JSON.stringify(wf.jobs[job]).includes("CLOUDFLARE_API_TOKEN")),
+    ["release", "rollback"],
+  );
+  assert.equal(check.environment, undefined, "check has no environment");
+  assert.deepEqual(check.permissions, { contents: "read" });
+  assert.deepEqual(
+    release.steps.filter((s) => JSON.stringify(s).includes("CLOUDFLARE_API_TOKEN")),
+    [release.steps.at(-1)],
+  );
+  const releaseRuns = release.steps.map((s) => s.run || "").join("\n");
+  assert.doesNotMatch(releaseRuns, /\bbun (run (check|format|lint|test|typecheck)|test)\b/);
+  assert.equal(release.needs, "check");
+  assert.equal(check.outputs.sha, "${{ steps.verify.outputs.sha }}");
+  const index = (match) => check.steps.findIndex(match);
+  const verify = index((s) => s.id === "verify");
+  const install = index((s) => s.run === "bun install --frozen-lockfile");
+  const runCheck = index((s) => s.run === "bun run check");
+  assert.ok(verify >= 0 && verify < install && install < runCheck, "verify runs before install and check");
+  const checkout = release.steps.find((s) => String(s.uses).startsWith("actions/checkout@"));
+  assert.equal(checkout.with.ref, "${{ needs.check.outputs.sha }}");
+  assert.equal(release.if, "inputs.operation == 'deploy'", "release never runs after check fails");
+  assert.deepEqual(release.permissions, { contents: "read" });
+  assert.doesNotMatch(JSON.stringify(check), /secrets\./, "check reads no secrets");
+  assert.equal(release.env.VERIFIED_SHA, "${{ needs.check.outputs.sha }}");
+  assert.match(releaseRuns, /test "\$SHA" = "\$VERIFIED_SHA"/, "release re-checks the checkout");
+  const restoresCache = (s) =>
+    String(s.uses).startsWith("actions/cache") ||
+    (String(s.uses).startsWith("oven-sh/setup-bun@") && s.with?.["no-cache"] !== true) ||
+    (String(s.uses).startsWith("actions/setup-node@") && s.with?.cache !== undefined);
+  assert.deepEqual(release.steps.filter(restoresCache), [], "release restores no cache check or CI could write");
 });
 
 test("CI workflow checks every push to main, scans for secrets and never sees secrets", () => {

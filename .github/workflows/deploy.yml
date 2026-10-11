@@ -58,19 +58,20 @@ env:
   BASE_BRANCH: main
 
 jobs:
-  deploy:
+  check:
     if: inputs.operation == 'deploy'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: ${{ inputs.target }}
+    permissions:
+      contents: read
     env:
       TARGET: ${{ inputs.target }}
       REF_NAME: ${{ github.ref_name }}
       INPUT_SHA: ${{ inputs.sha }}
       PERCENTAGE: ${{ inputs.percentage }}
       HOTFIX: ${{ inputs.hotfix }}
-      REASON: ${{ inputs.reason }}
-      RUN_ID: ${{ github.run_id }}
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
     steps:
       - name: Check the ref is allowed for this target
         run: |
@@ -95,11 +96,11 @@ jobs:
           persist-credentials: false
 
       - name: Check the commit belongs to the dispatched branch
+        id: verify
         run: |
           SHA="$(git rev-parse HEAD)"
           git merge-base --is-ancestor "$SHA" "origin/$REF_NAME" || { echo "::error::$SHA is not on $REF_NAME"; exit 1; }
-          echo "SHA=$SHA" >> "$GITHUB_ENV"
-          echo "TAG=gh-${SHA:0:7}-$RUN_ID" >> "$GITHUB_ENV"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
         with:
@@ -113,6 +114,45 @@ jobs:
 
       - name: Format, lint, types and unit tests
         run: bun run check
+
+  release:
+    needs: check
+    if: inputs.operation == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.target }}
+    permissions:
+      contents: read
+    env:
+      TARGET: ${{ inputs.target }}
+      REF_NAME: ${{ github.ref_name }}
+      PERCENTAGE: ${{ inputs.percentage }}
+      REASON: ${{ inputs.reason }}
+      RUN_ID: ${{ github.run_id }}
+      VERIFIED_SHA: ${{ needs.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the checkout is the verified commit and name the release
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          test "$SHA" = "$VERIFIED_SHA" || { echo "::error::Checked out $SHA, expected $VERIFIED_SHA"; exit 1; }
+          echo "TAG=gh-${SHA:0:7}-$RUN_ID" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+          no-cache: true
+
+      - run: bun install --frozen-lockfile
 
       - name: Upload the version and move traffic
         env:
