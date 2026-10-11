@@ -2418,6 +2418,10 @@ async function start() {
       onSnapshot: acceptArenaSnapshot,
       onEvent: queueArenaEvent,
       onLooks: acceptLooks,
+      // the new build id sits inside the frames this client can't read, so ask the page for its version instead
+      onDrop() {
+        if (ownVersion) buildChanged = true;
+      },
       onStatus(event) {
         arenaTransport = event.state || "offline";
         if (event.chat) arenaChat = event.chat;

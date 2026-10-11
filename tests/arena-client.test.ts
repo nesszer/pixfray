@@ -22,6 +22,7 @@ function harness() {
     events: Loose[] = [],
     snapshots: Loose[] = [], // Loose: as above
     looks: LooksMessage[] = [];
+  let drops = 0;
   function FakeSocket(this: FakeSocket) {
     this.close = () => {};
     sockets.push(this);
@@ -31,12 +32,13 @@ function harness() {
     onSnapshot: (s) => snapshots.push(s),
     onEvent: (e) => events.push(e),
     onLooks: (m) => looks.push(m),
+    onDrop: () => drops++,
     fetchImpl: () => new Promise<Response>(() => {}),
     // a constructor function standing in for WebSocket: the client calls only close and sets onmessage
     WebSocketImpl: FakeSocket as unknown as SocketConstructor,
   });
   const send = (payload: unknown) => must(sockets.at(-1)).onmessage({ data: JSON.stringify(payload) });
-  return { client, events, snapshots, looks, send };
+  return { client, events, snapshots, looks, send, drops: () => drops };
 }
 
 test("arena client: a local clock 11 s ahead of the server still sees events as fresh", () => {
@@ -104,6 +106,7 @@ test("arena client: malformed frames are dropped and leave the revision, seen ev
   assert.equal(h.snapshots.length, 1, "no snapshot reached the overlay");
   assert.equal(h.events.length, 1, "no event from a dropped frame played");
   assert.equal(warn.mock.callCount(), 2, "one warning for both bad snapshots, one for the broken JSON");
+  assert.equal(h.drops(), 2, "each dropped snapshot tells the overlay, which then checks for a newer page");
   h.send({ type: "event", revision: 9, event: { id: "9", type: "challenge_created", at } });
   assert.equal(h.events.length, 2, "event 9 was never marked as seen, so it plays now");
   assert.equal(h.events[1].at, at, "the dropped frame's serverNow did not shift the clock");

@@ -17,6 +17,7 @@ type ArenaClientOptions = {
   onSnapshot?: (snapshot: ArenaSnapshot, meta: SnapshotMeta) => void;
   onEvent?: (event: ArenaEvent) => void;
   onLooks?: (message: LooksMessage) => void;
+  onDrop?: () => void;
   onStatus?: (status: ArenaStatus) => void;
   pingMs?: number;
   watchdogMs?: number;
@@ -47,6 +48,8 @@ export function createArenaClient({
   onSnapshot = () => {},
   onEvent = () => {},
   onLooks = () => {}, // {type:'looks'} pushes: saved fighters changed for viewers the snapshot doesn't list
+  // A dropped snapshot may come from a newer server than this client reads; the overlay then asks for its page again.
+  onDrop = () => {},
   onStatus = () => {},
   // A socket can go half open: the network dropped but no close event came, so the overlay would freeze on its last
   // picture. The client sends "ping" every pingMs and the room's auto-response answers "pong" without waking it, so a
@@ -123,8 +126,10 @@ export function createArenaClient({
   /** The snapshot in a frame or an /api/state answer, parsed; undefined (after one warning) when it is dropped. */
   function parsedSnapshot(input: unknown) {
     const parsed = isObject(input) ? parseArenaSnapshot(snapshotFrom(input)) : parseArenaSnapshot(input);
-    if (!parsed.ok) warnOnce("an arena snapshot", parsed.error);
-    return parsed.value;
+    if (parsed.ok) return parsed.value;
+    warnOnce("an arena snapshot", parsed.error);
+    onDrop();
+    return undefined;
   }
 
   /** Hands a newer snapshot to onSnapshot and its new events to onEvent; null when it is older than the last one. */

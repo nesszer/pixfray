@@ -221,7 +221,9 @@ older than 10 s).
 Clients parse every frame before using it (`src/served/parse.ts` on the overlay, `parseAdminSnapshot` in `src/parse.ts`
 on the mod page). A frame that isn't JSON or has a top-level field of the wrong type is dropped whole and the page
 keeps its last good state; a player, duel or event with a field of the wrong type is dropped from its list. Each kind
-of drop logs one `console.warn` per page load. Fields a client doesn't read pass through unchecked.
+of drop logs one `console.warn` per page load. Fields a client doesn't read pass through unchecked. A dropped snapshot
+makes the overlay fetch its own page again (at most every 30 s), so a server that sends a shape an old overlay
+can't read still reloads that overlay to the new code.
 
 Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.ts`):
 
