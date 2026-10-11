@@ -129,9 +129,8 @@ rules apply to them. `check` has no environment, so its checks run before anyone
   cache (setup-bun runs with `no-cache: true`), because `check` and CI run branch code that could write one. Only the
   SHA passes from `check` to it. That install runs the committed `package.json`'s lifecycle scripts before the token step, so a script added
   by a push from outside the editor could change the Cloudflare CLI before the upload step runs.
-- `rollback` checks out `github.sha`. The owner page always dispatches rollbacks on the base branch, so that is the
-  base branch's head. A rollback dispatched by hand from another ref would run that ref's `scripts/release.mjs` with
-  the token, so start rollbacks from the owner page.
+- `rollback` refuses to run unless it was dispatched on the base branch, then checks out `github.sha`, the base
+  branch's head. So `scripts/release.mjs` from another ref never runs with the token through a rollback.
 - Code on a `live-fix/` or `hotfix/` branch, such as a lint plugin in `.oxlintrc.json`, runs in `check` without
   secrets, so it can't reach the token. The commit that `release` deploys is still that branch's code:
   `scripts/release.mjs` and the Cloudflare CLI run from it while the token is set. The token is scoped to Workers
