@@ -2,7 +2,7 @@
 // .ts, and vite.config.js serves each as plain JavaScript under /<name>.js. OBS keeps running cached code after a
 // reload, so the build adds ?v=<hash of the served code> to every reference between them and in public/*.html, and
 // the overlay compares that hash with the page's to reload itself (src/served/overlay.js). Kept under scripts/, so
-// the owner editor can read it but never save it (server/developer.js BUILD_FILE).
+// the owner editor can read it but never save it (server/developer.ts BUILD_FILE).
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import path from "node:path";

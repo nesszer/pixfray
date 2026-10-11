@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { ChannelRoom } from "../server/channel.js";
 import { AuthStore } from "../server/auth.ts";
-import { logRoomError } from "../server/developer.js";
+import { logRoomError } from "../server/developer.ts";
 import { createInitialState, defaultConfig } from "../server/game.ts";
 import { makePng, b64 } from "./upload-helpers.mjs";
 import { effectiveStats } from "../server/upgrades.ts";

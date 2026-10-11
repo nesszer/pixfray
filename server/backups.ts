@@ -15,7 +15,7 @@ export type BackupResult =
 /** A stored day, newest first in listBackups. */
 export type BackupRow = { day: string; at: number; bytes: number };
 /**
- * A channel room's export, as stored (the owner page's download). Only the fields developer.js reads are named;
+ * A channel room's export, as stored (the owner page's download). Only the fields developer.ts reads are named;
  * the room's export code is the full shape.
  */
 export type BackupExport = {
@@ -82,7 +82,7 @@ export async function backupChannels(
       results.push({ channel, ok: false, reason: e instanceof Error ? e.message : String(e) });
     }
   }
-  const db = env.BACKUPS!; // !: worker.js scheduled() and developer.js backupsRun check env.BACKUPS first
+  const db = env.BACKUPS!; // !: worker.js scheduled() and developer.ts backupsRun check env.BACKUPS first
   await db.batch([
     db.prepare(SCHEMA),
     db.prepare("DELETE FROM backups WHERE day < ?").bind(backupDay(at - BACKUP_DAYS * DAY_MS)),

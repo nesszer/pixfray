@@ -12,7 +12,7 @@ import {
   touchBroadcaster,
   markModsConnected,
 } from "./auth.ts";
-import { handleDeveloper, logWorkerError } from "./developer.js";
+import { handleDeveloper, logWorkerError } from "./developer.ts";
 import { backupChannels } from "./backups.ts";
 import { handleUploads } from "./uploads.ts";
 import { handlePets } from "./pets.ts";

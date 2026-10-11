@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import worker from "../server/worker.js";
 import { digest } from "../server/auth.ts";
 import { ChannelRoom } from "../server/channel.js";
-import { validPath, usage, logRoomEvent } from "../server/developer.js";
+import { validPath, usage, logRoomEvent } from "../server/developer.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz";
 const SECRET = "test-only-internal-secret-0123456789";

@@ -13,7 +13,7 @@ import {
 } from "./game.ts";
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.ts";
 import { ensureRankLogSchema, rankBefore } from "./ranklog.ts";
-import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
+import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.ts";
 import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.ts";
 import { accountCreatedAt } from "./accounts.ts";
 import { EVENTSUB_DEDUPE_MS, claimMessage, releaseMessage } from "./dedupe.ts";

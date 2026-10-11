@@ -1,4 +1,4 @@
-// Owner page (/admin/dev/, Lane E). Owner-only page over /api/dev/* (server/developer.js). No framework.
+// Owner page (/admin/dev/, Lane E). Owner-only page over /api/dev/* (server/developer.ts). No framework.
 /** @type {(selector: string) => any} */
 const $ = (s) => document.querySelector(s);
 const S = { session: null, diag: null, config: null, configVersion: 0, fileSha: "", fileRef: "", progress: {} };
