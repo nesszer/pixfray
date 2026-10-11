@@ -189,7 +189,7 @@ const seen = new IntersectionObserver(
 );
 
 // once the visible tiles are done, fill in the rest of the page (hidden tiles wait until they are shown)
-let idleTimer: ReturnType<typeof setTimeout> | 0 = 0;
+let idleTimer: ReturnType<typeof setTimeout> = 0; // a number in the browser, so 0 means none
 function fillRest() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {

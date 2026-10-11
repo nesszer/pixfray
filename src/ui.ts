@@ -237,7 +237,7 @@ const redrawAll = () => {
 };
 // Lists rebuild their canvases on every render; the old ones are dropped a moment later, once the new list is in
 // the page (a canvas is added here before it is attached).
-let sweep: ReturnType<typeof setTimeout> | 0 = 0;
+let sweep: ReturnType<typeof setTimeout> = 0; // a number in the browser, so 0 means none
 function onRedraw(canvas: Element, draw: () => void) {
   redraws.set(draw, canvas);
   if (!sweep)
