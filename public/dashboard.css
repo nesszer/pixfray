@@ -1385,7 +1385,7 @@ html:has(.config-bar.dirty) {
 
 @media (max-width: 900px) {
   /* narrow screens: the preview card sticks to the top of the screen as a compact bar while you pick in the tabs
-     below it, so the fighter and Save are always in view (dashboard.js keeps scroll-padding-top clear of it) */
+     below it, so the fighter and Save are always in view (dashboard.ts keeps scroll-padding-top clear of it) */
   /* :has() matches the wide /start rule's specificity, so the sign-in card also stacks */
   .hero-grid,
   .hero-grid:has(.signup-card) {
@@ -2850,7 +2850,7 @@ body:has(#gate:not([hidden])) .gate {
   }
 }
 
-/* round 7: voxel thumbnails on the picker tiles (src/voxthumb.js); the flat sprite shows until one is drawn */
+/* round 7: voxel thumbnails on the picker tiles (src/voxthumb.ts); the flat sprite shows until one is drawn */
 .thumb {
   display: grid;
   place-items: center;
@@ -3282,7 +3282,7 @@ body:has(#gate:not([hidden])) .gate {
 }
 
 /* ---------- round 10 ---------- */
-/* phones: once you scroll into the picker the stuck preview becomes a short strip (dashboard.js compactPreview) */
+/* phones: once you scroll into the picker the stuck preview becomes a short strip (dashboard.ts compactPreview) */
 @media (max-width: 900px) {
   html.compact .hero-card.has-3d .showcase {
     height: 148px;
@@ -3412,7 +3412,7 @@ body:has(#gate:not([hidden])) .gate {
 
 /* ---------- round 11 ---------- */
 @media (max-width: 900px) {
-  /* the Save bar steps aside while scrolling down and on Ranks and Rules (dashboard.js tuckSaveBar) */
+  /* the Save bar steps aside while scrolling down and on Ranks and Rules (dashboard.ts tuckSaveBar) */
   html.bar-away .hero-card.has-3d .toolbar {
     transform: translateY(110%);
   }
@@ -4390,7 +4390,7 @@ main.page:has(> .ready:last-child) {
 }
 @media (max-width: 900px) {
   /* phones: the flat on-stream view rides over the 3D stage instead of taking a row. Only its "Preview a win" chip shows;
-     the on-stream strip slides up along the stage's bottom while the win plays (dashboard.js sets .is-playing) */
+     the on-stream strip slides up along the stage's bottom while the win plays (dashboard.ts sets .is-playing) */
   .hero-card.has-3d .preview {
     grid-area: show;
     align-self: stretch;
@@ -4887,7 +4887,7 @@ body:has(.hero-card.has-3d) .site-foot {
   margin-top: 0;
 }
 
-/* ---------- round 28: the intro's camera moves on every page, as baked stills scrubbed by scroll (src/scrub.js) ---------- */
+/* ---------- round 28: the intro's camera moves on every page, as baked stills scrubbed by scroll (src/scrub.ts) ---------- */
 /* the backdrop: the camera pulls back from the floating islets as the page scrolls; the old still stays until it loads */
 .scene-sky {
   position: fixed;
