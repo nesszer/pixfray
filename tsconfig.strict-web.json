@@ -1,0 +1,15 @@
+// Strict TypeScript for browser code (src/, and types/dom.ts once it lands): DOM types, no Worker or Node types.
+// Every ported browser .ts file is listed here, one entry per file; Worker, script and shared files go in
+// tsconfig.strict.json. scripts/port-check.ts fails a branch that changes a .ts file missing from both lists.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": ["vite/client"],
+    "checkJs": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "files": ["types/lib-guards.ts", "types/site.ts", "site.config.js"]
+}
