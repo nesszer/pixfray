@@ -126,7 +126,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(
       for (const [p, v] of Object.entries(value)) node.style.setProperty(p, v as string); // style values are strings
     else if (key.startsWith("on") && typeof value === "function")
       node.addEventListener(key.slice(2), value as EventListener); // on* attrs are event handlers
-    else if (key in node && typeof value !== "string") (node as unknown as Record<string, unknown>)[key] = value; // key in node: an own property of this element
+    else if (key in node && typeof value !== "string") (node as unknown as Record<string, unknown>)[key] = value; // key in node: a property this element has (own or inherited, like value or checked)
     else node.setAttribute(key, value === true ? "" : String(value));
   }
   for (const child of children.flat(Infinity))

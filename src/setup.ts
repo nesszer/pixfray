@@ -17,7 +17,7 @@ function update() {
 size.addEventListener("input", update);
 // element types from the page HTML
 (document.querySelector("#copy") as HTMLButtonElement).addEventListener("click", async () => {
-  const input = document.querySelector("#obs-url") as HTMLInputElement;
+  const input = document.querySelector("#obs-url") as HTMLInputElement; // element type from the page HTML
   const status = document.querySelector("#copy-status") as HTMLParagraphElement; // element type from the page HTML
   try {
     await navigator.clipboard.writeText(input.value);
