@@ -6,7 +6,7 @@ import type { Sealed } from "./auth.ts";
 import type { Env } from "./env.ts";
 import { isObject, parseEventsubEnvelope } from "./parse.ts";
 import type { JsonObject } from "./parse.ts";
-import type { ChatEvent } from "./model.ts";
+import type { ChatEvent, SendResult } from "./model.ts";
 
 /** The bot's reply lines for one command, handed to deps.sendChat after the 204. */
 export type BotChat = { channel: string; broadcasterId: string; senderId: string; messages: string[]; replyTo: string };
@@ -49,8 +49,6 @@ export type ChatLine = {
   replyTo?: string;
   sleep?: (ms: number) => Promise<unknown>;
 };
-/** Whether Twitch posted a line, and its drop_reason code (or the error) when it didn't. */
-export type SendResult = { sent: boolean; reason: string };
 export const EVENTSUB_PATH = "/api/eventsub";
 export const MAX_EVENTSUB_BYTES = 64 * 1024;
 export const RECONNECT_URL = "/auth/login?connect=1";

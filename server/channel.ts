@@ -91,7 +91,7 @@ import {
   parseSeAdmin,
 } from "./parse.ts";
 import type { ProfileInput } from "./parse.ts";
-import type { SendResult } from "./eventsub.ts";
+import type { SendResult } from "./model.ts";
 import type { SpriteRow } from "./sprites.ts";
 import type { CatalogEntry } from "./uploads.ts";
 import type { CosmeticKind } from "./cosmetics.ts";
