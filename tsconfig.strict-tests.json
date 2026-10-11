@@ -1,4 +1,6 @@
-// Strict TypeScript for unit tests that import a DOM module (src/served/overlay.ts) and Node, but no Worker module.
+// Strict TypeScript for Node code that needs DOM types but imports no Worker module: unit tests of a DOM module
+// (src/served/overlay.ts), and Playwright tests and scripts whose page callbacks run in the browser. Node-only scripts
+// that use Buffer's methods (the character build) live here too: the Worker types in tsconfig.strict.json hide them.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -15,6 +17,12 @@
     "site.config.js",
     "types/dom.ts",
     "tests/overlay.test.ts",
-    "tests/served.test.ts"
+    "tests/served.test.ts",
+    "tests/dev-ui.ts",
+    "scripts/og-image.ts",
+    "scripts/lib/zip-read.ts",
+    "scripts/lib/png-io.ts",
+    "scripts/build-characters.ts",
+    "scripts/live-chat-e2e.ts"
   ]
 }

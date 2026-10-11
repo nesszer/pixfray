@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installed by `bun install` (scripts/install-hooks.mjs). Skip once with `git commit --no-verify`.
+# Installed by `bun install` (scripts/install-hooks.ts). Skip once with `git commit --no-verify`.
 set -e
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "pre-commit: gitleaks is not installed. Install it (https://github.com/gitleaks/gitleaks#installing," >&2

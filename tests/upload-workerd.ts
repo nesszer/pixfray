@@ -1,11 +1,13 @@
 // Lane D end-to-end check on the real Workers runtime (workerd via Miniflare), using the built bundle.
 // It exercises worker.ts -> uploads.ts -> ChannelRoom SQLite storage with test-only secrets (never .dev.vars).
-// Run after `bunx cf build`:  node tests/upload-workerd.mjs
+// Run after `bunx cf build`:  node tests/upload-workerd.ts
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { makePng, b64 } from "./upload-helpers.ts";
+import type { URL as NodeURL } from "node:url";
+import type { Loose } from "./fakes.ts";
 
 const root = new URL("../", import.meta.url);
 const ORIGIN = "http://localhost",
@@ -32,7 +34,8 @@ const mf = new Miniflare(
       ASSETS: async (req) => {
         const path = new URL(req.url).pathname;
         try {
-          return new Response(await readFile(new URL("public" + path, root)), {
+          // as: the Workers URL type and Node's differ only in iterator helpers; readFile takes this URL at runtime
+          return new Response(await readFile(new URL("public" + path, root) as NodeURL), {
             headers: { "Content-Type": path.endsWith(".json") ? "application/json" : "application/octet-stream" },
           });
         } catch {
@@ -44,7 +47,7 @@ const mf = new Miniflare(
 );
 
 let passed = 0;
-const check = (name, fn) =>
+const check = (name: string, fn: () => Promise<void>) =>
   fn().then(() => {
     passed++;
     console.log("ok - " + name);
@@ -55,7 +58,7 @@ try {
   const stub = auth.get(auth.idFromName("auth"));
   const cookieValue = "a".repeat(64),
     expires = Date.now() + 3600000;
-  const put = (key, value) =>
+  const put = (key: string, value: unknown) =>
     stub.fetch("https://auth/entry?key=" + encodeURIComponent(key), {
       method: "POST",
       headers: { "X-Mini-Internal": "test-only-internal-secret-not-real", "Content-Type": "application/json" },
@@ -71,7 +74,7 @@ try {
     200,
   );
   const cookie = "mini_session=" + cookieValue;
-  const call = (path, method = "GET", data, extra = {}) =>
+  const call = (path: string, method = "GET", data?: unknown, extra: Record<string, string> = {}) =>
     mf.dispatchFetch(ORIGIN + path, {
       method,
       headers: {
@@ -79,10 +82,11 @@ try {
         ...(method !== "GET" ? { Origin: ORIGIN, "Content-Type": "application/json" } : {}),
         ...extra,
       },
-      body: data === undefined ? undefined : JSON.stringify(data),
+      // as: undici reads an undefined body as none; miniflare's RequestInit type leaves undefined out
+      body: (data === undefined ? undefined : JSON.stringify(data)) as string,
     });
-  const strip = (n) => Array.from({ length: n }, (_, i) => ({ x: i * 64, y: 0, w: 64, h: 64 }));
-  const upload = (label, atlas = b64(makePng(256, 64)), extra = {}) =>
+  const strip = (n: number) => Array.from({ length: n }, (_, i) => ({ x: i * 64, y: 0, w: 64, h: 64 }));
+  const upload = (label: string, atlas = b64(makePng(256, 64)), extra: Record<string, string> = {}) =>
     call(
       "/api/assets/nesszerra",
       "POST",
@@ -91,11 +95,11 @@ try {
     );
   const bulk = { Authorization: "Bearer " + DEV }; // dev-token calls aren't counted by the 30-writes-a-minute limit, so the 25-character test can upload in bulk
 
-  let firstId;
+  let firstId: string | undefined;
   await check("a valid PNG upload is stored and served back byte-for-byte", async () => {
     const png = makePng(256, 64);
     const r = await upload("Night Knight", b64(png));
-    const body = await r.json();
+    const body = (await r.json()) as Loose; // as Loose: the upload reply, read by field below; miniflare types it unknown
     assert.equal(r.status, 201, JSON.stringify(body));
     firstId = body.item.id;
     const got = await mf.dispatchFetch(ORIGIN + "/api/assets/nesszerra/" + firstId); // public, no cookie
@@ -104,7 +108,8 @@ try {
     assert.deepEqual(Buffer.from(await got.arrayBuffer()), png);
   });
   await check("the merged catalog lists the custom character and profiles can pick it", async () => {
-    const cat = await (await call("/api/catalog/nesszerra")).json();
+    // as: the catalog body is a list of entries, of which the test reads id and custom; miniflare types it unknown
+    const cat = (await (await call("/api/catalog/nesszerra")).json()) as { id: string; custom?: boolean }[];
     assert.ok(
       cat.some((c) => c.id === "toon-ranger"),
       "static roster present",
@@ -138,18 +143,21 @@ try {
       animations: { attack: [{ x: 0, y: 0, w: 10, h: 10 }] },
     });
     assert.equal(many.status, 400);
-    assert.equal((await many.json()).reason, "too_many_frames");
+    // as Loose: a refusal body, read by field; miniflare types it unknown
+    assert.equal(((await many.json()) as Loose).reason, "too_many_frames");
   });
   await check("the 25th character is refused, a delete frees a slot", async () => {
     for (let i = 2; i <= 24; i++) assert.equal((await upload("Knight " + i, undefined, bulk)).status, 201);
     const extra = await upload("Knight 25", undefined, bulk);
     assert.equal(extra.status, 409);
-    assert.equal((await extra.json()).reason, "custom_limit_reached");
-    const admin = await (await call("/api/admin/nesszerra")).json();
+    // as Loose: a refusal body, as above
+    assert.equal(((await extra.json()) as Loose).reason, "custom_limit_reached");
+    const admin = (await (await call("/api/admin/nesszerra")).json()) as Loose; // as Loose: the admin body, read by field
     assert.equal(admin.customUsage.count, 24);
     const del = await call("/api/assets/nesszerra/" + firstId, "DELETE", undefined, bulk);
     assert.equal(del.status, 200);
-    assert.equal((await del.json()).usage.count, 23);
+    // as Loose: the delete reply, read by field
+    assert.equal(((await del.json()) as Loose).usage.count, 23);
     assert.equal((await upload("Knight 25", undefined, bulk)).status, 201);
   });
   await check("the 31st write in a minute is refused with 429 and Retry-After, reads still work", async () => {
@@ -172,7 +180,7 @@ try {
       defaultAbility: "heavy",
     });
     assert.equal(refused.status, 429);
-    const body = await refused.json();
+    const body = (await refused.json()) as Loose; // as Loose: the refusal body, read by field below
     assert.equal(body.reason, "rate_limited");
     assert.equal(refused.headers.get("retry-after"), String(body.retryAfter));
     assert.equal((await call("/api/profile/nesszerra")).status, 200, "a read is not counted");

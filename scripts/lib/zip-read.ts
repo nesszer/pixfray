@@ -1,7 +1,11 @@
 // Minimal in-memory ZIP reader (stored + deflate entries) so the character build needs no unzip tool or npm package.
 import zlib from "node:zlib";
 
-export function readZip(buffer) {
+type Entry = { name: string; method: number; csize: number; offset: number };
+// The archive as readZip returns it: entry names, a membership test and a reader that inflates one entry.
+export type Zip = { names: () => string[]; has: (name: string) => boolean; read(name: string): Buffer };
+
+export function readZip(buffer: Buffer): Zip {
   let eocd = -1;
   for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65558); i--) {
     if (buffer.readUInt32LE(i) === 0x06054b50) {
@@ -12,7 +16,7 @@ export function readZip(buffer) {
   if (eocd < 0) throw new Error("not a ZIP file (no end-of-central-directory record)");
   const count = buffer.readUInt16LE(eocd + 10);
   let p = buffer.readUInt32LE(eocd + 16);
-  const entries = new Map();
+  const entries = new Map<string, Entry>();
   for (let n = 0; n < count; n++) {
     if (buffer.readUInt32LE(p) !== 0x02014b50) throw new Error("bad central directory");
     const flags = buffer.readUInt16LE(p + 8);
@@ -29,8 +33,8 @@ export function readZip(buffer) {
   }
   return {
     names: () => [...entries.keys()],
-    has: (name) => entries.has(name),
-    read(name) {
+    has: (name: string) => entries.has(name),
+    read(name: string): Buffer {
       const e = entries.get(name);
       if (!e) throw new Error("not in archive: " + name);
       const nl = buffer.readUInt16LE(e.offset + 26),

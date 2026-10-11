@@ -1050,8 +1050,8 @@ test("code editor request validation happens before GitHub is called", async (t)
     "tsconfig.json",
     "tsconfig.strict.json",
     "types/lib-guards.d.ts",
-    "scripts/release.mjs",
-    "scripts/lib/zip-read.mjs",
+    "scripts/release.ts",
+    "scripts/lib/zip-read.ts",
   ]) {
     assert.equal(validPath(path), true, path);
     const r = await call(f, "/api/dev/code/save", "POST", { path, content: "x", branch: "live-fix/a" }, owner);

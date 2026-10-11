@@ -374,7 +374,7 @@ the `BOT_DEBUG` test site).
 `challenge` is an alias of `duel`, `fight` is an alias of `accept`, and duel needs a target. `attack` uses the player's
 `defaultAbility`. The optional target is allowed on every command. `rematch` ignores it and challenges the opponent of the sender's last finished duel (`lastOpponentId` on the player, saved as `profiles.last_opponent`), with the same rules as a challenge; with no such duel the reason is `no_previous_opponent`. A rematch answered by `!rematch` is a mutual challenge, so the duel starts. If someone has challenged the sender and is waiting for an answer, `!rematch` answers that challenge instead, so it works even when the challenger was not the sender's last opponent.
 
-Local testing: `cf dev` started with `MINI_LOCAL_TEST=1` (scripts/test-all.mjs does this) makes
+Local testing: `cf dev` started with `MINI_LOCAL_TEST=1` (scripts/test-all.ts does this) makes
 `connectChat` record a `local-<16 hex>` subscription without calling Twitch, only when
 `PUBLIC_ORIGIN` and the request host are loopback. `cloudflare.config.ts` refuses to build or
 deploy with that flag. Tests sign their own webhook bodies with the derived secret.
@@ -505,7 +505,7 @@ subset of fields. Versioning works like this:
 | Lane | Owns | Contract |
 |---|---|---|
 | A (backend core) | `server/worker.ts`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
-| B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.js` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
+| B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.ts` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.ts`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
 | E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.ts` | The signatures below |
 
@@ -567,7 +567,7 @@ bun run port-check         # node scripts/port-check.ts --base origin/main. Exit
                            #   tsconfig.json. For each strict config the merge base has (any of the four),
                            #   the head's resolved compilerOptions for it
                            #   (tsc --showConfig) must equal the base's; only its files list may change.
-                           # - In tests/, scripts/, cloudflare.config.ts and vite.config.js, passes a string
+                           # - In tests/, scripts/, cloudflare.config.ts and vite.config.ts, passes a string
                            #   naming a moved file's new path.
                            # - Treats public/ as served as written: its code keeps its path and stays
                            #   JavaScript, and every file there compares byte for byte.
@@ -580,27 +580,27 @@ node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrite
                                         # refuses files under public/ and never rewrites one: it lists each
                                         # line there that names a renamed file as file:line
 bun run test:unit          # node --import ./tests/register.ts --test "tests/*.test.{mjs,ts}"
-bun run test:port          # node --test tests/port/port-check.test.mjs: port-check and port-rename against fixture
+bun run test:port          # node --test tests/port/port-check.test.ts: port-check and port-rename against fixture
                            # repos in one new OS temp folder per run (the build tests run bunx cf build); not in
                            # check, for speed; CI runs it next to bun run check
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test
-node tests/build-versions.mjs   # after a build: each served module is at the output root, and every reference
+node tests/build-versions.ts   # after a build: each served module is at the output root, and every reference
                                 # between them and from public/*.html carries the same ?v=<10 lowercase hex>
 bunx cf dev                # local only; reads .dev.vars. Never deploy from a lane.
-bun run test:all           # everything below, in order (scripts/test-all.mjs)
+bun run test:all           # everything below, in order (scripts/test-all.ts)
 ```
 
-- `MINI_PORT` (default 5173) and `MINI_PERSIST` (a local state folder) are read by `vite.config.js`, so
+- `MINI_PORT` (default 5173) and `MINI_PERSIST` (a local state folder) are read by `vite.config.ts`, so
   `MINI_PORT=5199 MINI_PERSIST=.cloudflare/e2e-state bunx cf dev` runs beside another dev server.
-- `tests/seed-local.mjs` writes test-only sessions (owner 900001 nesszerra, alice_e2e, bob_e2e,
+- `tests/seed-local.ts` writes test-only sessions (owner 900001 nesszerra, alice_e2e, bob_e2e,
   carol_e2e) into that local AuthStore while no server holds it.
-- Browser tests take `MINI_BASE_URL`; `tests/e2e-local.mjs` sends signed EventSub webhooks to the
-  real Worker (it needs `MINI_AUTH_SECRET`, which scripts/test-all.mjs reads from `.dev.vars`
+- Browser tests take `MINI_BASE_URL`; `tests/e2e-local.ts` sends signed EventSub webhooks to the
+  real Worker (it needs `MINI_AUTH_SECRET`, which scripts/test-all.ts reads from `.dev.vars`
   without printing it) and drives the overlay, dashboard, admin and dev pages.
 - The overlay draws the arena only with `arena=1` (the OBS URL from the setup page adds it).
 - Served modules: `src/served/<name>.js` or `.ts` is served at `/<name>.js` as JavaScript, types stripped by
-  oxc and comments kept (`scripts/lib/served.ts`, the `served-modules` steps in `vite.config.js`); a name with
+  oxc and comments kept (`scripts/lib/served.ts`, the `served-modules` steps in `vite.config.ts`); a name with
   both a `.js` and a `.ts` source fails. `bun run dev` serves them as `text/javascript` with `Cache-Control: no-cache`
   and no version. The build writes them to the output root and rewrites each `./<name>.ts` or `./<name>.js`
   between them, and in `public/*.html`, to `./<name>.js?v=<hash>`: the first 10 hex digits of a SHA-256 over

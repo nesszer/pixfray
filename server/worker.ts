@@ -333,7 +333,7 @@ function seView(env: Env, url: URL, channel: string, se: Partial<SeSettings> | n
 }
 // Test site only: DEV_TOOLS_TOKEN is declared only by `cf deploy --mode test`, and only the test secrets file holds it
 // (cf deploy uploads every key in the file, declared or not), so production has no token to match.
-// A matching "Authorization: Bearer" acts as the owner, for scripts/devtools.mjs (docs/DEVTOOLS.md).
+// A matching "Authorization: Bearer" acts as the owner, for scripts/devtools.ts (docs/DEVTOOLS.md).
 async function devToken(request: Request, env: Env): Promise<boolean> {
   const m = /^Bearer ([A-Za-z0-9_-]{32,200})$/.exec(request.headers.get("Authorization") || "");
   if (!env.DEV_TOOLS_TOKEN || env.DEV_TOOLS_TOKEN.length < 32 || !m) return false;

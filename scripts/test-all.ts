@@ -3,21 +3,23 @@
 // Usage: bun run test:all          (MINI_PORT=5199 by default; set MINI_BASE_URL to reuse a running, seeded server
 //                                   that was started with MINI_LOCAL_TEST=1, and MINI_AUTH_SECRET to its AUTH_SECRET)
 // Nothing here deploys or talks to Twitch or a deployed site. The local `cf dev` runs with MINI_LOCAL_TEST=1, so
-// Connect chat records a local subscription, and e2e-local.mjs signs EventSub webhooks with the AUTH_SECRET from
+// Connect chat records a local subscription, and e2e-local.ts signs EventSub webhooks with the AUTH_SECRET from
 // .dev.vars. That value is passed to the e2e process environment only and is never printed.
 import { spawn, spawnSync } from "node:child_process";
+import type { ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { seed } from "../tests/seed-local.mjs";
+import { seed } from "../tests/seed-local.ts";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const port = process.env.MINI_PORT || "5199";
 const persist = ".cloudflare/e2e-state";
 const external = process.env.MINI_BASE_URL;
 const base = external || "http://127.0.0.1:" + port;
-const results = [];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function devVar(name) {
+const results: [name: string, status: string, time: string][] = [];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function devVar(name: string) {
   if (process.env["MINI_" + name]) return process.env["MINI_" + name];
   let text = "";
   try {
@@ -33,8 +35,8 @@ function devVar(name) {
     .replace(/^(["'])(.*)\1$/, "$2");
 }
 // Each test file is its own string literal, so a rename that moves it is a path change port-check can follow.
-const node = (file) => "node " + file;
-function run(name, cmd, env = {}) {
+const node = (file: string) => "node " + file;
+function run(name: string, cmd: string, env: Record<string, string | undefined> = {}) {
   const started = Date.now();
   console.log("\n=== " + name + ": " + cmd);
   const r = spawnSync(cmd, { cwd: root, shell: true, stdio: "inherit", env: { ...process.env, ...env } });
@@ -45,7 +47,7 @@ function run(name, cmd, env = {}) {
     process.exit(1);
   }
 }
-let server = null;
+let server: ChildProcessByStdio<null, Readable, Readable> | null = null;
 async function start() {
   console.log("\n=== start: bunx cf dev on " + base + " (state " + persist + ")");
   server = spawn("bunx cf dev", {
@@ -79,8 +81,8 @@ try {
   run("port-check tests", "bun run test:port");
   run("cf build", "bunx cf build");
   run("cf build (test)", "bunx cf build --mode test");
-  run("module versions", node("tests/build-versions.mjs"));
-  run("upload (workerd)", node("tests/upload-workerd.mjs"));
+  run("module versions", node("tests/build-versions.ts"));
+  run("upload (workerd)", node("tests/upload-workerd.ts"));
   if (!external) {
     await start(); // first start creates the local AuthStore, then sessions are seeded with the server stopped
     await fetch(base + "/api/session", { headers: { Cookie: "mini_session=" + "0".repeat(64) } });
@@ -91,11 +93,11 @@ try {
     await start();
   }
   const env = { MINI_BASE_URL: base };
-  run("smoke (v1 overlay)", node("tests/smoke.mjs"), env);
-  run("ui (dashboard/admin)", node("tests/ui.mjs"), env);
-  run("dev-ui (owner page)", node("tests/dev-ui.mjs"), env);
-  run("arena browser", node("tests/arena-browser.mjs"), env);
-  run("e2e local", node("tests/e2e-local.mjs"), { ...env, MINI_AUTH_SECRET: devVar("AUTH_SECRET") });
+  run("smoke (v1 overlay)", node("tests/smoke.ts"), env);
+  run("ui (dashboard/admin)", node("tests/ui.ts"), env);
+  run("dev-ui (owner page)", node("tests/dev-ui.ts"), env);
+  run("arena browser", node("tests/arena-browser.ts"), env);
+  run("e2e local", node("tests/e2e-local.ts"), { ...env, MINI_AUTH_SECRET: devVar("AUTH_SECRET") });
 } catch (error) {
   console.error(error);
   results.push(["harness", "FAIL", ""]);

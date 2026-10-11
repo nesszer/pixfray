@@ -1,8 +1,7 @@
-// Node build configs. The .mjs scripts and browser tests are linted (`bun run lint`) but not type checked: Playwright
-// callbacks would need many annotations for little gain. The .ts scripts and the unit tests are in the strict configs
-// (tsconfig.strict.json, tsconfig.strict-tests.json and tsconfig.strict-tests-shared.json).
+// Node build configs, checked with Node types. They, the scripts and all tests are TypeScript in the strict configs
+// too (tsconfig.strict.json, tsconfig.strict-tests.json and tsconfig.strict-tests-shared.json).
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "lib": ["esnext"], "types": ["node"] },
-  "include": ["vite.config.js", "cloudflare.config.ts", "types/lib-guards.ts"]
+  "include": ["vite.config.ts", "cloudflare.config.ts", "types/lib-guards.ts"]
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Release steps for .github/workflows/deploy.yml, using Cloudflare Worker versions and deployments.
-//   node scripts/release.mjs deploy   --target test|production [--percentage 1-100] [--tag T] [--message M] [--dry-run]
-//   node scripts/release.mjs rollback --target test|production [--version <uuid>] [--message M] [--dry-run]
+//   node scripts/release.ts deploy   --target test|production [--percentage 1-100] [--tag T] [--message M] [--dry-run]
+//   node scripts/release.ts rollback --target test|production [--version <uuid>] [--message M] [--dry-run]
 // Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the environment. Never prints either.
 // deploy = upload a new version (`cf workers versions create`, which builds the project), check that it
 // still has the Worker secrets, then point traffic at it (100%, or a gradual split with the current version).
@@ -10,22 +10,68 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import site from "../site.config.js";
+import type { Environment } from "../types/site.ts";
+
+/** Checked release options, as parseArgs returns them. */
+export type ReleaseOpts = {
+  command: "deploy" | "rollback";
+  target: Environment;
+  percentage: number;
+  tag: string;
+  message: string;
+  version?: string;
+  dryRun?: boolean;
+};
+// parseArgs's draft: flags arrive by name as raw strings and are checked and converted before it returns.
+type DraftOpts = {
+  command: string | undefined;
+  target?: string;
+  percentage?: string | number;
+  tag?: string;
+  message?: string;
+  version?: string;
+  dryRun?: boolean;
+  [flag: string]: unknown;
+};
+/** One traffic split of a deployment. */
+export type Split = { version_id: string; percentage: number };
+/** A Worker deployment, as the Cloudflare API lists it (only the fields read here). */
+export type Deployment = { created_on?: string; versions?: Split[] };
+/** A Worker version, as the Cloudflare API lists it (only the fields read here). */
+export type Version = { id: string; metadata?: { created_on?: string }; annotations?: Record<string, string> };
+/** One version's detail: its bindings, which include the secrets. */
+export type VersionDetail = { resources?: { bindings?: { name: string; type?: string }[] } };
+/** What api() passes to fetch. */
+export type ApiInit = { method?: string; body?: string };
+export type FetchLike = (url: string, init: ApiInit & { headers: Record<string, string> }) => Promise<Response>;
+/** The Cloudflare credentials api() reads. */
+export type ApiEnv = { CLOUDFLARE_ACCOUNT_ID?: string | undefined; CLOUDFLARE_API_TOKEN?: string | undefined };
+/** The Cloudflare API envelope: `result` on success, `errors` on failure. */
+type Envelope<T> = { success?: boolean; errors?: { message: string }[]; result: T };
+/** Test seams for run(). */
+export type ReleaseDeps = {
+  fetch?: FetchLike;
+  upload?: (opts: ReleaseOpts) => void;
+  summary?: (lines: string[]) => void;
+};
 
 export const SCRIPTS = { production: site.workers.production, test: site.workers.test };
 export const REQUIRED_SECRETS = ["AUTH_SECRET", "INTERNAL_SECRET"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export function parseArgs(argv) {
+export function parseArgs(argv: string[]): ReleaseOpts {
   const [command, ...rest] = argv,
-    opts = { command };
+    opts: DraftOpts = { command };
   for (let i = 0; i < rest.length; i++) {
-    const k = rest[i];
+    const k = rest[i]!; // i < rest.length
     if (k === "--dry-run") opts.dryRun = true;
     else if (/^--(target|percentage|tag|message|version)$/.test(k) && i + 1 < rest.length) opts[k.slice(2)] = rest[++i];
     else throw new Error("Unknown argument: " + k);
   }
-  if (!["deploy", "rollback"].includes(command)) throw new Error("Command must be deploy or rollback");
-  if (!Object.hasOwn(SCRIPTS, opts.target)) throw new Error("--target must be test or production");
+  // a missing command (undefined) is not in the list either, so it throws
+  if (!["deploy", "rollback"].includes(command!)) throw new Error("Command must be deploy or rollback");
+  // a missing --target (undefined) is read as the key "undefined", which SCRIPTS lacks, so it throws
+  if (!Object.hasOwn(SCRIPTS, opts.target!)) throw new Error("--target must be test or production");
   opts.percentage = opts.percentage === undefined || opts.percentage === "" ? 100 : Number(opts.percentage);
   if (!Number.isInteger(opts.percentage) || opts.percentage < 1 || opts.percentage > 100)
     throw new Error("--percentage must be an integer from 1 to 100");
@@ -35,15 +81,16 @@ export function parseArgs(argv) {
   opts.message = String(opts.message || "")
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .slice(0, 100);
-  return opts;
+  return opts as ReleaseOpts; // command, target and percentage are validated above; tag and message are strings
 }
 
 // The main version of a deployment is the one carrying the most traffic.
-export const mainVersion = (deployment) =>
+export const mainVersion = (deployment: Deployment | undefined): string | null =>
   [...(deployment?.versions || [])].sort((a, b) => b.percentage - a.percentage)[0]?.version_id || null;
-const newestFirst = (list) => [...list].sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
+const newestFirst = <T extends { created_on?: unknown }>(list: T[]): T[] =>
+  [...list].sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
 
-export function findVersionByTag(versions, tag) {
+export function findVersionByTag(versions: Version[] | undefined, tag: string): string | null {
   return (
     newestFirst((versions || []).map((v) => ({ ...v, created_on: v.metadata?.created_on }))).find(
       (v) => v.annotations?.["workers/tag"] === tag,
@@ -51,7 +98,11 @@ export function findVersionByTag(versions, tag) {
   );
 }
 
-export function planDeploy(deployments, newVersion, percentage) {
+export function planDeploy(
+  deployments: Deployment[] | undefined,
+  newVersion: string,
+  percentage: number,
+): { previous: string | null; versions: Split[] } {
   const current = mainVersion(newestFirst(deployments || [])[0]);
   if (percentage === 100 || !current || current === newVersion)
     return { previous: current, versions: [{ version_id: newVersion, percentage: 100 }] };
@@ -64,7 +115,10 @@ export function planDeploy(deployments, newVersion, percentage) {
   };
 }
 
-export function planRollback(deployments, requested) {
+export function planRollback(
+  deployments: Deployment[] | undefined,
+  requested?: string,
+): { previous: string | null; target: string | null } {
   const list = newestFirst(deployments || []),
     current = mainVersion(list[0]);
   if (requested) return { previous: current, target: requested };
@@ -76,31 +130,32 @@ export function planRollback(deployments, requested) {
   return { previous: current, target };
 }
 
-export function missingSecrets(versionDetail) {
+export function missingSecrets(versionDetail: VersionDetail | null | undefined): string[] {
   const names = new Set((versionDetail?.resources?.bindings || []).map((b) => b.name));
   return REQUIRED_SECRETS.filter((n) => !names.has(n));
 }
 
-export function api(env, fetchImpl = fetch) {
+export function api(env: ApiEnv, fetchImpl: FetchLike = fetch) {
   const account = env.CLOUDFLARE_ACCOUNT_ID,
     token = env.CLOUDFLARE_API_TOKEN;
   if (!token || !/^[a-f0-9]{32}$/.test(account || ""))
     throw new Error("CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required");
-  return async (path, init = {}) => {
+  return async <T = unknown>(path: string, init: ApiInit = {}): Promise<T> => {
     const r = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${path}`, {
       ...init,
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     });
-    const data = await r.json().catch(() => null);
+    const data = await r.json<Envelope<T>>().catch(() => null);
     if (!r.ok || data?.success === false)
       throw new Error(
         `Cloudflare API ${r.status} on ${path.split("?")[0]}: ${(data?.errors || []).map((e) => e.message).join("; ") || "request failed"}`,
       );
-    return data.result;
+    // an ok answer that isn't JSON leaves data null, and this read throws, as it always has
+    return data!.result;
   };
 }
 
-function uploadVersion(opts) {
+function uploadVersion(opts: ReleaseOpts) {
   const args = [
     "cf",
     "workers",
@@ -116,17 +171,26 @@ function uploadVersion(opts) {
   if (r.status !== 0) throw new Error("cf workers versions create failed (exit " + r.status + ")");
 }
 
-function summary(lines) {
+function summary(lines: string[]) {
   console.log(lines.join("\n"));
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
 }
 
-export async function run(opts, env = process.env, deps = {}) {
+/** What run() resolves to: the deploy or rollback plan it carried out. */
+export type RunResult = {
+  previous: string | null;
+  target?: string | null;
+  versionId?: string;
+  versions?: Split[];
+};
+
+export async function run(opts: ReleaseOpts, env: ApiEnv = process.env, deps: ReleaseDeps = {}): Promise<RunResult> {
   const call = api(env, deps.fetch),
     script = SCRIPTS[opts.target],
     log = deps.summary || summary;
-  const deployments = async () => (await call(script + "/deployments")).deployments || [];
-  const deployTo = (versions, message) =>
+  const deployments = async () =>
+    (await call<{ deployments?: Deployment[] }>(script + "/deployments")).deployments || [];
+  const deployTo = (versions: Split[], message?: string) =>
     call(script + "/deployments", {
       method: "POST",
       body: JSON.stringify({
@@ -149,7 +213,7 @@ export async function run(opts, env = process.env, deps = {}) {
   }
   if (!opts.tag) throw new Error("--tag is required for deploy");
   if (!opts.dryRun) (deps.upload || uploadVersion)(opts);
-  const versions = (await call(script + "/versions")).items || [];
+  const versions = (await call<{ items?: Version[] }>(script + "/versions")).items || [];
   const versionId = findVersionByTag(versions, opts.tag);
   if (!versionId)
     throw new Error(
@@ -157,7 +221,7 @@ export async function run(opts, env = process.env, deps = {}) {
         ? "Dry run: no uploaded version is tagged " + opts.tag
         : "Uploaded version with tag " + opts.tag + " not found",
     );
-  const missing = missingSecrets(await call(script + "/versions/" + versionId));
+  const missing = missingSecrets(await call<VersionDetail>(script + "/versions/" + versionId));
   if (missing.length)
     throw new Error(
       "New version is missing secrets " +
@@ -182,7 +246,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   try {
     await run(parseArgs(process.argv.slice(2)));
   } catch (error) {
-    console.error("release: " + error.message);
+    // parseArgs, run and the API helper throw Error objects only
+    console.error("release: " + (error as Error).message);
     process.exit(1);
   }
 }

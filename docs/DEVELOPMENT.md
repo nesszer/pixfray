@@ -9,7 +9,7 @@ scripts; the tools themselves (`cf`, Vite, Playwright, the tests) run on Node.
 bun install
 ```
 
-`bun install` also points git at the hooks in `.githooks/` (`scripts/install-hooks.mjs`). Before
+`bun install` also points git at the hooks in `.githooks/` (`scripts/install-hooks.ts`). Before
 each commit they run [gitleaks](https://github.com/gitleaks/gitleaks) over the staged changes and
 `bun run check`; before each push they scan the commits being pushed for secrets. Install gitleaks
 first (`winget install Gitleaks.Gitleaks`, `brew install gitleaks`), or the hooks refuse.
@@ -48,9 +48,9 @@ bun run dev
   (the build configs) check loosely; `tsconfig.strict.json` (Worker and Node types),
   `tsconfig.strict-web.json` (DOM types), `tsconfig.strict-tests.json` (DOM and Node types) and
   `tsconfig.strict-tests-shared.json` (Worker, DOM and Node types) check every TypeScript file, the unit
-  tests included, with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. The
-  `.mjs` scripts and browser tests are linted but not type checked. In a `.js` file, add JSDoc where inference falls
-  short (`/** @param {{ … }} opts */`) rather than casting the problem away.
+  tests, browser tests, scripts and `vite.config.ts` included, with `strict`, `noUncheckedIndexedAccess` and
+  `exactOptionalPropertyTypes`. In a `.js` file, add JSDoc where inference falls short
+  (`/** @param {{ … }} opts */`) rather than casting the problem away.
 - `bun run audit` checks every installed package against the advisory database and fails on a high or
   critical one. When the fix sits behind a dependency that pins the old version, add an exact version to
   `overrides` in `package.json` (as for `sharp`) once that release is 7 days old. Before bumping a package,
@@ -68,8 +68,9 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
   Type-only imports say `import type` (`verbatimModuleSyntax`).
 - Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`) is listed in `files` in one of the four
   strict programs, split by runtime so each sees only its own globals:
-  - `tsconfig.strict.json`: the Worker (`server/`), the `.ts` scripts (`scripts/`), `site.config.js`,
-    the shared types, and the unit tests that import only Worker and shared modules (with their
+  - `tsconfig.strict.json`: the Worker (`server/`), the scripts that use no DOM or Buffer methods (`scripts/`),
+    `vite.config.ts`, `site.config.js`, the shared types, the Node-only test runners (`tests/chrome.ts`,
+    `tests/seed-local.ts`, `tests/build-versions.ts`, `tests/upload-workerd.ts`), and the unit tests that import only Worker and shared modules (with their
     helpers: `tests/fakes.ts`, `tests/register.ts` and the others). Worker and Node types, no DOM, so
     server code can't use `document` or `window`, and Web Crypto and streams keep the Workers types.
   - `tsconfig.strict-web.json`: browser code (`src/`, and `types/dom.ts`). DOM types and
@@ -77,10 +78,15 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
     into this program too, so such a module (today `server/upgrades.ts`, imported by
     `src/dashboard.ts`) must type-check with DOM types as well.
   - `tsconfig.strict-tests.json`: unit tests that import a DOM module but no Worker module
-    (`tests/overlay.test.ts`, `tests/served.test.ts`). DOM and Node types.
+    (`tests/overlay.test.ts`, `tests/served.test.ts`), and Playwright code that imports none
+    (`tests/dev-ui.ts`, `scripts/og-image.ts`, `scripts/live-chat-e2e.ts`), whose page callbacks
+    run in the browser. DOM and Node types. The character build (`scripts/build-characters.ts`,
+    `scripts/lib/png-io.ts`, `scripts/lib/zip-read.ts`) is here too: the Worker types declare `Buffer`
+    as `any`, which hides its methods in `tsconfig.strict.json`.
   - `tsconfig.strict-tests-shared.json`: unit tests that import both a Worker module and a DOM
     module (`tests/arena-client.test.ts`, `tests/atlas.test.ts`, `tests/cosmetics.test.ts`,
-    `tests/spritify.test.ts`). Worker, DOM and Node types. Keep a test file on one side where
+    `tests/spritify.test.ts`), and the browser tests that import a Worker module (`tests/smoke.ts`,
+    `tests/ui.ts`, `tests/arena-browser.ts`, `tests/e2e-local.ts`). Worker, DOM and Node types. Keep a test file on one side where
     you can: a Worker test and a DOM test in one file land here, where neither side's globals are
     kept out.
 
@@ -152,8 +158,8 @@ A port pull request changes types only, from a `port/<name>` branch:
    while a changed comment changes the hash and open overlays reload once.
 2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json` (Worker,
    scripts, unit tests of Worker modules), `tsconfig.strict-web.json` (browser code in `src/`),
-   `tsconfig.strict-tests.json` (unit tests of DOM modules) or `tsconfig.strict-tests-shared.json`
-   (unit tests that import both).
+   `tsconfig.strict-tests.json` (unit tests of DOM modules, Playwright code) or
+   `tsconfig.strict-tests-shared.json` (tests that import both).
 3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) checks every file that
    differs between the working tree and where the branch left `main`. Code files are `.js`, `.mjs`,
    `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` and `.tsx`. Run without `--base <ref>` or `--strict-list`,
@@ -175,7 +181,7 @@ A port pull request changes types only, from a `port/<name>` branch:
      path the base file would write to reach the base version of the same target, so a moved
      importer or a renamed target is not a difference, while `./b.mjs` changed to `./b.js` is.
    - Strings in code that doesn't ship. In `tests/`, `scripts/`, `cloudflare.config.ts` and
-     `vite.config.js`, a string literal naming a moved code file is read the same way, so a test
+     `vite.config.ts`, a string literal naming a moved code file is read the same way, so a test
      that reads `"src/ui.ts"` or the Worker `entrypoint: "./server/worker.ts"` passes once it names
      the new path. The base file's strings are read the same way, so a string that already named
      the new path before the port passes whether it is kept or not. Any other change in those
@@ -293,7 +299,7 @@ A port pull request changes types only, from a `port/<name>` branch:
      branch.
 
    CI runs it on every push to a `port/` branch and every pull request from one to `main`. Its
-   own tests are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of
+   own tests are `bun run test:port` (`tests/port/port-check.test.ts`), kept out of
    `bun run check` because they build small fixture repos in the OS temp folder (40-70 s on a
    32-thread machine with the six-build cap below, about 80 s on CI). Each run keeps its fixtures in
    one new `pixfray-port-check-*` folder there (about 15 MB of files, 20 MiB on disk, measured at

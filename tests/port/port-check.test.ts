@@ -22,11 +22,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import type { URL as NodeURL } from "node:url";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
-const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+// as NodeURL: the global URL type here is workers-types', but at runtime it is Node's URL, which fileURLToPath takes.
+const ROOT = fileURLToPath(new URL("../..", import.meta.url) as NodeURL);
 const SCRIPT = path.join(ROOT, "scripts", "port-check.ts");
 const RENAME = path.join(ROOT, "scripts", "port-rename.ts");
 const OXLINT = path.join(ROOT, "node_modules", "oxlint", "bin", "oxlint");
@@ -51,14 +53,14 @@ const ENV = {
 };
 
 /** A PATH without its node_modules/.bin folders. */
-function withoutPackageBins(value) {
+function withoutPackageBins(value: string): string {
   return value
     .split(path.delimiter)
     .filter((entry) => !entry.replaceAll(path.win32.sep, path.posix.sep).endsWith("/node_modules/.bin"))
     .join(path.delimiter);
 }
 
-async function git(dir, ...args) {
+async function git(dir: string, ...args: string[]): Promise<string> {
   const { stdout } = await run("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], {
     cwd: dir,
     env: ENV,
@@ -66,7 +68,10 @@ async function git(dir, ...args) {
   return stdout;
 }
 
-function write(dir, files) {
+/** Fixture files by path: text, or bytes for the encoding tests. */
+type Fixture = Record<string, string | Uint8Array>;
+
+function write(dir: string, files: Fixture): void {
   for (const [file, text] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     writeFileSync(path.join(dir, file), text);
@@ -74,12 +79,12 @@ function write(dir, files) {
 }
 
 /** Moves `file` out of the repo, next to it, so the working tree no longer has it. */
-function moveOut(dir, file) {
+function moveOut(dir: string, file: string): void {
   renameSync(path.join(dir, file), `${dir}-${file.replaceAll("/", "-")}`);
 }
 
 /** A repo with `files` committed on main and a port branch checked out, in a new temp folder or in `dir`. */
-async function repo(files, dir) {
+async function repo(files: Fixture, dir?: string): Promise<string> {
   if (dir === undefined) {
     dir = mkdtempSync(path.join(RUN, "repo-"));
     const outside = await git(dir, "rev-parse", "--show-toplevel").then(
@@ -113,12 +118,22 @@ const STRICT_OPTIONS = {
 
 /** A tsconfig.strict.json with the required options plus `options`, any other top-level keys in `more`, then `files`
  * (left out when null), as JSONC with a comment and a trailing comma. */
-function strictConfig({ files = [], options = {}, ...more }) {
+function strictConfig({
+  files = [],
+  options = {},
+  ...more
+}: {
+  files?: string[] | null;
+  options?: Record<string, unknown>;
+  extends?: string;
+  include?: string[];
+  exclude?: string[];
+}): string {
   const config = { compilerOptions: { ...STRICT_OPTIONS, ...options }, ...more, ...(files && { files }) };
   return `// Fixture: JSONC with a comment and a trailing comma.\n${JSON.stringify(config, null, 2).replace(/\n}$/, ",\n}")}\n`;
 }
 
-const strictList = (...files) => strictConfig({ files });
+const strictList = (...files: string[]) => strictConfig({ files });
 
 /** The Cloudflare Vite plugin, imported by its full URL: a build fixture has no node_modules of its own. */
 const PLUGIN = import.meta.resolve("@cloudflare/vite-plugin");
@@ -138,7 +153,7 @@ const VITE_BIN = path.join(ROOT, "node_modules", "vite", "bin", "vite.js");
  * bun.lock to pick bunx, and the dependency names in package.json, never their versions, to pick its Vite build (without
  * `vite` listed it looks for the plugin in the fixture's own node_modules). Both run from this repo's node_modules
  * through the fixture's shims (binShims), with `headCf` passed on. */
-async function buildRepo(files, headCf) {
+async function buildRepo(files: Record<string, string | Uint8Array | null>, headCf?: string): Promise<string> {
   const all = {
     "package.json": `${JSON.stringify({
       private: true,
@@ -158,7 +173,8 @@ async function buildRepo(files, headCf) {
     "public/overlay.js": "// The overlay.\nexport const overlay = 1;\n",
     ...files,
   };
-  const dir = await repo(Object.fromEntries(Object.entries(all).filter(([, text]) => text !== null)));
+  // as Fixture: the filter drops the null entries, which TypeScript does not narrow through.
+  const dir = await repo(Object.fromEntries(Object.entries(all).filter(([, text]) => text !== null)) as Fixture);
   binShims(dir, headCf);
   buildDirs.add(dir);
   return dir;
@@ -166,19 +182,19 @@ async function buildRepo(files, headCf) {
 
 /** Fixture repos from buildRepo. port-check runs two Vite builds in each, so at most BUILD_SLOTS of these run at once:
  * all 16 together took the 16 GB CI runner down, where 12 had passed. */
-const buildDirs = new Set();
+const buildDirs = new Set<string>();
 const BUILD_SLOTS = 6;
 
 /** Runs at most `count` jobs at once: `limit(job)` runs `job` once a slot is free, and frees the slot (or hands it to
  * the next waiter) when `job` settles. `limit.peak` is the most that ran at once. */
-function slotLimiter(count) {
+function slotLimiter(count: number) {
   let free = count;
   let running = 0;
   /** @type {(() => void)[]} */
-  const waiting = [];
-  const limit = async (job) => {
+  const waiting: (() => void)[] = [];
+  const limit = async <T>(job: () => Promise<T>): Promise<T> => {
     if (free > 0) free -= 1;
-    else await new Promise((resolve) => waiting.push(resolve));
+    else await new Promise<void>((resolve) => waiting.push(resolve));
     running += 1;
     limit.peak = Math.max(limit.peak, running);
     try {
@@ -201,9 +217,9 @@ const inBuildSlot = slotLimiter(BUILD_SLOTS);
  * the base checkout under .port-check/ included, so neither PATH nor a node_modules above the temp folder can swap
  * them. `headCf`, when given, is a script body that runs instead of cf at head, with `build()` running the real cf and
  * returning its exit code; the base always builds for real. */
-function binShims(dir, headCf) {
+function binShims(dir: string, headCf?: string): void {
   const bin = path.join(dir, "node_modules", ".bin");
-  const shim = (name, script) => {
+  const shim = (name: string, script: string) => {
     write(bin, {
       [name]: `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
       [`${name}.cmd`]: `@"${process.execPath}" "${script}" %*\r\n`,
@@ -229,17 +245,23 @@ function binShims(dir, headCf) {
 }
 
 /** Runs a script in `dir`. A non-zero exit rejects with an error that carries the same stdout and stderr. */
-async function node(dir, ...args) {
+/** What a script run printed, and its exit code. */
+type NodeRun = { status: number; stdout: string; stderr: string };
+
+async function node(dir: string, ...args: string[]): Promise<NodeRun> {
   return nodeWith(ENV, dir, ...args);
 }
 
-async function nodeWith(env, dir, ...args) {
+async function nodeWith(env: NodeJS.ProcessEnv, dir: string, ...args: string[]): Promise<NodeRun> {
   const start = () => run(process.execPath, args, { cwd: dir, env }).catch((error) => error);
-  const result = await (buildDirs.has(dir) ? inBuildSlot(start) : start());
+  // The output, or the rejection's error, which carries the exit code too.
+  const result: { code?: unknown; stdout: string; stderr: string } = await (buildDirs.has(dir)
+    ? inBuildSlot(start)
+    : start());
   return { status: typeof result.code === "number" ? result.code : 0, stdout: result.stdout, stderr: result.stderr };
 }
 
-const portCheck = (dir) => nodeWith(ENV, dir, SCRIPT, "--base", "main");
+const portCheck = (dir: string) => nodeWith(ENV, dir, SCRIPT, "--base", "main");
 
 describe("port-check", { concurrency: true }, () => {
   test("the fixture env drops GIT_* and node_modules/.bin from PATH, and turns off Node's compile cache", () => {
@@ -256,7 +278,7 @@ describe("port-check", { concurrency: true }, () => {
   test("the build slots never run more jobs than they hold, even after a waiter takes a freed slot", async () => {
     const limit = slotLimiter(2);
     /** @type {(() => void)[]} */
-    const finish = [];
+    const finish: (() => void)[] = [];
     const job = () => limit(() => new Promise((resolve) => finish.push(() => resolve(undefined))));
     const first = [job(), job(), job()];
     await new Promise((resolve) => setImmediate(resolve));
@@ -1077,7 +1099,10 @@ describe("port-check", { concurrency: true }, () => {
   test("a fresh base checkout is checked too: files left in its .partial folder are refused", async () => {
     const dir = await buildRepo({});
     const sha = (await git(dir, "rev-parse", "main")).trim();
-    const extra = (name) => [`.port-check/${sha}.partial/server/${name}`, "export const extra = 1;\n"];
+    const extra = (name: string): [string, string] => [
+      `.port-check/${sha}.partial/server/${name}`,
+      "export const extra = 1;\n",
+    ];
     write(dir, Object.fromEntries(["a.js", "b.js", "c.js", "d.js"].map(extra)));
     assert.deepEqual(await portCheck(dir), {
       status: 1,
@@ -1091,7 +1116,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("text whose bytes change but decode the same fails instead of passing as a renamed path, and so does a BOM", async () => {
-    const latin1 = (text) => Buffer.from(text, "latin1");
+    const latin1 = (text: string) => Buffer.from(text, "latin1");
     const dir = await repo({
       "tsconfig.strict.json": strictList("src/main.ts"),
       "src/main.js": "export const main = 1;\n",
@@ -1143,7 +1168,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   /** A head cf that builds for real, then swaps the bytes `from` for `to` in each .txt it wrote. */
-  const swapInText = (from, to) =>
+  const swapInText = (from: number[], to: number[]) =>
     [
       'import { readdirSync, readFileSync, writeFileSync } from "node:fs";',
       "const status = build();",
@@ -1162,9 +1187,9 @@ describe("port-check", { concurrency: true }, () => {
   // U+FFFD written out (valid UTF-8), and a lone byte that decodes to it (invalid UTF-8).
   const REPLACEMENT = [0xef, 0xbf, 0xbd];
   const INVALID = [0xe9];
-  const cafe = (bytes) => Buffer.from([...Buffer.from("caf"), ...bytes, 0x0a]);
+  const cafe = (bytes: number[]) => Buffer.from([...Buffer.from("caf"), ...bytes, 0x0a]);
   /** A page that loads `src`, then a line ending in `bytes`. */
-  const pageWith = (src, bytes) =>
+  const pageWith = (src: string, bytes: number[]) =>
     Buffer.from([...Buffer.from(`<script type="module" src="${src}"></script>\n`), ...cafe(bytes)]);
 
   test("build output that turns invalid UTF-8 into the same text written validly fails", async () => {
@@ -1435,7 +1460,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a long line that differs late is shown around its first difference", async () => {
-    const csp = (src) =>
+    const csp = (src: string) =>
       `  Content-Security-Policy: default-src 'self'; ${"img-src 'self' data: https://static-cdn.jtvnw.net; ".repeat(3)}connect-src 'self' ${src}\n`;
     const dir = await repo({
       "tsconfig.strict.json": strictList(),
@@ -1682,7 +1707,7 @@ describe("port-check", { concurrency: true }, () => {
   // there fails the guard test below as well as its own case.
   const NO_TURNS_OFF = ["noCheck", "noLib", "noResolve", "noStrictGenericChecks"];
   /** The names in the array literal `const <name> = [...]` in scripts/port-check.ts. */
-  const scriptList = (name) => {
+  const scriptList = (name: string) => {
     const literal = new RegExp(`\\nconst ${name} = \\[([^\\]]*)\\]`).exec(readFileSync(SCRIPT, "utf8"))?.[1] ?? "";
     return [...literal.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
   };
@@ -1804,10 +1829,10 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
-  const changedOption = (name, base, head) =>
+  const changedOption = (name: string, base: string, head: string) =>
     `tsconfig.strict.json changes ${name} from the base (base ${base}, head ${head}); a port changes only its files list`;
   /** The strict list below, extending tsconfig.base.json, with `options` added. */
-  const strictOn = (options = {}, files = ["a.ts"]) =>
+  const strictOn = (options: Record<string, unknown> = {}, files: string[] = ["a.ts"]) =>
     strictConfig({ extends: "./tsconfig.base.json", files, options });
   const optionChanges = [
     {
@@ -1866,14 +1891,14 @@ describe("port-check", { concurrency: true }, () => {
 
   test("oxlint fails // @ts-nocheck and a @ts-ignore that doesn't say why, and passes a @ts-expect-error that does", async () => {
     const folder = mkdtempSync(path.join(RUN, "lint-probe-"));
-    const probe = (name, text) => {
+    const probe = (name: string, text: string) => {
       writeFileSync(path.join(folder, name), text);
       return path.join(folder, name);
     };
     const nocheck = probe("nocheck.ts", "// @ts-nocheck\nexport const n: number = 1;\n");
     const ignore = probe("ignore.ts", "// @ts-ignore\nexport const i: number = 1;\n");
     const said = probe("said.ts", '// @ts-expect-error: the string is the point here\nexport const s: number = "1";\n');
-    const lint = (file) => node(ROOT, OXLINT, "-f", "unix", "-c", path.join(ROOT, ".oxlintrc.json"), file);
+    const lint = (file: string) => node(ROOT, OXLINT, "-f", "unix", "-c", path.join(ROOT, ".oxlintrc.json"), file);
     for (const file of [nocheck, ignore]) {
       const { status, stdout } = await lint(file);
       assert.equal(status, 1, file);
@@ -1883,12 +1908,12 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   /** An empty folder next to the repo for a link to point at, and a check that nothing was written through to it. */
-  const outside = (dir) => {
+  const outside = (dir: string) => {
     const target = `${dir}-outside`;
     mkdirSync(target);
     return { target, empty: () => assert.deepEqual(readdirSync(target), []) };
   };
-  const refused = (label) => ({
+  const refused = (label: string) => ({
     status: 1,
     stdout: [
       `the builds could not start: ${label} is a link (a symlink or junction), which port-check and the build would write through to wherever it points; make it a plain folder or move it out, and rerun`,

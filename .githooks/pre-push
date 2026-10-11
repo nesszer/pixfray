@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installed by `bun install` (scripts/install-hooks.mjs). Scans the commits being pushed for secrets, including
+# Installed by `bun install` (scripts/install-hooks.ts). Scans the commits being pushed for secrets, including
 # commits made with --no-verify. Skip once with `git push --no-verify`.
 set -e
 command -v gitleaks >/dev/null 2>&1 || { echo "pre-push: gitleaks is not installed (see .githooks/pre-commit)." >&2; exit 1; }

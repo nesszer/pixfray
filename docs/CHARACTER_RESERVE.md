@@ -4,7 +4,7 @@
 (checked 2026-10-07: `public/assets/characters.json` has 56 characters, none from this table).
 
 24 other characters, taken from this list and from the OpenGameArt packs by pzUH, were imported on
-2026-10-02 with `scripts/build-characters.mjs` (see `docs/ASSET_LICENSES.md`). Their rows were removed from the
+2026-10-02 with `scripts/build-characters.ts` (see `docs/ASSET_LICENSES.md`). Their rows were removed from the
 table below. Five more Pixel Platformer characters were imported on 2026-10-02 in v4.
 
 How each row was vetted: the official archive was downloaded from the Kenney asset page, the

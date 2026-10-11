@@ -1,9 +1,9 @@
 // Builds the v3 built-in character atlases (public/assets/<id>.png) and their entries in public/assets/characters.json
 // from the original CC0 source archives, and copies each pack's license notice byte-for-byte.
 //
-//   node scripts/build-characters.mjs --download   fetch missing archives into .asset-src/ (sha256 checked), then build
-//   node scripts/build-characters.mjs              build from archives already in .asset-src/ (or ASSET_SRC=<dir>)
-//   node scripts/build-characters.mjs --check      verify archive hashes only
+//   node scripts/build-characters.ts --download   fetch missing archives into .asset-src/ (sha256 checked), then build
+//   node scripts/build-characters.ts              build from archives already in .asset-src/ (or ASSET_SRC=<dir>)
+//   node scripts/build-characters.ts --check      verify archive hashes only
 //
 // Needs only Node (zlib/crypto/fs); the PNG and ZIP handling lives in scripts/lib/. Re-running is deterministic: the
 // same archives always produce the same PNG bytes and the same JSON. The 15 launch characters (Kenney Platformer
@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { readZip } from "./lib/zip-read.mjs";
+import { readZip } from "./lib/zip-read.ts";
 import {
   decodePng,
   encodePng,
@@ -24,7 +24,9 @@ import {
   resizeNearest,
   blank,
   blit,
-} from "./lib/png-io.mjs";
+} from "./lib/png-io.ts";
+import type { Image, Rect } from "./lib/png-io.ts";
+import type { Zip } from "./lib/zip-read.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const srcDir = path.resolve(process.env.ASSET_SRC || path.join(root, ".asset-src"));
@@ -35,7 +37,35 @@ const MAX_FRAME = 128;
 
 // ---------------------------------------------------------------- packs
 const OGA = "https://opengameart.org/sites/default/files/";
-const PACKS = {
+type PackId =
+  | "kenney-new-platformer"
+  | "kenney-pixel-platformer"
+  | "kenney-abstract-platformer"
+  | "kenney-jumper"
+  | "oga-knight"
+  | "oga-santa"
+  | "oga-ninja"
+  | "oga-adventure-girl"
+  | "oga-cat-dog"
+  | "oga-temple-run"
+  | "oga-cute-girl"
+  | "oga-jack"
+  | "oga-ninja-girl"
+  | "oga-red-hat-boy"
+  | "oga-flat-boy"
+  | "oga-robot"
+  | "oga-turtle"
+  | "oga-dino";
+// One source archive (or a single sprite sheet when `sheet` is set) and the license file copied out of it.
+type Pack = {
+  source: string;
+  file: string;
+  sha256: string;
+  url: string;
+  license?: { entry: string; out: string };
+  sheet?: { w: number; h: number };
+};
+const PACKS: Record<PackId, Pack> = {
   "kenney-new-platformer": {
     source: "https://kenney.nl/assets/new-platformer-pack",
     file: "kenney_new-platformer-pack-1.1.zip",
@@ -157,14 +187,29 @@ const PACKS = {
 
 // ---------------------------------------------------------------- characters
 // Frame names. `p(dir, name, list)` -> "dir/name (3).png"; `u(dir, name, list)` -> "dir/name__003.png".
-const p = (dir, name, list) => list.map((i) => `${dir}${name} (${i}).png`);
-const u = (dir, name, list) => list.map((i) => `${dir}${name}__${String(i).padStart(3, "0")}.png`);
-const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
-const every = (list, step, from = 0) => list.filter((_, i) => i >= from && (i - from) % step === 0);
+const p = (dir: string, name: string, list: number[]): string[] => list.map((i) => `${dir}${name} (${i}).png`);
+const u = (dir: string, name: string, list: number[]): string[] =>
+  list.map((i) => `${dir}${name}__${String(i).padStart(3, "0")}.png`);
+const range = (a: number, b: number): number[] => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+const every = (list: number[], step: number, from = 0): number[] =>
+  list.filter((_, i) => i >= from && (i - from) % step === 0);
+
+// Source file names per animation (zip entries, or "tile <n>" for a sheet).
+type Frames = { walk: string[]; idle: string[]; jump: string[]; cheer: string[]; attack?: string[]; ko?: string[] };
+// Where hats go when it isn't the top of the figure, as fractions of the cell (src/served/hats.ts).
+type Head = { top: number; left: number; right: number };
+type Character = Frames & {
+  id: string;
+  label: string;
+  pack: PackId;
+  fps: number;
+  scale: { height?: number; smooth?: number; pixel?: number };
+  head?: Head;
+};
 
 // scale: {height: px} fits the walk/idle height to px (area-average downscale), {smooth: n} integer bilinear upscale,
 // {pixel: n} integer nearest-neighbour upscale (pixel art), {} native size. Nothing may end up above 128 x 128.
-const npp = (colour, id, label) => ({
+const npp = (colour: string, id: string, label: string): Character => ({
   id,
   label,
   pack: "kenney-new-platformer",
@@ -182,7 +227,7 @@ const npp = (colour, id, label) => ({
   ],
   ko: [`Sprites/Characters/Default/character_${colour}_hit.png`],
 });
-const nppBug = (name, id, label, jump, extra = {}) => ({
+const nppBug = (name: string, id: string, label: string, jump: string, extra: Partial<Character> = {}): Character => ({
   id,
   label,
   pack: "kenney-new-platformer",
@@ -194,7 +239,7 @@ const nppBug = (name, id, label, jump, extra = {}) => ({
   cheer: [`Sprites/Enemies/Default/${name}_rest.png`, `Sprites/Enemies/Default/${jump}.png`],
   ...extra,
 });
-const pixel = (a, b, id, label) => ({
+const pixel = (a: string, b: string, id: string, label: string): Character => ({
   id,
   label,
   pack: "kenney-pixel-platformer",
@@ -205,7 +250,7 @@ const pixel = (a, b, id, label) => ({
   jump: [`Tiles/Characters/tile_${b}.png`],
   cheer: [`Tiles/Characters/tile_${a}.png`, `Tiles/Characters/tile_${b}.png`],
 });
-const blob = (colour, id, label) => {
+const blob = (colour: string, id: string, label: string): Character => {
   const d = `PNG/Players/Player ${colour}/player${colour}_`;
   return {
     id,
@@ -221,19 +266,27 @@ const blob = (colour, id, label) => {
   };
 };
 // pzUH characters are big (400-900 px) side views: scaled down to ~104 px tall. 10 fps over 10 frames = one stride per second.
-const pz = (pack, id, label, o) => ({ id, label, pack, fps: 10, scale: { height: 104 }, ...o });
+const pz = (pack: PackId, id: string, label: string, o: Frames): Character => ({
+  id,
+  label,
+  pack,
+  fps: 10,
+  scale: { height: 104 },
+  ...o,
+});
 
 // Kenney Jumper Pack: big flat-colour sprites, scaled down like the pzUH ones. Frame lists are file names without ".png".
-const jumper = (dir, id, label, o) => ({
+const jumper = (dir: string, id: string, label: string, o: Frames): Character => ({
   id,
   label,
   pack: "kenney-jumper",
   fps: 6,
   scale: { height: 104 },
-  ...Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.map((n) => `PNG/${dir}/${n}.png`)])),
+  // as: fromEntries returns a string-keyed record; it maps each frame list of o to the same key, so it is Frames again
+  ...(Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.map((n) => `PNG/${dir}/${n}.png`)])) as Frames),
 });
 
-const CHARACTERS = [
+const CHARACTERS: Character[] = [
   pz("oga-knight", "knight", "Knight", {
     walk: p("png/", "Walk", range(1, 10)),
     idle: p("png/", "Idle", every(range(1, 10), 1)),
@@ -417,8 +470,8 @@ const CHARACTERS = [
 ];
 
 // ---------------------------------------------------------------- helpers
-const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
-const archivePath = (pack) => path.join(srcDir, PACKS[pack].file);
+const sha256 = (buf: Buffer): string => crypto.createHash("sha256").update(buf).digest("hex");
+const archivePath = (pack: PackId): string => path.join(srcDir, PACKS[pack].file);
 
 async function download() {
   fs.mkdirSync(srcDir, { recursive: true });
@@ -432,8 +485,11 @@ async function download() {
   }
 }
 
-const archives = new Map();
-function archive(pack) {
+// A pack's opened source: a ZIP archive, or a sprite sheet cut into tiles.
+type Sheet = { tile: (n: number) => Image };
+type Archive = Zip | Sheet;
+const archives = new Map<PackId, Archive>();
+function archive(pack: PackId): Archive {
   if (!archives.has(pack)) {
     const file = archivePath(pack);
     if (!fs.existsSync(file)) throw new Error("missing " + file + " (run with --download)");
@@ -445,36 +501,69 @@ function archive(pack) {
       const { w, h } = PACKS[pack].sheet,
         img = decodePng(buf);
       archives.set(pack, {
-        tile: (n) => crop(img, { x: (n % (img.width / w)) * w, y: Math.floor(n / (img.width / w)) * h, w, h }),
+        tile: (n: number) => crop(img, { x: (n % (img.width / w)) * w, y: Math.floor(n / (img.width / w)) * h, w, h }),
       });
     } else archives.set(pack, readZip(buf));
   }
-  return archives.get(pack);
+  return archives.get(pack)!; // !: set just above when it was missing
 }
 
-function loadFrame(pack, name) {
+// One source frame: its canvas size, the bounds of its opaque pixels and the decoded image.
+type Frame = { name: string; canvas: { w: number; h: number }; box: Rect; img: Image };
+function loadFrame(pack: PackId, name: string): Frame {
   const tile = /^tile (\d+)$/.exec(name);
-  const img = tile && PACKS[pack].sheet ? archive(pack).tile(Number(tile[1])) : decodePng(archive(pack).read(name));
+  // as: archive() opens a pack with a sheet as a Sheet and every other pack as a Zip (next line too)
+  const img =
+    tile && PACKS[pack].sheet
+      ? (archive(pack) as Sheet).tile(Number(tile[1])) // as Sheet: a pack with a sheet opens as a Sheet
+      : decodePng((archive(pack) as Zip).read(name)); // as Zip: every other pack opens as a Zip
   const box = alphaBounds(img);
   if (!box) throw new Error(pack + ": " + name + " is empty");
   return { name, canvas: { w: img.width, h: img.height }, box, img };
 }
 
 // ---------------------------------------------------------------- atlas
-function buildCharacter(c) {
-  const order = []; // unique source files, in atlas order
-  for (const r of ["walk", "idle", "jump", "attack", "ko", "cheer"])
+type Animations = {
+  idle: Rect[];
+  walk?: Rect[];
+  jump?: Rect[];
+  cheer?: Rect[];
+  attack?: Rect[];
+  ko?: Rect[];
+};
+// One entry of public/assets/characters.json.
+type CatalogEntry = {
+  id: string;
+  label: string;
+  url: string;
+  frames: Rect[];
+  fps: number;
+  animations: Animations;
+  anchor: { x: number; y: number };
+  license: string;
+  source: string;
+  head?: Head;
+  combatFallback?: string;
+};
+
+function buildCharacter(c: Character): { entry: CatalogEntry; png: Buffer; cell: string; frames: number } {
+  const order: string[] = []; // unique source files, in atlas order
+  // as const: the animation keys of Character, so c[r] is a frame list
+  for (const r of ["walk", "idle", "jump", "attack", "ko", "cheer"] as const)
     for (const f of c[r] || []) if (!order.includes(f)) order.push(f);
-  const frames = new Map(order.map((f) => [f, loadFrame(c.pack, f)]));
-  const base = [...c.walk, ...c.idle].map((f) => frames.get(f));
+  const frames = new Map<string, Frame>(order.map((f) => [f, loadFrame(c.pack, f)]));
+  // !: order holds every walk and idle file and frames has an entry for each; walk is never empty, so base[0] exists
+  // (the base[0]! reads in the next lines rely on that too)
+  const base = [...c.walk, ...c.idle].map((f) => frames.get(f)!);
   // Walk and idle frames that share a canvas keep the body on one column (no sway); other frames centre on their own bounds.
-  const sameCanvas = base.every((f) => f.canvas.w === base[0].canvas.w && f.canvas.h === base[0].canvas.h);
+  const sameCanvas = base.every((f) => f.canvas.w === base[0]!.canvas.w && f.canvas.h === base[0]!.canvas.h);
   const cx = sameCanvas
     ? (Math.min(...base.map((f) => f.box.x)) + Math.max(...base.map((f) => f.box.x + f.box.w))) / 2
     : 0;
-  const anchored = (f) => sameCanvas && f.canvas.w === base[0].canvas.w && f.canvas.h === base[0].canvas.h;
-  const left = (f) => (anchored(f) ? cx - f.box.x : f.box.w / 2),
-    right = (f) => (anchored(f) ? f.box.x + f.box.w - cx : f.box.w / 2);
+  // !: base[0] exists, as above
+  const anchored = (f: Frame) => sameCanvas && f.canvas.w === base[0]!.canvas.w && f.canvas.h === base[0]!.canvas.h;
+  const left = (f: Frame) => (anchored(f) ? cx - f.box.x : f.box.w / 2),
+    right = (f: Frame) => (anchored(f) ? f.box.x + f.box.w - cx : f.box.w / 2);
 
   let scale = 1,
     mode = "area";
@@ -500,10 +589,10 @@ function buildCharacter(c) {
     ch = d.h;
   if (cw > MAX_FRAME || ch > MAX_FRAME) throw new Error(c.id + ": cell " + cw + "x" + ch + " exceeds " + MAX_FRAME);
 
-  const cells = new Map();
+  const cells = new Map<string, Rect>();
   const atlas = blank(cw * order.length, ch);
   order.forEach((name, i) => {
-    const f = frames.get(name);
+    const f = frames.get(name)!; // !: frames has an entry for every name in order
     let img = crop(f.img, f.box);
     if (mode === "pixel") img = resizeNearest(img, scale);
     else if (mode === "smooth") img = resizeBilinear(img, scale);
@@ -513,14 +602,15 @@ function buildCharacter(c) {
     blit(atlas, img, i * cw + Math.max(0, Math.min(cw - img.width, dx)), ch - img.height);
     cells.set(name, { x: i * cw, y: 0, w: cw, h: ch });
   });
-  const rects = (list) => list.map((f) => ({ ...cells.get(f) }));
-  const animations = { idle: rects(c.idle) };
+  // !: every file in order has a cell
+  const rects = (list: string[]): Rect[] => list.map((f) => ({ ...cells.get(f)! }));
+  const animations: Animations = { idle: rects(c.idle) };
   animations.walk = rects(c.walk);
   animations.jump = rects(c.jump);
   animations.cheer = rects(c.cheer);
   if (c.attack) animations.attack = rects(c.attack);
   if (c.ko) animations.ko = rects(c.ko);
-  const entry = {
+  const entry: CatalogEntry = {
     id: c.id,
     label: c.label,
     url: "/assets/" + c.id + ".png",
@@ -540,7 +630,7 @@ function buildCharacter(c) {
 if (args.has("--download")) await download();
 if (args.has("--check")) {
   for (const [name, pack] of Object.entries(PACKS)) {
-    const file = archivePath(name);
+    const file = archivePath(name as PackId); // as: Object.entries types keys as string; these are PACKS' own keys
     console.log(
       (fs.existsSync(file) ? sha256(fs.readFileSync(file)) : "missing".padEnd(64)) +
         "  " +
@@ -555,13 +645,13 @@ if (args.has("--check")) {
   process.exit(0);
 }
 
-const seen = new Set();
+const seen = new Set<string>();
 for (const c of CHARACTERS) {
   if (seen.has(c.id)) throw new Error("duplicate id " + c.id);
   seen.add(c.id);
 }
-const existing = JSON.parse(fs.readFileSync(catalogFile, "utf8")).filter((e) => !seen.has(e.id));
-const built = [];
+const existing = JSON.parse(fs.readFileSync(catalogFile, "utf8")).filter((e: { id: string }) => !seen.has(e.id));
+const built: CatalogEntry[] = [];
 for (const c of CHARACTERS) {
   const r = buildCharacter(c);
   fs.writeFileSync(path.join(outDir, c.id + ".png"), r.png);
@@ -580,7 +670,7 @@ fs.writeFileSync(catalogFile, JSON.stringify([...existing, ...built], null, 2) +
 for (const name of new Set(CHARACTERS.map((c) => c.pack))) {
   const lic = PACKS[name].license;
   if (!lic) continue;
-  const text = archive(name).read(lic.entry);
+  const text = (archive(name) as Zip).read(lic.entry); // as: a pack with a license file is a ZIP archive, not a sheet
   const target = path.join(outDir, lic.out);
   if (!fs.existsSync(target) || !fs.readFileSync(target).equals(text)) fs.writeFileSync(target, text);
 }

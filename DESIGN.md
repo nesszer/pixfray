@@ -135,5 +135,5 @@ Each of these came back in a review round. Check for them by name.
 ## 11. Changing this file
 
 A rule earns its place when a review keeps catching the same problem. Put the fix in the narrowest place: a class
-or token in `dashboard.css` for mechanics, a check in `tests/ui.mjs` for anything testable, and prose here for
+or token in `dashboard.css` for mechanics, a check in `tests/ui.ts` for anything testable, and prose here for
 judgment. Recheck the affected pages at both widths after the change.

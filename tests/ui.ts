@@ -1,24 +1,29 @@
 // Lane B UI test: viewer dashboard ("/") and mod controls ("/admin/") at 1280px and 390px.
 // Signed-out runs against the real local server (`bunx cf dev` / vite); signed-in states stub /api/* with page.route.
-// Usage: MINI_BASE_URL=http://127.0.0.1:5193 node tests/ui.mjs
-import { chromeOptions } from "./chrome.mjs";
+// Usage: MINI_BASE_URL=http://127.0.0.1:5193 node tests/ui.ts
+import { chromeOptions } from "./chrome.ts";
 import { chromium } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import assert from "node:assert/strict";
 import { enforceCsp } from "./csp-helper.ts";
 import { makePng } from "./upload-helpers.ts";
+import type { Loose } from "./fakes.ts";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const shots = fileURLToPath(new URL("../screenshots", import.meta.url));
 fs.mkdirSync(shots, { recursive: true });
 const browser = await chromium.launch(chromeOptions());
-const errors = [];
-const sizes = [
+const errors: string[] = [];
+// The init script's WebSocket stub keeps each socket the page opens on window.__sockets (not in lib.dom).
+type StubWindow = { __sockets: { url: string }[] };
+type Size = { name: string; width: number; height: number };
+const sizes: [Size, Size] = [
   { name: "1280", width: 1280, height: 900 },
   { name: "390", width: 390, height: 844 },
 ];
 const now = Date.now();
-const json = (route, data, status = 200) =>
+const json = (route: Route, data: unknown, status = 200) =>
   route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
 const user = { id: "1001", login: "viewer_one", displayName: "Viewer_One" };
 const mod = { id: "2002", login: "mod_two", displayName: "Mod_Two" };
@@ -99,7 +104,7 @@ const board = [
     losses: 2,
   },
 ];
-async function noOverflow(page, label) {
+async function noOverflow(page: Page, label: string) {
   const { sw, cw, wide } = await page.evaluate(() => ({
     sw: document.documentElement.scrollWidth,
     cw: document.documentElement.clientWidth,
@@ -107,7 +112,8 @@ async function noOverflow(page, label) {
       .filter(
         (e) =>
           e.getBoundingClientRect().right > document.documentElement.clientWidth + 1 &&
-          !e.parentElement.closest(".table-wrap"),
+          // every element under body has a parent
+          !e.parentElement!.closest(".table-wrap"),
       )
       .slice(0, 5)
       .map(
@@ -119,20 +125,22 @@ async function noOverflow(page, label) {
   }));
   assert.ok(sw <= cw + 1, label + ": horizontal overflow " + sw + " > " + cw + " from " + wide.join(", "));
 }
-async function newPage(viewport) {
+async function newPage(viewport: { width: number; height: number }) {
   const context = await browser.newContext({ viewport });
   await enforceCsp(context);
   await context.addInitScript(() => {
     // no real live socket in stubbed runs
-    window.__sockets = [];
+    // __sockets is the stub's own list (StubWindow); the class stands in for WebSocket with url, send and close only
+    (window as unknown as StubWindow).__sockets = [];
     window.WebSocket = class {
-      constructor(u) {
+      declare url: string;
+      constructor(u: string) {
         this.url = u;
-        window.__sockets.push(this);
+        (window as unknown as StubWindow).__sockets.push(this); // StubWindow: as above
       }
       send() {}
       close() {}
-    };
+    } as unknown as typeof WebSocket; // as above: a stub, not a full WebSocket
   });
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
@@ -151,15 +159,16 @@ try {
     const count = await page.locator("#characters input[name=character]").count();
     assert.ok(count >= 5, "expected at least 5 characters, got " + count);
     assert.equal(await page.locator("#save").isHidden(), true);
-    await page.waitForFunction(() => !document.querySelector("#leaderboard tbody").textContent.includes("Loading"));
+    await page.waitForFunction(() => !document.querySelector("#leaderboard tbody")!.textContent.includes("Loading")); // the page has this element
     await page.waitForFunction(() => {
-      const c = document.querySelector("#preview");
-      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const c = document.querySelector<HTMLCanvasElement>("#preview")!; // the page has this canvas
+      const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data; // a 2d canvas, so the context exists
       for (let i = 3; i < d.length; i += 4) if (d[i]) return true;
       return false;
     });
-    const session = await page.evaluate(() => fetch("/api/session").then((r) => r.json()));
-    if (session.configured === false) assert.match(await page.locator("#signin-note").textContent(), /isn't set up/);
+    // Loose: the session body, read by field below
+    const session = await page.evaluate(() => fetch("/api/session").then((r) => r.json<Loose>()));
+    if (session.configured === false) assert.match((await page.locator("#signin-note").textContent())!, /isn't set up/); // element text, never null
     else assert.equal(await page.locator("#save-signin").isVisible(), true);
     assert.equal(
       await page.locator('#who a[href^="/auth/login"]').count(),
@@ -173,11 +182,11 @@ try {
     );
     if (await page.locator("#leaderboard tr.empty").count())
       assert.match(
-        await page.locator("#leaderboard tr.empty").textContent(),
+        (await page.locator("#leaderboard tr.empty").textContent())!, // element text, never null
         /To get on the board: sign in and save your fighter.*!challenge @viewer/,
       );
     await page.locator("#char-soldier").check({ force: true });
-    assert.match(await page.locator("#preview-caption").textContent(), /Soldier/);
+    assert.match((await page.locator("#preview-caption").textContent())!, /Soldier/); // element text, never null
     // Character search and type filters.
     await page.fill("#char-search", "zomb");
     assert.equal(await page.locator("#characters .char-option:visible").count(), 1, "search finds the zombie");
@@ -210,21 +219,21 @@ try {
     await page.waitForSelector("#trail-flames", { state: "attached" });
     await page.locator("label[for=trail-flames]").click();
     assert.match(
-      await page.locator("#status-trail").textContent(),
+      (await page.locator("#status-trail").textContent())!, // element text, never null
       /Trying on Flames in the preview\. Sign in to buy it\./,
     );
     assert.equal(await page.locator("#play-win").isDisabled(), true, "no win effect or taunt yet");
     await page.locator('.jump a[href="#win-effects"]').click();
     await page.locator("label[for=effect-confetti]").click();
     assert.equal(await page.locator("#play-win").isDisabled(), false);
-    assert.match(await page.locator("#preview").getAttribute("aria-label"), /Flames trail/);
+    assert.match((await page.locator("#preview").getAttribute("aria-label"))!, /Flames trail/); // the page sets this attribute
     await page.locator("#tab-fighter").click();
     await noOverflow(page, "viewer signed-out " + s.name);
     await page.screenshot({ path: shots + "/viewer-signed-out-real-" + s.name + ".png", fullPage: true });
     await page.goto(base + "/admin/");
-    await page.waitForFunction(() => !document.querySelector("#gate-text").textContent.includes("Checking"));
+    await page.waitForFunction(() => !document.querySelector("#gate-text")!.textContent.includes("Checking")); // the page has this element
     assert.equal(await page.locator("#app").isHidden(), true);
-    assert.match(await page.locator("#gate-text").textContent(), /Sign in|isn't set up/);
+    assert.match((await page.locator("#gate-text").textContent())!, /Sign in|isn't set up/); // element text, never null
     await noOverflow(page, "admin signed-out " + s.name);
     await page.screenshot({ path: shots + "/admin-signed-out-real-" + s.name + ".png", fullPage: true });
     await context.close();
@@ -252,19 +261,20 @@ try {
     assert.equal(await page.locator("#channel-list li:visible").count(), 0, "rows filter as you type");
     const host = new URL(base).host;
     assert.ok(
-      (await page.locator("#channel-status").textContent()).startsWith(
+      // element text, never null
+      (await page.locator("#channel-status").textContent())!.startsWith(
         `some_streamer isn't on ${host} yet. Send them this link to set it up: ${host}/start`,
       ),
     );
     assert.equal(await page.locator("#channel-status a").getAttribute("href"), "/start/");
     assert.match(
-      await page.locator("#channel-status .invite-note").textContent(),
+      (await page.locator("#channel-status .invite-note").textContent())!, // element text, never null
       /run their own copy of PixFray have it on their own site/,
     );
     assert.equal(await page.locator('a[href*="some_streamer"]').count(), 0, "no link to a channel without PixFray");
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
     await page.click('#channel-status button:has-text("Copy invite link")');
-    await page.waitForFunction(() => document.querySelector("#channel-status button").textContent === "Copied");
+    await page.waitForFunction(() => document.querySelector("#channel-status button")!.textContent === "Copied"); // the page has this element
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), base + "/start/");
     await page.fill("#channel-q", "some streamer!");
     assert.equal(await page.locator("#channel-status").textContent(), "No channel with PixFray matches that name.");
@@ -277,7 +287,7 @@ try {
     assert.ok((await page.locator("#channel-list li:visible").count()) >= 2);
     await page.locator("#channel-list a", { hasText: "miolafff" }).click();
     await page.waitForSelector("#characters input[name=character]");
-    assert.match(await page.locator("#hero-title").textContent(), /miolafff/);
+    assert.match((await page.locator("#hero-title").textContent())!, /miolafff/); // element text, never null
     assert.equal(
       await page.locator(".topbar .nav-cta").getAttribute("href"),
       "/?channel=miolafff",
@@ -300,13 +310,15 @@ try {
       const real = await (await r.fetch()).json();
       return json(r, {
         ...real,
-        channels: many.map((login) => real.channels.find((c) => c.login === login) || { login, top: [] }),
+        channels: many.map(
+          (login) => real.channels.find((c: { login: string }) => c.login === login) || { login, top: [] },
+        ),
       });
     });
     await page.goto(base + "/play/");
     await page.waitForSelector("#channel-list a");
     assert.equal(await page.locator("#channel-list li:visible").count(), 8);
-    assert.match(await page.locator("#channel-status").textContent(), /find the other 4 channels/);
+    assert.match((await page.locator("#channel-status").textContent())!, /find the other 4 channels/); // element text, never null
     await page.fill("#channel-q", "streamer_9");
     assert.deepEqual(
       await page.locator("#channel-list li:visible a").evaluateAll((a) => a.map((x) => x.getAttribute("href"))),
@@ -325,7 +337,7 @@ try {
     await page.waitForSelector("#channel-list a");
     await page.fill("#channel-q", "some_streamer");
     assert.match(
-      await page.locator("#channel-status").textContent(),
+      (await page.locator("#channel-status").textContent())!, // element text, never null
       /isn't on .* yet\. This site is full right now; they can run their own copy\./,
     );
     assert.equal(await page.locator("#channel-status a").getAttribute("href"), "/start/#source");
@@ -390,12 +402,12 @@ try {
     assert.equal(await page.locator("#save-status").textContent(), "");
     await page.evaluate(() => localStorage.setItem("pixfray:signed-in", "1"));
     await page.reload();
-    await page.waitForFunction(() => /signed out/.test(document.querySelector("#save-status").textContent));
+    await page.waitForFunction(() => /signed out/.test(document.querySelector("#save-status")!.textContent)); // the page has this element
     assert.equal(await page.locator("#save-signin").textContent(), "Sign in to load your fighter");
     await page.locator("#char-soldier").check({ force: true });
     await page.locator("#save-signin").click();
-    await page.waitForFunction(() =>
-      /from before you signed in are back/.test(document.querySelector("#save-status").textContent),
+    await page.waitForFunction(
+      () => /from before you signed in are back/.test(document.querySelector("#save-status")!.textContent), // the page has this element
     );
     assert.equal(await page.locator("#char-soldier").isChecked(), true, "the pick made while signed out came back");
     assert.equal(await page.locator("#others").isHidden(), true, "a restored draft is not replaced by an offer");
@@ -410,7 +422,7 @@ try {
     );
     await page.locator("#others button").click();
     assert.equal(await page.locator("#char-player").isChecked(), true);
-    assert.match(await page.locator("#save-status").textContent(), /Copied your miolafff fighter/);
+    assert.match((await page.locator("#save-status").textContent())!, /Copied your miolafff fighter/); // element text, never null
     await noOverflow(page, "fighter offer 390");
     await page.screenshot({ path: shots + "/viewer-others-offer-390.png", fullPage: false });
     await context.close();
@@ -428,7 +440,7 @@ try {
         if (!repriced) return r.continue();
         const res = await r.fetch(),
           list = await res.json();
-        list.pets = list.pets.map((p) => (p.id === "mouse" ? { ...p, price: 11 } : p));
+        list.pets = list.pets.map((p: { id: string }) => (p.id === "mouse" ? { ...p, price: 11 } : p));
         return r.fulfill({ response: res, json: list });
       }
       bought = r.request().postDataJSON();
@@ -482,27 +494,27 @@ try {
     );
     assert.equal(await page.locator("input[name=ability]").count(), 0, "no ability picker with quick duels");
     assert.equal(await page.locator("#admin-link").isHidden(), true);
-    assert.match(await page.locator("#stat-elo").textContent(), /1012/);
-    assert.equal((await page.locator("#stat-streak").textContent()).trim(), "3");
+    assert.match((await page.locator("#stat-elo").textContent())!, /1012/); // element text, never null
+    assert.equal((await page.locator("#stat-streak").textContent())!.trim(), "3"); // element text, never null
     assert.equal(await page.locator("#stat-dollars").textContent(), "$12");
-    assert.match(await page.locator("#cmd-give").textContent(), /up to \$100 per stream, after your first 5 duels/);
+    assert.match((await page.locator("#cmd-give").textContent())!, /up to \$100 per stream, after your first 5 duels/); // element text, never null
     await page.waitForSelector("#leaderboard tr.me", { state: "attached" });
     await page.locator("label[for=char-adventurer]").click();
     await page.locator('.swatch[data-color="#34d399"]').click();
     // Builds: one free slot; the next costs $60.
-    assert.match(await page.locator("#build-list").textContent(), /Build 1\s*On stream/);
+    assert.match((await page.locator("#build-list").textContent())!, /Build 1\s*On stream/); // element text, never null
     assert.equal(
       await page.getByRole("button", { name: "Buy build slot 2 for $60" }).isDisabled(),
       true,
       "$12 is not enough for a slot",
     );
     // Hats and upgrades: 2 wins + 1 check-in point = 3 points; the crown needs 20 wins.
-    assert.match(await page.locator("#points-note").textContent(), /3 of 3 points/);
+    assert.match((await page.locator("#points-note").textContent())!, /3 of 3 points/); // element text, never null
     await page.locator("#tab-shop").click();
-    assert.match(await page.locator("#shop-note").textContent(), /^You have \$12\./);
+    assert.match((await page.locator("#shop-note").textContent())!, /^You have \$12\./); // element text, never null
     assert.equal(await page.locator("#hats .char-option:has(#hat-crown)").getAttribute("class"), "char-option locked");
     await page.locator("label[for=hat-cap]").click();
-    assert.ok((await page.locator("#upgrades-help").textContent()).includes("2 from wins and 1 from check-ins"));
+    assert.ok((await page.locator("#upgrades-help").textContent())!.includes("2 from wins and 1 from check-ins")); // element text, never null
     // Shop: hats past the wins can be bought; a pet buy needs a second click to confirm, then the pet is picked.
     const crown = page.getByRole("button", { name: /^Buy Crown hat for \$60, you need \$48 more$/ });
     assert.equal(await crown.isDisabled(), true, "$12 is not enough for the crown");
@@ -517,9 +529,13 @@ try {
     assert.equal(await page.locator(".jump a[aria-current]").textContent(), "Titles");
     assert.equal(await page.getByRole("button", { name: "Buy Iron Wall title for $15" }).isDisabled(), true);
     await page.locator("label[for=title-wall]").click();
-    assert.match(await page.locator("#save-status").textContent(), /Trying on Iron Wall\. Buy it to save this look\./);
+    assert.match(
+      // element text, never null
+      (await page.locator("#save-status").textContent())!,
+      /Trying on Iron Wall\. Buy it to save this look\./,
+    );
     await page.locator("#save").click();
-    assert.match(await page.locator("#save-status").textContent(), /Not saved: buy Iron Wall first/);
+    assert.match((await page.locator("#save-status").textContent())!, /Not saved: buy Iron Wall first/); // element text, never null
     assert.equal(posted, null);
     await page.locator("label[for=title-none]").click();
     await page.evaluate(() => scrollTo(0, 0));
@@ -532,7 +548,7 @@ try {
     assert.equal(await buyMouse.textContent(), "Confirm: spend $10");
     assert.equal(bought, null, "the first click only asks to confirm");
     await buyMouse.click();
-    await page.waitForFunction(() => /price changed/.test(document.querySelector("#pet-status").textContent));
+    await page.waitForFunction(() => /price changed/.test(document.querySelector("#pet-status")!.textContent)); // the page has this element
     assert.deepEqual(bought, { kind: "pet", id: "mouse", price: 10 });
     assert.equal(
       await page.locator("#pet-status").textContent(),
@@ -541,11 +557,11 @@ try {
     const buyMouse2 = page.getByRole("button", { name: "Buy Mouse for $11" });
     await buyMouse2.click();
     await buyMouse2.click();
-    await page.waitForFunction(() => document.querySelector("#pet-status").textContent.startsWith("Bought"));
+    await page.waitForFunction(() => document.querySelector("#pet-status")!.textContent.startsWith("Bought")); // the page has this element
     assert.deepEqual(bought, { kind: "pet", id: "mouse", price: 11 });
     assert.equal(await page.locator("#pet-mouse").isChecked(), true);
     assert.equal(await page.locator("#stat-dollars").textContent(), "$1");
-    assert.match(await page.locator("#pet-note").textContent(), /you own 1, you have \$1/);
+    assert.match((await page.locator("#pet-note").textContent())!, /you own 1, you have \$1/); // element text, never null
     assert.equal(await page.locator("#items-petcolor input").count(), 9, "eight pet colors and none");
     await page.evaluate(() => scrollTo(0, 0));
     await page.screenshot({ path: shots + "/viewer-pets-" + s.name + ".png", fullPage: true });
@@ -558,11 +574,11 @@ try {
       true,
       "no points left",
     );
-    assert.match(await page.locator("#save-status").textContent(), /unsaved/i);
+    assert.match((await page.locator("#save-status").textContent())!, /unsaved/i); // element text, never null
     if (s.name === "1280")
       await page.screenshot({ path: shots + "/viewer-signed-in-editing-1280.png", fullPage: true });
     await page.locator("#save").click();
-    await page.waitForFunction(() => document.querySelector("#save-status").textContent.startsWith("Saved"));
+    await page.waitForFunction(() => document.querySelector("#save-status")!.textContent.startsWith("Saved")); // the page has this element
     assert.deepEqual(posted, {
       avatar: "adventurer",
       color: "#34d399",
@@ -580,12 +596,12 @@ try {
       build: 0,
     }); // the saved ability is kept as is
     assert.match(
-      await page.locator("#upgrade-list").textContent(),
+      (await page.locator("#upgrade-list").textContent())!, // element text, never null
       /2 \/ 8 \+1/,
       "the mouse adds +1 power past the points",
     );
     assert.match(
-      await page.locator("#upgrade-list").textContent(),
+      (await page.locator("#upgrade-list").textContent())!, // element text, never null
       /\+12% damage dealt \(1 from your pet\)/,
       "plain numbers, pet included",
     );
@@ -599,18 +615,19 @@ try {
       const lb = page.locator("#leaderboard");
       assert.equal(await lb.locator("th.col-char").isVisible(), false, "no Character column on phones");
       assert.ok(
-        await lb.evaluate((t) => t.parentElement.scrollWidth <= t.parentElement.clientWidth + 1),
+        // the table sits in its wrap
+        await lb.evaluate((t) => t.parentElement!.scrollWidth <= t.parentElement!.clientWidth + 1),
         "leaderboard fits without sideways scrolling at " + s.name,
       );
       await page.locator("#tab-fighter").click();
       await page.locator("#upgrade-list").evaluate((n) => n.scrollIntoView({ block: "start" }));
-      const bar = await page.locator(".hero-card").boundingBox(),
-        vh = page.viewportSize().height;
+      const bar = (await page.locator(".hero-card").boundingBox())!, // the element is on the page, so it has a box
+        vh = page.viewportSize()!.height; // newPage sets a viewport
       assert.ok(
         Math.abs(bar.y) <= 1 && bar.height < vh / 2,
         "preview bar sticks to the top of the screen at " + s.name + ": " + JSON.stringify(bar),
       );
-      const up = await page.locator("#upgrade-list").boundingBox();
+      const up = (await page.locator("#upgrade-list").boundingBox())!; // the element is on the page, so it has a box
       assert.ok(up.y >= bar.y + bar.height - 1, "the picked section scrolls clear of the preview bar");
       await page.screenshot({ path: shots + "/viewer-signed-in-picking-" + s.name + ".png" });
     }
@@ -621,7 +638,7 @@ try {
   // 3b. First run: back from Twitch sign-in with no fighter, save one, then the next step until the first duel.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    let saved = null;
+    let saved: Loose = null; // Loose: the saved profile, sent back by field
     await page.route("**/api/session", (r) =>
       json(r, { user, owner: false, configured: true, channels: ["nesszerra"], productionEnabled: false }),
     );
@@ -640,7 +657,7 @@ try {
       return json(r, saved);
     });
     await page.goto(base + "/?channel=nesszerra&signed_in=1");
-    await page.waitForFunction(() => document.querySelector("#save-status").textContent.startsWith("Signed in"));
+    await page.waitForFunction(() => document.querySelector("#save-status")!.textContent.startsWith("Signed in")); // the page has this element
     assert.equal(await page.locator("#save-status").textContent(), "Signed in as Viewer_One. Pick a fighter and save.");
     assert.equal(new URL(page.url()).search, "?channel=nesszerra", "the signed_in flag is gone from the address");
     assert.equal(await page.locator("#next-step").isHidden(), true);
@@ -653,8 +670,8 @@ try {
     );
     assert.equal(await page.locator("#save-status").textContent(), "", "the next step replaces the plain saved line");
     if (s.name !== "1280") {
-      const bar = await page.locator(".hero-card").boundingBox(),
-        vh = page.viewportSize().height;
+      const bar = (await page.locator(".hero-card").boundingBox())!, // the element is on the page, so it has a box
+        vh = page.viewportSize()!.height; // newPage sets a viewport
       assert.ok(bar.height < vh / 2, "preview bar with the next step still fits at " + s.name);
     }
     await noOverflow(page, "viewer first run " + s.name);
@@ -666,7 +683,7 @@ try {
   //     Only the viewer's own approved sprite is in their character list.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    const ball = (w, h) =>
+    const ball = (w: number, h: number) =>
       makePng(w, h, {
         pixel: (x, y) =>
           (x - w / 2) ** 2 + (y - h / 2) ** 2 < (h / 3) ** 2
@@ -678,7 +695,7 @@ try {
     const spritePng = makePng(48, 64, {
       pixel: (x, y) => (x > 8 && x < 40 && y > 4 ? [220, 120, 30, 255] : [0, 0, 0, 0]),
     });
-    let sent = null,
+    let sent: Loose = null, // Loose: the posted sprite body, read by field below
       redraws = 0;
     const status = () => ({
       live: { id: "v-mine-aaaaaa", label: "Mine", url: "/api/assets/nesszerra/v-mine-aaaaaa", status: "live" },
@@ -709,7 +726,7 @@ try {
     );
     await page.route("**/api/catalog/nesszerra", async (r) => {
       const real = await (await r.fetch()).json(),
-        mine = (id, owner, label) => ({
+        mine = (id: string, owner: string, label: string) => ({
           id,
           label,
           url: "/api/assets/nesszerra/" + id,
@@ -742,38 +759,38 @@ try {
     await page.waitForSelector("#sprite-maker:not([hidden])");
     assert.equal(await page.locator("#char-v-mine-aaaaaa").count(), 1, "the viewer's own sprite is in their list");
     assert.equal(await page.locator("#char-v-other-bbbbbb").count(), 0, "another viewer's sprite is not");
-    assert.match(await page.locator("label[for=char-v-mine-aaaaaa]").textContent(), /Your sprite/);
-    assert.match(await page.locator("#sprite-current").textContent(), /Mine is approved/);
+    assert.match((await page.locator("label[for=char-v-mine-aaaaaa]").textContent())!, /Your sprite/); // element text, never null
+    assert.match((await page.locator("#sprite-current").textContent())!, /Mine is approved/); // element text, never null
     assert.equal(await page.locator("#sprite-send").isDisabled(), true);
     await page
       .locator("#sprite-file")
       .setInputFiles({ name: "my_cat.png", mimeType: "image/png", buffer: ball(300, 200) });
-    await page.waitForFunction(() => !document.querySelector("#sprite-send").disabled);
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#sprite-send")!.disabled); // the page has this element
     assert.equal(await page.locator("#sprite-name").inputValue(), "my cat");
-    assert.match(await page.locator("#sprite-size").textContent(), /^\d+ x 116 px$/);
+    assert.match((await page.locator("#sprite-size").textContent())!, /^\d+ x 116 px$/); // element text, never null
     const painted = () =>
-      page.locator("#sprite-canvas").evaluate((c) => {
-        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      page.locator("#sprite-canvas").evaluate((c: HTMLCanvasElement) => {
+        const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data; // a 2d canvas, so the context exists
         let n = 0;
         for (let i = 3; i < d.length; i += 4) if (d[i]) n++;
         return n;
       });
     assert.ok((await painted()) > 1000, "the preview shows the sprite");
     await page.locator("#sprite-ai").click();
-    await page.waitForFunction(() => document.querySelector("#sprite-status").textContent.startsWith("Redrawn"));
+    await page.waitForFunction(() => document.querySelector("#sprite-status")!.textContent.startsWith("Redrawn")); // the page has this element
     assert.equal(await page.locator("#sprite-plain").isVisible(), true);
     assert.equal(await page.locator("#sprite-ai").textContent(), "Redraw again");
-    assert.match(await page.locator("#sprite-note").textContent(), /2 AI redraws/);
+    assert.match((await page.locator("#sprite-note").textContent())!, /2 AI redraws/); // element text, never null
     await noOverflow(page, "viewer sprite maker " + s.name);
     await page.locator("#sprite-maker").scrollIntoViewIfNeeded();
     await page.locator("#sprite-maker").screenshot({ path: shots + "/viewer-sprite-maker-" + s.name + ".png" });
     await page.locator("#sprite-send").click();
-    await page.waitForFunction(() =>
-      document.querySelector("#sprite-current").textContent.includes("waiting for a mod"),
+    await page.waitForFunction(
+      () => document.querySelector("#sprite-current")!.textContent.includes("waiting for a mod"), // the page has this element
     );
-    assert.match(await page.locator("#sprite-status").textContent(), /^Sent/);
+    assert.match((await page.locator("#sprite-status").textContent())!, /^Sent/); // element text, never null
     assert.deepEqual([sent.label, sent.ai, sent.image.startsWith("iVBORw0KGgo")], ["my cat", true, true]);
-    assert.match(await page.locator("#sprite-current").textContent(), /my cat is waiting for a mod/);
+    assert.match((await page.locator("#sprite-current").textContent())!, /my cat is waiting for a mod/); // element text, never null
     assert.equal(await page.locator("#sprite-send").isDisabled(), true, "the form clears after sending");
     await context.close();
   }
@@ -791,13 +808,13 @@ try {
       json(r, { error: "PixFray is not enabled for this channel", off: "not_enabled" }, 403),
     );
     await page.goto(base + "/admin/?channel=nesszerra");
-    await page.waitForFunction(() => document.querySelector("#gate-text").textContent.includes("Only nesszerra"));
+    await page.waitForFunction(() => document.querySelector("#gate-text")!.textContent.includes("Only nesszerra")); // the page has this element
     assert.equal(await page.locator("#app").isHidden(), true);
     await page.screenshot({ path: shots + "/admin-not-mod-390.png", fullPage: true });
     // The bare page names no channel: a viewer without a channel of their own is pointed to /start.
     await page.goto(base + "/admin/");
-    await page.waitForFunction(() =>
-      document.querySelector("#gate-text").textContent.includes("PixFray isn't on for viewer_one yet"),
+    await page.waitForFunction(
+      () => document.querySelector("#gate-text")!.textContent.includes("PixFray isn't on for viewer_one yet"), // the page has this element
     );
     assert.equal(await page.locator("h1").first().textContent(), "PixFray mod controls");
     assert.equal(await page.locator('#gate-actions a[href="/start/"]').count(), 1);
@@ -815,8 +832,8 @@ try {
     await page.route("**/api/access/nesszerra", (r) => json(r, { owner: false, moderator: true, canManage: true }));
     await page.route("**/api/admin/nesszerra", (r) => json(r, { error: "room error" }, 500));
     await page.goto(base + "/admin/?channel=nesszerra");
-    await page.waitForFunction(() =>
-      document.querySelector("#gate-text").textContent.includes("Couldn't load the arena"),
+    await page.waitForFunction(
+      () => document.querySelector("#gate-text")!.textContent.includes("Couldn't load the arena"), // the page has this element
     );
     assert.equal(await page.locator("#app").isHidden(), true);
     assert.equal(await page.locator("#gate-actions button").textContent(), "Try again");
@@ -829,7 +846,7 @@ try {
       if (role === "owner" && s.name === "390") continue;
       const { context, page } = await newPage(s);
       page.on("dialog", (d) => d.accept());
-      const posts = [];
+      const posts: Loose[] = []; // Loose: the POST bodies, read by field below
       let version = 3,
         conflictNext = false,
         reconnectNext = true,
@@ -948,7 +965,7 @@ try {
           limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 24 },
         }),
       );
-      const spriteRow = (id, label, extra) => ({
+      const spriteRow = (id: string, label: string, extra: object) => ({
         id,
         userId: "3003",
         username: "top_dog",
@@ -1032,7 +1049,7 @@ try {
       });
       await page.goto(base + "/admin/");
       await page.waitForSelector("#app:not([hidden])");
-      await page.waitForFunction(() => document.querySelector("#summary-title").textContent === "Duels are live");
+      await page.waitForFunction(() => document.querySelector("#summary-title")!.textContent === "Duels are live"); // the page has this element
       assert.equal(
         await page.locator("#open-chat-setup").isHidden(),
         true,
@@ -1042,17 +1059,21 @@ try {
       assert.equal(await page.locator("#players tbody tr").count(), 4);
       assert.equal(await page.locator("#ranks tbody tr").count(), 3);
       assert.equal(await page.locator("#history tbody tr").count(), 3);
-      assert.match(await page.locator("#history tbody tr").nth(1).textContent(), /Heavy strike damage 35 HP → 30 HP/);
-      assert.match(await page.locator("#usage-title").textContent(), /1 of 24/);
+      assert.match(
+        // element text, never null
+        (await page.locator("#history tbody tr").nth(1).textContent())!,
+        /Heavy strike damage 35 HP → 30 HP/,
+      );
+      assert.match((await page.locator("#usage-title").textContent())!, /1 of 24/); // element text, never null
       assert.equal(await page.locator("#dev-open").isVisible(), role === "owner"); // on the Live tab, shown first
       assert.equal(await page.locator("#dev-link").textContent(), "Owner");
-      const liveText = await page.locator("#panel-live").textContent(),
+      const liveText = (await page.locator("#panel-live").textContent())!, // element text, never null
         headline = await page.locator("#stats, #summary-text, #meta").allTextContents();
       for (const jargon of ["state revision", "Rules version", "Live-fix"])
         assert.ok(!liveText.includes(jargon), 'no "' + jargon + '" on the Live tab');
       assert.ok(!/round/i.test(headline.join(" ")), "no global round number in the summary");
-      assert.match(await page.locator("#stats").textContent(), /Twitch chat\s*Connected/);
-      assert.match(await page.locator("#stats").textContent(), /Duels\s*On\s*accepting commands/);
+      assert.match((await page.locator("#stats").textContent())!, /Twitch chat\s*Connected/); // element text, never null
+      assert.match((await page.locator("#stats").textContent())!, /Duels\s*On\s*accepting commands/); // element text, never null
       // the summary holds at most the one primary action; the stats and then the moderation buttons follow, all inside the 1280x800 fold
       assert.equal(
         await page.locator(".summary #toggle-duels, .summary #reset-health, .summary #reset-round").count(),
@@ -1071,28 +1092,26 @@ try {
       ]);
       assert.equal(await page.locator("#moderation-title").textContent(), "Moderation");
       assert.ok(
-        await page
-          .locator(".moderation")
-          .evaluate(
-            (n) => n.getBoundingClientRect().top > document.querySelector("#stats").getBoundingClientRect().bottom,
-          ),
+        await page.locator(".moderation").evaluate(
+          (n) => n.getBoundingClientRect().top > document.querySelector("#stats")!.getBoundingClientRect().bottom, // the page has this element
+        ),
         "Moderation comes after the stats",
       );
-      assert.match(await page.locator("#meta").textContent(), /^Signed in as (the broadcaster|a moderator)\.$/);
+      assert.match((await page.locator("#meta").textContent())!, /^Signed in as (the broadcaster|a moderator)\.$/); // element text, never null
       assert.equal(await page.locator("#panel-chat").isHidden(), true, "only the Live tab shows at first");
       await page.click("#tab-chat");
       assert.equal(new URL(page.url()).hash, "#chat");
       // the OBS Browser Source link moved here from the viewer page
       assert.match(await page.locator("#obs-url").inputValue(), /\/overlay\.html\?channel=nesszerra&size=64&arena=1$/);
-      assert.match(await page.locator("#demo").getAttribute("href"), /arena=1&demo=1$/);
+      assert.match((await page.locator("#demo").getAttribute("href"))!, /arena=1&demo=1$/); // the page sets this attribute
       assert.equal(await page.locator("#se-health").isHidden(), true, "no StreamElements note before any command");
       assert.equal(await page.locator("#owner-chat").isVisible(), role === "owner");
-      assert.match(await page.locator("#chat-text").textContent(), /Last chat message/);
+      assert.match((await page.locator("#chat-text").textContent())!, /Last chat message/); // element text, never null
       assert.equal(await page.locator("#connect-chat").textContent(), "Reconnect chat");
       if (s.name === "1280") {
         // first try: Twitch says the broadcaster authorization is missing, so the page points at the reconnect link
         await page.click("#connect-chat");
-        await page.waitForFunction(() => /Reconnect Twitch/.test(document.querySelector("#chat-status").textContent));
+        await page.waitForFunction(() => /Reconnect Twitch/.test(document.querySelector("#chat-status")!.textContent)); // the page has this element
         assert.equal(
           (await page.locator('#chat-status a[href="/auth/login?connect=1"]').count()) +
             (await page.locator('#owner-chat a[href="/auth/login?connect=1"]').count()) >=
@@ -1100,14 +1119,14 @@ try {
           true,
         );
         await page.click("#connect-chat");
-        await page.waitForFunction(() => /Chat connected/.test(document.querySelector("#chat-status").textContent));
+        await page.waitForFunction(() => /Chat connected/.test(document.querySelector("#chat-status")!.textContent)); // the page has this element
         assert.deepEqual(posts.filter((p) => p.action === "connectChat").length, 2);
         await page.click("#disconnect-chat"); // dialog auto-accepted
-        await page.waitForFunction(() => /Chat disconnected/.test(document.querySelector("#chat-status").textContent));
+        await page.waitForFunction(() => /Chat disconnected/.test(document.querySelector("#chat-status")!.textContent)); // the page has this element
         assert.equal(posts.at(-1).action, "disconnectChat");
         // chat offline: the Live tab points at the fix instead of offering to pause
         await page.click("#tab-live");
-        await page.waitForFunction(() => document.querySelector("#summary-title").textContent === "Waiting for chat");
+        await page.waitForFunction(() => document.querySelector("#summary-title")!.textContent === "Waiting for chat"); // the page has this element
         assert.equal(await page.locator("#open-chat-setup").isVisible(), true);
         assert.equal(await page.locator("#toggle-duels.btn-primary").count(), 0, "one primary action");
         assert.equal(
@@ -1116,7 +1135,7 @@ try {
           "the summary holds just the primary action",
         );
         assert.match(
-          await page.locator("#stats").textContent(),
+          (await page.locator("#stats").textContent())!, // element text, never null
           /Duels\s*Waiting\s*for chat/,
           'Duels are not "On" while chat is down',
         );
@@ -1124,18 +1143,21 @@ try {
         assert.equal(await page.locator("#tab-chat").getAttribute("aria-selected"), "true");
       }
       assert.ok(
-        await page.evaluate(() => window.__sockets.some((w) => w.url.endsWith("/api/live/nesszerra"))),
+        await page.evaluate(() =>
+          // StubWindow: the WebSocket stub's list, not in lib.dom
+          (window as unknown as StubWindow).__sockets.some((w) => w.url.endsWith("/api/live/nesszerra")),
+        ),
         "live socket opened",
       );
       if ((await page.request.head(base + "/upload.js")).ok()) {
         // Lane D's uploader is mounted into the admin page
         await page.waitForFunction(
-          () => !document.querySelector("#upload-root").textContent.includes("isn't available"),
+          () => !document.querySelector("#upload-root")!.textContent.includes("isn't available"), // the page has this element
         );
         assert.equal(
           await page.locator("#upload-root .status.error").count(),
           0,
-          await page.locator("#upload-root").textContent(),
+          (await page.locator("#upload-root").textContent())!, // element text, never null
         );
       }
       for (const tab of ["live", "players", "rules", "characters", "chat"]) {
@@ -1144,13 +1166,13 @@ try {
         assert.equal(await page.locator("[role=tabpanel]:visible").count(), 1, "one panel at a time");
         if (tab === "characters") {
           const text = await page.locator("#panel-characters").innerText(),
-            count = (re) => (text.match(re) || []).length;
+            count = (re: RegExp) => (text.match(re) || []).length;
           assert.equal(count(/custom character slots used/g), 1, "slot usage appears once on the Characters tab");
           assert.ok(count(/PNG only/g) <= 1 && count(/characters per channel/g) <= 1, "upload limits appear once");
           assert.ok(count(/1.5 MB|1.50 MB/g) <= 1, "the atlas size limit appears once");
           assert.match(text, /Viewer sprites waiting for review \(1\)/);
           assert.equal(await page.locator("#sprite-pending tbody tr").count(), 1);
-          assert.match(await page.locator("#tab-characters").textContent(), /Characters \(1\)/);
+          assert.match((await page.locator("#tab-characters").textContent())!, /Characters \(1\)/); // element text, never null
         }
         if (tab === "rules") {
           assert.equal(
@@ -1182,14 +1204,15 @@ try {
       await page.focus("#tab-chat");
       await page.keyboard.press("ArrowRight");
       assert.equal(await page.locator("#tab-live").getAttribute("aria-selected"), "true");
-      assert.equal(await page.evaluate(() => document.activeElement.id), "tab-live");
+      assert.equal(await page.evaluate(() => document.activeElement!.id), "tab-live"); // a page always has a focused element
       if (s.name === "390") {
         // phones: with unsaved rule changes the Save bar stays at the bottom of the screen
         await page.click("#tab-rules");
         await page.locator("#cfg-maxHp").fill("120");
-        const field = await page.locator("#cfg-maxHp").boundingBox(),
-          bar = await page.locator("#config-bar").boundingBox(),
-          vh = page.viewportSize().height;
+        // the elements are on the page, so they have boxes; newPage sets a viewport
+        const field = (await page.locator("#cfg-maxHp").boundingBox())!,
+          bar = (await page.locator("#config-bar").boundingBox())!, // as above
+          vh = page.viewportSize()!.height; // as above
         assert.ok(
           bar.y + bar.height <= vh + 1 && bar.y > vh / 2,
           "Rules save bar sits at the bottom of the screen at 390",
@@ -1204,13 +1227,13 @@ try {
       }
 
       await page.locator("#toggle-duels").click();
-      await page.waitForFunction(() => document.querySelector("#action-status").classList.contains("ok"));
+      await page.waitForFunction(() => document.querySelector("#action-status")!.classList.contains("ok")); // the page has this element
       assert.deepEqual(posts.at(-1), {
         action: "config",
         payload: { patch: { enabled: false }, baseVersion: 3, note: "duels paused" },
       });
       await page.locator("#duels tbody tr").first().getByRole("button", { name: "Cancel duel" }).click();
-      await page.waitForFunction(() => document.querySelector("#action-status").textContent.includes("cancelled"));
+      await page.waitForFunction(() => document.querySelector("#action-status")!.textContent.includes("cancelled")); // the page has this element
       assert.deepEqual(posts.at(-1), { action: "cancelDuel", payload: { duelId: "d1" } });
       await page.locator("#reset-health").click();
       await page.waitForTimeout(150);
@@ -1231,10 +1254,10 @@ try {
       // mod gift: a Twitch name (with or without @) and a whole amount
       await page.locator("#gift-user").fill("@Cara");
       await page.locator("#gift-send").click();
-      assert.match(await page.locator("#gift-status").textContent(), /whole number/);
+      assert.match((await page.locator("#gift-status").textContent())!, /whole number/); // element text, never null
       await page.locator("#gift-amount").fill("25");
       await page.locator("#gift-send").click();
-      await page.waitForFunction(() => document.querySelector("#gift-status").textContent.startsWith("Gave"));
+      await page.waitForFunction(() => document.querySelector("#gift-status")!.textContent.startsWith("Gave")); // the page has this element
       assert.deepEqual(posts.at(-1), { action: "giftDollars", payload: { username: "Cara", amount: 25 } });
       assert.equal(await page.locator("#gift-status").textContent(), "Gave $25 to Cara. They have $75 now.");
       // config: invalid value blocks save, valid value saves only the changed field
@@ -1243,14 +1266,14 @@ try {
       // hidden HP-fight inputs still round trip: saving another field sends only that field
       await page.locator("#cfg-maxHp").fill("120");
       await page.locator("#config-save").click();
-      await page.waitForFunction(() =>
-        document.querySelector("#config-status").textContent.startsWith("Saved as version"),
+      await page.waitForFunction(
+        () => document.querySelector("#config-status")!.textContent.startsWith("Saved as version"), // the page has this element
       );
       assert.deepEqual(posts.at(-1).payload.patch, { maxHp: 120 });
       await page.locator("#cfg-streakBonus").uncheck();
       await page.locator("#config-save").click();
-      await page.waitForFunction(() =>
-        document.querySelector("#config-status").textContent.startsWith("Saved as version"),
+      await page.waitForFunction(
+        () => document.querySelector("#config-status")!.textContent.startsWith("Saved as version"), // the page has this element
       );
       assert.deepEqual(posts.at(-1).payload.patch, { streakBonus: false });
       // with quick duels off the HP-fight group shows
@@ -1260,20 +1283,20 @@ try {
       await page.click("#tab-rules");
       assert.equal(await page.locator("#config-fields .config-group:visible").count(), 6);
       assert.match(
-        await page.locator("#config-fields .config-group:visible").last().locator("legend").textContent(),
+        (await page.locator("#config-fields .config-group:visible").last().locator("legend").textContent())!, // element text, never null
         /HP fight abilities/,
       );
       const strike = page.locator("#cfg-abilities-strike-damage");
       await strike.fill("5000");
       assert.equal(await page.locator("#config-save").isDisabled(), true);
-      assert.match(await page.locator("#config-status").textContent(), /between 1 HP and 1000 HP/);
+      assert.match((await page.locator("#config-status").textContent())!, /between 1 HP and 1000 HP/); // element text, never null
       await strike.fill("12");
       await page.locator("#cfg-abilities-strike-cooldownMs").fill("2.5");
       await page.locator("#config-note").fill("faster strikes");
       const base0 = version;
       await page.locator("#config-save").click();
-      await page.waitForFunction(() =>
-        document.querySelector("#config-status").textContent.startsWith("Saved as version"),
+      await page.waitForFunction(
+        () => document.querySelector("#config-status")!.textContent.startsWith("Saved as version"), // the page has this element
       );
       assert.deepEqual(posts.at(-1), {
         action: "config",
@@ -1287,10 +1310,10 @@ try {
       conflictNext = true;
       await page.locator("#cfg-maxHp").fill("150");
       await page.locator("#config-save").click();
-      await page.waitForFunction(() =>
-        document.querySelector("#config-status").textContent.includes("someone else saved"),
+      await page.waitForFunction(
+        () => document.querySelector("#config-status")!.textContent.includes("someone else saved"), // the page has this element
       );
-      assert.match(await page.locator("#config-status").textContent(), /Max health 100 HP → 150 HP/);
+      assert.match((await page.locator("#config-status").textContent())!, /Max health 100 HP → 150 HP/); // element text, never null
       await page.locator("#config-form").screenshot({ path: shots + "/admin-config-conflict-1280.png" });
       await page.click("#history-title");
       await page
@@ -1308,8 +1331,9 @@ try {
         await page.selectOption("#announce", "top");
         await page.waitForFunction(
           () =>
-            /within seconds/.test(document.querySelector("#announce-status").textContent) &&
-            !document.querySelector("#announce").disabled,
+            /within seconds/.test(document.querySelector("#announce-status")!.textContent) && // the page has this element
+            // the page has this select (querySelector<HTMLSelectElement> clashes with the Worker Element type)
+            !(document.querySelector("#announce") as unknown as HTMLSelectElement).disabled,
         );
         assert.deepEqual(posts.at(-1).payload.patch, { announce: "top" });
         assert.match(
@@ -1320,13 +1344,13 @@ try {
         // The on-stream limit is a channel setting too; out-of-range values are refused before posting.
         await page.fill("#cap", "9");
         await page.locator("#cap").dispatchEvent("change");
-        assert.match(await page.locator("#cap-status").textContent(), /15 to 100/);
+        assert.match((await page.locator("#cap-status").textContent())!, /15 to 100/); // element text, never null
         await page.fill("#cap", "30");
         await page.locator("#cap").dispatchEvent("change");
         await page.waitForFunction(
           () =>
-            /up to 30/.test(document.querySelector("#cap-status").textContent) &&
-            !document.querySelector("#cap").disabled,
+            /up to 30/.test(document.querySelector("#cap-status")!.textContent) && // the page has this element
+            !document.querySelector<HTMLInputElement>("#cap")!.disabled, // the page has this element
         );
         assert.deepEqual(posts.at(-1).payload.patch, { maxOnStream: 30 });
       }
@@ -1416,12 +1440,12 @@ try {
     );
     await page.goto(base + "/admin/#chat");
     await page.waitForSelector("#se-health:not([hidden])");
-    assert.match(await page.locator("#se-health").textContent(), se.expect);
+    assert.match((await page.locator("#se-health").textContent())!, se.expect); // element text, never null
     assert.equal(await page.locator("#se-health").evaluate((n) => n.classList.contains("warning")), se.warn);
     assert.equal(await page.locator("#checkin-test").isHidden(), true); // check-in test mode is for the site channel only
     // the Live tab tells the same story as Stream setup
     assert.equal(await page.locator("#summary-title").textContent(), se.live);
-    assert.match(await page.locator("#stats").textContent(), new RegExp("StreamElements\\s*" + se.stat));
+    assert.match((await page.locator("#stats").textContent())!, new RegExp("StreamElements\\s*" + se.stat)); // element text, never null
     // the reply column never shows the key; Copy reply still copies the whole line
     const previews = await page.locator("#se-table code.reply-preview").allTextContents();
     assert.equal(previews.length, 3);
@@ -1441,8 +1465,8 @@ try {
     const actions = ["challenge", "accept", "decline", "rematch", "top", "elo", "help"];
     let overlays = 0,
       duelModuleOff = false,
-      seen = { challenge: Date.now() - 125000, decline: Date.now() - 125000 };
-    const posts = [];
+      seen: Record<string, number> = { challenge: Date.now() - 125000, decline: Date.now() - 125000 };
+    const posts: Loose[] = []; // Loose: the POST bodies, read by field below
     const chatStatus = {
       connected: true,
       source: "streamelements",
@@ -1522,14 +1546,14 @@ try {
     );
     await page.click("#setup-next a");
     assert.equal(await page.locator("#panel-chat").isVisible(), true);
-    assert.equal(await page.evaluate(() => document.activeElement.id), "check-overlay");
+    assert.equal(await page.evaluate(() => document.activeElement!.id), "check-overlay"); // a page always has a focused element
     assert.equal(await page.locator("#check-title").textContent(), "Stream setup: 0 of 3 steps done");
-    assert.match(await page.locator("#check-overlay").textContent(), /To do.*No overlay is open/s);
+    assert.match((await page.locator("#check-overlay").textContent())!, /To do.*No overlay is open/s); // element text, never null
     assert.match(
-      await page.locator("#check-commands").textContent(),
+      (await page.locator("#check-commands").textContent())!, // element text, never null
       /2 of 7 commands have reached PixFray\. Not used yet: !accept, !rematch, !top, !elo, !help\./,
     );
-    assert.match(await page.locator("#check-mods").textContent(), /Done.*moderators of nesszerra can sign in/s);
+    assert.match((await page.locator("#check-mods").textContent())!, /Done.*moderators of nesszerra can sign in/s); // element text, never null
     assert.deepEqual(await page.locator("#se-table [data-seen]").allTextContents(), [
       "Working · 2 min ago",
       "Not used yet",
@@ -1541,15 +1565,17 @@ try {
     ]);
     // the command table uses the full step width: badges stay on one line, nothing is cut off, narrow screens scroll inside the wrap
     const wrap = page.locator("#se-table").locator("xpath=.."),
-      wrapBox = await wrap.boundingBox();
+      wrapBox = (await wrap.boundingBox())!; // the element is on the page, so it has a box
     for (const b of await page.locator("#se-table [data-seen] .badge").all())
-      assert.ok((await b.boundingBox()).height < 28, "status badge on one line at " + s.name);
-    const lastCell = await page.locator("#se-table tbody tr").first().locator("td").last().boundingBox();
+      // the element is on the page, so it has a box
+      assert.ok((await b.boundingBox())!.height < 28, "status badge on one line at " + s.name);
+    // the element is on the page, so it has a box
+    const lastCell = (await page.locator("#se-table tbody tr").first().locator("td").last().boundingBox())!;
     if (s.name === "1280") {
       assert.ok(wrapBox.width > 800, "table is wider than the reading column, got " + wrapBox.width);
       assert.ok(await wrap.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "table is not clipped at 1280");
       assert.ok(lastCell.x + lastCell.width <= wrapBox.x + wrapBox.width + 1, "Response to paste column fits");
-      const prose = await page.locator("#se-setup > ol").boundingBox();
+      const prose = (await page.locator("#se-setup > ol").boundingBox())!; // the element is on the page, so it has a box
       assert.ok(prose.width <= 720, "step prose stays at reading width, got " + prose.width);
     } else {
       // phones stack each command into rows, so nothing scrolls sideways and Copy reply stays in reach
@@ -1567,27 +1593,28 @@ try {
     await page.locator("#setup-check").screenshot({ path: shots + "/admin-checklist-" + s.name + ".png" });
     // tick the Duel module box; then an overlay connects and !fight arrives, and the next refresh finishes setup
     await page.check("#duel-module-off");
-    await page.waitForFunction(() => /Duel module is off/.test(document.querySelector("#check-status").textContent));
+    await page.waitForFunction(() => /Duel module is off/.test(document.querySelector("#check-status")!.textContent)); // the page has this element
     assert.deepEqual(posts.at(-1), { action: "setDuelModuleOff", value: true });
-    await page.waitForFunction(() => /^\s*Done/.test(document.querySelector("#check-duel").textContent)); // after the reload
+    // the page has this element
+    await page.waitForFunction(() => /^\s*Done/.test(document.querySelector("#check-duel")!.textContent)); // after the reload
     overlays = 1;
     seen = { ...seen, accept: now };
     await page.waitForFunction(
-      () => document.querySelector("#check-title").textContent === "Stream setup is done",
+      () => document.querySelector("#check-title")!.textContent === "Stream setup is done", // the page has this element
       null,
       { timeout: 15000 },
     );
-    assert.match(await page.locator("#check-overlay").textContent(), /1 overlay is connected right now/);
+    assert.match((await page.locator("#check-overlay").textContent())!, /1 overlay is connected right now/); // element text, never null
     assert.equal(await page.locator("#setup-next").isHidden(), true);
     // check-in test mode: on for 15 minutes, then off again
     assert.equal(await page.locator("#checkin-test-title").textContent(), "Test !checkin while offline");
     await page.click("#checkin-test-toggle");
     await page.waitForFunction(
-      () => document.querySelector("#checkin-test-title").textContent === "!checkin test mode is on",
+      () => document.querySelector("#checkin-test-title")!.textContent === "!checkin test mode is on", // the page has this element
     );
     assert.deepEqual(posts.at(-1), { action: "checkinTest", value: true });
     assert.match(
-      await page.locator("#checkin-test-text").textContent(),
+      (await page.locator("#checkin-test-text").textContent())!, // element text, never null
       /^Until .+ \(turned on by ModMia\), !checkin answers while the stream is offline/,
     );
     assert.equal(await page.locator("#checkin-test-toggle").textContent(), "Turn test mode off");
@@ -1595,7 +1622,7 @@ try {
     await page.locator("#checkin-test").screenshot({ path: shots + "/admin-checkin-test-" + s.name + ".png" });
     await page.click("#checkin-test-toggle");
     await page.waitForFunction(
-      () => document.querySelector("#checkin-test-title").textContent === "Test !checkin while offline",
+      () => document.querySelector("#checkin-test-title")!.textContent === "Test !checkin while offline", // the page has this element
     );
     assert.deepEqual(posts.at(-1), { action: "checkinTest", value: false });
     await context.close();
@@ -1603,7 +1630,7 @@ try {
   // 7a. Chat commands: shown while the PixFray bot reads chat; add, edit, delete and set a counter.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
-    const posts = [];
+    const posts: Loose[] = []; // Loose: the POST bodies, read by field below
     let data = {
       commands: [
         { name: "!nt", reply: "Nesszerra has tried $(count nt) times!" },
@@ -1713,7 +1740,7 @@ try {
     // a bot site: the bot step replaces the StreamElements steps, Done while the bot reads chat
     assert.equal(await page.locator("#check-bot [data-badge]").textContent(), "Done");
     assert.match(
-      await page.locator("#check-bot [data-detail]").textContent(),
+      (await page.locator("#check-bot [data-detail]").textContent())!, // element text, never null
       /^The PixFray bot \(pixfray\) reads your chat and answers the duel commands\. It last answered a command \d+ (s|min) ago\. Type \/mod pixfray/,
     );
     for (const id of ["#check-duel", "#check-commands"])
@@ -1725,7 +1752,7 @@ try {
     ]);
     // the bot's health: a drop newer than the last sent reply is a warning
     assert.match(
-      await page.locator("#bot-health").textContent(),
+      (await page.locator("#bot-health").textContent())!, // element text, never null
       /^Bot: last command \d+ (s|min) ago \(alice !fray\), last reply sent \d+ (s|min) ago\. 41 sent, 1 dropped\. The last reply was dropped \d+ (s|min) ago: the same line twice within 30 s \(msg_duplicate\)\. Type !fray debug/,
     );
     assert.equal(await page.locator("#bot-health").getAttribute("class"), "small callout warning");
@@ -1734,20 +1761,20 @@ try {
     await page.fill("#command-name", "fray");
     await page.fill("#command-reply", "x");
     await page.click("#command-save");
-    await page.waitForFunction(() =>
-      /PixFray already uses that name/.test(document.querySelector("#command-status").textContent),
+    await page.waitForFunction(
+      () => /PixFray already uses that name/.test(document.querySelector("#command-status")!.textContent), // the page has this element
     );
     await page.fill("#command-name", "Sens");
     await page.fill("#command-reply", "0.14 3600dpi");
     await page.click("#command-save");
-    await page.waitForFunction(() => /Added !sens/.test(document.querySelector("#command-status").textContent));
+    await page.waitForFunction(() => /Added !sens/.test(document.querySelector("#command-status")!.textContent)); // the page has this element
     assert.deepEqual(posts.at(-1), { action: "saveCommand", payload: { name: "!sens", reply: "0.14 3600dpi" } });
     assert.equal(await page.locator("#command-name").inputValue(), "");
     await page.click('[data-edit="!tablet"]');
     assert.equal(await page.locator("#command-save").textContent(), "Save changes");
     await page.fill("#command-name", "!pad");
     await page.click("#command-save");
-    await page.waitForFunction(() => /Saved !pad/.test(document.querySelector("#command-status").textContent));
+    await page.waitForFunction(() => /Saved !pad/.test(document.querySelector("#command-status")!.textContent)); // the page has this element
     assert.deepEqual(posts.at(-1), {
       action: "saveCommand",
       payload: { name: "!pad", reply: "60Wx45H (CTL-472 700hz custom firmware)", oldName: "!tablet" },
@@ -1759,8 +1786,8 @@ try {
     ]);
     await page.fill('[data-counter="nt"]', "20");
     await page.click('[data-save-counter="nt"]');
-    await page.waitForFunction(() =>
-      /Counter nt is 20 now/.test(document.querySelector("#counter-status").textContent),
+    await page.waitForFunction(
+      () => /Counter nt is 20 now/.test(document.querySelector("#counter-status")!.textContent), // the page has this element
     );
     assert.deepEqual(posts.at(-1), { action: "setCounter", payload: { name: "nt", value: 20 } });
     await noOverflow(page, "chat commands " + s.name);
@@ -1775,7 +1802,7 @@ try {
     await page.locator("#bot-commands").screenshot({ path: shots + "/admin-bot-commands-" + s.name + ".png" });
     page.once("dialog", (d) => d.accept());
     await page.click('[data-delete="!sens"]');
-    await page.waitForFunction(() => /Deleted !sens/.test(document.querySelector("#command-status").textContent));
+    await page.waitForFunction(() => /Deleted !sens/.test(document.querySelector("#command-status")!.textContent)); // the page has this element
     assert.deepEqual(posts.at(-1), { action: "deleteCommand", payload: { name: "!sens" } });
     await context.close();
   }
@@ -1902,8 +1929,8 @@ try {
         );
         await page.goto(base + "/admin/?channel=" + ch + "#chat");
         await page.waitForSelector("#app:not([hidden])");
-        await page.waitForFunction(() => document.querySelector("#check-mods [data-detail]").textContent.length > 0);
-        const detail = (await page.locator("#check-mods [data-detail]").textContent()).trim();
+        await page.waitForFunction(() => document.querySelector("#check-mods [data-detail]")!.textContent.length > 0); // the page has this element
+        const detail = (await page.locator("#check-mods [data-detail]").textContent())!.trim(); // element text, never null
         assert.match(detail, c.text, c.name + " " + s.name);
         assert.ok(!/Only \w+ can open this page/.test(detail), c.name + ": the old wording is gone");
         assert.equal(await page.locator("#check-mods [data-badge]").textContent(), c.badge, c.name + " badge");
@@ -1914,7 +1941,7 @@ try {
           assert.equal(await page.locator("#check-mods a").count(), 0, c.name + ": no connect link for this viewer");
         if (c.paused) {
           await page.click("#tab-live");
-          assert.match(await page.locator("#stats").textContent(), /Duels\s*Paused\s*commands ignored/);
+          assert.match((await page.locator("#stats").textContent())!, /Duels\s*Paused\s*commands ignored/); // element text, never null
         }
         if (s.name === "1280" && /owner, not/.test(c.name))
           await page.locator("#check-mods").screenshot({ path: shots + "/admin-step4-owner-1280.png" });
@@ -1944,8 +1971,19 @@ try {
     for (const c of cases)
       for (const s of sizes) {
         const { context, page } = await newPage(s);
-        const posts = [];
-        let chatStatus = { connected: false, status: "disconnected", subscriptionId: "", createdAt: 0 };
+        const posts: Loose[] = []; // Loose: the POST bodies, read by field below
+        let chatStatus: {
+          connected: boolean;
+          source?: string;
+          status: string;
+          subscriptionId: string;
+          createdAt: number;
+        } = {
+          connected: false,
+          status: "disconnected",
+          subscriptionId: "",
+          createdAt: 0,
+        };
         await page.route("**/api/session", (r) =>
           json(r, {
             user: c.session,
@@ -2013,7 +2051,7 @@ try {
         });
         await page.goto(base + "/admin/?channel=" + ch + c.query + "#chat");
         await page.waitForSelector("#app:not([hidden])");
-        await page.waitForFunction(() => document.querySelector("#check-bot [data-detail]").textContent.length > 0);
+        await page.waitForFunction(() => document.querySelector("#check-bot [data-detail]")!.textContent.length > 0); // the page has this element
         for (const id of ["#check-duel", "#check-commands"])
           assert.equal(await page.locator(id).isHidden(), true, c.name + ": " + id + " hidden");
         assert.equal(
@@ -2022,10 +2060,10 @@ try {
           c.name + ": the chat connection shows on a signed-up channel",
         );
         if (c.query) {
-          await page.waitForFunction(() => document.querySelector("#check-bot [data-badge]").textContent === "Done");
+          await page.waitForFunction(() => document.querySelector("#check-bot [data-badge]")!.textContent === "Done"); // the page has this element
           assert.deepEqual(posts, [{ action: "connectChat" }], "bot=allowed connects chat once");
           assert.equal(new URL(page.url()).searchParams.get("bot"), null, "the flag leaves the address");
-          assert.match(await page.locator("#bot-status").textContent(), /Chat connected/);
+          assert.match((await page.locator("#bot-status").textContent())!, /Chat connected/); // element text, never null
           assert.equal(await page.locator("#check-title").textContent(), "Stream setup is done");
           assert.equal(
             await page.locator("#copy").getAttribute("class"),
@@ -2040,16 +2078,16 @@ try {
           assert.equal(await add.getAttribute("href"), "/auth/login?channel=newstreamer&connect=bot");
           assert.equal(await page.locator("#panel-chat .btn-primary").count(), 1, "one primary button");
           assert.equal(await add.getAttribute("class"), "btn btn-primary");
-          assert.match(await page.locator("#setup-next").textContent(), /Next: add the PixFray bot to your chat\./);
+          assert.match((await page.locator("#setup-next").textContent())!, /Next: add the PixFray bot to your chat\./); // element text, never null
           await noOverflow(page, "bot step " + s.name);
           await page.locator("#check-bot").screenshot({ path: shots + "/admin-bot-step-" + s.name + ".png" });
         } else {
           assert.match(
-            await page.locator("#check-bot [data-detail]").textContent(),
+            (await page.locator("#check-bot [data-detail]").textContent())!, // element text, never null
             /^Ask newstreamer to open this page and click Add the PixFray bot, or to type \/mod pixfray/,
           );
           await page.click("#bot-actions button");
-          await page.waitForFunction(() => document.querySelector("#check-bot [data-badge]").textContent === "Done");
+          await page.waitForFunction(() => document.querySelector("#check-bot [data-badge]")!.textContent === "Done"); // the page has this element
           assert.deepEqual(posts, [{ action: "connectChat" }]);
         }
         await context.close();
@@ -2068,9 +2106,10 @@ try {
       "the closing band repeats the sign-in",
     );
     assert.equal(await page.locator("#signup-problem").isHidden(), true);
-    assert.match(await page.locator("#source a").getAttribute("href"), /^https:\/\/github\.com\//);
-    const stage = await page.locator(".stage").boundingBox(),
-      frame = await page.locator(".stage iframe").boundingBox();
+    assert.match((await page.locator("#source a").getAttribute("href"))!, /^https:\/\/github\.com\//); // the page sets this attribute
+    // the element is on the page, so it has a box
+    const stage = (await page.locator(".stage").boundingBox())!,
+      frame = (await page.locator(".stage iframe").boundingBox())!; // as above
     const want = s.name === "390" ? 1 : 4 / 3; // phones get a square crop: the fighters stay readable and every nameplate fits
     assert.ok(
       Math.abs(stage.width / stage.height - want) < 0.03,
@@ -2086,7 +2125,7 @@ try {
       "overlay frame fills the stage",
     );
     assert.ok(
-      await page.locator(".stage iframe").evaluate((f) => f.offsetWidth >= 640),
+      await page.locator(".stage iframe").evaluate((f: HTMLIFrameElement) => f.offsetWidth >= 640),
       "overlay lays out at 640px or wider",
     );
     await page.waitForTimeout(5000); // let the demo fighters walk in before the screenshot
@@ -2095,7 +2134,7 @@ try {
     // back from Twitch after cancelling the permission: offer setup without mod access, and drop ?error from the URL
     await page.goto(base + "/start/?error=denied");
     await page.waitForSelector("#signup-problem:not([hidden])");
-    assert.match(await page.locator("#signup-problem").textContent(), /cancelled the Twitch permission/);
+    assert.match((await page.locator("#signup-problem").textContent())!, /cancelled the Twitch permission/); // element text, never null
     assert.deepEqual(await page.locator("#signup-actions a").evaluateAll((a) => a.map((x) => x.getAttribute("href"))), [
       "/auth/login?signup=1",
       "/auth/login?signup=1&mods=0",
@@ -2104,10 +2143,10 @@ try {
     if (s.name === "390") await page.locator("#signup").screenshot({ path: shots + "/start-denied-390.png" });
     await page.goto(base + "/start/?error=full");
     await page.waitForSelector("#signup-problem:not([hidden])");
-    assert.match(await page.locator("#signup-problem").textContent(), /PixFray is full right now/);
+    assert.match((await page.locator("#signup-problem").textContent())!, /PixFray is full right now/); // element text, never null
     await page.goto(base + "/start/?error=failed");
     await page.waitForSelector("#signup-problem:not([hidden])");
-    assert.match(await page.locator("#signup-problem").textContent(), /sign-in didn't finish/);
+    assert.match((await page.locator("#signup-problem").textContent())!, /sign-in didn't finish/); // element text, never null
     await page.goto(base + "/start/?invite=" + "ab".repeat(16));
     assert.equal(await page.locator("#signup-problem").isHidden(), true, "an old invite link opens the plain sign-up");
     await context.close();
@@ -2118,7 +2157,7 @@ try {
     const { context, page } = await newPage(s);
     const me = { id: "5505", login: "newstreamer", displayName: "NewStreamer" };
     let channelState = "on";
-    const posts = [];
+    const posts: Loose[] = []; // Loose: the POST bodies, read by field below
     await page.route("**/api/session", (r) =>
       json(r, { user: me, owner: false, configured: true, channels: ["nesszerra"], productionEnabled: false }),
     );
@@ -2165,8 +2204,8 @@ try {
     page.on("dialog", (d) => d.accept());
     await page.goto(base + "/admin/?channel=newstreamer&mods=denied#chat");
     await page.waitForSelector("#app:not([hidden])");
-    await page.waitForFunction(() =>
-      /permission was cancelled/.test(document.querySelector("#check-status").textContent),
+    await page.waitForFunction(
+      () => /permission was cancelled/.test(document.querySelector("#check-status")!.textContent), // the page has this element
     );
     assert.equal(new URL(page.url()).search, "?channel=newstreamer", "the mods flag is dropped from the URL");
     assert.equal(
@@ -2182,7 +2221,7 @@ try {
       "Let your moderators help",
     ]);
     assert.equal(await page.locator("#summary-title").textContent(), "Waiting for chat");
-    assert.match(await page.locator("#stats").textContent(), /Duels\s*Waiting\s*for chat/);
+    assert.match((await page.locator("#stats").textContent())!, /Duels\s*Waiting\s*for chat/); // element text, never null
     assert.equal(await page.locator("#channel-power").isVisible(), true);
     assert.equal(await page.locator("#paused-note").isHidden(), true);
     await page.click("#power-toggle");
@@ -2206,12 +2245,12 @@ try {
     await page.route("**/api/state/*", (r) => json(r, { error: "off", off }, 403));
     await page.goto(base + "/?channel=newstreamer");
     await page.waitForSelector("#off-note:not([hidden])");
-    assert.match(await page.locator("#off-note").textContent(), /PixFray is off on newstreamer's channel right now/);
+    assert.match((await page.locator("#off-note").textContent())!, /PixFray is off on newstreamer's channel right now/); // element text, never null
     assert.equal(await page.locator(".fighter-card").isVisible(), true);
     off = "not_enabled";
     await page.goto(base + "/?channel=nobodyhere");
     await page.waitForSelector("#off-note:not([hidden])");
-    assert.match(await page.locator("#off-note").textContent(), /isn't set up on nobodyhere's channel/);
+    assert.match((await page.locator("#off-note").textContent())!, /isn't set up on nobodyhere's channel/); // element text, never null
     assert.equal(await page.locator(".fighter-card").isHidden(), true);
     await noOverflow(page, "viewer not set up 390");
     await page.screenshot({ path: shots + "/viewer-not-set-up-390.png" });
@@ -2268,7 +2307,7 @@ try {
     if (!paused) {
       assert.equal(await leaving(), false, "nothing edited yet");
       await page.locator("#build-list button.build").nth(1).click();
-      assert.match(await page.locator("#save-status").textContent(), /Build 2 isn't on stream/);
+      assert.match((await page.locator("#save-status").textContent())!, /Build 2 isn't on stream/); // element text, never null
       assert.equal(await leaving(), false, "only looking at build 2");
       await page.locator('.swatch[data-color="#f472b6"]').click();
       assert.equal(await leaving(), true, "build 2 was changed");
@@ -2278,7 +2317,7 @@ try {
       await page.waitForSelector("#off-note:not([hidden])");
       assert.equal(await page.locator("#save").isDisabled(), true);
       assert.match(
-        await page.locator("#save-status").textContent(),
+        (await page.locator("#save-status").textContent())!, // element text, never null
         /PixFray is off on this channel right now, so saving and buying are closed. Your fighter is kept./,
       );
       assert.equal(await page.locator("#next-step").isHidden(), true);
@@ -2320,7 +2359,7 @@ try {
     await page.goto(base + "/?channel=nesszerra");
     await page.waitForSelector("#build-list button.build");
     assert.equal(await page.locator("#build-list > *").count(), 5, "five builds and no buy button");
-    assert.doesNotMatch(await page.locator("#build-list").textContent(), /null/, "no slot for sale leaves no text");
+    assert.doesNotMatch((await page.locator("#build-list").textContent())!, /null/, "no slot for sale leaves no text"); // element text, never null
     assert.equal(await page.locator("#build-note").textContent(), "(5 of 5)");
     await context.close();
   }
@@ -2329,8 +2368,9 @@ try {
     const { context, page } = await newPage({ width: size.width, height: size.height });
     await page.goto(base + "/start/");
     await page.waitForFunction(() => document.querySelector("#signup-text")?.textContent.trim());
-    const copy = await page.locator(".hero-copy").boundingBox(),
-      card = await page.locator("#signup").boundingBox();
+    // the element is on the page, so it has a box
+    const copy = (await page.locator(".hero-copy").boundingBox())!,
+      card = (await page.locator("#signup").boundingBox())!; // as above
     const apart = card.x >= copy.x + copy.width || card.y >= copy.y + copy.height;
     assert.ok(apart, `start ${size.name}: sign-in card overlaps the copy`);
     assert.ok(copy.width >= Math.min(size.width * 0.5, 400), `start ${size.name}: copy squeezed to ${copy.width}px`);
@@ -2359,7 +2399,8 @@ try {
   // a browser without WebGL2 gets the text-only page and this one deliberate error
   // (in dev, Vite's client also logs when it can't forward that error to the server)
   for (let i = errors.length - 1; i >= 0; i--)
-    if (/WebGL2 is not available|Failed to send error to Vite server/.test(errors[i])) errors.splice(i, 1);
+    // i stays inside errors
+    if (/WebGL2 is not available|Failed to send error to Vite server/.test(errors[i]!)) errors.splice(i, 1);
   assert.deepEqual(errors, []);
   console.log(
     "PASS: viewer + admin UI at 1280/390, signed-out (real server), signed-in viewer save, mod gate, admin actions, config save/409/revert; no page errors.",

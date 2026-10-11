@@ -1,22 +1,27 @@
 // Renders public/og.png (1200x630), the link preview Twitch and Discord show for pixfray.xyz.
-// Uses only the site's own character art and font. Rerun after adding characters: node scripts/og-image.mjs
+// Uses only the site's own character art and font. Rerun after adding characters: node scripts/og-image.ts
 import { chromium } from "@playwright/test";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { chromeOptions } from "../tests/chrome.mjs";
+import { chromeOptions } from "../tests/chrome.ts";
 
 const root = new URL("../public/", import.meta.url);
-const catalog = JSON.parse(readFileSync(new URL("assets/characters.json", root)));
+// The fields of public/assets/characters.json this script reads.
+type Cell = { x: number; y: number; w: number; h: number };
+type CatalogEntry = { id: string; url: string; frames: Cell[]; animations?: { idle?: Cell[] } };
+// as: JSON.parse turns the Buffer into a string (its UTF-8 text) before parsing; the types only accept a string
+const catalog: CatalogEntry[] = JSON.parse(readFileSync(new URL("assets/characters.json", root)) as unknown as string);
 const picks = ["adventurer", "toon-ranger", "alien-pink", "soldier", "toon-robot", "zombie", "alien-green"];
-const sprite = (id) => {
-  const c = catalog.find((x) => x.id === id),
-    f = c.animations?.idle?.[0] || c.frames[0];
+const sprite = (id: string): string => {
+  // !: every id in picks is a catalog entry, and an entry has at least one frame
+  const c = catalog.find((x) => x.id === id)!,
+    f = c.animations?.idle?.[0] || c.frames[0]!; // !: every entry has a frame
   const scale = 190 / f.h;
   return `<div class="s" style="width:${f.w * scale}px;height:190px;background:url(${new URL(c.url.slice(1), root)}) -${f.x * scale}px -${f.y * scale}px/auto ${190 * (readSize(c.url).h / f.h)}px"></div>`;
 };
-function readSize(url) {
+function readSize(url: string): { w: number; h: number } {
   // PNG width/height from the IHDR chunk
   const b = readFileSync(new URL(url.slice(1), root));
   return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };

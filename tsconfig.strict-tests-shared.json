@@ -1,4 +1,5 @@
-// Strict TypeScript for unit tests that import both a Worker module and a DOM module: Worker, DOM and Node types.
+// Strict TypeScript for tests that need both Worker and DOM types: unit tests that import a Worker module and a DOM
+// module, and browser tests that import a Worker module (server/security.ts, server/game.ts, upload helpers).
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -17,6 +18,10 @@
     "tests/arena-client.test.ts",
     "tests/atlas.test.ts",
     "tests/cosmetics.test.ts",
-    "tests/spritify.test.ts"
+    "tests/spritify.test.ts",
+    "tests/e2e-local.ts",
+    "tests/smoke.ts",
+    "tests/ui.ts",
+    "tests/arena-browser.ts"
   ]
 }

@@ -1,18 +1,52 @@
-// Local end-to-end check against a running dev server with seeded test sessions (tests/seed-local.mjs).
+// Local end-to-end check against a running dev server with seeded test sessions (tests/seed-local.ts).
 // Real Worker + Durable Objects, chat delivered as signed Twitch EventSub webhook POSTs to /api/eventsub,
 // and the real overlay/dashboard/admin/dev pages in installed Chrome. Nothing here talks to Twitch or a deployed site:
 // the dev server runs with MINI_LOCAL_TEST=1, so Connect chat records a local subscription without calling Helix.
-// Usage: MINI_BASE_URL=http://127.0.0.1:5199 MINI_AUTH_SECRET=<the dev server's AUTH_SECRET> node tests/e2e-local.mjs
-// (normally run by scripts/test-all.mjs, which reads AUTH_SECRET from .dev.vars and never prints it)
-import { chromeOptions } from "./chrome.mjs";
+// Usage: MINI_BASE_URL=http://127.0.0.1:5199 MINI_AUTH_SECRET=<the dev server's AUTH_SECRET> node tests/e2e-local.ts
+// (normally run by scripts/test-all.ts, which reads AUTH_SECRET from .dev.vars and never prints it)
+import { chromeOptions } from "./chrome.ts";
 import { chromium } from "@playwright/test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { cookies, users } from "./seed-local.mjs";
+import { cookies, users } from "./seed-local.ts";
 import { enforceCsp } from "./csp-helper.ts";
 import { defaultConfig } from "../server/game.ts";
+import type { Loose } from "./fakes.ts";
+
+type User = { id: string; login: string; displayName: string };
+type ApiOptions = { cookie?: string; method?: string; body?: unknown };
+type PostOptions = { id?: string; timestamp?: string; secret?: string };
+// A command's outcome, read back from the room events (or the challenge check in step 6).
+// Loose: events are room events from /api/state, kept only for the failure message
+type Ack = { ok: boolean; reason?: string; retryAt?: number; events?: Loose[] };
+// /api/state/<channel>, the fields this test reads.
+// Loose: events, duels and players are the room's JSON records; each step reads the fields of its own event or duel
+type RoomState = {
+  revision: number;
+  paused: boolean;
+  chat: { connected: boolean };
+  events: Loose[];
+  duels: Loose[];
+  players: Loose[];
+};
+// The overlay's ?debug=1 snapshot (window.__arenaDebug in src/served/overlay.ts), the fields this test reads.
+// Loose: players, duels and results are the overlay's own records, read by field and asserted on
+type ArenaDebug = {
+  revision: number;
+  paused: boolean;
+  chat: { bot?: boolean } | null;
+  players: Loose[];
+  duels: Loose[];
+  announcement: string;
+  results: Loose[];
+  banners: string[];
+};
+// The debug hook with its snapshot type; types/dom.ts declares it optional and returning unknown.
+type DebugWindow = { __arenaDebug: () => ArenaDebug };
+// Page callbacks below run in the overlay, where window has the debug hook.
+declare const window: DebugWindow;
 
 // The duel script below counts hits for the first preset (strike 10 every 3 s, heavy 25 every 8 s, heal 15 every 10 s).
 // Step 2 pins it: with the shipped defaults (strike 20, heavy 35) the first !attack ends the duel, and the loop expects a second.
@@ -23,23 +57,25 @@ const DUEL_BALANCE = {
 };
 
 // The scripts named in the setup errors below, each its own literal so a rename can follow it.
-const TEST_ALL = "scripts/test-all.mjs";
-const SEED_LOCAL = "tests/seed-local.mjs";
+const TEST_ALL = "scripts/test-all.ts";
+const SEED_LOCAL = "tests/seed-local.ts";
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const ch = "nesszerra";
 const shots = fileURLToPath(new URL("../screenshots", import.meta.url));
 fs.mkdirSync(shots, { recursive: true });
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const log = (...a) => console.log("[e2e]", ...a);
-async function api(path, { cookie, method = "GET", body } = {}) {
-  const headers = { Origin: base };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const log = (...a: unknown[]) => console.log("[e2e]", ...a);
+async function api(path: string, { cookie, method = "GET", body }: ApiOptions = {}) {
+  const headers: Record<string, string> = { Origin: base };
   if (cookie) headers.Cookie = "mini_session=" + cookie;
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  // as RequestInit: body is undefined for a request without one, which fetch reads as no body; the type has no
+  // undefined under exactOptionalPropertyTypes
   const res = await fetch(base + path, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  } as RequestInit); // as RequestInit: see the comment above
   const text = await res.text();
   let data;
   try {
@@ -49,8 +85,8 @@ async function api(path, { cookie, method = "GET", body } = {}) {
   }
   return { status: res.status, data };
 }
-const state = async () => (await api("/api/state/" + ch)).data;
-async function until(fn, label, ms = 8000) {
+const state = async (): Promise<RoomState> => (await api("/api/state/" + ch)).data;
+async function until<T>(fn: () => Promise<T>, label: string, ms = 8000) {
   const end = Date.now() + ms;
   let last;
   while (Date.now() < end) {
@@ -69,9 +105,13 @@ const eventsubSecret = createHmac("sha256", process.env.MINI_AUTH_SECRET).update
 let seq = 0,
   subscriptionId = "";
 async function eventsubPost(
-  type,
-  body,
-  { id = "e2e-" + Date.now() + "-" + ++seq, timestamp = new Date().toISOString(), secret = eventsubSecret } = {},
+  type: string,
+  body: unknown,
+  {
+    id = "e2e-" + Date.now() + "-" + ++seq,
+    timestamp = new Date().toISOString(),
+    secret = eventsubSecret,
+  }: PostOptions = {},
 ) {
   const raw = JSON.stringify(body);
   const signature =
@@ -104,7 +144,7 @@ const subscription = (status = "enabled") => ({
   transport: { method: "webhook", callback: base + "/api/eventsub" },
   created_at: new Date().toISOString(),
 });
-const chatMessage = (user, text, messageId = "chat-" + Date.now() + "-" + ++seq) => ({
+const chatMessage = (user: User, text: string, messageId = "chat-" + Date.now() + "-" + ++seq) => ({
   subscription: subscription(),
   event: {
     broadcaster_user_id: "1",
@@ -119,13 +159,13 @@ const chatMessage = (user, text, messageId = "chat-" + Date.now() + "-" + ++seq)
     color: "",
   },
 });
-async function say(user, text, options) {
+async function say(user: User, text: string, options?: PostOptions) {
   const r = await eventsubPost("notification", chatMessage(user, text), options);
   assert.equal(r.status, 204, "eventsub notification: " + r.status + " " + r.text);
   return r;
 }
 // Twitch gets no reply, so a command's outcome is read back from the room event list (rejections are logged there).
-async function command(user, text) {
+async function command(user: User, text: string): Promise<Ack> {
   const before = (await state()).revision;
   await say(user, text);
   const added = (await state()).events.filter((e) => Number(e.id) > before);
@@ -134,9 +174,9 @@ async function command(user, text) {
   if (!added.length) return { ok: false, reason: "no_effect" };
   return { ok: true, reason: added.some((e) => e.type === "duel_completed") ? "duel_completed" : added.at(-1).type };
 }
-const presence = (user, text = "hi") => say(user, text);
+const presence = (user: User, text = "hi") => say(user, text);
 
-const errors = [];
+const errors: string[] = [];
 const browser = await chromium.launch(chromeOptions(["--disable-features=LocalNetworkAccessChecks"]));
 // enforceCsp (csp-helper.ts) serves the overlay through a Playwright route, which Chrome treats as a public page, so its
 // Local Network Access check would block the socket to 127.0.0.1. The deployed overlay is same-origin and never hits it.
@@ -157,7 +197,7 @@ try {
     bob: ["alien-blue", "#3b82f6", "heavy"],
     carol: ["toon-robot", "#f59e0b", "heal"],
   };
-  const saveProfile = async (k) => {
+  const saveProfile = async (k: keyof typeof saves) => {
     // saving a profile also puts the viewer in the arena
     const [avatar, color, defaultAbility] = saves[k];
     const r = await api("/api/profile/" + ch, {
@@ -268,7 +308,9 @@ try {
   await presence(users.alice);
   await presence(users.bob);
   await until(async () => (await state()).players.length === 2, "two players in state");
-  await overlay.waitForFunction(() => window.__arenaDebug().players.length === 2, null, { timeout: 8000 });
+  await overlay.waitForFunction(() => window.__arenaDebug().players.length === 2, null, {
+    timeout: 8000,
+  });
   let d = await dbg();
   const pa = d.players.find((p) => p.userId === users.alice.id),
     pb = d.players.find((p) => p.userId === users.bob.id);
@@ -285,7 +327,7 @@ try {
   const first = await eventsubPost("notification", challengeBody);
   assert.equal(first.status, 204);
   let s = await state();
-  let ack = s.events.some((e) => Number(e.id) > r0 && e.type === "challenge_created")
+  let ack: Ack | null = s.events.some((e) => Number(e.id) > r0 && e.type === "challenge_created")
     ? { ok: true }
     : { ok: false, events: s.events.slice(-3) };
   assert.equal(ack.ok, true, JSON.stringify(ack));
@@ -317,7 +359,8 @@ try {
   ack = await command(users.alice, "!strike");
   assert.equal(ack.ok, false);
   assert.equal(ack.reason, "cooldown");
-  assert.ok(ack.retryAt > Date.now() - 1000, "cooldown ack carries retryAt");
+  // !: a cooldown rejection carries retryAt; were it missing, the comparison is false and the assertion fails
+  assert.ok(ack.retryAt! > Date.now() - 1000, "cooldown ack carries retryAt");
   const bobHit = await command(users.bob, "!heavy");
   assert.equal(bobHit.ok, true, "bob can act while alice is on cooldown");
   await overlay.screenshot({ path: shots + "/e2e-overlay-duel-1280.png" });
@@ -356,7 +399,8 @@ try {
 
   // 7. Elo and leaderboard.
   const lb = (await api("/api/leaderboard/" + ch)).data;
-  const rows = Array.isArray(lb) ? lb : lb.leaderboard || lb.players;
+  // Loose: leaderboard rows from the JSON reply, read by field below
+  const rows: Loose[] = Array.isArray(lb) ? lb : lb.leaderboard || lb.players;
   const la = rows.find((r) => r.userId === users.alice.id),
     lbob = rows.find((r) => r.userId === users.bob.id);
   assert.deepEqual([la.elo, la.wins, la.losses], [1012, 1, 0]);
@@ -396,7 +440,9 @@ try {
   log("inactive duel cancelled after 10 s, unscored");
 
   // 9. Chat disconnected mid-duel: game pauses, duel cancelled unscored, ranks unchanged.
-  const ranks = async () => (await api("/api/leaderboard/" + ch)).data.map((r) => [r.userId, r.elo, r.wins, r.losses]);
+  // Loose: a leaderboard row, as above
+  const ranks = async () =>
+    (await api("/api/leaderboard/" + ch)).data.map((r: Loose) => [r.userId, r.elo, r.wins, r.losses]);
   const before = await ranks();
   ack = await command(users.alice, "!duel @carol_e2e");
   assert.equal(ack.ok, true, JSON.stringify(ack));
@@ -467,9 +513,11 @@ try {
     await page.screenshot({ path: shots + "/e2e-overlay-" + size.name + ".png" });
     await ctx.addCookies([{ name: "mini_session", value: cookies.alice, url: base }]);
     await page.goto(base + "/?channel=nesszerra");
-    await page.waitForFunction(() => !document.querySelector("#leaderboard tbody")?.textContent.includes("Loading"));
+    // !: an element's textContent is a string, never null
+    await page.waitForFunction(() => !document.querySelector("#leaderboard tbody")?.textContent!.includes("Loading"));
     await page.waitForTimeout(500);
-    assert.match(await page.locator("#leaderboard").textContent(), /Alice_E2E|alice_e2e/);
+    // !: #leaderboard is on the page, so its textContent is a string
+    assert.match((await page.locator("#leaderboard").textContent())!, /Alice_E2E|alice_e2e/);
     await page.screenshot({ path: shots + "/e2e-dashboard-" + size.name + ".png", fullPage: true });
     await ctx.clearCookies();
     await ctx.addCookies([{ name: "mini_session", value: cookies.owner, url: base }]);
