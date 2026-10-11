@@ -164,7 +164,7 @@ const state: State = {
   config: null,
   shop: null,
   owned: emptyOwned(),
-  // null!: applyProfile sets the loadout before anything renders or reads it
+  // null!: null until applyProfile runs; render3d can run first and checks `!d` itself, so keep that check
   d: null!, // the loadout being edited: { avatar, color, defaultAbility, stats, hat, pet, ...LOOK_FIELDS }
   slot: 0, // the build slot being edited; the profile's own build is the one on stream
   builds: [], // saved loadouts per slot (GET /api/profile builds), null for a slot never saved
