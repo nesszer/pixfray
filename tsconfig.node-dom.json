@@ -1,0 +1,22 @@
+// Node code that needs DOM types but imports no Worker module: unit tests of DOM modules, and Playwright tests and
+// scripts whose page callbacks run in the browser. The character build lives here too: the Workers types declare
+// `Buffer` as `any`, which hides its methods. DOM and Node types. One entry per file.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "lib": ["esnext", "dom", "dom.iterable"], "types": ["node"] },
+  "files": [
+    "types/lib-guards.ts",
+    "types/site.ts",
+    "site.config.js",
+    "types/dom.ts",
+    "tests/browser-parse.test.ts",
+    "tests/overlay.test.ts",
+    "tests/served.test.ts",
+    "tests/dev-ui.ts",
+    "scripts/og-image.ts",
+    "scripts/lib/zip-read.ts",
+    "scripts/lib/png-io.ts",
+    "scripts/build-characters.ts",
+    "scripts/live-chat-e2e.ts"
+  ]
+}

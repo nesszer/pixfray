@@ -1,5 +1,5 @@
 // Cosmetic ids shared by the Worker (server/cosmetics.ts) and the overlay drawings (src/served/cosmetics.ts). Its own
-// file because it imports both a Worker module and a DOM module (tsconfig.strict-tests-shared.json).
+// file because it imports both a Worker module and a DOM module (tsconfig.node-all.json).
 import test from "node:test";
 import assert from "node:assert/strict";
 

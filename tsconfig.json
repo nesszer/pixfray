@@ -1,18 +1,14 @@
-// Type checking (`bun run typecheck`): one loose project per runtime for the JavaScript, because the Worker, the
-// browser and Node each have their own globals, and four strict ones for the TypeScript files, split by the globals
-// their files need: tsconfig.strict.json (Worker, scripts, shared, the build config, and the unit tests of Worker and
-// shared modules), tsconfig.strict-web.json (browser, DOM types), tsconfig.strict-tests.json (unit tests of DOM modules
-// and Playwright scripts: DOM and Node) and tsconfig.strict-tests-shared.json (tests that import both: Worker, DOM and
-// Node). Nothing is emitted.
+// Type checking (`bun run typecheck`): five strict programs, split by the globals their files run with, because the
+// Worker, the browser and Node each have their own and some of them clash (the Workers types declare `Buffer` as
+// `any`, and they and the DOM type streams, crypto and canvas contexts differently). Nothing is emitted.
+// scripts/port-check.ts --strict-list fails a TypeScript file that none of them checks.
 {
   "files": [],
   "references": [
     { "path": "./tsconfig.worker.json" },
     { "path": "./tsconfig.web.json" },
     { "path": "./tsconfig.node.json" },
-    { "path": "./tsconfig.strict.json" },
-    { "path": "./tsconfig.strict-web.json" },
-    { "path": "./tsconfig.strict-tests.json" },
-    { "path": "./tsconfig.strict-tests-shared.json" }
+    { "path": "./tsconfig.node-dom.json" },
+    { "path": "./tsconfig.node-all.json" }
   ]
 }

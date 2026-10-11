@@ -1,6 +1,8 @@
-// Browser code: the pages (src/) and the overlay and other modules served at fixed URLs (src/served/).
+// Browser code: the pages (src/) and the overlay and other modules served at fixed URLs (src/served/). DOM types and
+// vite/client, no Worker or Node types. A server module a page imports is checked here too, so it must type-check with
+// DOM types as well.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "lib": ["esnext", "dom", "dom.iterable"], "types": ["vite/client"] },
-  "include": ["src/**/*.js", "types/browser.d.ts", "types/lib-guards.ts"]
+  "include": ["src/**/*.ts", "types/lib-guards.ts", "types/site.ts", "types/dom.ts", "site.config.js"]
 }

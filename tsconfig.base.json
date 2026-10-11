@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
+    // site.config.js is the one JavaScript file in any program; its own `// @ts-check` has tsc check it.
     "allowJs": true,
-    "checkJs": true,
     "noEmit": true,
-    "strict": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
     "target": "esnext",
     "module": "esnext",
     "moduleDetection": "force",

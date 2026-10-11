@@ -1,7 +1,48 @@
-// Node build configs, checked with Node types. They, the scripts and all tests are TypeScript in the strict configs
-// too (tsconfig.strict.json, tsconfig.strict-tests.json and tsconfig.strict-tests-shared.json).
+// Node code that runs Worker code or uses only Node and Workers globals: the scripts that need no DOM or Buffer
+// methods, the build configs, the Node-only test runners, and the unit tests that import only Worker and shared modules
+// (with their helpers). Workers and Node types, no DOM. One entry per file.
 {
   "extends": "./tsconfig.base.json",
-  "compilerOptions": { "lib": ["esnext"], "types": ["node"] },
-  "include": ["vite.config.ts", "cloudflare.config.ts", "types/lib-guards.ts"]
+  "compilerOptions": { "lib": ["esnext"], "types": ["@cloudflare/workers-types", "node"] },
+  "files": [
+    "types/lib-guards.ts",
+    "types/site.ts",
+    "site.config.js",
+    "scripts/lib/port.ts",
+    "scripts/port-check.ts",
+    "scripts/port-rename.ts",
+    "scripts/lib/served.ts",
+    "tests/fakes.ts",
+    "tests/register.ts",
+    "tests/cloudflare-test-loader.ts",
+    "tests/csp-helper.ts",
+    "tests/upload-helpers.ts",
+    "tests/auth.test.ts",
+    "tests/channel-param.test.ts",
+    "tests/channel.test.ts",
+    "tests/content.test.ts",
+    "tests/dedupe.test.ts",
+    "tests/dev-api.test.ts",
+    "tests/dev-release.test.ts",
+    "tests/game.test.ts",
+    "tests/hardening.test.ts",
+    "tests/hosts.test.ts",
+    "tests/registry.test.ts",
+    "tests/security.test.ts",
+    "tests/site-config.test.ts",
+    "tests/upload.test.ts",
+    "tests/worker.test.ts",
+    "tests/parse.test.ts",
+    "vite.config.ts",
+    "scripts/install-hooks.ts",
+    "scripts/release.ts",
+    "scripts/devtools.ts",
+    "scripts/test-all.ts",
+    "tests/chrome.ts",
+    "tests/seed-local.ts",
+    "tests/build-versions.ts",
+    "tests/upload-workerd.ts",
+    "tests/port/port-check.test.ts",
+    "cloudflare.config.ts"
+  ]
 }

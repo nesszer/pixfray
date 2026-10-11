@@ -1,7 +1,7 @@
 // Proves a TypeScript port changes no runtime code, and that the strict programs check every TypeScript file:
-// tsconfig.strict.json (the Worker, scripts, shared files and most unit tests), tsconfig.strict-web.json (browser code),
-// tsconfig.strict-tests.json (unit tests of DOM modules) and tsconfig.strict-tests-shared.json (unit tests that import
-// both a Worker module and a DOM module).
+// tsconfig.worker.json (the Worker), tsconfig.web.json (browser code), tsconfig.node.json (scripts, build configs and
+// unit tests of Worker modules), tsconfig.node-dom.json (unit tests of DOM modules, Playwright code) and
+// tsconfig.node-all.json (tests that import both a Worker module and a DOM module).
 //
 // `--base <ref>` pairs every file at the merge base with `<ref>` against the working tree. Code files are stripped to
 // JavaScript with oxc and compared. A file pairs with the same path; a code file gone at head pairs with a new code file
@@ -37,27 +37,24 @@ import {
   type Specifier,
 } from "./lib/port.ts";
 
-const STRICT_CONFIG = "tsconfig.strict.json";
+/** The strict programs, one per set of globals, in the order their problems print: the Worker (Workers types), the
+ * browser (DOM), and Node code with Workers types, with DOM types, or with both. A file passes the strict list in any
+ * of them; a config the working tree lacks is skipped. */
+const STRICT_CONFIGS = [
+  "tsconfig.worker.json",
+  "tsconfig.web.json",
+  "tsconfig.node.json",
+  "tsconfig.node-dom.json",
+  "tsconfig.node-all.json",
+] as const; // a tuple, so STRICT_CONFIGS[0] is a string, not string | undefined
 
-/** The strict program for browser code: DOM types, and none of the Worker's or Node's. */
-const STRICT_WEB_CONFIG = "tsconfig.strict-web.json";
-
-/** The strict program for unit tests that import a DOM module: DOM and Node types, no Worker types. */
-const STRICT_TESTS_CONFIG = "tsconfig.strict-tests.json";
-
-/** The strict program for unit tests that import both a Worker module and a DOM module: all three type sets. */
-const STRICT_TESTS_SHARED_CONFIG = "tsconfig.strict-tests-shared.json";
-
-/** The strict programs, in the order their problems print. A file passes the strict list in any of them; a config the
- * working tree lacks is skipped. */
-const STRICT_CONFIGS = [STRICT_CONFIG, STRICT_WEB_CONFIG, STRICT_TESTS_CONFIG, STRICT_TESTS_SHARED_CONFIG];
-
-/** The strict configs a message names: tsconfig.strict.json always, then each other one `root` has, as "a", "a or b",
- * or "a, b or c" (with `and` for "and"). */
+/** The strict configs a message names: the first always, then each other one `root` has, as "a", "a or b", or
+ * "a, b or c" (with `and` for "and"). */
 function strictNames(root: string, and = false): { names: string; count: number } {
-  const present = STRICT_CONFIGS.filter((config) => config === STRICT_CONFIG || existsSync(path.join(root, config)));
-  const last = present.at(-1) ?? STRICT_CONFIG;
-  const names = present.length > 1 ? `${present.slice(0, -1).join(", ")} ${and ? "and" : "or"} ${last}` : STRICT_CONFIG;
+  const [first] = STRICT_CONFIGS;
+  const present = STRICT_CONFIGS.filter((config) => config === first || existsSync(path.join(root, config)));
+  const last = present.at(-1) ?? first;
+  const names = present.length > 1 ? `${present.slice(0, -1).join(", ")} ${and ? "and" : "or"} ${last}` : first;
   return { names, count: present.length };
 }
 
@@ -84,12 +81,6 @@ const STRIPPED: Record<CodeExtension, string> = {
   ".mts": ".mjs",
   ".cts": ".cjs",
   ".tsx": ".jsx",
-};
-
-/** TypeScript files that the strict programs leave out, each with the program that checks it instead. */
-const STRICT_EXCLUSIONS: Record<string, string> = {
-  "cloudflare.config.ts": "tsconfig.node.json",
-  "types/browser.d.ts": "tsconfig.web.json",
 };
 
 /** Changed files that don't ship to the Worker or the pages, each with the reason printed when one is allowed. */
@@ -376,13 +367,6 @@ async function strictListProblems(
   bases: ReadonlyMap<string, Promise<Shown | undefined>> = new Map(),
 ): Promise<string[]> {
   const typescript = files.filter((file) => /\.(?:ts|mts|cts|tsx)$/.test(file)).sort();
-  const programs = new Map<string, ReturnType<typeof programFiles>>();
-  for (const file of typescript) {
-    const program = STRICT_EXCLUSIONS[file];
-    if (program !== undefined && !programs.has(program) && existsSync(path.join(root, program))) {
-      programs.set(program, programFiles(root, program));
-    }
-  }
   const runs = STRICT_CONFIGS.map((config) => {
     const has = existsSync(path.join(root, config));
     const program = has ? programFiles(root, config) : Promise.resolve({ files: new Set<string>(), errors: [] });
@@ -400,15 +384,7 @@ async function strictListProblems(
     for (const file of listed) checked.add(file);
   }
   const lists = strictNames(root).names;
-  for (const file of typescript) {
-    if (checked.has(file)) continue;
-    const program = STRICT_EXCLUSIONS[file];
-    const other = program === undefined ? undefined : programs.get(program);
-    if (program === undefined) problems.push(`${file} is not in ${lists}`);
-    else if (other === undefined || !(await other).files.has(file)) {
-      problems.push(`${file} is left out of ${STRICT_CONFIG} for ${program}, which does not list it`);
-    }
-  }
+  for (const file of typescript) if (!checked.has(file)) problems.push(`${file} is not in ${lists}`);
   return problems;
 }
 

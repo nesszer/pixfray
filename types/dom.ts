@@ -1,6 +1,5 @@
-// Browser globals for the strict browser program (tsconfig.strict-web.json) that lib.dom leaves out. The loose web
-// program (tsconfig.web.json) reads types/browser.d.ts instead, which also makes selector lookups untyped; strict
-// files cast each lookup to the element the page holds.
+// Browser globals that lib.dom leaves out, for the browser program (tsconfig.web.json) and the Node programs with DOM
+// types. Selector lookups stay typed as lib.dom has them, so each one is cast to the element the page holds.
 export {};
 
 declare global {
