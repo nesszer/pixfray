@@ -16,6 +16,7 @@
     "site.config.js",
     "scripts/lib/port.ts",
     "scripts/port-check.ts",
-    "scripts/port-rename.ts"
+    "scripts/port-rename.ts",
+    "scripts/lib/served.ts"
   ]
 }

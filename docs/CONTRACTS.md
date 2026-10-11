@@ -78,7 +78,7 @@ everything else is revalidated.
 | GET | `/api/sprites/:channel` | canManage | none | `{pending:[Sprite], live:[Sprite]}`; `Sprite = {id, userId, username, displayName, label, status, bytes, width, height, ai, createdAt, reviewedBy, reviewedAt}` | 401, 403 |
 | GET | `/api/sprites/:channel/:id` | canManage | none | The PNG of a waiting or approved sprite (`private, no-store`) | 404 |
 | POST | `/api/sprites/:channel/:id` | canManage | `{action:"approve"\|"reject"\|"remove"}` | `{ok:true, ...}`. Approve makes it live (replacing the viewer's previous one), adds it to the catalog and puts the viewer in it; reject drops the image; remove deletes a live one and puts its wearers back on `player`. Each changes the snapshot revision | 400 `invalid_action`, 404 `not_found`, 409 `wrong_status` (already reviewed) or `live_limit` (300 approved per channel), 401, 403 |
-| GET | `/api/pets/:channel` | none | none | `{pets:[{id, label, tier, boost:{power,guard,luck}, price, custom, url?, width?, height?}], hatPricePerWin, limits:{maxPets, maxBytes, maxSide, maxLabel}}`: the 14 built-in pets (drawn by public/pets.js), then the channel's uploaded pets. Open while the channel is paused | 403 |
+| GET | `/api/pets/:channel` | none | none | `{pets:[{id, label, tier, boost:{power,guard,luck}, price, custom, url?, width?, height?}], hatPricePerWin, limits:{maxPets, maxBytes, maxSide, maxLabel}}`: the 14 built-in pets (drawn by src/served/pets.js), then the channel's uploaded pets. Open while the channel is paused | 403 |
 | GET | `/api/pets/:channel/:id` | none | an uploaded pet id (`p-<slug>-<6 hex>`) | the PNG | 404 |
 | POST | `/api/pets/:channel` | canManage | `{label:1-24 chars, tier, stat, stat2?, image:<base64 PNG, data: prefix allowed>}`; at most 64 by 64 px and 64 KB. `stat` is power, guard or luck (not used for legendary); epic needs a different `stat2` | 201 `{ok:true, item}` | 400 `invalid_label`, `invalid_tier`, `invalid_stat`, `invalid_image`, `image_dimensions`; 409 `pet_limit_reached` (24 per channel); 413 `image_too_large`; 415 `not_png` |
 | DELETE | `/api/pets/:channel/:id` | canManage | none | `{ok:true}`. Removes the pet from every owner (no refund) and from fighters who bring it | 404 |
@@ -182,7 +182,7 @@ channel of that account only, so nobody can turn on someone else's channel.
 The server sends a snapshot as soon as the socket opens and after every visible change. The only
 message a client may send is the text `ping`, which the room's WebSocket auto-response answers with
 `pong` without waking the Durable Object; any other client message closes the socket with 1008.
-`public/arena-client.js` pings every 20 s and replaces a socket that has received nothing, not even
+`src/served/arena-client.js` pings every 20 s and replaces a socket that has received nothing, not even
 `pong`, for 45 s (half open). Reconnect with backoff, and use `GET /api/state/:channel` for the state
 after each (re)connect.
 
@@ -203,7 +203,7 @@ Duel   = {id, a, b, status:"pending"|"active"|"completed"|"cancelled"|"expired"|
 Event  = {id:string(revision), type, at:ms, ...fields}
 ```
 
-Deduplicate events by `id`. All `ms` times are server clock. `public/arena-client.js` shifts `event.at`,
+Deduplicate events by `id`. All `ms` times are server clock. `src/served/arena-client.js` shifts `event.at`,
 `event.respawnAt`, `player.respawnAt` and `chat.lastSeen` by `serverNow − Date.now()` before the overlay
 sees them, so a streaming PC whose clock is off still plays fresh events (the overlay drops events
 older than 10 s).
@@ -431,7 +431,7 @@ Viewer sprites (server/sprites.js):
 - Dollars: every finished ranked duel pays `winDollars` to the winner and `lossDollars` to the loser, saved fighters only. game.js records it as `duel.payout` and the room adds it to `profiles.dollars` once, in the same transaction (`duel.paid`). Like Elo, a payout stays out of `!wallet`, `/api/profile` and the leaderboard until the stream has shown the fight. Profiles carry `dollars` (at most 1,000,000). Check-ins give points, not dollars. A rank reset, a profile save and a re-save keep dollars; removing a viewer deletes them.
 - `!wallet` (the StreamElements `wallet` action, also while duels are paused): "@x: $N PixFray dollars, P of 20 upgrade points, S-stream streak." Reasons: `wallet`, `no_fighter`.
 - Pets and the shop (server/pets.js): 14 built-in pets in 5 tiers, plus up to 24 uploaded per channel. A fighter owns any number of pets (`owned_items`) and brings one (`profiles.pet`); hats can be bought too. A pet's boost is added after the upgrade limits: common and uncommon +1 to one stat, rare +2, epic +2 and +1 to a second stat, legendary +1 to every stat. Pets cost `petPrice<Tier>` dollars; a hat whose wins aren't reached costs `hatPricePerWin` times the wins it needs. The overlay draws the pet behind its fighter at about 40% of its height; epic and legendary pets sparkle, legendary pets hover. Snapshot players and `/api/looks` carry `pet` and `petTier`; players also carry `petBoost`.
-- Cosmetics and builds (server/cosmetics.js, drawn by public/cosmetics.js): recolor (a CSS filter on the fighter), pet color (the same 8 tints on the pet), accessories, walking trails, win effects (about 3 s over the winner when the overlay shows the result), win taunts (a speech bubble then) and titles (under the nameplate). Each kind has one config price. Owned cosmetics are `owned_items` rows; the worn ones are profile columns. Build slots: 1 free, the 2nd costs `buildSlotPrice`, the 3rd to 5th `buildSlotPriceMore` each. Each slot keeps its own loadout in the `builds` table; saving to a slot makes it the one on stream, and every build can spend the full point pool. Removing a viewer deletes their builds; a rank reset keeps them.
+- Cosmetics and builds (server/cosmetics.js, drawn by src/served/cosmetics.js): recolor (a CSS filter on the fighter), pet color (the same 8 tints on the pet), accessories, walking trails, win effects (about 3 s over the winner when the overlay shows the result), win taunts (a speech bubble then) and titles (under the nameplate). Each kind has one config price. Owned cosmetics are `owned_items` rows; the worn ones are profile columns. Build slots: 1 free, the 2nd costs `buildSlotPrice`, the 3rd to 5th `buildSlotPriceMore` each. Each slot keeps its own loadout in the `builds` table; saving to a slot makes it the one on stream, and every build can spend the full point pool. Removing a viewer deletes their builds; a rank reset keeps them.
 - `!pet [@name]` (the `pet` action): "@x's pet: Fox (rare), +2 power." Reasons: `pet`, `no_pet` (with the site link for the sender's own), `no_fighter`.
 - `!pay @name amount` (the `give` action; on a channel the PixFray bot reads, it's `!give` and `!pay` stays an alias; `a=` is `20` or `$20`): moves dollars between two saved fighters while the channel is live (the same Twitch check as check-ins). In order it refuses with `give_off` (config `giveEnabled` false), `no_fighter`, `give_usage` (no target or no whole amount of at least 1), `target_not_found`, `self_give`, `twitch_error`, `not_live`, `too_few_duels` (fewer than `giveMinDuels` finished duels, `{duels, need}`), `give_cap` (already gave `giveMaxPerStream` this stream), `over_cap` (`{left}`), `not_enough` (`{dollars}`) and `target_full` (`{to, room}`: the receiver's wallet can't hold the amount, so nothing moves). Hidden duel results and payouts don't count yet. The limit is per Twitch stream id (`profiles.give_stream`, `given_in_stream`). Success is `given` with `{amount, to, dollars, left}`; the command log stores the amount.
 - Check-ins (the StreamElements `checkin` action; the test site's dev chat also takes `!checkin`, Twitch EventSub chat does not): once per stream, only while Twitch's Helix `/streams` says the channel is live (cached 60 s; a Twitch error answers "try again" and is not cached). Gives `checkinPoints` (bonus capped at 1000). The streak counts the channel's streams in a row that had any check-in; one missed stream is forgiven once every 7 days. With `streakBonus`, a streak of 3, 7, 14 or 30 gives +1 more. Reasons: `checked_in`, `already_checked_in`, `not_live`, `no_fighter`, `twitch_error`. On the test Worker, `POST /api/devtools/<ch>/live` with `{live, streamId?}` (DEV_TOOLS_TOKEN only) replaces the Twitch answer: `true` is live, `false` is offline, and `null` goes back to asking Twitch.
@@ -493,9 +493,9 @@ subset of fields. Versioning works like this:
 | Lane | Owns | Contract |
 |---|---|---|
 | A (backend core) | `server/worker.js`, `server/channel.js`, `server/auth.js`, `server/game.js`, `server/eventsub.js`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
-| B (UI) | `index.html`, `admin/index.html`, `src/`, `public/*.js`, the `vite.config.js` inputs | Sections 2, 3, 5, 7 |
+| B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.js` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.js`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
-| E (developer) | `server/developer.js`, `server/ranklog.js`, `server/backups.js`, `admin/dev/index.html` | The signatures below |
+| E (developer) | `server/developer.js`, `server/ranklog.js`, `server/backups.js`, `admin/dev/index.html`, `src/dev.js` | The signatures below |
 
 Keep these signatures; worker.js and channel.js call them.
 
@@ -508,7 +508,7 @@ export async function handleRoomAssets(room, request, {path, channel})  // DO: G
 export function ensureUploadSchema(sql)                                // called from the ChannelRoom constructor
 export function customUsage(room)                                      // -> {count, limit, bytes}
 
-// public/upload.js (Lane D, browser): the admin page mounts it
+// src/served/upload.js (Lane D, browser): the admin page mounts it
 export async function mountUpload(root, {channel, usage, limits, items, refresh})  // -> {destroy()}
 
 // server/developer.js (Lane E)
@@ -568,6 +568,8 @@ bun run test:port          # node --test tests/port/port-check.test.mjs: port-ch
                            # check, for speed; CI runs it next to bun run check
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test
+node tests/build-versions.mjs   # after a build: each served module is at the output root, and every reference
+                                # between them and from public/*.html carries the same ?v=<10 lowercase hex>
 bunx cf dev                # local only; reads .dev.vars. Never deploy from a lane.
 bun run test:all           # everything below, in order (scripts/test-all.mjs)
 ```
@@ -580,6 +582,16 @@ bun run test:all           # everything below, in order (scripts/test-all.mjs)
   real Worker (it needs `MINI_AUTH_SECRET`, which scripts/test-all.mjs reads from `.dev.vars`
   without printing it) and drives the overlay, dashboard, admin and dev pages.
 - The overlay draws the arena only with `arena=1` (the OBS URL from the setup page adds it).
+- Served modules: `src/served/<name>.js` or `.ts` is served at `/<name>.js` as JavaScript, types stripped by
+  oxc and comments kept (`scripts/lib/served.ts`, the `served-modules` steps in `vite.config.js`); a name with
+  both a `.js` and a `.ts` source fails. `bun run dev` serves them as `text/javascript` with `Cache-Control: no-cache`
+  and no version. The build writes them to the output root and rewrites each `./<name>.ts` or `./<name>.js`
+  between them, and in `public/*.html`, to `./<name>.js?v=<hash>`: the first 10 hex digits of a SHA-256 over
+  each module's name and served code. The overlay compares the `?v=` it was loaded with against the one in
+  `overlay.html` after a deploy and reloads itself between duels when they differ (`overlayVersionFromUrl`).
+  Pages bundled by Vite (`src/ui.js`, `src/admin.js`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
+  `/upload.js` by full URL at run time, without a version. URLs, `public/overlay.html` and `public/_headers`
+  stay as they are; `src/dev.js` is the owner page's bundled entry (`admin/dev/index.html`).
 - Bindings: ASSETS, ROOMS, AUTH, `CF_VERSION_METADATA` (version metadata), `PUBLIC_ORIGIN`
   (the EventSub callback and OAuth redirect origin), `OWNER_TWITCH_ID` (text, nesszerra's Twitch id; left out under `MINI_LOCAL_TEST=1`) and the secrets
   `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET`, `INTERNAL_SECRET`. `GITHUB_TOKEN`,

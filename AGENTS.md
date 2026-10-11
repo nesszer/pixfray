@@ -97,7 +97,7 @@ Each one has happened here. Check for it by name before calling work done.
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
 [Code]|server/: worker.js routes, auth glue|channel.js ChannelRoom DO (state, bot commands, alarms, broadcast)|game.js rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.js webhooks, slimEvent, sendChat|auth.js sessions, Helix mod checks|channels.js registry|botcommands.js|streamelements.js|uploads.js|sprites.js|developer.js|security.js|ratelimit.js|dedupe.js|upgrades.js pets.js cosmetics.js
 |src/: admin.js mod page|dashboard.js channel page|start.js sign-up|setup.js|intro/ home page 3D|scrub.js|sprite-maker.js spritify.js|fighter3d.js voxthumb.js
-|public/: overlay.html overlay.js|arena-client.js|chat.js anonymous IRC|dashboard.css design tokens
+|src/served/: overlay.js|arena-client.js|chat.js IRC|public/: overlay.html|dashboard.css tokens
 |tests/: *.test.{mjs,ts} unit|port/ port tools|smoke.mjs|ui.mjs arena-browser.mjs|e2e-local.mjs|chrome.mjs
 |scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.mjs|release.mjs|live-chat-e2e.mjs|test-all.mjs|configure-twitch.ps1
 ```

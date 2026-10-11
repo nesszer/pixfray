@@ -1,4 +1,4 @@
-// Pure helpers of the OBS overlay (public/overlay.js): limits, text cutting, name colors, version parsing.
+// Pure helpers of the OBS overlay (src/served/overlay.js): limits, text cutting, name colors, version parsing.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -10,7 +10,7 @@ import {
   readableColor,
   overlayVersionFromUrl,
   overlayVersionFromHtml,
-} from "../public/overlay.js";
+} from "../src/served/overlay.js";
 
 test("overlay: parseCap floors, clamps to 100 and falls back for anything below 1 or not a number", () => {
   assert.equal(parseCap("8"), 8);

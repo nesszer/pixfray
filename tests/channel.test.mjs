@@ -2041,9 +2041,9 @@ test("profile saves land in the owner log: a save as a command row, a refusal wi
   });
 });
 
-test("cosmetic ids: the overlay drawings (public/cosmetics.js) match the server lists", async () => {
+test("cosmetic ids: the overlay drawings (src/served/cosmetics.js) match the server lists", async () => {
   const server = await import("../server/cosmetics.js");
-  const client = await import("../public/cosmetics.js");
+  const client = await import("../src/served/cosmetics.js");
   for (const kind of server.COSMETIC_KINDS) {
     const ids = server.COSMETICS[kind].map((x) => x.id);
     assert.deepEqual(client.COSMETIC_IDS[kind], ids, kind);

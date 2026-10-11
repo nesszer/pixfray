@@ -9,7 +9,7 @@ declare global {
     querySelectorAll(selectors: string): NodeListOf<any>;
   }
   interface Window {
-    __arenaMove?: (userId: string, x: number) => void; // overlay ?debug=1 hooks (public/overlay.js)
+    __arenaMove?: (userId: string, x: number) => void; // overlay ?debug=1 hooks (src/served/overlay.js)
     __arenaDebug?: () => unknown;
     __intro?: any; // home page test hooks (src/intro/main.js)
     webkitAudioContext?: typeof AudioContext; // older Safari

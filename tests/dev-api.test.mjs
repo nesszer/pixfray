@@ -886,7 +886,7 @@ test("owner can connect and disconnect Twitch chat from the dev settings; diagno
 });
 
 test("editor paths reject traversal and protected files", () => {
-  for (const p of ["server/worker.js", "public/dev.js", "README.md", "docs/LIVE_FIX.md"])
+  for (const p of ["server/worker.js", "src/dev.js", "README.md", "docs/LIVE_FIX.md"])
     assert.equal(validPath(p), true, p);
   for (const p of [
     "",
@@ -1100,7 +1100,7 @@ test("save creates the live-fix branch from main, then commits the file", async 
       [201, { ref: "refs/heads/live-fix/overlay" }],
     ],
     [
-      ["PUT", /\/contents\/public\/overlay\.js$/],
+      ["PUT", /\/contents\/src\/served\/overlay\.js$/],
       [200, { content: { sha: "c".repeat(40) }, commit: { sha: "d".repeat(40) } }],
     ],
   ]);
@@ -1111,7 +1111,7 @@ test("save creates the live-fix branch from main, then commits the file", async 
     "/api/dev/code/save",
     "POST",
     {
-      path: "public/overlay.js",
+      path: "src/served/overlay.js",
       content: "héllo ✓\n",
       branch: "live-fix/overlay",
       sha: "a".repeat(40),
@@ -1122,7 +1122,7 @@ test("save creates the live-fix branch from main, then commits the file", async 
   assert.equal(r.status, 200);
   assert.deepEqual(r.body, {
     ok: true,
-    path: "public/overlay.js",
+    path: "src/served/overlay.js",
     branch: "live-fix/overlay",
     branchCreated: true,
     sha: "c".repeat(40),

@@ -1,6 +1,6 @@
-// Browser code: the pages (src/) and the overlay and other scripts served as written (public/).
+// Browser code: the pages (src/) and the overlay and other modules served at fixed URLs (src/served/).
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "lib": ["esnext", "dom", "dom.iterable"], "types": ["vite/client"] },
-  "include": ["src/**/*.js", "public/*.js", "types/browser.d.ts", "types/lib-guards.ts"]
+  "include": ["src/**/*.js", "types/browser.d.ts", "types/lib-guards.ts"]
 }

@@ -225,7 +225,7 @@ async function stub(page, { configured, calls = { progress: [] } }) {
       });
     if (op === "code/file")
       return json(r, {
-        path: "public/overlay.js",
+        path: "src/served/overlay.js",
         ref: "main",
         sha: "a".repeat(40),
         size: 120,
@@ -234,7 +234,7 @@ async function stub(page, { configured, calls = { progress: [] } }) {
     if (op === "code/save")
       return json(r, {
         ok: true,
-        path: "public/overlay.js",
+        path: "src/served/overlay.js",
         branch: "live-fix/overlay-text",
         branchCreated: true,
         sha: "b".repeat(40),
@@ -334,7 +334,7 @@ for (const size of sizes) {
   assert.match(await page.textContent("#runs"), /deploy test live-fix\/overlay-text/);
   assert.match(await page.textContent("#deployments"), /promote #7/);
   await page.fill("#branch", "live-fix/overlay-text");
-  await page.fill("#path", "public/overlay.js");
+  await page.fill("#path", "src/served/overlay.js");
   await page.click("#load-file");
   await page.waitForFunction(() => document.querySelector("#editor").value.includes("overlay"));
   await page.click("#save-file");

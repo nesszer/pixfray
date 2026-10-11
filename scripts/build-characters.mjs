@@ -531,7 +531,7 @@ function buildCharacter(c) {
     license: "CC0-1.0",
     source: PACKS[c.pack].source,
   };
-  if (c.head) entry.head = c.head; // where hats go (public/hats.js), when it isn't the top of the figure
+  if (c.head) entry.head = c.head; // where hats go (src/served/hats.js), when it isn't the top of the figure
   if (!c.attack) entry.combatFallback = "effects";
   return { entry, png: encodePng(atlas), cell: cw + " x " + ch, frames: order.length };
 }

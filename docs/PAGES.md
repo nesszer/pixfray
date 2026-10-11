@@ -31,5 +31,9 @@ The overlay link is `/overlay.html?channel=<login>` plus any of these:
 | `debug=1` | Debug readout. |
 
 The overlay joins chat over anonymous read-only Twitch IRC to show who is chatting
-([public/chat.js](../public/chat.js)). Twitch may change anonymous access. Duels and ranks go
+([src/served/chat.js](../src/served/chat.js)). Twitch may change anonymous access. Duels and ranks go
 through the Worker.
+
+The link and its options stay the same across deploys. The overlay's code lives in `src/served/`
+and is served at `/overlay.js` with a `?v=` code hash. After a deploy that changes the overlay's code,
+an open overlay reloads itself between duels, at most once a minute, so OBS never needs a manual refresh.

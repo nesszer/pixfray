@@ -1454,7 +1454,7 @@ $("#pet-form").addEventListener("submit", async (e) => {
   loadPets();
 });
 
-// Lane D hook: public/upload.js may export mountUpload(root, ctx). Probe first so a missing file stays quiet.
+// Lane D hook: src/served/upload.js may export mountUpload(root, ctx). Probe first so a missing file stays quiet.
 async function mountUploads() {
   const root = $("#upload-root");
   try {

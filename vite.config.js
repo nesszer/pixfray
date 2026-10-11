@@ -1,9 +1,9 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig } from "vite";
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import site from "./site.config.js";
+import { linkServed, servedSources, servedVersion, stripServed } from "./scripts/lib/served.ts";
 // Multi-page build: index.html (viewer dashboard: /?channel= and the /play/ picker), "/admin/", "/admin/dev/", "/start/" (streamer sign-up),
 // intro/index.html (3D showcase, served at "/" by server/worker.js page()).
 // Add new pages here as extra inputs; files in public/ are copied as-is.
@@ -23,28 +23,56 @@ const siteTokens = {
     handler: (html) => html.replace(/%(SITE_[A-Z_]+)%/g, (m, k) => SITE_TOKENS[k] ?? m),
   },
 };
-// public/ is copied as-is, so the overlay's module URLs (./overlay.js, ./cosmetics.js, ...) never change between deploys
-// and OBS's browser keeps running cached code after a reload. The build adds ?v=<hash of public/*.js> to every
-// "./x.js" reference in the copied .html and .js files, so each deploy loads fresh modules. The dev server is unchanged.
-const versionPublicModules = {
-  name: "version-public-modules",
+// The overlay and the other modules loaded by a fixed URL (/overlay.js, /hats.js, /upload.js, ...) live in src/served/
+// as .js or .ts and are served as plain JavaScript at the site root under the same names (scripts/lib/served.ts).
+// Their URLs never change between deploys and OBS's browser keeps running cached code after a reload, so the build
+// adds ?v=<hash of the served code> to every reference between them and in public/*.html, and each deploy with new
+// overlay code loads fresh modules. The dev server serves them unversioned and uncached, so an edit shows on reload.
+const servedDev = {
+  name: "served-modules-dev",
+  apply: "serve",
+  configureServer(server) {
+    server.middlewares.use(async (req, res, next) => {
+      const name = /^\/([\w-]+)\.js(?:\?|$)/.exec(req.url || "")?.[1];
+      const modules = servedSources(),
+        module = modules.find((m) => m.name === name);
+      if (!module) return next();
+      try {
+        const code = await stripServed(module.file, readFileSync(module.file, "utf8"));
+        res.setHeader("Content-Type", "text/javascript");
+        res.setHeader("Cache-Control", "no-cache");
+        res.end(
+          linkServed(
+            code,
+            modules.map((m) => m.name),
+            "",
+          ),
+        );
+      } catch (error) {
+        next(error);
+      }
+    });
+  },
+};
+const servedBuild = {
+  name: "served-modules",
   apply: "build",
-  closeBundle() {
+  async closeBundle() {
     if (this.environment && this.environment.name !== "client") return;
-    const out = this.environment ? this.environment.config.build.outDir : "dist",
-      js = readdirSync("public")
-        .filter((f) => f.endsWith(".js"))
-        .sort();
-    const hash = createHash("sha256");
-    for (const f of js) hash.update(f).update(readFileSync(join("public", f)));
-    const v = hash.digest("hex").slice(0, 10);
-    for (const f of readdirSync("public").filter((f) => /\.(js|html)$/.test(f))) {
-      const file = join(out, f),
-        text = readFileSync(file, "utf8");
-      writeFileSync(
-        file,
-        text.replace(/(["'])\.\/([\w-]+\.js)\1/g, (m, q, name) => (js.includes(name) ? `${q}./${name}?v=${v}${q}` : m)),
-      );
+    const out = this.environment ? this.environment.config.build.outDir : "dist";
+    if (!existsSync(out)) throw new Error(`served-modules: build output ${out} is missing`);
+    const modules = await Promise.all(
+      servedSources().map(async ({ name, file }) => ({
+        name,
+        code: await stripServed(file, readFileSync(file, "utf8")),
+      })),
+    );
+    const names = modules.map((m) => m.name),
+      v = servedVersion(modules);
+    for (const { name, code } of modules) writeFileSync(join(out, name + ".js"), linkServed(code, names, v));
+    for (const f of readdirSync("public").filter((f) => f.endsWith(".html"))) {
+      const file = join(out, f);
+      writeFileSync(file, linkServed(readFileSync(file, "utf8"), names, v));
     }
   },
 };
@@ -52,7 +80,8 @@ export default defineConfig({
   // MINI_PERSIST points local DO/KV state at another folder (tests/e2e use .cloudflare/e2e-state so they never share a dev server's state).
   plugins: [
     siteTokens,
-    versionPublicModules,
+    servedDev,
+    servedBuild,
     cloudflare(process.env.MINI_PERSIST ? { persistState: { path: process.env.MINI_PERSIST } } : {}),
   ],
   // Hashed bundles go to /assets/build/, which public/_headers caches for a year; public/assets/ (sprites, characters.json)
