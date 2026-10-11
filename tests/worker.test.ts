@@ -1,11 +1,15 @@
 // Worker routing, gates and validation, with in-memory AuthStore/ChannelRoom stubs.
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../server/worker.ts";
+import type { Env } from "../server/env.ts";
+import { asEnv, asExecutionContext, must } from "./fakes.ts";
+import type { Loose } from "./fakes.ts";
 import { createHmac } from "node:crypto";
 import { digest } from "../server/auth.ts";
 import { forgetChannel } from "../server/channels.ts";
-import { makePng } from "./upload-helpers.mjs";
+import { makePng } from "./upload-helpers.ts";
 import {
   eventsubSecret,
   signEventsub,
@@ -15,20 +19,33 @@ import {
   botDropText,
 } from "../server/eventsub.ts";
 
+/** What the room and AuthStore fakes receive; the Worker sends JSON bodies as strings. */
+type FakeInit = { method?: string; body?: string; headers?: HeadersInit };
+type FakeStub = { fetch(url: string, options?: FakeInit): Promise<Response> };
+/** A namespace fake: ids are the names themselves, and get returns a stub for that name. */
+type FakeNamespace = { idFromName(name: string): string; get(name: string): FakeStub };
+/** The bindings under test: an Env for the Worker whose namespaces the tests also call by channel name. */
+type TestEnv = Env & { ROOMS: FakeNamespace; AUTH: FakeNamespace };
+type Fixture = ReturnType<typeof environment>;
+/** The init a mocked global fetch receives from the Worker's Twitch calls. */
+type FetchInit = { method?: string; body?: string; headers?: Record<string, string> };
+
 function environment() {
-  const entries = new Map(),
-    forwarded = [];
+  // Loose: stored values, which the tests read by property
+  const entries = new Map<string, Loose>(),
+    // Loose: forwarded room calls, which the tests read by property
+    forwarded: Loose[] = [];
   const env = {
     AUTH_SECRET: "test-only-auth-key",
     INTERNAL_SECRET: "test-only-internal-key",
     TWITCH_CLIENT_ID: "test-app",
     TWITCH_CLIENT_SECRET: "test-secret",
     AUTH: {
-      idFromName: (x) => x,
+      idFromName: (x: string) => x,
       get: () => ({
-        async fetch(url, options) {
+        async fetch(url: string, options: { method?: string; body: string }) {
           const u = new URL(url),
-            key = u.searchParams.get("key"),
+            key = u.searchParams.get("key") as string, // the Worker's AuthStore calls always carry a key
             method = options.method;
           if (u.pathname === "/list")
             return Response.json(
@@ -57,9 +74,9 @@ function environment() {
       }),
     },
     ROOMS: {
-      idFromName: (x) => x,
-      get: (channel) => ({
-        async fetch(url, options = {}) {
+      idFromName: (x: string) => x,
+      get: (channel: string) => ({
+        async fetch(url: string, options: FakeInit = {}) {
           const path = new URL(url).pathname;
           forwarded.push({ channel, path, options, body: options.body ? JSON.parse(options.body) : undefined });
           if (path === "/catalog") return Response.json([{ id: "c-robot" }]);
@@ -71,17 +88,18 @@ function environment() {
     },
     ASSETS: { fetch: async () => Response.json([{ id: "player" }]) },
   };
-  return { env, entries, forwarded };
+  // partial bindings (each test adds what its route reads), and the namespaces stay callable by name
+  return { env: asEnv(env) as TestEnv, entries, forwarded };
 }
-async function signedIn(f, owner = false) {
+async function signedIn(f: Fixture, owner = false) {
   const cookie = (owner ? "1" : "2").repeat(64),
     user = { id: owner ? "1" : "2", login: owner ? "nesszerra" : "viewer", displayName: "V" };
   f.entries.set("owner:nesszerra", { id: "1" });
   f.entries.set("session:" + (await digest(cookie)), { user });
   return "mini_session=" + cookie;
 }
-const b64png = (w, h) => Buffer.from(makePng(w, h)).toString("base64");
-function req(path, method = "GET", data, cookie, extra = {}) {
+const b64png = (w: number, h: number) => Buffer.from(makePng(w, h)).toString("base64");
+function req(path: string, method = "GET", data?: unknown, cookie?: string, extra: Record<string, string> = {}) {
   const headers = {
     ...(cookie ? { Cookie: cookie } : {}),
     ...(method !== "GET" ? { Origin: "https://chat.miolaf.xyz", "Content-Type": "application/json" } : {}),
@@ -103,7 +121,7 @@ test("admin dashboard data requires a mod or the owner", async () => {
   );
   const r = await worker.fetch(req("/api/admin/nesszerra", "GET", undefined, await signedIn(f, true)), f.env);
   assert.equal(r.status, 200);
-  const body = await r.json();
+  const body = await r.json<Loose>(); // Loose: the JSON reply, read by property
   assert.equal(body.revision, 3);
   assert.equal(body.access.canManage, true);
 });
@@ -125,7 +143,7 @@ test("custom character uploads are gated; atlas reads are public", async () => {
   assert.equal((await worker.fetch(req("/api/assets/nesszerra", "POST", {}, await signedIn(f)), f.env)).status, 403);
   const bad = await worker.fetch(req("/api/assets/nesszerra", "POST", {}, await signedIn(f, true)), f.env);
   assert.equal(bad.status, 400, "an empty upload is rejected in the Worker before reaching the room");
-  assert.equal((await bad.json()).reason, "invalid_label");
+  assert.equal((await bad.json<Loose>()).reason, "invalid_label"); // Loose: the JSON reply, read by property
   const pub = await worker.fetch(req("/api/assets/nesszerra/c-robot"), f.env);
   assert.equal(pub.status, 200);
   assert.equal(f.forwarded.at(-1).path, "/asset/c-robot");
@@ -146,9 +164,9 @@ test("developer routes are owner-only", async () => {
 test("catalog merges static and custom characters; profiles may pick either", async () => {
   const f = environment(),
     cookie = await signedIn(f);
-  const cat = await (await worker.fetch(req("/api/catalog/nesszerra"), f.env)).json();
+  const cat = await (await worker.fetch(req("/api/catalog/nesszerra"), f.env)).json<Loose>(); // Loose: the JSON reply, read by property
   assert.deepEqual(
-    cat.map((x) => x.id),
+    cat.map((x: { id: string }) => x.id),
     ["player", "c-robot"],
   );
   const ok = await worker.fetch(
@@ -180,7 +198,7 @@ test("a saved fighter is indexed per viewer, and /others lists their look on oth
   const f = environment(),
     cookie = await signedIn(f);
   // Rooms: the viewer (id 2) has a fighter on miolafff and on newstreamer, none on nesszerra.
-  const saved = {
+  const saved: Record<string, object> = {
     miolafff: { avatar: "cowgirl", color: "#F87171", defaultAbility: "heal", lastSeen: 100, hat: "crown" },
     newstreamer: { avatar: "dog", color: "#FBBF24", defaultAbility: "strike", lastSeen: 200 },
   };
@@ -197,13 +215,15 @@ test("a saved fighter is indexed per viewer, and /others lists their look on oth
         return rooms(channel).fetch(url, options);
       },
     }),
-  };
+  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
   f.entries.set("channel:newstreamer", { id: "77", login: "newstreamer", enabledAt: 1 });
   assert.equal((await worker.fetch(req("/api/profile/nesszerra/others"), f.env)).status, 401);
   assert.equal((await worker.fetch(req("/api/profile/nesszerra/other", "GET", undefined, cookie), f.env)).status, 404);
   assert.equal((await worker.fetch(req("/api/profile/nesszerra/others", "POST", {}, cookie), f.env)).status, 404);
   // Before any save the index is empty: only the built-in channels are checked, never this one.
-  let r = await (await worker.fetch(req("/api/profile/nesszerra/others", "GET", undefined, cookie), f.env)).json();
+  let r = await (
+    await worker.fetch(req("/api/profile/nesszerra/others", "GET", undefined, cookie), f.env)
+  ).json<Loose>(); // Loose: the JSON reply, read by property
   assert.deepEqual(
     r.fighters,
     [{ channel: "miolafff", avatar: "cowgirl", color: "#F87171", defaultAbility: "heal", lastSeen: 100 }],
@@ -239,7 +259,7 @@ test("a saved fighter is indexed per viewer, and /others lists their look on oth
   assert.deepEqual(f.entries.get("fighters:2"), { channels: ["nesszerra", "newstreamer"] });
   r = await (await worker.fetch(req("/api/profile/nesszerra/others", "GET", undefined, cookie), f.env)).json();
   assert.deepEqual(
-    r.fighters.map((x) => x.channel),
+    r.fighters.map((x: { channel: string }) => x.channel),
     ["newstreamer", "miolafff"],
   );
   assert.ok(
@@ -251,7 +271,7 @@ test("a saved fighter is indexed per viewer, and /others lists their look on oth
   forgetChannel("newstreamer");
   r = await (await worker.fetch(req("/api/profile/nesszerra/others", "GET", undefined, cookie), f.env)).json();
   assert.deepEqual(
-    r.fighters.map((x) => x.channel),
+    r.fighters.map((x: { channel: string }) => x.channel),
     ["miolafff"],
   );
 });
@@ -290,8 +310,8 @@ test("live sockets require a WebSocket upgrade; the relay routes are gone", asyn
 // ---------- Twitch EventSub webhook ----------
 const NOW = Date.parse("2026-10-01T12:00:00Z");
 async function eventsub(
-  f,
-  body,
+  f: Fixture,
+  body: unknown,
   {
     type = "notification",
     id = "msg-" + Math.random().toString(16).slice(2),
@@ -299,6 +319,13 @@ async function eventsub(
     sign = true,
     signature,
     headers = {},
+  }: {
+    type?: string;
+    id?: string;
+    at?: number;
+    sign?: boolean;
+    signature?: string;
+    headers?: Record<string, string>;
   } = {},
 ) {
   const raw = typeof body === "string" ? body : JSON.stringify(body),
@@ -325,7 +352,22 @@ async function eventsub(
     f.env,
   );
 }
-const chatBody = (channel = "nesszerra") => ({
+/** A chat notification; tests add the optional fields a message can carry. */
+type ChatBody = {
+  subscription: { id: string; status: string; type: string };
+  event: {
+    broadcaster_user_login: string;
+    chatter_user_id: string;
+    chatter_user_login: string;
+    chatter_user_name: string;
+    message_id: string;
+    message: { text: string; fragments?: object[] };
+    color: string;
+    badges?: { set_id: string; id: string; info: string }[];
+    reply?: { parent_message_body: string };
+  };
+};
+const chatBody = (channel = "nesszerra"): ChatBody => ({
   subscription: { id: "sub-1", status: "enabled", type: "channel.chat.message" },
   event: {
     broadcaster_user_login: channel,
@@ -400,7 +442,7 @@ test("eventsub: verification answers the challenge as text/plain; revocation is 
     { type: "webhook_callback_verification" },
   );
   assert.equal(res.status, 200);
-  assert.match(res.headers.get("content-type"), /^text\/plain/);
+  assert.match(must(res.headers.get("content-type")), /^text\/plain/);
   assert.equal(await res.text(), "pogchamp-kappa-360noscope");
   assert.equal(f.forwarded.at(-1).body.messageType, "webhook_callback_verification");
   const revoked = await eventsub(
@@ -421,7 +463,10 @@ test("eventsub: verification answers the challenge as text/plain; revocation is 
 test("eventsub: a room failure is not acknowledged, so Twitch retries", async (t) => {
   t.mock.method(Date, "now", () => NOW);
   const f = environment();
-  f.env.ROOMS = { idFromName: (x) => x, get: () => ({ fetch: async () => new Response("boom", { status: 500 }) }) };
+  f.env.ROOMS = {
+    idFromName: (x) => x,
+    get: () => ({ fetch: async () => new Response("boom", { status: 500 }) }),
+  } as FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
   assert.equal((await eventsub(f, chatBody())).status, 503);
 });
 
@@ -449,7 +494,7 @@ test("eventsub: an emote-heavy message (~30 KB) is forwarded as a few hundred by
   };
   body.event.badges = Array.from({ length: 20 }, () => ({ set_id: "subscriber", id: "12", info: "12" }));
   body.event.reply = { parent_message_body: "x".repeat(500) };
-  body.event.message.fragments.push(...Array.from({ length: 60 }, () => emote));
+  must(body.event.message.fragments).push(...Array.from({ length: 60 }, () => emote));
   const raw = JSON.stringify(body);
   assert.ok(raw.length > 28_000 && raw.length < 64 * 1024, "body is " + raw.length + " bytes");
   assert.equal((await eventsub(f, body)).status, 204);
@@ -470,7 +515,7 @@ test("eventsub: an emote-heavy message (~30 KB) is forwarded as a few hundred by
   f.env.ROOMS = {
     idFromName: (x) => x,
     get: () => ({ fetch: async () => Response.json({ error: "request body too large" }, { status: 400 }) }),
-  };
+  } as FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
   assert.equal((await eventsub(f, chatBody())).status, 204);
 });
 
@@ -483,7 +528,7 @@ test("eventsub: broadcaster, moderator and lead moderator badges mark the chatte
     [["broadcaster"], true],
     [["vip", "subscriber"], false],
     [[], false],
-  ]) {
+  ] satisfies [string[], boolean][]) {
     const body = chatBody();
     body.event.badges = badges.map((set_id) => ({ set_id, id: "1", info: "" }));
     assert.equal((await eventsub(f, body)).status, 204);
@@ -492,9 +537,12 @@ test("eventsub: broadcaster, moderator and lead moderator badges mark the chatte
 });
 
 // ---------- Connect chat (Helix lifecycle) ----------
-function helixMock(t, { subscriptions = [], create = 202 } = {}) {
-  const calls = [];
-  t.mock.method(globalThis, "fetch", async (url, init = {}) => {
+function helixMock(
+  t: TestContext,
+  { subscriptions = [], create = 202 }: { subscriptions?: object[]; create?: number } = {},
+) {
+  const calls: Loose[] = []; // Loose: call records the tests read by property
+  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: FetchInit = {}) => {
     const u = new URL(String(url)),
       method = init.method || "GET";
     calls.push({
@@ -517,7 +565,7 @@ function helixMock(t, { subscriptions = [], create = 202 } = {}) {
   return calls;
 }
 const callback = "https://chat.miolaf.xyz/api/eventsub";
-const sub = (id, extra = {}) => ({
+const sub = (id: string, extra: object = {}) => ({
   id,
   status: "enabled",
   type: "channel.chat.message",
@@ -600,7 +648,7 @@ test("connectChat: a live subscription for the same channel on the other site is
   });
   const res = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
   assert.equal(res.status, 409);
-  const body = await res.json();
+  const body = await res.json<Loose>(); // Loose: the JSON reply, read by property
   assert.equal(body.connectedElsewhere, "https://test.chat.miolaf.xyz");
   assert.match(
     body.error,
@@ -629,7 +677,7 @@ test("connectChat: a live subscription for the same channel on the other site is
   assert.equal(f.forwarded.at(-1).body.subscriptionId, "sub-new");
   // the owner dev settings route takes the same option
   const dev = await worker.fetch(req("/api/dev/settings", "POST", { action: "connectChat" }, owner), f.env);
-  assert.deepEqual([dev.status, (await dev.json()).connectedElsewhere], [409, "https://test.chat.miolaf.xyz"]);
+  assert.deepEqual([dev.status, (await dev.json<Loose>()).connectedElsewhere], [409, "https://test.chat.miolaf.xyz"]); // Loose: the JSON reply, read by property
 });
 
 test("connectChat: a Helix 409 on create (raced by another site) is the same clear conflict", async (t) => {
@@ -638,7 +686,7 @@ test("connectChat: a Helix 409 on create (raced by another site) is the same cle
   helixMock(t, { create: 409 });
   const res = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
   assert.equal(res.status, 409);
-  const body = await res.json();
+  const body = await res.json<Loose>(); // Loose: the JSON reply, read by property
   assert.equal(body.connectedElsewhere, "another site");
   assert.match(body.error, /Only one site can receive chat at a time/);
 });
@@ -649,7 +697,7 @@ test("connectChat: a Twitch authorization error tells the owner to reconnect Twi
   helixMock(t, { create: 403 });
   const res = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
   assert.equal(res.status, 403);
-  const body = await res.json();
+  const body = await res.json<Loose>(); // Loose: the JSON reply, read by property
   assert.equal(body.reconnect, "/auth/login?connect=1");
   assert.match(body.error, /Reconnect Twitch at \/auth\/login\?connect=1/);
   assert.equal(
@@ -671,7 +719,7 @@ test("disconnectChat deletes the subscription and pauses the room; viewers canno
           ? Response.json({ connected: true, subscriptionId: "sub-9" })
           : rooms.get(c).fetch(url, o),
     }),
-  };
+  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
   const calls = helixMock(t);
   assert.equal(
     (await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "disconnectChat" }, owner), f.env)).status,
@@ -694,7 +742,7 @@ test("local test mode marks chat connected without Twitch only for a loopback cf
   const f = environment(),
     owner = await signedIn(f, true);
   Object.assign(f.env, { MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: "http://127.0.0.1:5199" });
-  const local = (path, data) =>
+  const local = (path: string, data: unknown) =>
     new Request("http://127.0.0.1:5199" + path, {
       method: "POST",
       headers: { Origin: "http://127.0.0.1:5199", Cookie: owner, "Content-Type": "application/json" },
@@ -706,21 +754,21 @@ test("local test mode marks chat connected without Twitch only for a loopback cf
   // the same flag on a public origin does nothing: production must talk to Twitch
   assert.equal(
     localTestMode(
-      { MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: "https://chat.miolaf.xyz" },
+      asEnv({ MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: "https://chat.miolaf.xyz" }),
       new URL("https://chat.miolaf.xyz/"),
     ),
     false,
   );
   assert.equal(
     localTestMode(
-      { MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: "http://127.0.0.1:5199" },
+      asEnv({ MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: "http://127.0.0.1:5199" }),
       new URL("https://chat.miolaf.xyz/"),
     ),
     false,
   );
   assert.equal(
     localTestMode(
-      { MINI_LOCAL_TEST: "true", PUBLIC_ORIGIN: "http://127.0.0.1:5199" },
+      asEnv({ MINI_LOCAL_TEST: "true", PUBLIC_ORIGIN: "http://127.0.0.1:5199" }),
       new URL("http://127.0.0.1:5199/"),
     ),
     false,
@@ -738,7 +786,7 @@ test("unknown routes and channels that are not enabled", async () => {
 });
 
 const DEV = "dev-token-for-tests-0123456789abcdefghij";
-function devReq(path, data, token = DEV, extra = {}) {
+function devReq(path: string, data?: unknown, token = DEV, extra: Record<string, string> = {}) {
   return new Request("https://test.chat.miolaf.xyz" + path, {
     method: data === undefined ? "GET" : "POST",
     headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", ...extra },
@@ -800,7 +848,7 @@ test("channel export (dev token only): room tables plus mod access, for a site o
   f.entries.set("modsconnected:miolafff", { at: 5 });
   const res = await worker.fetch(devReq("/api/devtools/miolafff/export"), f.env);
   assert.equal(res.status, 200);
-  const out = await res.json();
+  const out = await res.json<Loose>(); // Loose: the JSON reply, read by property
   assert.deepEqual(
     { channel: out.channel, tables: out.tables, auth: out.auth },
     {
@@ -915,7 +963,8 @@ test("dev token (test site only): the right token acts as the owner and can seed
 
 test("dev token binding: declared for the test deploy only, never for production", async () => {
   const { default: config } = await import("../cloudflare.config.ts");
-  const env = (mode) => config({ mode }).worker.env;
+  // only the mode is read here; isPreview stays unset as before
+  const env = (mode?: string) => config({ mode } as Parameters<typeof config>[0]).worker.env;
   assert.ok("DEV_TOOLS_TOKEN" in env("test"));
   assert.ok(!("DEV_TOOLS_TOKEN" in env(undefined)));
   assert.ok(!("DEV_TOOLS_TOKEN" in env("production")));
@@ -932,7 +981,7 @@ test("pets: the catalog and images are public; uploads and deletes need a mod; t
   const owner = await signedIn(f, true),
     sent = f.forwarded.length;
   const bad = await worker.fetch(req("/api/pets/nesszerra", "POST", { label: "Blob", tier: "mythic" }, owner), f.env);
-  assert.equal((await bad.json()).reason, "invalid_tier");
+  assert.equal((await bad.json<Loose>()).reason, "invalid_tier"); // Loose: the JSON reply, read by property
   assert.equal(
     (await worker.fetch(req("/api/pets/nesszerra/fox", "DELETE", undefined, owner), f.env)).status,
     404,
@@ -1048,7 +1097,7 @@ test("pets: the catalog and images are public; uploads and deletes need a mod; t
 });
 
 // ---------- PixFray chat bot (CHAT_BOT) ----------
-const botBody = (text) => ({
+const botBody = (text: string) => ({
   subscription: {
     id: "sub-bot",
     status: "enabled",
@@ -1069,18 +1118,18 @@ const botBody = (text) => ({
 test("chat bot: only commands reach the room; its reply is sent as the bot, threaded, never as a command", async (t) => {
   t.mock.method(Date, "now", () => NOW);
   const f = environment(),
-    waits = [];
+    waits: Promise<unknown>[] = [];
   f.env.ROOMS = {
     idFromName: (x) => x,
     get: (channel) => ({
       async fetch(url, options = {}) {
-        f.forwarded.push({ channel, url, body: JSON.parse(options.body) });
+        f.forwarded.push({ channel, url, body: JSON.parse(options.body as string) }); // bot commands always carry a body
         return Response.json({ ok: true, reply: "!ranks are at pixfray" });
       },
     }),
-  };
-  const ctx = { waitUntil: (p) => waits.push(p) };
-  const post = async (body) => {
+  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
+  const ctx = asExecutionContext({ waitUntil: (p) => waits.push(p) });
+  const post = async (body: object) => {
     const raw = JSON.stringify(body),
       timestamp = new Date(NOW).toISOString(),
       id = "m-" + Math.random();
@@ -1100,11 +1149,11 @@ test("chat bot: only commands reach the room; its reply is sent as the bot, thre
       ctx,
     );
   };
-  const helix = [];
-  t.mock.method(globalThis, "fetch", async (url, init = {}) => {
+  const helix: Loose[] = []; // Loose: Helix posts the test reads by property
+  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: FetchInit = {}) => {
     if (String(url).startsWith("https://id.twitch.tv"))
       return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    helix.push({ url: String(url), body: JSON.parse(init.body) });
+    helix.push({ url: String(url), body: JSON.parse(init.body as string) }); // Helix chat posts always carry a body
     return Response.json({ data: [{ message_id: "r1", is_sent: true }] });
   });
   assert.equal((await post(botBody("hello chat"))).status, 204);
@@ -1140,7 +1189,7 @@ test("chat bot: drop reasons read as words", () => {
 test("chat bot: a signed-up channel gets its verification, and the bot answers on its own channel", async (t) => {
   t.mock.method(Date, "now", () => NOW);
   const f = environment(),
-    waits = [];
+    waits: Promise<unknown>[] = [];
   f.env.CHAT_BOT = "1";
   f.entries.set("channel:solo", { id: "42", login: "solo", enabledAt: NOW });
   f.entries.set("bot:twitch", { id: "42", login: "solo" });
@@ -1148,12 +1197,12 @@ test("chat bot: a signed-up channel gets its verification, and the bot answers o
     idFromName: (x) => x,
     get: (channel) => ({
       async fetch(url, options = {}) {
-        f.forwarded.push({ channel, url, body: JSON.parse(options.body) });
+        f.forwarded.push({ channel, url, body: JSON.parse(options.body as string) }); // bot commands always carry a body
         return Response.json({ ok: true, reply: "solo has 1000 elo" });
       },
     }),
-  };
-  const post = async (body, type = "notification") => {
+  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
+  const post = async (body: object, type = "notification") => {
     const raw = JSON.stringify(body),
       timestamp = new Date(NOW).toISOString(),
       id = "m-" + Math.random();
@@ -1170,14 +1219,14 @@ test("chat bot: a signed-up channel gets its verification, and the bot answers o
         body: raw,
       }),
       f.env,
-      { waitUntil: (p) => waits.push(p) },
+      asExecutionContext({ waitUntil: (p) => waits.push(p) }),
     );
   };
-  const helix = [];
-  t.mock.method(globalThis, "fetch", async (url, init = {}) => {
+  const helix: Loose[] = []; // Loose: Helix posts the test reads by property
+  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: FetchInit = {}) => {
     if (String(url).startsWith("https://id.twitch.tv"))
       return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    helix.push({ url: String(url), body: JSON.parse(init.body) });
+    helix.push({ url: String(url), body: JSON.parse(init.body as string) }); // Helix chat posts always carry a body
     return Response.json({ data: [{ message_id: "r1", is_sent: true }] });
   });
   const condition = { broadcaster_user_id: "42", user_id: "42" };
@@ -1200,7 +1249,7 @@ test("chat bot: a signed-up channel gets its verification, and the bot answers o
     "the signed-up room hears its verification",
   );
   f.forwarded.length = 0;
-  const line = (login, text) => ({
+  const line = (login: string, text: string) => ({
     subscription: { id: "sub-solo", status: "enabled", type: "channel.chat.message", condition },
     event: {
       broadcaster_user_id: "42",
@@ -1238,7 +1287,7 @@ test("chat bot: Connect chat subscribes as the signed-in bot account, and asks f
   });
   const first = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
   assert.equal(first.status, 409);
-  assert.match((await first.json()).error, /\/auth\/login\?bot=1/);
+  assert.match((await first.json<Loose>()).error, /\/auth\/login\?bot=1/); // Loose: the JSON reply, read by property
   f.entries.set("bot:twitch", { id: "99", login: "pixbot" });
   assert.equal(
     (await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env)).status,
@@ -1251,7 +1300,7 @@ test("chat bot: Connect chat subscribes as the signed-in bot account, and asks f
     ["broadcaster-self"],
     "the channel's old self-read subscription goes; another channel's bot subscription stays",
   );
-  const view = await (await worker.fetch(req("/api/admin/nesszerra", "GET", undefined, owner), f.env)).json();
+  const view = await (await worker.fetch(req("/api/admin/nesszerra", "GET", undefined, owner), f.env)).json<Loose>(); // Loose: the JSON reply, read by property
   assert.deepEqual(view.chatBot, { login: "pixbot", debug: false });
 });
 
@@ -1262,21 +1311,21 @@ test("chat bot: bot sign-in needs CHAT_BOT and asks for the chat scopes", async 
   const res = await worker.fetch(req("/auth/login?bot=1"), f.env);
   assert.equal(res.status, 302);
   assert.equal(
-    new URL(res.headers.get("Location")).searchParams.get("scope"),
+    new URL(must(res.headers.get("Location"))).searchParams.get("scope"),
     "user:read:chat user:write:chat user:bot",
   );
   const allow = await worker.fetch(req("/auth/login?channel=nesszerra&connect=bot"), f.env);
-  assert.equal(new URL(allow.headers.get("Location")).searchParams.get("scope"), "moderation:read channel:bot");
+  assert.equal(new URL(must(allow.headers.get("Location"))).searchParams.get("scope"), "moderation:read channel:bot");
 });
 
 test("chat bot: a rate-limited reply (429) is retried after a short wait, then gives up", async (t) => {
   const f = environment(),
-    waits = [];
+    waits: number[] = [];
   let statuses = [429, 200];
-  t.mock.method(globalThis, "fetch", async (url) => {
+  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL) => {
     if (String(url).startsWith("https://id.twitch.tv"))
       return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    const status = statuses.shift();
+    const status = statuses.shift() as number; // the test queues one status per call
     return status === 200
       ? Response.json({ data: [{ message_id: "r1", is_sent: true }] })
       : new Response("{}", { status });
@@ -1298,9 +1347,9 @@ test("chat bot: a rate-limited reply (429) is retried after a short wait, then g
 
 test("chat bot: a line Twitch drops as a duplicate is resent with an invisible tag character, at most twice", async (t) => {
   const f = environment(),
-    sent = [];
+    sent: string[] = [];
   let dupes = 1;
-  t.mock.method(globalThis, "fetch", async (url, init) => {
+  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: { body: string }) => {
     if (String(url).startsWith("https://id.twitch.tv"))
       return Response.json({ access_token: "app-token-1", expires_in: 5000 });
     sent.push(JSON.parse(init.body).message);
@@ -1324,13 +1373,13 @@ test("chat bot: a line Twitch drops as a duplicate is resent with an invisible t
 
 test("chat bot: several reply lines go out in order, about a second apart, and one failure does not stop the rest", async (t) => {
   const f = environment(),
-    waits = [],
-    sent = [];
+    waits: number[] = [],
+    sent: string[] = [];
   let first = true;
-  t.mock.method(globalThis, "fetch", async (url, init = {}) => {
+  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: FetchInit = {}) => {
     if (String(url).startsWith("https://id.twitch.tv"))
       return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    sent.push(JSON.parse(init.body).message);
+    sent.push(JSON.parse(init.body as string).message); // chat posts always carry a body
     if (first) {
       first = false;
       return new Response("{}", { status: 500 });
@@ -1382,7 +1431,7 @@ test("check-in test mode: only on the site channel", async () => {
     f.env,
   );
   assert.equal(res.status, 403);
-  assert.match((await res.json()).error, /only for nesszerra's channel/);
+  assert.match((await res.json<Loose>()).error, /only for nesszerra's channel/); // Loose: the JSON reply, read by property
   assert.equal(
     f.forwarded.some((x) => x.path === "/checkin-test"),
     false,
@@ -1404,21 +1453,21 @@ test("viewer sprites: only the owner may wear one; sends need sign-in, reviews n
             { id: "v-theirs-bbbbbb", owner: "9" },
           ]);
         if (path === "/sprites/ai") {
-          f.forwarded.push({ path, body: JSON.parse(options.body) });
+          f.forwarded.push({ path, body: JSON.parse(options.body as string) }); // redraw calls always carry a body
           return Response.json({ ok: true, left: 2 });
         }
         return rooms(channel).fetch(url, options);
       },
     }),
-  };
-  const save = (avatar) =>
+  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
+  const save = (avatar: string) =>
     worker.fetch(
       req("/api/profile/nesszerra", "POST", { avatar, color: "#aabbcc", defaultAbility: "heal" }, cookie),
       f.env,
     );
   assert.equal((await save("v-mine-aaaaaa")).status, 200);
   const theirs = await save("v-theirs-bbbbbb");
-  assert.deepEqual([theirs.status, (await theirs.json()).error], [403, "That sprite belongs to another viewer"]);
+  assert.deepEqual([theirs.status, (await theirs.json<Loose>()).error], [403, "That sprite belongs to another viewer"]); // Loose: the JSON reply, read by property
   assert.deepEqual(f.forwarded.filter((x) => x.path === "/dev/log").at(-1)?.body, {
     source: "warn",
     message: "viewer profile not saved: sprite_not_owned",
@@ -1426,7 +1475,9 @@ test("viewer sprites: only the owner may wear one; sends need sign-in, reviews n
   });
 
   assert.equal((await worker.fetch(req("/api/sprite/nesszerra"), f.env)).status, 401);
-  const status = await (await worker.fetch(req("/api/sprite/nesszerra", "GET", undefined, cookie), f.env)).json();
+  const status = await (
+    await worker.fetch(req("/api/sprite/nesszerra", "GET", undefined, cookie), f.env)
+  ).json<Loose>(); // Loose: the JSON reply, read by property
   assert.deepEqual(status.ai, { available: false, left: 0 });
   // The room gets the session's identity, never one from the body.
   const png = "data:image/png;base64," + Buffer.from(makePng(32, 48)).toString("base64");
@@ -1458,13 +1509,13 @@ test("viewer sprites: only the owner may wear one; sends need sign-in, reviews n
     (await worker.fetch(req("/api/sprite/nesszerra/redraw", "POST", { image: b64png(64, 64) }, cookie), f.env)).status,
     503,
   );
-  let input = null;
+  let input: Loose = null; // Loose: set by the fake model below, read after the call
   f.env.AI = {
-    async run(model, { multipart }) {
+    async run(model: string, { multipart }: { multipart: { contentType: string } }) {
       input = { model, type: multipart.contentType };
       return { image: "QUJD" };
     },
-  };
+  } as unknown as Ai; // a fake with only run, the one Ai call the redraw makes
   const drawn = await worker.fetch(
     req("/api/sprite/nesszerra/redraw", "POST", { image: b64png(64, 64) }, cookie),
     f.env,
@@ -1480,7 +1531,7 @@ test("viewer sprites: only the owner may wear one; sends need sign-in, reviews n
     async run() {
       throw new Error("capacity");
     },
-  };
+  } as unknown as Ai; // a fake with only run, the one Ai call the redraw makes
   const failed = await worker.fetch(
     req("/api/sprite/nesszerra/redraw", "POST", { image: b64png(64, 64) }, cookie),
     f.env,

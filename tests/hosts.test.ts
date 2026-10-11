@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import worker from "../server/worker.ts";
 import { hostChannel, siteOrigin, authOrigin, channelPageRedirect } from "../server/hosts.ts";
 import { PAGE_CSP } from "../server/security.ts";
+import type { Env } from "../server/env.ts";
+import { asEnv } from "./fakes.ts";
 
 const MAIN = "https://pixfray.xyz",
   MIOLAF = "https://chat.miolaf.xyz";
-function environment() {
-  const entries = new Map();
-  return {
+function environment(): Env {
+  const entries = new Map<string | null, unknown>();
+  return asEnv({
     AUTH_SECRET: "test-only-auth-key",
     INTERNAL_SECRET: "test-only-internal-key",
     TWITCH_CLIENT_ID: "test-app",
@@ -16,9 +18,9 @@ function environment() {
     PUBLIC_ORIGIN: MAIN,
     CHANNEL_ORIGINS: JSON.stringify({ miolafff: MIOLAF }),
     AUTH: {
-      idFromName: (x) => x,
+      idFromName: (x: string) => x,
       get: () => ({
-        async fetch(url, options) {
+        async fetch(url: string, options: { method?: string; body: string }) {
           const key = new URL(url).searchParams.get("key");
           if (options.method === "GET") return Response.json(entries.get(key) ?? null);
           entries.set(key, JSON.parse(options.body).value);
@@ -26,12 +28,12 @@ function environment() {
         },
       }),
     },
-    ROOMS: { idFromName: (x) => x, get: () => ({ fetch: async () => Response.json({}) }) },
-    ASSETS: { fetch: async (request) => new Response("asset " + new URL(request.url).pathname) },
-  };
+    ROOMS: { idFromName: (x: string) => x, get: () => ({ fetch: async () => Response.json({}) }) },
+    ASSETS: { fetch: async (request: Request) => new Response("asset " + new URL(request.url).pathname) },
+  });
 }
-const get = (url, env = environment()) => worker.fetch(new Request(url), env);
-const moved = async (url) => {
+const get = (url: string, env = environment()) => worker.fetch(new Request(url), env);
+const moved = async (url: string) => {
   const r = await get(url);
   return r.status === 302 ? r.headers.get("Location") : "served " + r.status;
 };
@@ -53,7 +55,11 @@ test("a channel domain belongs to its channel; links for a channel use its domai
     MAIN,
     "bad config falls back",
   );
-  assert.equal(channelPageRedirect({}, new URL(MIOLAF + "/")), null, "no channel domains configured: nothing moves");
+  assert.equal(
+    channelPageRedirect({} as Env /* no channel domains or origin on purpose */, new URL(MIOLAF + "/")),
+    null,
+    "no channel domains configured: nothing moves",
+  );
 });
 
 test("chat.miolaf.xyz opens miolafff's pages and sends every other page to pixfray.xyz", async () => {
@@ -80,7 +86,8 @@ test("pages keep their no-framing headers when they pass through the Worker", as
     const r = await get(url);
     assert.equal(r.headers.get("X-Frame-Options"), "DENY", url);
     assert.equal(r.headers.get("Content-Security-Policy"), PAGE_CSP, url);
-    assert.match(r.headers.get("Content-Security-Policy"), /frame-ancestors 'none'/, url);
+    // as string: the line above asserted the header equals PAGE_CSP
+    assert.match(r.headers.get("Content-Security-Policy") as string, /frame-ancestors 'none'/, url);
     assert.equal(r.headers.get("X-Robots-Tag"), null, url);
   }
   for (const site of ["https://staging.pixfray.xyz/", "https://test.chat.miolaf.xyz/?channel=miolafff"])
@@ -96,6 +103,10 @@ test("sign-in returns to the domain it started on", async () => {
   for (const origin of [MAIN, MIOLAF]) {
     const r = await get(origin + "/auth/login?channel=miolafff");
     assert.equal(r.status, 302);
-    assert.equal(new URL(r.headers.get("Location")).searchParams.get("redirect_uri"), origin + "/auth/callback");
+    assert.equal(
+      // as string: a 302 from the Worker always carries a Location
+      new URL(r.headers.get("Location") as string).searchParams.get("redirect_uri"),
+      origin + "/auth/callback",
+    );
   }
 });

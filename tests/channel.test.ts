@@ -1,71 +1,34 @@
 // ChannelRoom and AuthStore against real SQLite (node:sqlite) behind a minimal fake DO context.
-// Run with: node --import ./tests/register.mjs --test tests/channel.test.mjs
+// Run with: node --import ./tests/register.ts --test tests/channel.test.ts
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
 import { ChannelRoom } from "../server/channel.ts";
 import { AuthStore } from "../server/auth.ts";
 import { logRoomError } from "../server/developer.ts";
 import { createInitialState, defaultConfig } from "../server/game.ts";
-import { makePng, b64 } from "./upload-helpers.mjs";
+import { makePng, b64 } from "./upload-helpers.ts";
 import { effectiveStats } from "../server/upgrades.ts";
 import { tierBoost, petOf, PETS, boostText } from "../server/pets.ts";
+import { asEnv, fakeCtx, must } from "./fakes.ts";
+import type { FakeSocketLike, FakeState, Loose } from "./fakes.ts";
+import type { Env } from "../server/env.ts";
+import type { Duel } from "../server/model.ts";
 
 const SECRET = "test-only-internal-secret-0123456789";
 
-function fakeCtx() {
-  const db = new DatabaseSync(":memory:");
-  const sockets = [];
-  let depth = 0;
-  const storage = {
-    sql: {
-      exec(query, ...params) {
-        const rows = db
-          .prepare(query)
-          .all(...params)
-          .map((r) => ({ ...r }));
-        return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() };
-      },
-    },
-    transactionSync(fn) {
-      if (depth) return fn();
-      depth++;
-      db.exec("BEGIN");
-      try {
-        const v = fn();
-        db.exec("COMMIT");
-        return v;
-      } catch (e) {
-        db.exec("ROLLBACK");
-        throw e;
-      } finally {
-        depth--;
-      }
-    },
-    alarm: null,
-    async setAlarm(t) {
-      this.alarm = t;
-    },
-    async getAlarm() {
-      return this.alarm ?? null;
-    },
-    async deleteAlarm() {
-      this.alarm = null;
-    },
-  };
-  return {
-    storage,
-    acceptWebSocket(ws, tags) {
-      ws.tags = tags;
-      sockets.push(ws);
-    },
-    getWebSockets(tag) {
-      return sockets.filter((s) => s.tags.includes(tag) && s.readyState === 1);
-    },
-    sockets,
-  };
-}
-function fakeSocket(attachment, tag) {
+/** A hibernatable WebSocket stand-in: records what the room sends and how it closed it. */
+type FakeSocket = FakeSocketLike & {
+  // Loose: the frames are the room's JSON messages, which tests read by property
+  sent: Loose[];
+  closed: [number | undefined, string | undefined] | null;
+  att: unknown;
+  send(m: string): void;
+  close(code?: number, reason?: string): void;
+  serializeAttachment(a: unknown): void;
+  deserializeAttachment(): unknown;
+};
+
+function fakeSocket(attachment: unknown, tag: string): FakeSocket {
   return {
     tags: [tag],
     readyState: 1,
@@ -87,13 +50,50 @@ function fakeSocket(attachment, tag) {
     },
   };
 }
+
+type CallOptions = { method?: string; body?: unknown; userId?: string; secret?: string };
+// Loose: the body is the room's JSON (or text) reply, which each test reads by property and asserts on
+type CallResult = { status: number; body: Loose };
+type Extra = Record<string, unknown>;
+
+/** A ChannelRoom with the request helpers room() attaches, and its fake context still readable. */
+type TestRoom = ChannelRoom & {
+  ctx: FakeState;
+  call(path: string, options?: CallOptions): Promise<CallResult>;
+  save(id: string, login: string, extra?: Extra): Promise<CallResult>;
+  connectChat(subscriptionId?: string, status?: string): Promise<CallResult>;
+  notify(messageType: string, extra?: Extra): Promise<CallResult>;
+  chat(id: string, login: string, text: string, options?: { color?: string } & Extra): Promise<CallResult>;
+  live(): FakeSocket;
+};
+
+/** botRoom() adds a helper that posts a chat line as the bot's EventSub delivery. */
+// Loose: say returns the room's JSON reply to the bot delivery (reply, replies, reason), read by property
+type BotRoom = TestRoom & { say(id: string, login: string, text: string, opts?: { mod?: boolean }): Promise<Loose> };
+
+// Loose: a leaderboard or player row from a JSON reply; tests read whichever fields they assert on
+type Ranked = Loose;
+// Loose: a console.error record the logging tests capture; tests read message and context fields
+type LogRow = Loose;
+
+// as: WebSocketPair and WebSocketRequestResponsePair are Workers globals declared outside globalThis's type; tests swap
+// in fakes and restore them
+const workerGlobals = globalThis as unknown as { WebSocketPair?: unknown; WebSocketRequestResponsePair?: unknown };
+
+/** A completed duel, which always carries the time the stream reveals it (Duel types revealAt as optional). */
+type Revealed = Duel & { revealAt: number };
+
+/** tierBoost as the tests call it: production types its stat as required, but the tier alone is valid (stat undefined). */
+type TierBoostOneArg = (tier: string, stat?: string, stat2?: string) => ReturnType<typeof tierBoost>;
+
 // HP-fight tests run with quick duels off; pass { quick: true } for the one-hit mode.
-function room(env = {}, { quick = false } = {}) {
+function room(env: Extra = {}, { quick = false } = {}): TestRoom {
   const ctx = fakeCtx();
-  const r = new ChannelRoom(ctx, { INTERNAL_SECRET: SECRET, ...env });
+  // TestRoom: room() attaches the helpers and ctx below before returning; Env: a partial Env on purpose (the test reads)
+  const r = new ChannelRoom(ctx, { INTERNAL_SECRET: SECRET, ...env } as Env) as TestRoom;
   if (!quick) r.writeState({ ...createInitialState("nesszerra"), config: { ...defaultConfig(), quickDuel: false } });
   r.call = async (path, { method = "GET", body, userId, secret = SECRET } = {}) => {
-    const headers = { "X-Mini-Internal": secret, "X-Mini-Channel": "nesszerra" };
+    const headers: Record<string, string> = { "X-Mini-Internal": secret, "X-Mini-Channel": "nesszerra" };
     if (userId) headers["X-Mini-User-Id"] = userId;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const res = await r.fetch(
@@ -104,7 +104,8 @@ function room(env = {}, { quick = false } = {}) {
       }),
     );
     const type = res.headers.get("content-type") || "";
-    return { status: res.status, body: type.includes("json") ? await res.json() : await res.text() };
+    // Loose: CallResult.body, the room's JSON reply read by property
+    return { status: res.status, body: type.includes("json") ? await res.json<Loose>() : await res.text() };
   };
   r.save = (id, login, extra = {}) =>
     r.call("/profile", {
@@ -158,7 +159,7 @@ function room(env = {}, { quick = false } = {}) {
   r.ctx = ctx;
   return r;
 }
-const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 
 test("export: every table a copy needs, BLOBs as base64", async () => {
   const r = room();
@@ -171,7 +172,8 @@ test("export: every table a copy needs, BLOBs as base64", async () => {
   assert.equal(status, 200);
   assert.equal(body.game_state[0].channel, "nesszerra");
   assert.deepEqual(
-    body.profiles.map((p) => p.username),
+    // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+    body.profiles.map((p: Ranked) => p.username),
     ["alice"],
   );
   assert.deepEqual(body.custom_characters[0].atlas, { $b64: "AQL/" });
@@ -236,7 +238,7 @@ test("chat commands run a full duel; Elo persists to the leaderboard; overlays g
     const s = r.readState("nesszerra");
     const duel = s.duels.find((d) => d.status === "active");
     if (!duel) break;
-    duel.cooldowns.u1 = { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 };
+    must(duel.cooldowns).u1 = { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 };
     r.writeState(s);
   }
   const state = (await r.call("/state")).body;
@@ -247,19 +249,22 @@ test("chat commands run a full duel; Elo persists to the leaderboard; overlays g
   assert.ok(state.chat.lastSeen > 0, "last notification time is recorded");
   const board = (await r.call("/leaderboard")).body;
   assert.deepEqual(
-    board.map((p) => [p.username, p.elo, p.wins, p.losses]),
+    // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+    board.map((p: Ranked) => [p.username, p.elo, p.wins, p.losses]),
     [
       ["alice", 1012, 1, 0],
       ["bob", 988, 0, 1],
     ],
   );
   assert.equal(
-    board.some((p) => "dollars" in p),
+    // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+    board.some((p: Ranked) => "dollars" in p),
     false,
     "dollars stay off the public leaderboard",
   );
   assert.ok(
-    (await r.call("/leaderboard?private=1")).body.every((p) => Number.isInteger(p.dollars)),
+    // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+    (await r.call("/leaderboard?private=1")).body.every((p: Ranked) => Number.isInteger(p.dollars)),
     "mods see them",
   );
   assert.ok(live.sent.length > 3);
@@ -284,21 +289,21 @@ test("unregistered chatters appear in their Twitch color but cannot duel; reject
   await r.connectChat();
   assert.equal((await r.chat("g1", "guest", "hello chat", { color: "#1e90ff" })).body.reason, "presence_updated");
   let state = r.readState("nesszerra");
-  assert.equal(state.players.find((p) => p.userId === "g1").color, "#1E90FF");
+  assert.equal(must(state.players.find((p) => p.userId === "g1")).color, "#1E90FF");
   const rejected = await r.chat("g1", "guest", "!challenge @alice");
   assert.deepEqual([rejected.body.ok, rejected.body.reason], [false, "ranked_sign_in_required"]);
   state = r.readState("nesszerra");
   assert.deepEqual(state.events.at(-1), {
     id: String(state.revision),
     type: "command_rejected",
-    at: state.events.at(-1).at,
+    at: must(state.events.at(-1)).at,
     userId: "g1",
     command: "duel",
     reason: "ranked_sign_in_required",
   });
   // registered players keep their saved color, whatever Twitch says
   await r.chat("u1", "alice", "hi", { color: "#00FF00" });
-  assert.equal(r.readState("nesszerra").players.find((p) => p.userId === "u1").color, "#123456");
+  assert.equal(must(r.readState("nesszerra").players.find((p) => p.userId === "u1")).color, "#123456");
 });
 
 test("plain chat refreshes presence at most every 30 s", async () => {
@@ -314,7 +319,7 @@ test("replayed EventSub messages are ignored; other subscriptions and offline ch
   const r = room();
   await r.save("u1", "alice");
   await r.save("u2", "bob");
-  const body = (messageId, subscriptionId = "sub-1") => ({
+  const body = (messageId: string, subscriptionId = "sub-1") => ({
     method: "POST",
     body: {
       messageId,
@@ -395,13 +400,17 @@ test("chat disconnect cancels open duels without scoring", async () => {
   assert.equal(state.paused, true);
   assert.equal(state.events.at(-1).type, "chat_disconnected");
   const board = (await r.call("/leaderboard")).body;
-  assert.ok(board.every((p) => p.elo === 1000 && p.wins === 0 && p.losses === 0));
+  // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+  assert.ok(board.every((p: Ranked) => p.elo === 1000 && p.wins === 0 && p.losses === 0));
   assert.equal((await r.chat("u1", "alice", "!challenge @bob")).body.reason, "unknown_subscription");
 });
 
 test("the hourly alarm re-checks the Helix subscription and disconnects only on a definite answer", async (t) => {
-  const store = new AuthStore(fakeCtx(), { INTERNAL_SECRET: SECRET });
-  const AUTH = { idFromName: () => "auth", get: () => ({ fetch: (url, init) => store.fetch(new Request(url, init)) }) };
+  const store = new AuthStore(fakeCtx(), asEnv({ INTERNAL_SECRET: SECRET }));
+  const AUTH = {
+    idFromName: () => "auth",
+    get: () => ({ fetch: (url: string, init?: RequestInit) => store.fetch(new Request(url, init)) }),
+  };
   const r = room({
     AUTH,
     AUTH_SECRET: "a".repeat(64),
@@ -409,15 +418,15 @@ test("the hourly alarm re-checks the Helix subscription and disconnects only on 
     TWITCH_CLIENT_SECRET: "client-secret",
   });
   let helix = () => Response.json({ data: [{ id: "sub-1", status: "enabled" }], pagination: {} });
-  const calls = [];
-  t.mock.method(globalThis, "fetch", async (url) => {
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     calls.push(String(url));
     if (String(url).startsWith("https://id.twitch.tv/oauth2/token"))
       return Response.json({ access_token: "app-token", expires_in: 3600 });
     return helix();
   });
   await r.connectChat();
-  assert.ok(r.ctx.storage.alarm <= Date.now() + 3_600_000 + 50, "the check is scheduled at most an hour out");
+  assert.ok((r.ctx.storage.alarm ?? 0) <= Date.now() + 3_600_000 + 50, "the check is scheduled at most an hour out");
   await r.alarm();
   assert.equal(calls.length, 0, "not due yet: no Helix call");
   const age = () => {
@@ -446,8 +455,11 @@ test("the hourly alarm re-checks the Helix subscription and disconnects only on 
 });
 
 test("a subscription stuck awaiting verification is re-checked within minutes and a failed verification is recorded", async (t) => {
-  const store = new AuthStore(fakeCtx(), { INTERNAL_SECRET: SECRET });
-  const AUTH = { idFromName: () => "auth", get: () => ({ fetch: (url, init) => store.fetch(new Request(url, init)) }) };
+  const store = new AuthStore(fakeCtx(), asEnv({ INTERNAL_SECRET: SECRET }));
+  const AUTH = {
+    idFromName: () => "auth",
+    get: () => ({ fetch: (url: string, init?: RequestInit) => store.fetch(new Request(url, init)) }),
+  };
   const r = room({
     AUTH,
     AUTH_SECRET: "a".repeat(64),
@@ -455,14 +467,14 @@ test("a subscription stuck awaiting verification is re-checked within minutes an
     TWITCH_CLIENT_SECRET: "client-secret",
   });
   let status = "webhook_callback_verification_pending";
-  t.mock.method(globalThis, "fetch", async (url) =>
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) =>
     String(url).startsWith("https://id.twitch.tv")
       ? Response.json({ access_token: "app-token", expires_in: 3600 })
       : Response.json({ data: [{ id: "sub-1", status }], pagination: {} }),
   );
   await r.connectChat("sub-1", "webhook_callback_verification_pending");
   assert.ok(
-    r.ctx.storage.alarm <= Date.now() + 5 * 60_000,
+    (r.ctx.storage.alarm ?? 0) <= Date.now() + 5 * 60_000,
     "a pending subscription is checked within minutes, not an hour",
   );
   const age = () => {
@@ -474,7 +486,7 @@ test("a subscription stuck awaiting verification is re-checked within minutes an
   await r.alarm();
   let chat = (await r.call("/chat")).body;
   assert.deepEqual([chat.connected, chat.subscriptionId], [false, "sub-1"], "still pending: unchanged");
-  assert.ok(r.ctx.storage.alarm > Date.now() + 60_000, "the next pending check waits another interval");
+  assert.ok((r.ctx.storage.alarm ?? 0) > Date.now() + 60_000, "the next pending check waits another interval");
   status = "webhook_callback_verification_failed";
   age();
   await r.alarm();
@@ -517,7 +529,7 @@ test("versioned config editor: history, optimistic version check, rollback", asy
   assert.equal(bad.status, 400);
   const view = (await r.call("/admin")).body;
   assert.deepEqual(
-    view.history.map((h) => [h.version, h.actorId, h.note]),
+    view.history.map((h: { version: number; actorId: string; note: string }) => [h.version, h.actorId, h.note]),
     [
       [2, "mod1", "buff heavy"],
       [1, "system", "initial"],
@@ -546,7 +558,8 @@ test("versioned config editor: history, optimistic version check, rollback", asy
   );
   // A version saved before a setting existed (here: the Stage 4 prices) restores that setting's default.
   const old = JSON.parse(
-    r.ctx.storage.sql.exec("SELECT config FROM config_history WHERE version = 1").toArray()[0].config,
+    must(r.ctx.storage.sql.exec<{ config: string }>("SELECT config FROM config_history WHERE version = 1").toArray()[0])
+      .config,
   );
   delete old.trailPrice;
   delete old.buildSlotPrice;
@@ -601,20 +614,24 @@ test("restoreRank sets a fighter's stored rank, offline or active, and logs who 
   const quiet = r.readState("nesszerra");
   quiet.players = quiet.players.filter((p) => p.userId !== "u1");
   r.writeState(quiet);
-  const restore = (payload) =>
+  const restore = (payload: Extra) =>
     r.call("/admin", { method: "POST", body: { actorId: "1", actorName: "owner", action: "restoreRank", payload } });
   assert.equal((await restore({ userId: "u1", elo: 1016, wins: 3, losses: 3 })).status, 200);
   assert.equal((await restore({ userId: "u2", elo: 1042, wins: 5, losses: 1 })).status, 200);
-  const rank = (p) => [p.elo, p.wins, p.losses];
+  const rank = (p: { elo: number; wins: number; losses: number }) => [p.elo, p.wins, p.losses];
   assert.deepEqual(rank((await r.call("/profile?userId=u1")).body), [1016, 3, 3]);
   assert.deepEqual(rank((await r.call("/profile?userId=u2")).body), [1042, 5, 1]);
-  assert.deepEqual(rank(r.readState("nesszerra").players.find((p) => p.userId === "u2")), [1042, 5, 1]);
+  assert.deepEqual(rank(must(r.readState("nesszerra").players.find((p) => p.userId === "u2"))), [1042, 5, 1]);
   const bad = await restore({ userId: "u1", elo: 1016.5, wins: 3, losses: 3 });
   assert.deepEqual([bad.status, bad.body.reason], [400, "invalid_rank"]);
   assert.equal((await restore({ userId: "nobody", elo: 1000, wins: 0, losses: 0 })).body.reason, "profile_not_found");
-  const logs = (await r.call("/dev/logs?source=command")).body.filter((x) => x.context?.action === "restoreRank");
+  const logs = (await r.call("/dev/logs?source=command")).body.filter(
+    // Loose (LogRow): captured log records, read by property
+    (x: LogRow) => x.context?.action === "restoreRank",
+  );
   assert.deepEqual(
-    logs.map((x) => x.message),
+    // Loose (LogRow): captured log records, read by property
+    logs.map((x: LogRow) => x.message),
     ["owner restored rank 1042/5/1 -> u2", "owner restored rank 1016/3/3 -> u1"],
   );
 });
@@ -628,15 +645,16 @@ test("rank history records every rank change, and restoreRank can go back to bef
   await sleep(5);
   await r.save("u1", "alice", { color: "#654321" });
   await r.call("/admin", { method: "POST", body: { actorId: "mod1", action: "resetRank", payload: { userId: "u1" } } });
-  const history = async (user) => (await r.call("/dev/ranks?user=" + user)).body;
-  const ranks = (rows) => rows.map((x) => [x.elo, x.wins, x.losses]);
+  const history = async (user: string) => (await r.call("/dev/ranks?user=" + user)).body;
+  // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+  const ranks = (rows: Ranked[]) => rows.map((x) => [x.elo, x.wins, x.losses]);
   assert.deepEqual(ranks(await history("Alice")), [
     [1000, 0, 0],
     [1106, 14, 9],
     [1000, 0, 0],
   ]);
   assert.deepEqual(ranks(await history("u1")), ranks(await history("alice")), "by login or by id");
-  const restore = (payload) =>
+  const restore = (payload: Extra) =>
     r.call("/admin", { method: "POST", body: { actorId: "1", actorName: "owner", action: "restoreRank", payload } });
   assert.equal((await restore({ userId: "u1", before: mark })).status, 200);
   const p = (await r.call("/profile?userId=u1")).body;
@@ -652,7 +670,7 @@ test("rank history starts from the current ranks in a room that had fighters bef
   r.ctx.storage.sql.exec("UPDATE profiles SET elo = 1042, wins = 5, losses = 1 WHERE user_id = ?", "u1");
   for (const name of ["rank_log_insert", "rank_log_update"]) r.ctx.storage.sql.exec("DROP TRIGGER " + name);
   r.ctx.storage.sql.exec("DROP TABLE rank_log");
-  const again = new ChannelRoom(r.ctx, { INTERNAL_SECRET: SECRET });
+  const again = new ChannelRoom(r.ctx, asEnv({ INTERNAL_SECRET: SECRET }));
   assert.deepEqual(again.ctx.storage.sql.exec("SELECT user_id, elo, wins, losses FROM rank_log").toArray(), [
     { user_id: "u1", elo: 1042, wins: 5, losses: 1 },
   ]);
@@ -717,8 +735,8 @@ test("catalog, assets and dev routes answer inside the room; uploads validate", 
 
 test("AuthStore consume returns a value exactly once", async () => {
   const ctx = fakeCtx();
-  const store = new AuthStore(ctx, { INTERNAL_SECRET: SECRET });
-  const call = (path, method, body) =>
+  const store = new AuthStore(ctx, asEnv({ INTERNAL_SECRET: SECRET }));
+  const call = (path: string, method: string, body?: unknown) =>
     store
       .fetch(
         new Request("https://auth" + path, {
@@ -744,7 +762,7 @@ test("StreamElements commands run a duel with chat replies; the key and command 
   assert.match(se.secret, /^[0-9a-f]{48}$/);
   assert.equal(se.names.accept, "!fight");
   let m = 0;
-  const cmd = (id, login, action, target = "", key = se.secret) =>
+  const cmd = (id: string, login: string, action: string, target = "", key = se.secret) =>
     r.call("/se?origin=https%3A%2F%2Ftest.example", {
       method: "POST",
       body: { key, action, userId: id, username: login, displayName: login, target, messageId: "se" + ++m },
@@ -824,7 +842,7 @@ test("the first StreamElements command moves a Twitch-chat channel over, but not
   const admin = async () => (await r.call("/admin")).body;
   const se = (await admin()).streamelements;
   let m = 0;
-  const cmd = (action) =>
+  const cmd = (action: string) =>
     r.call("/se?origin=https%3A%2F%2Ftest.example", {
       method: "POST",
       body: {
@@ -875,7 +893,7 @@ test("SE_ONLY: a StreamElements command with the right key makes StreamElements 
   const r = room({ SE_ONLY: "1" }, { quick: true });
   const se = (await r.call("/admin")).body.streamelements;
   await r.connectChat("sub-1"); // a Twitch subscription from before the switch
-  const cmd = (key) =>
+  const cmd = (key: string) =>
     r.call("/se?origin=https%3A%2F%2Ftest.example", {
       method: "POST",
       body: {
@@ -904,7 +922,7 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
   await r.save("u1", "alice");
   await r.save("u2", "bob");
   let m = 0;
-  const cmd = (id, login, action, target = "") =>
+  const cmd = (id: string, login: string, action: string, target = "") =>
     r.call("/se?origin=https%3A%2F%2Ftest.example", {
       method: "POST",
       body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: "q" + ++m },
@@ -919,14 +937,16 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
     "bob, nobody has challenged you yet. Start one: !challenge @name",
   );
   // Until the overlay has played the duel (plus stream delay), every read shows the pre-fight numbers.
-  const duel = r.readState("nesszerra").duels.find((d) => d.status === "completed");
+  // as: a completed duel always carries its reveal time
+  const duel = must(r.readState("nesszerra").duels.find((d) => d.status === "completed")) as Revealed;
   assert.ok(
     duel.revealAt - Date.now() > 6000 && duel.revealAt - Date.now() < 40_000,
     "revealed after the replay and the stream delay",
   );
   const before = (await r.call("/leaderboard")).body;
   assert.deepEqual(
-    before.map((p) => [p.elo, p.wins, p.losses]),
+    // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+    before.map((p: Ranked) => [p.elo, p.wins, p.losses]),
     [
       [1000, 0, 0],
       [1000, 0, 0],
@@ -939,7 +959,8 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
   assert.equal((await r.call("/looks?u=alice")).body.alice.elo, 1000);
   // The loser's knockout (hp 0, respawnAt) would name them, so public reads leave it out; so does a website save.
   assert.ok(
-    before.every((p) => p.hp === 100 && !(p.respawnAt > Date.now())),
+    // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+    before.every((p: Ranked) => p.hp === 100 && !(p.respawnAt > Date.now())),
     "leaderboard shows nobody knocked out",
   );
   for (const id of ["u1", "u2"]) {
@@ -970,7 +991,8 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
     assert.match(
       (await cmd("u1", "alice", "elo")).body.reply,
       new RegExp(
-        `^alice: ${after.find((p) => p.username === "alice").elo} Elo, rank ${after.findIndex((p) => p.username === "alice") + 1} of 3`,
+        // Loose (Ranked): leaderboard rows from the JSON reply, read by property
+        `^alice: ${after.find((p: Ranked) => p.username === "alice").elo} Elo, rank ${after.findIndex((p: Ranked) => p.username === "alice") + 1} of 3`,
       ),
     );
   } finally {
@@ -993,8 +1015,10 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
   ); // +3 if flawless
   assert.notEqual(saved.u1.elo, 1000);
   // Every command lands in the dev log with what came in, the game's decision and the reply.
-  const log = (await r.call("/dev/logs?source=command")).body.filter((x) => x.context.action !== "save");
-  assert.deepEqual(log.map((x) => x.context.reason).reverse(), [
+  // Loose (LogRow): captured log records, read by property
+  const log = (await r.call("/dev/logs?source=command")).body.filter((x: LogRow) => x.context.action !== "save");
+  // Loose (LogRow): captured log records, read by property
+  assert.deepEqual(log.map((x: LogRow) => x.context.reason).reverse(), [
     "challenge",
     "quick_duel",
     "challenge_not_found",
@@ -1004,12 +1028,13 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
     "result_hidden",
     "elo",
   ]);
-  const quick = log.find((x) => x.context.reason === "quick_duel");
+  // Loose (LogRow): captured log records, read by property
+  const quick = log.find((x: LogRow) => x.context.reason === "quick_duel");
   assert.match(quick.context.swings, /^([1-6][hxcm] ?)+$/);
   assert.equal((await r.call("/dev/logs?source=warn")).body.length, 0);
   // A result that didn't reach the stored profile is flagged.
   const state = r.readState("nesszerra");
-  state.players.find((p) => p.userId === "u1").wins += 5;
+  must(state.players.find((p) => p.userId === "u1")).wins += 5;
   r.checkSavedProfiles(state, quick.context.duelId);
   assert.match((await r.call("/dev/logs?source=warn")).body[0].message, /profile for alice not saved/);
 });
@@ -1025,7 +1050,7 @@ test("StreamElements !rematch challenges the last opponent, saved with the profi
   await r.save("u2", "bob");
   await r.save("u3", "cara");
   let m = 0;
-  const cmd = (id, login, action, target = "") =>
+  const cmd = (id: string, login: string, action: string, target = "") =>
     r.call("/se?origin=https%3A%2F%2Ftest.example", {
       method: "POST",
       body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: "r" + ++m },
@@ -1078,8 +1103,10 @@ test("StreamElements !rematch challenges the last opponent, saved with the profi
     Date.now = realNow;
   }
   const reasons = (await r.call("/dev/logs?source=command")).body
-    .filter((x) => x.context.action !== "save")
-    .map((x) => x.context.reason)
+    // Loose (LogRow): captured log records, read by property
+    .filter((x: LogRow) => x.context.action !== "save")
+    // Loose (LogRow): captured log records, read by property
+    .map((x: LogRow) => x.context.reason)
     .reverse();
   assert.deepEqual(
     [...reasons.slice(0, 3), ...reasons.slice(4)],
@@ -1093,7 +1120,7 @@ test("StreamElements !ranks, !elo, !fray and !look work even while duels are pau
   const se = (await r.call("/admin")).body.streamelements;
   assert.deepEqual([se.names.top, se.names.elo, se.names.help, se.names.look], ["!ranks", "!elo", "!fray", "!look"]);
   let m = 0;
-  const cmd = (id, login, action, target = "") =>
+  const cmd = (id: string, login: string, action: string, target = "") =>
     r.call("/se?origin=https%3A%2F%2Ftest.example", {
       method: "POST",
       body: { key: se.secret, action, userId: id, username: login, displayName: login, target, messageId: "t" + ++m },
@@ -1159,7 +1186,7 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
   const se = (await r.call("/admin")).body.streamelements;
   assert.equal(se.names.checkin, "!checkin");
   let m = 0;
-  const cmd = (id, login) =>
+  const cmd = (id: string, login: string) =>
     r.call("/se?origin=https%3A%2F%2Ftest.example", {
       method: "POST",
       body: {
@@ -1171,8 +1198,8 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
         messageId: "c" + ++m,
       },
     });
-  const live = (body) => r.call("/dev-live", { method: "POST", body });
-  const say = async (id, login) => (await cmd(id, login)).body.reply;
+  const live = (body: Extra) => r.call("/dev-live", { method: "POST", body });
+  const say = async (id: string, login: string) => (await cmd(id, login)).body.reply;
   assert.equal(
     await say("u1", "alice"),
     "@alice, you have no fighter in the arena yet! Gear up at https://test.example/?channel=nesszerra",
@@ -1200,7 +1227,7 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
     ["s5", ["u1", "alice"]],
     ["s6", ["u2", "bob"]],
     ["s7", ["u1", "alice"]],
-  ]) {
+  ] satisfies [string, [string, string]][]) {
     await live({ live: true, streamId: stream });
     const reply = await say(...who);
     if (stream === "s5") assert.ok(reply.includes("+1 upgrade point (4-stream streak, free miss used). 5 of 20"));
@@ -1209,7 +1236,7 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
   let p = (await r.call("/profile?userId=u1")).body;
   assert.deepEqual([p.bonus, p.checkins, p.streak, p.upgrades.points, p.upgrades.fromCheckins], [6, 5, 1, 6, 6]);
   assert.equal(
-    (await r.call("/state")).body.players.find((x) => x.userId === "u1").bonus,
+    (await r.call("/state")).body.players.find((x: { userId: string }) => x.userId === "u1").bonus,
     6,
     "the next duel counts the new points",
   );
@@ -1223,7 +1250,7 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
   p = (await r.call("/profile?userId=u1")).body;
   assert.deepEqual([p.wins, p.bonus, p.upgrades.points], [0, 6, 6]);
   // Mods tune it: no points per check-in and no streak bonus still count the streak.
-  const cfg = (patch) =>
+  const cfg = (patch: Extra) =>
     r.call("/admin", { method: "POST", body: { actorId: "mod1", action: "config", payload: { patch } } });
   assert.equal((await cfg({ checkinPoints: 4 })).body.error, "invalid_config_checkinPoints");
   assert.equal((await cfg({ streakBonus: "yes" })).body.error, "invalid_config_streakBonus");
@@ -1254,7 +1281,7 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
   await r.save("u2", "bob");
   await r.save("u3", "cara");
   let m = 0;
-  const cmd = async (id, login, action, target = "", amount) =>
+  const cmd = async (id: string, login: string, action: string, target = "", amount?: string) =>
     (
       await r.call("/se?origin=https%3A%2F%2Ftest.example", {
         method: "POST",
@@ -1279,7 +1306,10 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
     );
   await cmd("u1", "alice", "challenge", "bob");
   await cmd("u2", "bob", "accept");
-  const duel = r.readState("nesszerra").duels.find((d) => d.status === "completed");
+  // as: a completed duel carries its reveal time; paid is the room's own field on top of Duel
+  const duel = must(r.readState("nesszerra").duels.find((d) => d.status === "completed")) as Revealed & {
+    paid?: boolean;
+  };
   const [win, lose] = duel.winnerId === "u1" ? ["alice", "bob"] : ["bob", "alice"];
   assert.deepEqual(
     [dollars()[win], dollars()[lose], duel.paid],
@@ -1314,7 +1344,7 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
   }
   // A website save and a rank reset keep dollars.
   assert.equal((await r.save("u3", "cara")).body.profile.dollars, 0);
-  const gift = (username, amount) =>
+  const gift = (username: string, amount: number) =>
     r.call("/admin", {
       method: "POST",
       body: { actorId: "mod1", actorName: "Mod", action: "giftDollars", payload: { username, amount } },
@@ -1332,7 +1362,7 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
   await r.call("/admin", { method: "POST", body: { actorId: "mod1", action: "resetRank", payload: { userId: "u3" } } });
   assert.equal((await r.save("u3", "cara")).body.profile.dollars, 50, "a rank reset and a save keep dollars");
   // !give: usage, targets and the live check come first.
-  const live = (body) => r.call("/dev-live", { method: "POST", body });
+  const live = (body: Extra) => r.call("/dev-live", { method: "POST", body });
   assert.equal(await cmd("u3", "cara", "give", "alice"), "Give who, and how much? Type !pay @name 10");
   assert.equal(
     await cmd("u3", "cara", "give", "nobody", "5"),
@@ -1374,7 +1404,7 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
   const log = (await r.call("/dev/logs?source=command")).body;
   assert.deepEqual([log[0].context.reason, log[0].context.amount], ["given", 10]);
   // The dev chat (test site) answers like the bot would.
-  const dev = async (text) =>
+  const dev = async (text: string) =>
     (await r.call("/dev-chat", { method: "POST", body: { userId: "u3", username: "cara", displayName: "cara", text } }))
       .body.reply;
   assert.equal(await dev("!wallet"), "@cara: $140 PixFray dollars, 3 of 20 upgrade points, 0-stream streak.");
@@ -1387,7 +1417,7 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
   assert.equal(await dev("!pay @bob 10"), "@cara gave $10 to @bob. You have $125 left.");
   assert.equal(await dev("!pay @bob 1"), "@bob already holds the most dollars a fighter can.");
   // Mods tune it or turn !give off; payouts follow the config.
-  const cfg = (patch) =>
+  const cfg = (patch: Extra) =>
     r.call("/admin", { method: "POST", body: { actorId: "mod1", action: "config", payload: { patch } } });
   assert.equal((await cfg({ winDollars: 101 })).body.error, "invalid_config_winDollars");
   assert.equal((await cfg({ giveEnabled: "no" })).body.error, "invalid_config_giveEnabled");
@@ -1400,12 +1430,15 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
     .readState("nesszerra")
     .duels.filter((d) => d.status === "completed")
     .at(-1);
-  assert.deepEqual(Object.values(second.payout), [1], "no win payout at 0; the loser gets 1");
+  assert.deepEqual(Object.values(must(must(second).payout)), [1], "no win payout at 0; the loser gets 1");
 });
 
 test("!checkin asks Twitch whether the channel is live, keeps the answer a minute, and says try again when Twitch fails", async (t) => {
-  const store = new AuthStore(fakeCtx(), { INTERNAL_SECRET: SECRET });
-  const AUTH = { idFromName: () => "auth", get: () => ({ fetch: (url, init) => store.fetch(new Request(url, init)) }) };
+  const store = new AuthStore(fakeCtx(), asEnv({ INTERNAL_SECRET: SECRET }));
+  const AUTH = {
+    idFromName: () => "auth",
+    get: () => ({ fetch: (url: string, init?: RequestInit) => store.fetch(new Request(url, init)) }),
+  };
   const r = room({
     AUTH,
     AUTH_SECRET: "a".repeat(64),
@@ -1413,15 +1446,15 @@ test("!checkin asks Twitch whether the channel is live, keeps the answer a minut
     TWITCH_CLIENT_SECRET: "client-secret",
   });
   let helix = () => new Response("down", { status: 503 });
-  const calls = [];
-  t.mock.method(globalThis, "fetch", async (url) => {
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     calls.push(String(url));
     if (String(url).startsWith("https://id.twitch.tv/oauth2/token"))
       return Response.json({ access_token: "app-token", expires_in: 3600 });
     return helix();
   });
   const se = (await r.call("/admin")).body.streamelements;
-  const say = async (id, login) =>
+  const say = async (id: string, login: string) =>
     (
       await r.call("/se", {
         method: "POST",
@@ -1445,7 +1478,7 @@ test("!checkin asks Twitch whether the channel is live, keeps the answer a minut
     2,
     "the failed lookup was not cached; the live answer is",
   );
-  assert.equal(r.ctx.storage.sql.exec("SELECT stream_id FROM streams").toArray()[0].stream_id, "4242");
+  assert.equal(must(r.ctx.storage.sql.exec("SELECT stream_id FROM streams").toArray()[0]).stream_id, "4242");
 });
 
 test("/looks returns saved looks by login for the overlay: saved profiles only, at most 20 logins", async () => {
@@ -1492,7 +1525,7 @@ test("dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   await r.connectChat();
   await r.save("b1", "testbot_a");
   await r.save("b2", "testbot_b");
-  const say = (id, login, text) =>
+  const say = (id: string, login: string, text: string) =>
     r.call("/dev-chat", { method: "POST", body: { userId: id, username: login, displayName: login, text } });
   assert.equal((await say("b2", "testbot_b", "hello")).body.reply, "", "a plain line only refreshes presence");
   const ch = await say("b1", "testbot_a", "!challenge @testbot_b");
@@ -1503,7 +1536,7 @@ test("dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   assert.equal(fight.body.reply, "Fight on: testbot_a vs testbot_b! Watch the stream for the winner.");
   assert.equal(
     r.ctx.storage.sql
-      .exec("SELECT wins, losses FROM profiles")
+      .exec<{ wins: number; losses: number }>("SELECT wins, losses FROM profiles")
       .toArray()
       .filter((p) => p.wins + p.losses === 1).length,
     2,
@@ -1518,8 +1551,8 @@ test("dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
 
 test("account age: looked up once per fighter; a duel with an account under 7 days old is just for fun", async () => {
   const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40), TWITCH_CLIENT_ID: "cid" }, { quick: true });
-  const age = { b1: Date.now() - 400 * 86_400_000, b2: Date.now() - 2 * 86_400_000 };
-  const looked = [];
+  const age: Record<string, number> = { b1: Date.now() - 400 * 86_400_000, b2: Date.now() - 2 * 86_400_000 };
+  const looked: string[] = [];
   r.lookupAccount = async (id) => {
     looked.push(id);
     if (id === "b3") throw new Error("helix down");
@@ -1530,9 +1563,9 @@ test("account age: looked up once per fighter; a duel with an account under 7 da
     ["b1", "testbot_a"],
     ["b2", "testbot_b"],
     ["b3", "testbot_c"],
-  ])
+  ] satisfies [string, string][])
     await r.save(id, login);
-  const say = (id, login, text) =>
+  const say = (id: string, login: string, text: string) =>
     r.call("/dev-chat", { method: "POST", body: { userId: id, username: login, displayName: login, text } });
   await say("b1", "testbot_a", "!challenge @testbot_b");
   const fight = await say("b2", "testbot_b", "!fight");
@@ -1543,7 +1576,7 @@ test("account age: looked up once per fighter; a duel with an account under 7 da
   );
   assert.deepEqual(
     r.ctx.storage.sql
-      .exec("SELECT wins, losses, dollars FROM profiles")
+      .exec<{ wins: number; losses: number; dollars: number }>("SELECT wins, losses, dollars FROM profiles")
       .toArray()
       .map((p) => p.wins + p.losses + p.dollars),
     [0, 0, 0],
@@ -1558,7 +1591,7 @@ test("account age: looked up once per fighter; a duel with an account under 7 da
 
 test("overlay sockets: one network is capped; a full room drops the oldest viewer socket, never an overlay", async () => {
   const r = room();
-  const upgrade = (ip) =>
+  const upgrade = (ip: string) =>
     r.upgrade(
       new Request("https://room/live", { headers: { Upgrade: "websocket", "X-Mini-Client-Ip": ip } }),
       "live",
@@ -1569,9 +1602,12 @@ test("overlay sockets: one network is capped; a full room drops the oldest viewe
   const capped = await upgrade("198.51.100.7");
   assert.equal(capped.status, 429);
   for (let i = 16; i < 200; i++) r.ctx.acceptWebSocket(fakeSocket(null, "live"), ["live", "ip:203.0.113." + i]);
-  const [obs, oldestViewer] = r.ctx.sockets;
-  const saved = globalThis.WebSocketPair;
-  globalThis.WebSocketPair = class {
+  // as: every socket this room accepted is a fakeSocket, which records how it was closed
+  const [obs, oldestViewer] = r.ctx.sockets as FakeSocket[];
+  const saved = workerGlobals.WebSocketPair;
+  workerGlobals.WebSocketPair = class {
+    declare 0: unknown;
+    declare 1: FakeSocket;
     constructor() {
       this[0] = {};
       this[1] = fakeSocket(null, "live");
@@ -1581,11 +1617,11 @@ test("overlay sockets: one network is capped; a full room drops the oldest viewe
     await upgrade("192.0.2.1").catch(() => {});
   } // Node's Response can't build a 101; the eviction happens first
   finally {
-    globalThis.WebSocketPair = saved;
+    workerGlobals.WebSocketPair = saved;
   }
-  assert.equal(obs.closed, null, "the overlay stays");
-  assert.deepEqual(oldestViewer.closed, [1013, "room full"]);
-  assert.ok(r.ctx.sockets.at(-1).tags.includes("ip:192.0.2.1"), "the new socket is tagged with its network");
+  assert.equal(must(obs).closed, null, "the overlay stays");
+  assert.deepEqual(must(oldestViewer).closed, [1013, "room full"]);
+  assert.ok(must(r.ctx.sockets.at(-1)).tags.includes("ip:192.0.2.1"), "the new socket is tagged with its network");
   // A room holding only overlays refuses the newcomer rather than dropping one.
   const full = room();
   for (let i = 0; i < 200; i++)
@@ -1596,20 +1632,23 @@ test("overlay sockets: one network is capped; a full room drops the oldest viewe
     "nesszerra",
   );
   assert.equal(refused.status, 503);
-  assert.ok(full.ctx.sockets.every((ws) => ws.closed === null));
+  // as: every socket this room accepted is a fakeSocket, which records how it was closed
+  assert.ok((full.ctx.sockets as FakeSocket[]).every((ws) => ws.closed === null));
 });
 
 test("overlay sockets opened with role=overlay are counted for the admin setup checklist", async () => {
   const r = room();
   assert.equal((await r.call("/admin")).body.overlays, 0);
-  const saved = globalThis.WebSocketPair;
-  globalThis.WebSocketPair = class {
+  const saved = workerGlobals.WebSocketPair;
+  workerGlobals.WebSocketPair = class {
+    declare 0: unknown;
+    declare 1: FakeSocket;
     constructor() {
       this[0] = {};
       this[1] = fakeSocket(null, "live");
     }
   };
-  const open = (path) =>
+  const open = (path: string) =>
     r
       .fetch(
         new Request("https://room" + path, {
@@ -1622,7 +1661,7 @@ test("overlay sockets opened with role=overlay are counted for the admin setup c
     await open("/live");
   } // Node's Response can't build a 101; the socket is accepted first
   finally {
-    globalThis.WebSocketPair = saved;
+    workerGlobals.WebSocketPair = saved;
   }
   assert.deepEqual(
     r.ctx.sockets.map((s) => s.tags.includes("overlay")),
@@ -1640,7 +1679,7 @@ test("profiles save upgrades and hats within the points and unlocks the saved wi
   // Six wins, in the database and in the live game state (duels keep the two in step).
   r.ctx.storage.sql.exec("UPDATE profiles SET wins = 6 WHERE user_id = 'u1'");
   const live = r.readState("nesszerra");
-  live.players.find((p) => p.userId === "u1").wins = 6;
+  must(live.players.find((p) => p.userId === "u1")).wins = 6;
   r.writeState(live);
   const saved = await r.save("u1", "alice", { stats: { power: 3, luck: 2 }, hat: "tophat" });
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
@@ -1649,13 +1688,13 @@ test("profiles save upgrades and hats within the points and unlocks the saved wi
   assert.equal(got.hat, "tophat");
   assert.deepEqual(got.stats, { power: 3, guard: 0, luck: 2 });
   assert.equal(got.upgrades.points, 6);
-  assert.equal(got.upgrades.hats.find((h) => h.id === "tophat").unlocked, true);
+  assert.equal(got.upgrades.hats.find((h: { id: string }) => h.id === "tophat").unlocked, true);
   // Leaving stats and hat out keeps them.
   assert.equal((await r.save("u1", "alice", { color: "#654321" })).body.profile.hat, "tophat");
   assert.equal((await r.call("/profile?userId=u1")).body.stats.power, 3);
   // Overlays get the hat with the player.
   const state = (await r.call("/state")).body;
-  assert.equal(state.players.find((p) => p.userId === "u1")?.hat, "tophat");
+  assert.equal(state.players.find((p: { userId: string }) => p.userId === "u1")?.hat, "tophat");
 });
 
 test("snapshots carry the deploy build id and the announce setting so open overlays follow them", () => {
@@ -1675,11 +1714,12 @@ test("pets: tier boosts, added after the upgrade cap", () => {
     { power: 0, guard: 2, luck: 0 },
     "an epic second stat must differ",
   );
-  assert.deepEqual(tierBoost("legendary"), { power: 1, guard: 1, luck: 1 });
+  // as: tierBoost types its stat as required; the test checks the tier-only call (stat reads as undefined)
+  assert.deepEqual((tierBoost as TierBoostOneArg)("legendary"), { power: 1, guard: 1, luck: 1 });
   assert.deepEqual(tierBoost("mythic", "power"), { power: 0, guard: 0, luck: 0 });
   assert.equal(PETS.length, 14);
   assert.equal(petOf("p-gone", ""), null, "a deleted upload is no pet");
-  assert.deepEqual(petOf("p-blob-1a2b3c", "rare:power:").boost, { power: 2, guard: 0, luck: 0 });
+  assert.deepEqual(must(petOf("p-blob-1a2b3c", "rare:power:")).boost, { power: 2, guard: 0, luck: 0 });
   // 8 power at 8 points stays 8 before the pet, then the fox's +2 goes past the per-stat cap.
   assert.deepEqual(effectiveStats({ power: 8 }, 8, 0, tierBoost("rare", "power")), { power: 10, guard: 0, luck: 0 });
   assert.deepEqual(effectiveStats({ power: 8 }, 3, 0, null), { power: 3, guard: 0, luck: 0 });
@@ -1691,13 +1731,14 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.equal(se.names.pet, "!pet");
   await r.save("u1", "alice");
   await r.save("u2", "bob");
-  const gift = (username, amount) =>
+  const gift = (username: string, amount: number) =>
     r.call("/admin", {
       method: "POST",
       body: { actorId: "mod1", action: "giftDollars", payload: { username, amount } },
     });
-  const buy = (userId, kind, id) => r.call("/shop", { method: "POST", userId, body: { userId, kind, id } });
-  const cmd = async (id, login, target = "") =>
+  const buy = (userId: string, kind: string, id: string) =>
+    r.call("/shop", { method: "POST", userId, body: { userId, kind, id } });
+  const cmd = async (id: string, login: string, target = "") =>
     (
       await r.call("/se?origin=https%3A%2F%2Ftest.example", {
         method: "POST",
@@ -1708,7 +1749,7 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   const catalog = (await r.call("/pets")).body;
   assert.equal(catalog.pets.length, 14);
   assert.deepEqual(
-    catalog.pets.find((p) => p.id === "fox"),
+    catalog.pets.find((p: { id: string }) => p.id === "fox"),
     { id: "fox", label: "Fox", tier: "rare", boost: { power: 2, guard: 0, luck: 0 }, price: 60, custom: false },
   );
   assert.equal(catalog.hatPricePerWin, 3);
@@ -1739,7 +1780,7 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
     "wizard",
     "a bought hat saves before its wins",
   );
-  const cfg = (patch) =>
+  const cfg = (patch: Extra) =>
     r.call("/admin", { method: "POST", body: { actorId: "mod1", action: "config", payload: { patch } } });
   assert.equal((await cfg({ petPriceRare: 0 })).body.error, "invalid_config_petPriceRare");
   assert.equal((await cfg({ hatPricePerWin: 0 })).status, 200);
@@ -1761,7 +1802,7 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
     hats: ["wizard"],
   });
   assert.equal(
-    r.readState("nesszerra").players.find((p) => p.userId === "u1").petBoost.power,
+    must(r.readState("nesszerra").players.find((p) => p.userId === "u1")).petBoost.power,
     2,
     "duels count the boost",
   );
@@ -1795,7 +1836,7 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
     method: "POST",
     body: { action: "connected", subscriptionId: "se-streamelements", status: "enabled", createdAt: Date.now() },
   });
-  const duel = async (id, login, action, target = "") =>
+  const duel = async (id: string, login: string, action: string, target = "") =>
     r.call("/se", {
       method: "POST",
       body: { key: se.secret, action, userId: id, username: login, displayName: login, target },
@@ -1803,9 +1844,9 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   await duel("u1", "alice", "challenge", "bob");
   await duel("u2", "bob", "accept");
   assert.ok(r.readState("nesszerra").duels.some((d) => d.status === "completed"));
-  assert.equal(r.ctx.storage.sql.exec("SELECT pet FROM profiles WHERE user_id = 'u1'").toArray()[0].pet, "fox");
+  assert.equal(must(r.ctx.storage.sql.exec("SELECT pet FROM profiles WHERE user_id = 'u1'").toArray()[0]).pet, "fox");
   // Custom pets: checked uploads, priced by tier; deleting one takes it off fighters and owners.
-  const upload = (body) =>
+  const upload = (body: Extra) =>
     r.call("/pets", {
       method: "POST",
       body: {
@@ -1845,33 +1886,36 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.equal((await r.call("/pets/" + item.id, { method: "DELETE" })).body.ok, true);
   assert.equal((await r.call("/profile?userId=u2")).body.pet, "");
   assert.deepEqual((await r.call("/profile?userId=u2")).body.owned.pets, []);
-  assert.equal(r.readState("nesszerra").players.find((p) => p.userId === "u2").pet, "");
+  assert.equal(must(r.readState("nesszerra").players.find((p) => p.userId === "u2")).pet, "");
   assert.equal((await r.call("/pets/" + item.id, { method: "DELETE" })).status, 404);
   // A deleted profile takes its purchases with it.
   await r.call("/admin", {
     method: "POST",
     body: { actorId: "mod1", action: "removePlayer", payload: { userId: "u1" } },
   });
-  assert.equal(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM owned_items WHERE user_id = 'u1'").toArray()[0].n, 0);
+  assert.equal(
+    must(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM owned_items WHERE user_id = 'u1'").toArray()[0]).n,
+    0,
+  );
 });
 
 test("cosmetics and builds: the shop list, buying, wearing, build slots with their own loadout, duels keep them", async () => {
   const r = room({}, { quick: true });
   await r.save("u1", "alice");
   await r.save("u2", "bob");
-  const gift = (username, amount) =>
+  const gift = (username: string, amount: number) =>
     r.call("/admin", {
       method: "POST",
       body: { actorId: "mod1", action: "giftDollars", payload: { username, amount } },
     });
-  const buy = (kind, id, price) =>
+  const buy = (kind: string, id: string, price?: number) =>
     r.call("/shop", { method: "POST", userId: "u1", body: { userId: "u1", kind, id, price } });
   // The public list: every kind with the config price, and the build slot prices.
   const shop = (await r.call("/shop")).body;
   assert.equal(shop.pets.length, 14);
   assert.deepEqual(Object.keys(shop.items), ["recolor", "petcolor", "accessory", "trail", "effect", "taunt", "title"]);
   assert.deepEqual(
-    shop.items.trail.find((x) => x.id === "flames"),
+    shop.items.trail.find((x: { id: string }) => x.id === "flames"),
     { id: "flames", label: "Flames", price: 40 },
   );
   assert.deepEqual(shop.slots, { max: 5, prices: [60, 120, 120, 120] });
@@ -1891,7 +1935,7 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
     ["effect", "fireworks"],
     ["taunt", "gg"],
     ["title", "legend"],
-  ])
+  ] satisfies [string, string][])
     assert.equal((await buy(kind, id)).body.ok, true, kind);
   // Wearing: only bought ones; "" takes one off; left out keeps it.
   assert.equal((await r.save("u1", "alice", { accessory: "glasses" })).body.error, "item_locked");
@@ -1931,13 +1975,18 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
     ["crimson", "cape", "flames", "fireworks", "gg", "legend"],
   );
   assert.equal(
-    r.readState("nesszerra").players.find((x) => x.userId === "u1").trail,
+    must(r.readState("nesszerra").players.find((x) => x.userId === "u1")).trail,
     "flames",
     "the overlay state carries them",
   );
   // Build slots: 1 free, the 2nd costs 60, then 120 each, up to 5.
   assert.equal((await r.save("u1", "alice", { build: 1 })).body.error, "invalid_build");
-  assert.deepEqual((({ price, owned }) => [price, owned.slots])((await buy("slot", "")).body), [60, 2]);
+  assert.deepEqual(
+    (({ price, owned }: { price: number; owned: { slots: number } }) => [price, owned.slots])(
+      (await buy("slot", "")).body,
+    ),
+    [60, 2],
+  );
   // Slot 1 keeps its own character, stats and cosmetics; slot 0 is untouched.
   p = (
     await r.save("u1", "alice", {
@@ -1982,7 +2031,7 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
     method: "POST",
     body: { action: "connected", subscriptionId: "se-streamelements", status: "enabled", createdAt: Date.now() },
   });
-  const duel = (id, login, action, target = "") =>
+  const duel = (id: string, login: string, action: string, target = "") =>
     r.call("/se", {
       method: "POST",
       body: { key: se.secret, action, userId: id, username: login, displayName: login, target },
@@ -1998,7 +2047,7 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
     method: "POST",
     body: { actorId: "mod1", action: "removePlayer", payload: { userId: "u1" } },
   });
-  assert.equal(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM builds WHERE user_id = 'u1'").toArray()[0].n, 0);
+  assert.equal(must(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM builds WHERE user_id = 'u1'").toArray()[0]).n, 0);
 });
 
 test("a save after the fighter left the arena keeps its stored rank and record", async () => {
@@ -2010,7 +2059,7 @@ test("a save after the fighter left the arena keeps its stored rank and record",
   assert.equal((await r.save("u1", "alice", { color: "#654321" })).status, 200);
   const row = r.ctx.storage.sql.exec("SELECT elo, wins, losses, color FROM profiles WHERE user_id = 'u1'").toArray()[0];
   assert.deepEqual({ ...row }, { elo: 1106, wins: 14, losses: 9, color: "#654321" });
-  const fighter = r.readState("nesszerra").players.find((p) => p.userId === "u1");
+  const fighter = must(r.readState("nesszerra").players.find((p) => p.userId === "u1"));
   assert.deepEqual([fighter.elo, fighter.wins, fighter.losses], [1106, 14, 9]);
 });
 test("a save the Worker refuses lands in the room's owner log as a warn row", async () => {
@@ -2041,25 +2090,9 @@ test("profile saves land in the owner log: a save as a command row, a refusal wi
   });
 });
 
-test("cosmetic ids: the overlay drawings (src/served/cosmetics.js) match the server lists", async () => {
-  const server = await import("../server/cosmetics.ts");
-  const client = await import("../src/served/cosmetics.ts");
-  for (const kind of server.COSMETIC_KINDS) {
-    const ids = server.COSMETICS[kind].map((x) => x.id);
-    assert.deepEqual(client.COSMETIC_IDS[kind], ids, kind);
-  }
-  assert.deepEqual(
-    Object.keys(client.TAUNTS),
-    server.COSMETICS.taunt.map((x) => x.id),
-  );
-  assert.deepEqual(
-    Object.values(client.TITLES),
-    server.COSMETICS.title.map((x) => x.label),
-  );
-});
-
 test('pet boost text: legendary pets read "+1 to all stats", like the viewer page', () => {
-  assert.equal(boostText(tierBoost("legendary")), "+1 to all stats");
+  // as: tierBoost types its stat as required; the test checks the tier-only call (stat reads as undefined)
+  assert.equal(boostText((tierBoost as TierBoostOneArg)("legendary")), "+1 to all stats");
   assert.equal(boostText({ power: 2, guard: 1, luck: 0 }), "+2 power, +1 guard");
   assert.equal(boostText({ power: 0, guard: 0, luck: 1 }), "+1 luck");
 });
@@ -2070,7 +2103,7 @@ test("chat bot: commands by the channel names get a reply; chat, other commands 
   await r.save("u2", "bob");
   await r.connectChat("sub-bot");
   let n = 0;
-  const say = async (id, login, text, sub = "sub-bot") =>
+  const say = async (id: string, login: string, text: string, sub = "sub-bot") =>
     (
       await r.call("/eventsub?origin=" + encodeURIComponent("https://staging.example"), {
         method: "POST",
@@ -2155,8 +2188,9 @@ test("chat bot: a notification confirms a pending subscription; without CHAT_BOT
 });
 
 // BOT_DEBUG: the bot account (u9 pixbot) plays back. The Worker forwards the subscription's bot id and a mod flag.
-function botRoom(env) {
-  const r = room({ CHAT_BOT: "1", DEV_TOOLS_TOKEN: "x".repeat(40), ...env }, { quick: true });
+function botRoom(env: Extra): BotRoom {
+  // BotRoom: say is attached just below, before r is returned
+  const r = room({ CHAT_BOT: "1", DEV_TOOLS_TOKEN: "x".repeat(40), ...env }, { quick: true }) as BotRoom;
   let n = 0;
   r.say = async (id, login, text, { mod = false } = {}) =>
     (
@@ -2198,7 +2232,7 @@ test("chat bot: !give gives dollars (and !pay still does); replies name !give", 
 test("chat bot: text commands from the admin page answer in chat, with counters, cooldowns and protected names", async () => {
   const r = botRoom({});
   await r.connectChat("sub-bot");
-  const admin = async (action, payload) =>
+  const admin = async (action: string, payload: Extra) =>
     await r.call("/admin", { method: "POST", body: { actorId: "owner1", actorName: "nesszerra", action, payload } });
   assert.equal((await admin("saveCommand", { name: "sens", reply: "0.14 3600dpi" })).body.ok, true);
   const saved = await admin("saveCommand", { name: "!NT", reply: "Nesszerra has tried $(count nt) times!" });
@@ -2208,7 +2242,7 @@ test("chat bot: text commands from the admin page answer in chat, with counters,
   assert.equal((await r.say("u1", "alice", "!nt")).reply, "Nesszerra has tried 2 times!");
   assert.equal((await r.say("u2", "bob", "!nt")).reply, "", "global cooldown");
   assert.equal((await r.say("u1", "alice", "sens")).reply, "", "needs the !");
-  r.commandCooldowns.clear();
+  must(r.commandCooldowns).clear();
   assert.equal((await r.say("u2", "bob", "!NT now")).reply, "Nesszerra has tried 3 times!");
   await admin("saveCommand", { name: "hug", reply: "${user} hugs ${touser} (${getcount nt})" });
   assert.equal((await r.say("u1", "alice", "!hug @bob")).reply, "alice hugs bob (3)");
@@ -2223,14 +2257,14 @@ test("chat bot: text commands from the admin page answer in chat, with counters,
   // Edit with a rename, then delete; the admin page sees the list.
   assert.equal((await admin("saveCommand", { name: "sensitivity", reply: "0.15", oldName: "!sens" })).body.ok, true);
   assert.deepEqual(
-    (await r.call("/admin")).body.botCommands.commands.map((c) => c.name),
+    (await r.call("/admin")).body.botCommands.commands.map((c: { name: string }) => c.name),
     ["!hug", "!nt", "!sensitivity"],
   );
-  r.commandCooldowns.clear();
+  must(r.commandCooldowns).clear();
   assert.equal((await r.say("u1", "alice", "!sens")).reply, "");
   assert.equal((await admin("deleteCommand", { name: "hug" })).body.botCommands.commands.length, 2);
   // A reply the cap would drop doesn't count or start the cooldown.
-  r.commandCooldowns.clear();
+  must(r.commandCooldowns).clear();
   r.botReplies = Array(14).fill(Date.now());
   assert.equal((await r.say("u1", "alice", "!nt")).reason, "reply_limit");
   r.botReplies = [];
@@ -2288,11 +2322,16 @@ test("chat bot status: heard, sent and dropped replies, held-back replies and !f
   assert.equal((await r.call("/admin")).body.botStatus.heldReason, "unknown_subscription");
   for (let i = 0; i < 20; i++) await r.say("u1", "alice", "!elo");
   assert.equal((await r.call("/admin")).body.botStatus.heldReason, "reply_limit");
-  const warns = (await r.call("/dev/logs?source=warn")).body.map((x) => x.message);
+  // Loose (LogRow): captured log records, read by property
+  const warns = (await r.call("/dev/logs?source=warn")).body.map((x: LogRow) => x.message);
   assert.ok(
     warns.includes("bot reply held back: unknown_subscription") && warns.includes("bot reply held back: reply_limit"),
   );
-  assert.equal(warns.filter((m) => m === "bot reply held back: reply_limit").length, 1, "once a minute per reason");
+  assert.equal(
+    warns.filter((m: string) => m === "bot reply held back: reply_limit").length,
+    1,
+    "once a minute per reason",
+  );
 });
 
 test("chat bot: !fray off / !fray on (broadcaster or mod) silences the whole bot; the admin page toggles it too", async () => {
@@ -2322,7 +2361,7 @@ test("chat bot: !fray off / !fray on (broadcaster or mod) silences the whole bot
   );
   assert.match((await r.say("u1", "alice", "!challenge @bob")).reply, /bob/);
   // the admin page's Rules switch is the same setting
-  const admin = (patch) =>
+  const admin = (patch: Extra) =>
     r.call("/admin", {
       method: "POST",
       body: { actorId: "owner1", actorName: "nesszerra", action: "config", payload: { patch } },
@@ -2337,7 +2376,8 @@ test("chat bot: !fray off / !fray on (broadcaster or mod) silences the whole bot
 // The reminder posts through Helix as the bot. Twitch is faked: an app token, then every chat line is recorded.
 // down: true makes every chat send fail (Twitch 503).
 function fakeTwitch() {
-  const sent = [],
+  // Loose: the Helix chat bodies the room sent; tests read message and reply fields
+  const sent: Loose[] = [],
     real = globalThis.fetch;
   const AUTH = { idFromName: () => "auth", get: () => ({ fetch: async () => Response.json(null) }) };
   const tw = {
@@ -2354,7 +2394,7 @@ function fakeTwitch() {
       return Response.json({ access_token: "app", expires_in: 3600 });
     if (url.endsWith("/helix/chat/messages")) {
       if (tw.down) return new Response("unavailable", { status: 503 });
-      sent.push(JSON.parse(init.body));
+      sent.push(JSON.parse(init.body as string)); // as: the room sends Helix chat as a JSON string body
       return Response.json({ data: [{ is_sent: true }] });
     }
     throw new Error("unexpected fetch " + url);
@@ -2375,7 +2415,7 @@ test("chat bot reminder: off by default; on, it posts the !fray line as the bot 
     const due = r.reminderDue(r.readState("nesszerra"));
     assert.ok(due > Date.now() + 29 * 60000 && due <= Date.now() + 30 * 60000, "first one a full interval out");
     await r.scheduleAlarm(r.readState("nesszerra"));
-    assert.ok(r.ctx.storage.alarm <= due);
+    assert.ok((r.ctx.storage.alarm ?? 0) <= due);
     // Offline: nothing posted, and it waits another interval.
     await r.call("/dev-live", { method: "POST", body: { live: false } });
     await r.postReminder("nesszerra", due);
@@ -2446,14 +2486,15 @@ test("chat bot: after the stream has played a duel, the bot says who won and the
     await r.connectChat("sub-bot");
     await r.say("u1", "alice", "!challenge @bob");
     assert.match((await r.say("u2", "bob", "!fight")).replies.join(" "), /Watch the stream for the winner/);
-    const duel = r.readState("nesszerra").duels.find((d) => d.status === "completed");
+    // as: a completed duel always carries its reveal time
+    const duel = must(r.readState("nesszerra").duels.find((d) => d.status === "completed")) as Revealed;
     assert.ok(duel.revealAt > Date.now());
     await r.scheduleAlarm(r.readState("nesszerra"));
-    assert.ok(r.ctx.storage.alarm <= duel.revealAt + 1, "the alarm wakes for the reveal");
+    assert.ok((r.ctx.storage.alarm ?? 0) <= duel.revealAt + 1, "the alarm wakes for the reveal");
     await r.alarm();
     assert.equal(tw.sent.length, 0, "nothing before the stream has shown it");
     const s = r.readState("nesszerra");
-    s.duels.find((d) => d.id === duel.id).revealAt = Date.now() - 1;
+    must(s.duels.find((d) => d.id === duel.id)).revealAt = Date.now() - 1;
     r.writeState(s);
     await r.alarm();
     const [w, l] = duel.winnerId === "u1" ? ["alice", "bob"] : ["bob", "alice"];
@@ -2481,7 +2522,7 @@ test("chat bot: a result line survives a full reply cap, a Twitch outage, a miss
     await r.connectChat("sub-bot");
     const reveal = () => {
       const s = r.readState("nesszerra");
-      for (const d of s.duels) if (d.revealAt > Date.now()) d.revealAt = Date.now() - 1;
+      for (const d of s.duels) if ((d.revealAt ?? 0) > Date.now()) d.revealAt = Date.now() - 1;
       r.writeState(s);
     };
     const duel = async ({ shown = true } = {}) => {
@@ -2507,7 +2548,7 @@ test("chat bot: a result line survives a full reply cap, a Twitch outage, a miss
     await duel();
     await r.alarm();
     assert.equal(results(), 1);
-    assert.ok(r.ctx.storage.alarm <= Date.now() + 5000, "retried soon");
+    assert.ok((r.ctx.storage.alarm ?? 0) <= Date.now() + 5000, "retried soon");
     tw.down = false;
     await r.alarm();
     assert.equal(results(), 2);
@@ -2547,7 +2588,7 @@ test("chat bot: !accept, !duel and !top are hidden aliases, unless the channel u
   // Trailing punctuation still names the viewer.
   assert.match((await r.say("u1", "alice", "!elo @bob,")).reply, /^bob: /);
   // A channel that renamed !challenge to !duel keeps its own meaning; a custom !top command wins over the alias.
-  const admin = async (action, payload) =>
+  const admin = async (action: string, payload: Extra) =>
     await r.call("/admin", { method: "POST", body: { actorId: "owner1", actorName: "nesszerra", action, payload } });
   assert.equal((await admin("saveCommand", { name: "!top", reply: "custom top" })).body.ok, true);
   assert.equal((await r.say("u1", "alice", "!top")).reply, "custom top");
@@ -2561,9 +2602,10 @@ test("!checkin does not count a win the stream has not shown yet", async () => {
   await r.call("/dev-live", { method: "POST", body: { live: true, streamId: "s1" } });
   await r.say("u1", "alice", "!challenge @bob");
   await r.say("u2", "bob", "!fight");
-  const d = r.readState("nesszerra").duels.find((x) => x.status === "completed");
+  // as: a completed duel always carries its reveal time
+  const d = must(r.readState("nesszerra").duels.find((x) => x.status === "completed")) as Revealed;
   assert.ok(d.revealAt > Date.now());
-  const winner = d.winnerId === "u1" ? ["u1", "alice"] : ["u2", "bob"];
+  const winner: [string, string] = d.winnerId === "u1" ? ["u1", "alice"] : ["u2", "bob"];
   assert.match(
     (await r.say(winner[0], winner[1], "!checkin")).reply,
     / 1 of 20 points\./,
@@ -2622,7 +2664,7 @@ test("debug bot: !fray e2e plays every command once against the asker and posts 
   assert.doesNotMatch(detail, /FAIL/);
   assert.match(detail, /checkin ok \(not_live\)/);
   assert.match(detail, /fight by alice ok \(quick_duel\)/);
-  assert.ok(run.replies.every((line) => line.length <= 480));
+  assert.ok(run.replies.every((line: string) => line.length <= 480));
   const state = r.readState("nesszerra");
   assert.equal(
     state.duels.filter((d) => d.status === "pending" || d.status === "active").length,
@@ -2643,7 +2685,7 @@ test("!checkin test mode: answers while offline with what a check-in would give,
   const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40) }, { quick: true });
   const se = (await r.call("/admin")).body.streamelements;
   let m = 0;
-  const say = async (id, login) =>
+  const say = async (id: string, login: string) =>
     (
       await r.call("/se?origin=https%3A%2F%2Ftest.example", {
         method: "POST",
@@ -2657,8 +2699,8 @@ test("!checkin test mode: answers while offline with what a check-in would give,
         },
       })
     ).body.reply;
-  const live = (body) => r.call("/dev-live", { method: "POST", body });
-  const test = (on) => r.call("/checkin-test", { method: "POST", body: { on, by: "ModMia" } });
+  const live = (body: Extra) => r.call("/dev-live", { method: "POST", body });
+  const test = (on: boolean) => r.call("/checkin-test", { method: "POST", body: { on, by: "ModMia" } });
   await r.save("u1", "alice");
   await live({ live: true, streamId: "s1" });
   assert.match(await say("u1", "alice"), /^@alice checked in: \+1 upgrade point \(1-stream streak\)/);
@@ -2675,7 +2717,7 @@ test("!checkin test mode: answers while offline with what a check-in would give,
   const after = (await r.call("/profile?userId=u1")).body;
   assert.deepEqual([after.bonus, after.checkins, after.streak], [before.bonus, before.checkins, before.streak]);
   assert.equal(
-    r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM streams").toArray()[0].n,
+    must(r.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM streams").toArray()[0]).n,
     1,
     "no stream row for a test",
   );
@@ -2697,7 +2739,7 @@ test("!checkin test mode: answers while offline with what a check-in would give,
 test("viewer sprites: send, mod approves, worn and in the catalog with its owner; reject, replace, remove, limits", async () => {
   const r = room();
   await r.save("u1", "alice");
-  const send = (userId, label, extra = {}) =>
+  const send = (userId: string, label: string, extra: Extra = {}) =>
     r.call("/sprites", {
       method: "POST",
       body: {
@@ -2709,9 +2751,9 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
         ...extra,
       },
     });
-  const review = (id, action) =>
+  const review = (id: string, action: string) =>
     r.call("/sprites/review", { method: "POST", body: { id, action, actorId: "mod1", actorName: "Mod" } });
-  const raw = (path) =>
+  const raw = (path: string) =>
     r.fetch(
       new Request("https://room" + path, { headers: { "X-Mini-Internal": SECRET, "X-Mini-Channel": "nesszerra" } }),
     );
@@ -2738,7 +2780,7 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
   const ws = r.live();
   assert.deepEqual((await review(id1, "approve")).body, { ok: true, id: id1, status: "live" });
   assert.equal((await r.call("/profile?userId=u1")).body.avatar, id1);
-  assert.equal(r.readState("nesszerra").players.find((p) => p.userId === "u1").avatar, id1);
+  assert.equal(must(r.readState("nesszerra").players.find((p) => p.userId === "u1")).avatar, id1);
   assert.ok(ws.sent.length > 0);
   const entry = (await catalog())[0];
   assert.deepEqual(
@@ -2757,14 +2799,19 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
   const id2 = (await send("u1", "Dog")).body.pending.id;
   await review(id2, "approve");
   assert.deepEqual(
-    (await catalog()).map((e) => e.id),
+    (await catalog()).map((e: { id: string }) => e.id),
     [id2],
   );
   assert.equal((await raw("/asset/" + id1)).status, 404);
   assert.equal((await r.call("/profile?userId=u1")).body.avatar, id2);
   assert.equal(
-    JSON.parse(r.ctx.storage.sql.exec("SELECT data FROM builds WHERE user_id = 'u1' AND slot = 1").toArray()[0].data)
-      .avatar,
+    JSON.parse(
+      must(
+        r.ctx.storage.sql
+          .exec<{ data: string }>("SELECT data FROM builds WHERE user_id = 'u1' AND slot = 1")
+          .toArray()[0],
+      ).data,
+    ).avatar,
     id2,
   );
 
@@ -2782,7 +2829,7 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
   await review(idb, "approve");
   assert.equal((await r.call("/profile?userId=u2")).body, null);
   assert.deepEqual(
-    (await catalog()).map((e) => [e.id, e.owner]),
+    (await catalog()).map((e: { id: string; owner: string }) => [e.id, e.owner]),
     [
       [id2, "u1"],
       [idb, "u2"],
@@ -2792,10 +2839,15 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
   // Remove: fighters wearing it go back to the default character.
   assert.equal((await review(id2, "remove")).body.status, "removed");
   assert.equal((await r.call("/profile?userId=u1")).body.avatar, "player");
-  assert.equal(r.readState("nesszerra").players.find((p) => p.userId === "u1").avatar, "player");
+  assert.equal(must(r.readState("nesszerra").players.find((p) => p.userId === "u1")).avatar, "player");
   assert.equal(
-    JSON.parse(r.ctx.storage.sql.exec("SELECT data FROM builds WHERE user_id = 'u1' AND slot = 1").toArray()[0].data)
-      .avatar,
+    JSON.parse(
+      must(
+        r.ctx.storage.sql
+          .exec<{ data: string }>("SELECT data FROM builds WHERE user_id = 'u1' AND slot = 1")
+          .toArray()[0],
+      ).data,
+    ).avatar,
     "player",
   );
 
@@ -2817,7 +2869,7 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
 
 test("viewer sprites: AI redraws per viewer and per channel each day, refunded when the model fails", async () => {
   const r = room();
-  const take = (userId) => r.call("/sprites/ai", { method: "POST", body: { userId, op: "take" } });
+  const take = (userId: string) => r.call("/sprites/ai", { method: "POST", body: { userId, op: "take" } });
   assert.deepEqual((await take("u1")).body, { ok: true, left: 2 });
   await take("u1");
   await take("u1");
@@ -2836,22 +2888,27 @@ test("viewer sprites: AI redraws per viewer and per channel each day, refunded w
 
 test('rooms answer the overlay "ping" with "pong" through the WebSocket auto-response, without waking', () => {
   const had = "WebSocketRequestResponsePair" in globalThis,
-    original = globalThis.WebSocketRequestResponsePair;
-  globalThis.WebSocketRequestResponsePair = function (request, response) {
+    original = workerGlobals.WebSocketRequestResponsePair;
+  workerGlobals.WebSocketRequestResponsePair = function (
+    this: { request: string; response: string },
+    request: string,
+    response: string,
+  ) {
     this.request = request;
     this.response = response;
   };
   try {
     const ctx = fakeCtx(),
-      pairs = [];
+      // Loose: the pairs the room registers, built by the fake class above; the test reads request and response
+      pairs: Loose[] = [];
     ctx.setWebSocketAutoResponse = (pair) => pairs.push(pair);
-    new ChannelRoom(ctx, {});
+    new ChannelRoom(ctx, asEnv({}));
     assert.deepEqual(
       pairs.map((p) => [p.request, p.response]),
       [["ping", "pong"]],
     );
   } finally {
-    if (had) globalThis.WebSocketRequestResponsePair = original;
-    else delete globalThis.WebSocketRequestResponsePair;
+    if (had) workerGlobals.WebSocketRequestResponsePair = original;
+    else delete workerGlobals.WebSocketRequestResponsePair;
   }
 });

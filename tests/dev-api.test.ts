@@ -1,45 +1,62 @@
 // Live-fix API (/api/dev/*): owner gate, not-configured paths, request validation, GitHub calls,
 // and the ChannelRoom side on real SQLite. GitHub and Cloudflare are stubbed through globalThis.fetch.
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue, SQLOutputValue } from "node:sqlite";
 import worker from "../server/worker.ts";
 import { digest } from "../server/auth.ts";
 import { ChannelRoom } from "../server/channel.ts";
 import { validPath, usage, logRoomEvent } from "../server/developer.ts";
+import { asEnv, asExecutionContext, fakeCtx, must } from "./fakes.ts";
+import type { FakeState, Loose } from "./fakes.ts";
+
+// A Durable Object stub as the Worker calls it, and a namespace handing them out by name.
+type Stub = { fetch: (url: string, init?: RequestInit) => Promise<Response> };
+type FakeNamespace = { idFromName: (x: string) => string; get: (name: string) => Stub };
+type AuthInit = { method?: string; body?: string };
+/** The partial Env these tests build; asEnv() hands it to the Worker. */
+type DevEnv = {
+  [binding: string]: unknown;
+  AUTH_SECRET: string;
+  INTERNAL_SECRET: string;
+  TWITCH_CLIENT_ID: string;
+  TWITCH_CLIENT_SECRET: string;
+  AUTH: { idFromName: (x: string) => string; get: () => { fetch(url: string, options: AuthInit): Promise<Response> } };
+  ROOMS: FakeNamespace;
+  ASSETS: { fetch: () => Promise<Response> };
+  BACKUPS?: FakeD1;
+};
+/** A ChannelRoom built on fakeCtx(), so its storage reads come back as plain rows. */
+type DevRoom = Omit<ChannelRoom, "ctx"> & { ctx: FakeState };
+// Stored entries are whatever JSON the Worker wrote; tests read them by property.
+type Fixture = { env: DevEnv; entries: Map<string, Loose>; rooms: Map<string, DevRoom> };
+type D1Value = SQLInputValue | ArrayBuffer;
+type FakeStatement = {
+  bind: (...p: D1Value[]) => FakeStatement;
+  run: () => Promise<{ success: boolean }>;
+  all: () => Promise<{ results: Record<string, unknown>[] }>;
+  first: () => Promise<Record<string, unknown> | null>;
+};
+type FakeD1 = {
+  prepare: (query: string) => FakeStatement;
+  batch(list: FakeStatement[]): Promise<{ success: boolean }[]>;
+};
+type Backup = { day: string; at: number };
+type BackupResult = { channel: string; ok: boolean };
+type Reply = [status: number, body: unknown];
+type Route = [[method: string, url: RegExp], Reply | ((url: string, init: RequestInit) => Reply)];
 
 const ORIGIN = "https://chat.miolaf.xyz";
 const SECRET = "test-only-internal-secret-0123456789";
 
-function fakeCtx() {
-  const db = new DatabaseSync(":memory:");
-  return {
-    storage: {
-      sql: {
-        exec(query, ...params) {
-          const rows = db
-            .prepare(query)
-            .all(...params)
-            .map((r) => ({ ...r }));
-          return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() };
-        },
-      },
-      transactionSync(fn) {
-        return fn();
-      },
-      async setAlarm() {},
-      async deleteAlarm() {},
-    },
-    acceptWebSocket() {},
-    getWebSockets: () => [],
-  };
-}
-
 // A real ChannelRoom (node:sqlite) behind ROOMS, and an in-memory AuthStore.
-function environment(extra = {}) {
-  const entries = new Map(),
-    rooms = new Map();
-  const env = {
+function environment(extra: Record<string, unknown> = {}): Fixture {
+  // entries hold whatever JSON the Worker stored; tests read them by property
+  const entries = new Map<string, Loose>(),
+    rooms = new Map<string, DevRoom>();
+  const env: DevEnv = {
     AUTH_SECRET: "test-only-auth-key",
     INTERNAL_SECRET: SECRET,
     TWITCH_CLIENT_ID: "test-app",
@@ -49,7 +66,7 @@ function environment(extra = {}) {
       get: () => ({
         async fetch(url, options) {
           const u = new URL(url),
-            key = u.searchParams.get("key");
+            key = u.searchParams.get("key") as string; // the AuthStore client always sends ?key=
           if (u.pathname === "/list")
             return Response.json(
               [...entries].filter(([k]) => k.startsWith(key)).map(([k, value]) => ({ key: k, value })),
@@ -64,7 +81,7 @@ function environment(extra = {}) {
             entries.delete(key);
             return Response.json({ ok: true });
           }
-          entries.set(key, JSON.parse(options.body).value);
+          entries.set(key, JSON.parse(options.body as string).value); // every PUT from the AuthStore client has a body
           return Response.json({ ok: true });
         },
       }),
@@ -73,8 +90,12 @@ function environment(extra = {}) {
       idFromName: (x) => x,
       get: (name) => {
         if (!rooms.has(name))
-          rooms.set(name, new ChannelRoom(fakeCtx(), { INTERNAL_SECRET: SECRET, BACKUPS: env.BACKUPS }));
-        const room = rooms.get(name);
+          rooms.set(
+            name,
+            // built on fakeCtx(), so its ctx is the FakeState
+            new ChannelRoom(fakeCtx(), asEnv({ INTERNAL_SECRET: SECRET, BACKUPS: env.BACKUPS })) as DevRoom,
+          );
+        const room = must(rooms.get(name));
         return { fetch: (url, init) => room.fetch(new Request(url, init)) };
       },
     },
@@ -84,11 +105,13 @@ function environment(extra = {}) {
   return { env, entries, rooms };
 }
 // D1 (prepare/bind/run/all/first/batch) over node:sqlite. Blobs come back as arrays of numbers, as D1 returns them.
-function fakeD1() {
+function fakeD1(): FakeD1 {
   const db = new DatabaseSync(":memory:");
-  const args = (params) => params.map((v) => (v instanceof ArrayBuffer ? new Uint8Array(v) : v));
-  const row = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v instanceof Uint8Array ? [...v] : v]));
-  const statement = (query, params = []) => ({
+  const args = (params: D1Value[]): SQLInputValue[] =>
+    params.map((v) => (v instanceof ArrayBuffer ? new Uint8Array(v) : v));
+  const row = (r: Record<string, SQLOutputValue>) =>
+    Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v instanceof Uint8Array ? [...v] : v]));
+  const statement = (query: string, params: D1Value[] = []): FakeStatement => ({
     bind: (...p) => statement(query, p),
     run: async () => (db.prepare(query).run(...args(params)), { success: true }),
     all: async () => ({
@@ -105,19 +128,23 @@ function fakeD1() {
   return {
     prepare: (query) => statement(query),
     async batch(list) {
-      const out = [];
+      const out: { success: boolean }[] = [];
       for (const st of list) out.push(await st.run());
       return out;
     },
   };
 }
-async function cron(f, at) {
-  const pending = [];
-  await worker.scheduled({ scheduledTime: at, cron: "0 9 * * *" }, f.env, { waitUntil: (p) => pending.push(p) });
+async function cron(f: Fixture, at: number) {
+  const pending: Promise<unknown>[] = [];
+  await worker.scheduled(
+    { scheduledTime: at, cron: "0 9 * * *" } as ScheduledController, // the Worker reads only these two fields
+    asEnv(f.env),
+    asExecutionContext({ waitUntil: (p) => pending.push(p) }),
+  );
   await Promise.all(pending);
 }
 const GITHUB = { GITHUB_TOKEN: "test-only-gh-token", GITHUB_REPO: "Finesssee/pixfray" };
-async function cookieFor(f, owner) {
+async function cookieFor(f: Fixture, owner: boolean) {
   const cookie = (owner ? "a" : "b").repeat(64),
     user = owner
       ? { id: "1", login: "nesszerra", displayName: "nesszerra" }
@@ -126,7 +153,7 @@ async function cookieFor(f, owner) {
   f.entries.set("session:" + (await digest(cookie)), { user });
   return "mini_session=" + cookie;
 }
-function req(path, method = "GET", data, cookie, headers = {}) {
+function req(path: string, method = "GET", data?: unknown, cookie?: string, headers: Record<string, string> = {}) {
   return new Request(ORIGIN + path, {
     method,
     headers: {
@@ -137,14 +164,27 @@ function req(path, method = "GET", data, cookie, headers = {}) {
     ...(data !== undefined ? { body: typeof data === "string" ? data : JSON.stringify(data) } : {}),
   });
 }
-async function call(f, path, method, data, cookie, headers) {
-  const r = await worker.fetch(req(path, method, data, cookie, headers), f.env, { waitUntil() {} });
-  return { status: r.status, body: await r.json().catch(() => null) };
+async function call(
+  f: Fixture,
+  path: string,
+  method?: string,
+  data?: unknown,
+  cookie?: string,
+  headers?: Record<string, string>,
+) {
+  const r = await worker.fetch(
+    req(path, method, data, cookie, headers),
+    asEnv(f.env),
+    asExecutionContext({ waitUntil() {} }),
+  );
+  // JSON bodies: the tests read them by property and assert on the values
+  return { status: r.status, body: await r.json<Loose>().catch(() => null) };
 }
 
 // Records GitHub/Cloudflare calls and answers from a route table; anything unexpected fails the test.
-function stubFetch(t, routes) {
-  const calls = [],
+function stubFetch(t: TestContext, routes: Route[]) {
+  // stub call records: the tests read them by property
+  const calls: Loose[] = [],
     original = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input),
@@ -343,10 +383,13 @@ test("progress covers more than 40 channels across batched calls, 40 room reads 
     return get(name);
   };
   const list = await call(f, "/api/dev/channels", "GET", undefined, owner);
-  const on = [...list.body.builtin, ...list.body.channels.filter((c) => !c.pausedAt).map((c) => c.login)];
+  const on = [
+    ...list.body.builtin,
+    ...list.body.channels.filter((c: { pausedAt?: number }) => !c.pausedAt).map((c: { login: string }) => c.login),
+  ];
   assert.equal(on.length, 96);
   assert.equal(list.body.channels.length, 95);
-  const seen = {};
+  const seen: Record<string, Loose> = {}; // progress rows by login, read by property
   for (let i = 0; i < on.length; i += list.body.progressBatch) {
     reads.length = 0;
     const r = await call(
@@ -369,7 +412,7 @@ test("progress validates logins: required, at most 40, only channels that are on
     owner = await cookieFor(f, true);
   f.entries.set("channel:oldone", { id: "7", login: "oldone", enabledAt: 1, pausedAt: 2 });
   f.entries.set("channel:newone", { id: "8", login: "newone", enabledAt: 1 });
-  const get = (q) => call(f, "/api/dev/progress" + q, "GET", undefined, owner);
+  const get = (q: string) => call(f, "/api/dev/progress" + q, "GET", undefined, owner);
   assert.equal((await get("")).body.reason, "logins_required");
   assert.equal((await get("?logins=,,")).status, 400);
   const many = await get("?logins=" + Array.from({ length: 41 }, (_, i) => "channel" + i).join(","));
@@ -401,7 +444,7 @@ test("export downloads one room as JSON: fighters, ranks, config, history, chara
   const f = environment(),
     owner = await cookieFor(f, true);
   f.env.ROOMS.get("nesszerra");
-  const room = f.rooms.get("nesszerra"),
+  const room = must(f.rooms.get("nesszerra")),
     sql = room.ctx.storage.sql;
   const secret = room.seSettings().secret;
   assert.match(secret, /^[a-f0-9]{16,}$/);
@@ -433,15 +476,20 @@ test("export downloads one room as JSON: fighters, ranks, config, history, chara
     owner,
   );
 
-  const res = await worker.fetch(req("/api/dev/export?channel=NessZerra", "GET", undefined, owner), f.env, {
-    waitUntil() {},
-  });
+  const res = await worker.fetch(
+    req("/api/dev/export?channel=NessZerra", "GET", undefined, owner),
+    asEnv(f.env),
+    asExecutionContext({
+      waitUntil() {},
+    }),
+  );
   assert.equal(res.status, 200);
   assert.match(
-    res.headers.get("Content-Disposition"),
+    res.headers.get("Content-Disposition") as string, // a missing header fails the match all the same
     /^attachment; filename="mini-chat-nesszerra-\d{4}-\d{2}-\d{2}\.json"$/,
   );
-  assert.match(res.headers.get("Content-Type"), /^application\/json/);
+  // a missing header fails the match all the same
+  assert.match(res.headers.get("Content-Type") as string, /^application\/json/);
   const text = await res.text(),
     data = JSON.parse(text);
   assert.deepEqual(
@@ -449,7 +497,12 @@ test("export downloads one room as JSON: fighters, ranks, config, history, chara
     ["mini-chat-export", 1, "channel", "nesszerra", "builtin"],
   );
   assert.deepEqual(
-    data.profiles.map((p) => [p.username, p.elo, p.wins, p.losses]),
+    data.profiles.map((p: { username: string; elo: number; wins: number; losses: number }) => [
+      p.username,
+      p.elo,
+      p.wins,
+      p.losses,
+    ]),
     [
       ["fighter1", 1234, 9, 3],
       ["fighter2", 900, 1, 8],
@@ -462,7 +515,7 @@ test("export downloads one room as JSON: fighters, ranks, config, history, chara
   assert.equal(data.config.maxHp, 120);
   assert.equal(data.configVersion, 2);
   assert.deepEqual(
-    data.configHistory.map((h) => [h.version, h.note]),
+    data.configHistory.map((h: { version: number; note: string }) => [h.version, h.note]),
     [
       [2, "tankier"],
       [1, "initial"],
@@ -494,14 +547,14 @@ test("export downloads one room as JSON: fighters, ranks, config, history, chara
 
 // Point-in-time restore. Node has no PITR, so the room's storage gets a fake one: bookmarks are 'b<ms>' style hex
 // strings, onNextSessionRestoreBookmark returns an undo point, and abort() throws as the real one ends the session.
-function fakePitr(room) {
-  const calls = { armed: [], aborted: 0, times: [] };
+function fakePitr(room: DevRoom) {
+  const calls: { armed: string[]; aborted: number; times: (number | Date)[] } = { armed: [], aborted: 0, times: [] };
   Object.assign(room.ctx.storage, {
-    async getBookmarkForTime(t) {
+    async getBookmarkForTime(t: number | Date) {
       calls.times.push(t);
       return "0000007b-" + Number(t).toString(16).padStart(12, "0") + "-00001538-0c3e87bb37b3db5cc52eedb93cd3b96b";
     },
-    async onNextSessionRestoreBookmark(b) {
+    async onNextSessionRestoreBookmark(b: string) {
       calls.armed.push(b);
       return "0000007c-00000000ffff-00001539-" + "e".repeat(32);
     },
@@ -517,7 +570,7 @@ test("restore arms the point, restarts the room, moves the revision past the old
   const f = environment(),
     owner = await cookieFor(f, true);
   f.env.ROOMS.get("nesszerra");
-  const room = f.rooms.get("nesszerra"),
+  const room = must(f.rooms.get("nesszerra")),
     pitr = fakePitr(room);
   const state = room.readState("nesszerra");
   state.revision = 40;
@@ -576,7 +629,7 @@ test("restore refuses times outside the 30-day window, unknown channels, and loc
   assert.deepEqual([local.status, local.body.reason], [501, "restore_unavailable"]);
   assert.equal(f.entries.has("restore:nesszerra"), false);
   f.env.ROOMS.get("nesszerra");
-  const room = f.rooms.get("nesszerra");
+  const room = must(f.rooms.get("nesszerra"));
   fakePitr(room);
   room.ctx.storage.getBookmarkForTime = async () => "not a bookmark; DROP TABLE";
   const bad = await call(f, "/api/dev/restore", "POST", { channel: "nesszerra", at: now - day }, owner);
@@ -591,7 +644,7 @@ test("export does not create a StreamElements key or change the room", async () 
   const f = environment(),
     owner = await cookieFor(f, true);
   f.env.ROOMS.get("miolafff");
-  const sql = f.rooms.get("miolafff").ctx.storage.sql,
+  const sql = must(f.rooms.get("miolafff")).ctx.storage.sql,
     count = () => sql.exec("SELECT COUNT(*) AS n FROM se_settings").toArray()[0].n;
   assert.equal(count(), 0);
   const r = await call(f, "/api/dev/export?channel=miolafff", "GET", undefined, owner);
@@ -616,9 +669,13 @@ test("export of the channel list has every channel and who turned it off", async
   const f = environment(),
     owner = await cookieFor(f, true);
   f.entries.set("channel:oldone", { id: "7", login: "oldone", enabledAt: 1000, pausedAt: 2000 });
-  const res = await worker.fetch(req("/api/dev/export?registry=1", "GET", undefined, owner), f.env, { waitUntil() {} });
+  const res = await worker.fetch(
+    req("/api/dev/export?registry=1", "GET", undefined, owner),
+    asEnv(f.env),
+    asExecutionContext({ waitUntil() {} }),
+  );
   assert.match(
-    res.headers.get("Content-Disposition"),
+    res.headers.get("Content-Disposition") as string, // a missing header fails the match all the same
     /^attachment; filename="mini-chat-channels-\d{4}-\d{2}-\d{2}\.json"$/,
   );
   const text = await res.text(),
@@ -633,7 +690,7 @@ test("the daily cron backs up every channel into D1; the owner lists the days, d
     owner = await cookieFor(f, true);
   f.entries.set("channel:paused_one", { id: "9", login: "paused_one", enabledAt: 1, pausedAt: 2 });
   f.env.ROOMS.get("nesszerra");
-  const sql = f.rooms.get("nesszerra").ctx.storage.sql;
+  const sql = must(f.rooms.get("nesszerra")).ctx.storage.sql;
   sql.exec(
     "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen) VALUES ('11', 'fighter1', 'Fighter1', 'player', '#ff0000', 'strike', 1234, 9, 3, 5)",
   );
@@ -650,7 +707,7 @@ test("the daily cron backs up every channel into D1; the owner lists the days, d
   assert.equal(list.status, 200);
   assert.equal(list.body.keepDays, 90);
   assert.deepEqual(
-    list.body.backups.map((b) => [b.day, b.at]),
+    list.body.backups.map((b: Backup) => [b.day, b.at]),
     [["2026-10-09", at]],
   );
   assert.ok(list.body.backups[0].bytes > 100);
@@ -668,23 +725,23 @@ test("the daily cron backs up every channel into D1; the owner lists the days, d
       ["2026-10-09", "2026-10-09T09:00:00.000Z", 1234, 9, 3],
     );
     assert.deepEqual(
-      one.body.purchases.map((p) => p.itemId),
+      one.body.purchases.map((p: { itemId: string }) => p.itemId),
       ["legend"],
     );
     assert.deepEqual(one.body.builds, [{ userId: "11", slot: 0, data: { title: "legend" } }]);
   }
   const res = await worker.fetch(
     req("/api/dev/backups?channel=nesszerra&day=2026-10-09", "GET", undefined, owner),
-    f.env,
-    {
+    asEnv(f.env),
+    asExecutionContext({
       waitUntil() {},
-    },
+    }),
   );
   assert.equal(
     res.headers.get("Content-Disposition"),
     'attachment; filename="mini-chat-nesszerra-2026-10-09-backup.json"',
   );
-  const data = await res.json();
+  const data = await res.json<Loose>(); // the export JSON, read by property
   assert.deepEqual(
     [data.format, data.kind, data.channel, data.status, data.counts.profiles, data.counts.purchases],
     ["mini-chat-export", "channel", "nesszerra", "builtin", 1, 2],
@@ -693,7 +750,7 @@ test("the daily cron backs up every channel into D1; the owner lists the days, d
   assert.deepEqual([paused.status, paused.body.status], [200, "paused"]);
   assert.equal((await call(f, "/api/dev/backups?channel=miolafff", "GET", undefined, owner)).body.backups.length, 1);
 
-  const reason = async (q) => {
+  const reason = async (q: string) => {
     const r = await call(f, "/api/dev/backups?" + q, "GET", undefined, owner);
     return [r.status, r.body.reason];
   };
@@ -713,7 +770,7 @@ test("backups keep 90 days, and a second backup on the same day replaces that da
   await cron(f, start + day);
   await cron(f, start + day + 60000);
   assert.deepEqual(
-    (await list()).map((b) => [b.day, b.at]),
+    (await list()).map((b: Backup) => [b.day, b.at]),
     [
       ["2026-07-02", start + day + 60000],
       ["2026-07-01", start],
@@ -721,7 +778,7 @@ test("backups keep 90 days, and a second backup on the same day replaces that da
   );
   await cron(f, start + 91 * day);
   assert.deepEqual(
-    (await list()).map((b) => b.day),
+    (await list()).map((b: Backup) => b.day),
     ["2026-09-30", "2026-07-02"],
   );
 });
@@ -733,13 +790,13 @@ test("the owner can back up one channel now; without D1 the routes answer 501 an
   assert.equal(now.status, 200);
   assert.match(now.body.day, /^\d{4}-\d{2}-\d{2}$/);
   assert.deepEqual(
-    now.body.channels.map((c) => [c.channel, c.ok]),
+    now.body.channels.map((c: BackupResult) => [c.channel, c.ok]),
     [["nesszerra", true]],
   );
   assert.equal((await call(f, "/api/dev/backups?channel=miolafff", "GET", undefined, owner)).body.backups.length, 0);
   const all = await call(f, "/api/dev/backups", "POST", {}, owner);
   assert.deepEqual(
-    all.body.channels.map((c) => c.channel),
+    all.body.channels.map((c: BackupResult) => c.channel),
     ["nesszerra", "miolafff"],
   );
   const unknown = await call(f, "/api/dev/backups", "POST", { channel: "nobody_here" }, owner);
@@ -749,14 +806,15 @@ test("the owner can back up one channel now; without D1 the routes answer 501 an
     headers: { "X-Mini-Internal": SECRET, "X-Mini-Channel": "nesszerra" },
     body: JSON.stringify({ at: "soon", status: "on" }),
   });
-  assert.deepEqual([room.status, (await room.json()).reason], [400, "invalid_backup"]);
+  // the error body, read by property
+  assert.deepEqual([room.status, (await room.json<Loose>()).reason], [400, "invalid_backup"]);
 
   const bare = environment(),
     cookie = await cookieFor(bare, true);
   for (const [method, p] of [
     ["GET", "/api/dev/backups?channel=nesszerra"],
     ["POST", "/api/dev/backups"],
-  ]) {
+  ] satisfies [string, string][]) {
     const r = await call(bare, p, method, method === "POST" ? {} : undefined, cookie);
     assert.deepEqual([r.status, r.body.reason], [501, "backups_unavailable"], method);
   }
@@ -780,14 +838,14 @@ test("a room that fails its backup is logged, and the other channels are still b
   assert.equal((await call(f, "/api/dev/backups?channel=nesszerra", "GET", undefined, owner)).body.backups.length, 1);
   const logs = await call(f, "/api/dev/logs?source=worker", "GET", undefined, owner);
   assert.deepEqual(
-    logs.body.map((l) => [l.message, l.context.failed]),
+    logs.body.map((l: { message: string; context: { failed: unknown } }) => [l.message, l.context.failed]),
     [["Daily backup failed for 1 channel(s)", [{ channel: "miolafff", ok: false, reason: "room down" }]]],
   );
 });
 
 test("rooms no longer create the leftover dev_settings table", () => {
   const ctx = fakeCtx();
-  new ChannelRoom(ctx, { INTERNAL_SECRET: SECRET });
+  new ChannelRoom(ctx, asEnv({ INTERNAL_SECRET: SECRET }));
   assert.equal(ctx.storage.sql.exec("SELECT name FROM sqlite_master WHERE name = 'dev_settings'").toArray().length, 0);
 });
 
@@ -807,8 +865,8 @@ test("error log: worker errors land in the room, can be filtered, and cleared", 
   assert.equal(typeof logs.body[0].context.truncated, "string");
   assert.equal((await call(f, "/api/dev/logs?source=room", "GET", undefined, owner)).body.length, 0);
   // Chat command lines and warnings share the log but don't count as errors.
-  logRoomEvent(f.rooms.get("nesszerra"), "command", "alice challenge @bob -> challenge");
-  logRoomEvent(f.rooms.get("nesszerra"), "warn", "slow");
+  logRoomEvent(must(f.rooms.get("nesszerra")), "command", "alice challenge @bob -> challenge");
+  logRoomEvent(must(f.rooms.get("nesszerra")), "warn", "slow");
   const d = await call(f, "/api/dev/diagnostics", "GET", undefined, owner);
   assert.equal(d.body.room.errors, 1);
   assert.equal(d.body.room.errorsBySource.command, 1);
@@ -918,7 +976,7 @@ test("code editor request validation happens before GitHub is called", async (t)
   const calls = stubFetch(t, []);
   const f = environment(GITHUB),
     owner = await cookieFor(f, true);
-  const bad = [
+  const bad: [string, string, unknown?][] = [
     ["code/file?path=.dev.vars", "GET"],
     ["code/file?path=README.md&branch=main2", "GET"],
     ["code/tree?ref=feature/x", "GET"],
@@ -1027,7 +1085,9 @@ test("the editor saves files whose names only resemble build configs", async (t)
     assert.deepEqual([r.status, r.body.path], [200, path], path);
   }
   assert.deepEqual(
-    calls.filter((c) => c.method === "PUT").map((c) => decodeURIComponent(c.url).split("/contents/")[1].split("?")[0]),
+    calls
+      .filter((c) => c.method === "PUT")
+      .map((c) => must(decodeURIComponent(c.url).split("/contents/")[1]).split("?")[0]),
     notes,
   );
 });
@@ -1057,7 +1117,9 @@ test("the editor saves TypeScript source files, which are not build files", asyn
     assert.deepEqual([r.status, r.body.path], [200, path], path);
   }
   assert.deepEqual(
-    calls.filter((c) => c.method === "PUT").map((c) => decodeURIComponent(c.url).split("/contents/")[1].split("?")[0]),
+    calls
+      .filter((c) => c.method === "PUT")
+      .map((c) => must(decodeURIComponent(c.url).split("/contents/")[1]).split("?")[0]),
     sources,
   );
 });
@@ -1071,12 +1133,13 @@ test("the dev token can deploy the test site but not production", async (t) => {
   ]);
   const token = "d".repeat(40),
     f = environment({ ...GITHUB, DEV_TOOLS_TOKEN: token, OWNER_TWITCH_ID: "1" });
-  const dev = (p, body) => call(f, "/api/dev/" + p, "POST", body, undefined, { Authorization: "Bearer " + token });
+  const dev = (p: string, body: object) =>
+    call(f, "/api/dev/" + p, "POST", body, undefined, { Authorization: "Bearer " + token });
   for (const [p, body] of [
     ["promote", {}],
     ["hotfix", { branch: "hotfix/a" }],
     ["rollback", { target: "production" }],
-  ]) {
+  ] satisfies [string, object][]) {
     const r = await dev(p, body);
     assert.deepEqual([r.status, r.body.reason], [403, "owner_session_required"], p);
   }
@@ -1415,8 +1478,9 @@ test("request usage sums every Worker on the account for the current UTC day", a
       ],
     ],
   ]);
-  const u = await usage(
-    { CF_API_TOKEN: "test-only-cf", CF_ACCOUNT_ID: "a".repeat(32) },
+  // the success shape; usage() returns a union of it and the error shapes
+  const u: Loose = await usage(
+    asEnv({ CF_API_TOKEN: "test-only-cf", CF_ACCOUNT_ID: "a".repeat(32) }),
     Date.parse("2026-10-01T15:30:00Z"),
   );
   assert.equal(u.requests, 2000);
@@ -1434,7 +1498,9 @@ test("request usage reports an analytics error instead of throwing", async (t) =
       [200, { errors: [{ message: "no access" }], data: null }],
     ],
   ]);
-  const u = await usage({ CF_API_TOKEN: "x", CF_ACCOUNT_ID: "a".repeat(32) });
+  const u: { configured: boolean; error?: string; requests?: number } = await usage(
+    asEnv({ CF_API_TOKEN: "x", CF_ACCOUNT_ID: "a".repeat(32) }),
+  );
   assert.equal(u.configured, true);
   assert.ok(u.error);
   assert.equal(u.requests, undefined);
@@ -1450,10 +1516,14 @@ test("an upstream network failure returns 503 and is logged, never thrown", asyn
   });
   const f = environment(GITHUB),
     owner = await cookieFor(f, true),
-    pending = [];
-  const r = await worker.fetch(req("/api/dev/runs", "GET", undefined, owner), f.env, {
-    waitUntil: (p) => pending.push(p),
-  });
+    pending: Promise<unknown>[] = [];
+  const r = await worker.fetch(
+    req("/api/dev/runs", "GET", undefined, owner),
+    asEnv(f.env),
+    asExecutionContext({
+      waitUntil: (p) => pending.push(p),
+    }),
+  );
   assert.equal(r.status, 503);
   await Promise.all(pending);
   const logs = await call(f, "/api/dev/logs", "GET", undefined, owner);

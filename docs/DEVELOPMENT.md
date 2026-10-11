@@ -43,12 +43,13 @@ bun run dev
 - `bun run lint` runs [oxlint](https://oxc.rs/docs/guide/usage/linter) with type-aware rules
   (`.oxlintrc.json`). Warnings fail it. In `server/` every promise must be awaited or handed to
   `waitUntil`, because the Worker can cancel one that is dropped.
-- `bun run typecheck` runs `tsc` five times. `tsconfig.worker.json` (server/, all TypeScript, with Workers types only),
+- `bun run typecheck` runs `tsc` seven times. `tsconfig.worker.json` (server/, all TypeScript, with Workers types only),
   `tsconfig.web.json` (src/ with the served modules in src/served/, DOM types plus `types/browser.d.ts`) and `tsconfig.node.json`
-  (the build configs) check loosely; `tsconfig.strict.json` (Worker and Node types) and
-  `tsconfig.strict-web.json` (DOM types) check every TypeScript file with `strict`,
-  `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests and the
-  `.mjs` scripts are linted but not type checked. In a `.js` file, add JSDoc where inference falls
+  (the build configs) check loosely; `tsconfig.strict.json` (Worker and Node types),
+  `tsconfig.strict-web.json` (DOM types), `tsconfig.strict-tests.json` (DOM and Node types) and
+  `tsconfig.strict-tests-shared.json` (Worker, DOM and Node types) check every TypeScript file, the unit
+  tests included, with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. The
+  `.mjs` scripts and browser tests are linted but not type checked. In a `.js` file, add JSDoc where inference falls
   short (`/** @param {{ … }} opts */`) rather than casting the problem away.
 - `bun run audit` checks every installed package against the advisory database and fails on a high or
   critical one. When the fix sits behind a dependency that pins the old version, add an exact version to
@@ -65,32 +66,47 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
 - New and ported files are `.ts`, import local files with the `.ts` extension and use only syntax
   that strips to JavaScript (no `enum`, `namespace` or parameter properties; `erasableSyntaxOnly`).
   Type-only imports say `import type` (`verbatimModuleSyntax`).
-- Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`) is listed in `files` in one of the two
+- Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`) is listed in `files` in one of the four
   strict programs, split by runtime so each sees only its own globals:
-  - `tsconfig.strict.json`: the Worker (`server/`), the `.ts` scripts (`scripts/`), `site.config.js`
-    and the shared types. Worker and Node types, no DOM, so server code can't use `document` or
-    `window`, and Web Crypto and streams keep the Workers types.
+  - `tsconfig.strict.json`: the Worker (`server/`), the `.ts` scripts (`scripts/`), `site.config.js`,
+    the shared types, and the unit tests that import only Worker and shared modules (with their
+    helpers: `tests/fakes.ts`, `tests/register.ts` and the others). Worker and Node types, no DOM, so
+    server code can't use `document` or `window`, and Web Crypto and streams keep the Workers types.
   - `tsconfig.strict-web.json`: browser code (`src/`, and `types/dom.ts`). DOM types and
     `vite/client`, no Worker or Node types. A browser file that imports a server module pulls it
     into this program too, so such a module (today `server/upgrades.ts`, imported by
     `src/dashboard.ts`) must type-check with DOM types as well.
+  - `tsconfig.strict-tests.json`: unit tests that import a DOM module but no Worker module
+    (`tests/overlay.test.ts`, `tests/served.test.ts`). DOM and Node types.
+  - `tsconfig.strict-tests-shared.json`: unit tests that import both a Worker module and a DOM
+    module (`tests/arena-client.test.ts`, `tests/atlas.test.ts`, `tests/cosmetics.test.ts`,
+    `tests/spritify.test.ts`). Worker, DOM and Node types. Keep a test file on one side where
+    you can: a Worker test and a DOM test in one file land here, where neither side's globals are
+    kept out.
 
-  `types/lib-guards.ts`, `types/site.ts` and `site.config.js` are on both lists. A `.d.ts` file on
-  either fails (below), so new types go in `.ts` files. Two TypeScript files are checked by
+  Test doubles live in `tests/fakes.ts`: `fakeCtx()` (a Durable Object context on real SQLite
+  through `node:sqlite`), `asEnv()` and `asExecutionContext()` for partial bindings, `must()` for a
+  value the test expects to find, and `Loose` (`any`) for JSON bodies and rows a test asserts on.
+  Each of their casts carries its reason there once.
+
+  `types/lib-guards.ts`, `types/site.ts` and `site.config.js` are on every list. A `.d.ts` file on
+  any fails (below), so new types go in `.ts` files. Two TypeScript files are checked by
   another program instead: `cloudflare.config.ts` by `tsconfig.node.json` and
   `types/browser.d.ts` by `tsconfig.web.json`. `bun run typecheck` (so `bun run check`) enforces
   this by ending with `node scripts/port-check.ts --strict-list`, which reads every tracked and
   untracked file that git doesn't ignore and prints
-  `tsconfig.strict.json and tsconfig.strict-web.json cover every TypeScript file`, or one line per
-  file it misses, as `<file> is not in tsconfig.strict.json or tsconfig.strict-web.json` (in a repo
-  without `tsconfig.strict-web.json`, the lines name `tsconfig.strict.json` alone). It asks tsc for
+  `tsconfig.strict.json, tsconfig.strict-web.json, tsconfig.strict-tests.json and tsconfig.strict-tests-shared.json cover every TypeScript file`,
+  or one line per file it misses, as
+  `<file> is not in tsconfig.strict.json, tsconfig.strict-web.json, tsconfig.strict-tests.json or tsconfig.strict-tests-shared.json`.
+  The lines name `tsconfig.strict.json` and each of the other three the repo has (two read
+  `a and b` / `a or b`), so a repo with only `tsconfig.strict.json` names it alone. It asks tsc for
   each program (`tsc -p <config> --listFilesOnly`), so `files`, `include` and `exclude` count as
   tsc reads them, and each error tsc prints reading a config fails it too, as
   `tsc -p <config>: error TS…`.
-- The strict list also fails when either strict config checks less, as tsc reads it after
-  `extends` (`tsc --showConfig`; the rules take about 0.25 s). Each line names the config
-  (`tsconfig.strict.json` or `tsconfig.strict-web.json`); the problems of `tsconfig.strict.json`
-  print first:
+- The strict list also fails when any strict config checks less, as tsc reads it after
+  `extends` (`tsc --showConfig`; the rules take about 0.25 s). Each line names the config; the
+  problems print in the order `tsconfig.strict.json`, `tsconfig.strict-web.json`,
+  `tsconfig.strict-tests.json`, `tsconfig.strict-tests-shared.json`:
   - `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax` and
     `erasableSyntaxOnly` must be true:
     `<config> must set <option> to true (it is <value or "not set">)`.
@@ -106,8 +122,8 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
   after it (`typescript/ban-ts-comment`), so a TypeScript file is checked whole. oxlint reads that
   rule in TypeScript files only, and a lint directive comment can turn it off (oxlint has no option
   to ignore them), so the strict list also reads the comments of every code file in the strict
-  programs, JavaScript ones included; text in strings is not read. A file in both programs is read
-  once and named with `tsconfig.strict.json`. A `@ts-nocheck` in any letter case
+  programs, JavaScript ones included; text in strings is not read. A file in several programs is
+  read once and named with the first of them in that order. A `@ts-nocheck` in any letter case
   (`/// @ts-nocheck`, `// @TS-NOCHECK`) fails as
   `<file>:<line> has <pragma>, which turns type checking off; files on <config> are checked whole`,
   and any `eslint-disable` or `oxlint-disable` comment (line, next-line or block; naming rules or
@@ -135,7 +151,9 @@ A port pull request changes types only, from a `port/<name>` branch:
    keeps comments, so a port that adds only types serves the same code under the same `?v=` hash,
    while a changed comment changes the hash and open overlays reload once.
 2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json` (Worker,
-   scripts) or `tsconfig.strict-web.json` (browser code in `src/`).
+   scripts, unit tests of Worker modules), `tsconfig.strict-web.json` (browser code in `src/`),
+   `tsconfig.strict-tests.json` (unit tests of DOM modules) or `tsconfig.strict-tests-shared.json`
+   (unit tests that import both).
 3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) checks every file that
    differs between the working tree and where the branch left `main`. Code files are `.js`, `.mjs`,
    `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` and `.tsx`. Run without `--base <ref>` or `--strict-list`,
@@ -174,7 +192,7 @@ A port pull request changes types only, from a `port/<name>` branch:
    - A `tsconfig*.json` outside `public/` prints
      `allowed: <path> (the build diff compares what the build makes with it)` and is not counted:
      the build diff below sees what it changes, and the strict options are compared on their own.
-     For each strict config the merge base has (`tsconfig.strict.json`, `tsconfig.strict-web.json`),
+     For each strict config the merge base has (any of the four),
      the head's `compilerOptions` for it, as tsc resolves them after `extends`
      (`tsc -p <config> --showConfig`, run in the working tree and in the base checkout at
      `.port-check/<sha>/`, which is made for this even without a build config), must equal the

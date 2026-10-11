@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { URL as NodeURL } from "node:url";
 import site from "../site.config.js";
 import { CHANNELS } from "../server/auth.ts";
 
@@ -44,7 +45,7 @@ test("pages and browser scripts carry no hard-coded owner, channel or domain", a
     ...Object.values(site.origins).map((o) => new URL(o).host),
   ];
   for (const file of files) {
-    const text = readFileSync(new URL("../" + file, import.meta.url), "utf8");
+    const text = readFileSync(new NodeURL("../" + file, import.meta.url), "utf8");
     for (const word of words) assert.ok(!text.includes(word), `${file} names ${word}`);
   }
 });

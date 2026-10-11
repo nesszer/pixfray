@@ -1,22 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { TestContext } from "node:test";
 import worker from "../server/worker.ts";
 import { digest, seal, unseal, openState, safeNext, CONNECT_SCOPES } from "../server/auth.ts";
+import type { Env } from "../server/env.ts";
+import { must, type Loose } from "./fakes.ts";
 
+/** What the Worker hands a room: roomFetch always builds Headers, and JSON bodies are strings. */
+type RoomInit = { body?: string; headers: Headers };
 function environment() {
-  const entries = new Map(),
-    forwarded = [];
+  const entries = new Map<string, unknown>(),
+    forwarded: { channel: string; url: string; options: RoomInit }[] = [];
   const env = {
     AUTH_SECRET: "test-only-auth-key",
     INTERNAL_SECRET: "test-only-internal-key",
     TWITCH_CLIENT_ID: "test-app",
     TWITCH_CLIENT_SECRET: "test-secret",
     AUTH: {
-      idFromName: (x) => x,
+      idFromName: (x: string) => x,
       get: () => ({
-        async fetch(url, options) {
+        async fetch(url: string, options: { method?: string; body?: string }) {
           const u = new URL(url),
-            key = u.searchParams.get("key"),
+            // the Worker's AuthStore calls always carry ?key=; a missing one would read as an absent entry
+            key = u.searchParams.get("key") as string,
             method = options.method;
           if (u.pathname === "/consume") {
             const value = entries.get(key) ?? null;
@@ -28,15 +34,16 @@ function environment() {
             entries.delete(key);
             return Response.json({ ok: true });
           }
-          entries.set(key, JSON.parse(options.body).value);
+          // only a write gets here, and record() always sends it a JSON body
+          entries.set(key, JSON.parse(options.body as string).value);
           return Response.json({ ok: true });
         },
       }),
     },
     ROOMS: {
-      idFromName: (x) => x,
-      get: (channel) => ({
-        async fetch(url, options) {
+      idFromName: (x: string) => x,
+      get: (channel: string) => ({
+        async fetch(url: string, options: RoomInit) {
           forwarded.push({ channel, url, options });
           if (new URL(url).pathname === "/catalog") return Response.json([]);
           return Response.json(options.body ? JSON.parse(options.body) : { channel });
@@ -45,16 +52,18 @@ function environment() {
     },
     ASSETS: { fetch: async () => Response.json([{ id: "player" }]) },
   };
-  return { env, entries, forwarded };
+  // a partial Env on purpose: the fakes cover the bindings worker.fetch reads; their own call shapes stay readable
+  return { env: env as typeof env & Env, entries, forwarded };
 }
-async function signedIn(fixture, owner = false) {
+type Fixture = ReturnType<typeof environment>;
+async function signedIn(fixture: Fixture, owner = false) {
   const cookie = "1".repeat(64),
     user = { id: owner ? "1" : "2", login: owner ? "nesszerra" : "viewer", displayName: "Viewer" };
   fixture.entries.set("owner:nesszerra", { id: "1" });
   fixture.entries.set("session:" + (await digest(cookie)), { user });
   return "mini_session=" + cookie;
 }
-function req(path, method = "GET", data, cookie, origin = "https://chat.miolaf.xyz") {
+function req(path: string, method = "GET", data?: unknown, cookie?: string, origin = "https://chat.miolaf.xyz") {
   return new Request("https://chat.miolaf.xyz" + path, {
     method,
     headers: {
@@ -92,10 +101,10 @@ test("profile identity is derived from session, ignoring forged user IDs", async
     f.env,
   );
   assert.equal(r.status, 200);
-  const saved = await r.json();
+  const saved = await r.json<{ userId: string; username: string }>();
   assert.equal(saved.userId, "2");
   assert.equal(saved.username, "viewer");
-  assert.equal(f.forwarded.at(-1).options.headers.get("X-Mini-Internal"), f.env.INTERNAL_SECRET);
+  assert.equal(must(f.forwarded.at(-1)).options.headers.get("X-Mini-Internal"), f.env.INTERNAL_SECRET);
 });
 test("channels that are not enabled stay inaccessible", async () => {
   const f = environment(),
@@ -145,8 +154,9 @@ test("miolafff: the broadcaster manages their own channel, through StreamElement
   // sign-in comes back to the channel's page; broadcaster chat authorization stays nesszerra-only
   const login = await worker.fetch(req("/auth/login?channel=miolafff&next=/admin/"), f.env);
   assert.equal(login.status, 302);
-  const nonce = new URL(login.headers.get("Location")).searchParams.get("state");
-  assert.deepEqual(await openState(f.env, nonce), { channel: "miolafff", connect: false, next: "/admin/" });
+  const nonce = new URL(must(login.headers.get("Location"))).searchParams.get("state");
+  // openState reads a missing state as empty; the login above always sets one
+  assert.deepEqual(await openState(f.env, nonce as string), { channel: "miolafff", connect: false, next: "/admin/" });
   assert.equal(
     [...f.entries.keys()].some((k) => k.startsWith("oauth:")),
     false,
@@ -154,17 +164,25 @@ test("miolafff: the broadcaster manages their own channel, through StreamElement
   );
   assert.equal((await worker.fetch(req("/auth/login?channel=miolafff&connect=1"), f.env)).status, 403); // the bare /admin/ page signs in without naming a channel, so the page can send a streamer to their own
   const bare = await worker.fetch(req("/auth/login?next=%2Fadmin%2F"), f.env);
-  assert.deepEqual(await openState(f.env, new URL(bare.headers.get("Location")).searchParams.get("state")), {
-    connect: false,
-    next: "/admin/",
-  });
+  assert.deepEqual(
+    // openState reads a missing state as empty; the login above always sets one
+    await openState(f.env, new URL(must(bare.headers.get("Location"))).searchParams.get("state") as string),
+    {
+      connect: false,
+      next: "/admin/",
+    },
+  );
 });
 test("a moderator cannot reset every rank, make a new StreamElements key or take chat over from another site", async () => {
   const f = environment(),
     cookie = await signedIn(f);
   f.entries.set("mod:nesszerra:2", true);
   assert.equal(
-    (await (await worker.fetch(req("/api/access/nesszerra", "GET", undefined, cookie), f.env)).json()).moderator,
+    (
+      await (
+        await worker.fetch(req("/api/access/nesszerra", "GET", undefined, cookie), f.env)
+      ).json<{ moderator: boolean }>()
+    ).moderator,
     true,
   );
   for (const body of [
@@ -173,7 +191,7 @@ test("a moderator cannot reset every rank, make a new StreamElements key or take
     { action: "connectChat", takeover: true },
   ]) {
     const r = await worker.fetch(req("/api/admin/nesszerra", "POST", body, cookie), f.env);
-    assert.deepEqual([r.status, (await r.json()).reason], [403, "broadcaster_only"], body.action);
+    assert.deepEqual([r.status, (await r.json<{ reason: string }>()).reason], [403, "broadcaster_only"], body.action);
   }
   assert.equal(
     (await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "resetAll" }, cookie), f.env)).status,
@@ -194,13 +212,13 @@ test("the leaderboard with dollars (?private=1) is for mods and the owner; the p
       .status,
     200,
   );
-  assert.equal(new URL(f.forwarded.at(-1).url).search, "?private=1");
+  assert.equal(new URL(must(f.forwarded.at(-1)).url).search, "?private=1");
   assert.equal((await worker.fetch(req("/api/leaderboard/nesszerra?private=0"), f.env)).status, 200);
-  assert.equal(new URL(f.forwarded.at(-1).url).search, "");
+  assert.equal(new URL(must(f.forwarded.at(-1)).url).search, "");
 });
 test("/api/picker lists every channel with its top three ranked fighters in one request", async () => {
   const f = environment(),
-    boards = {
+    boards: Record<string, object[]> = {
       nesszerra: [1, 2, 3, 4].map((n) => ({
         userId: String(n),
         username: "u" + n,
@@ -215,11 +233,15 @@ test("/api/picker lists every channel with its top three ranked fighters in one 
         { userId: "9", username: "idle", displayName: "Idle", elo: 1000, wins: 0, losses: 0, avatar: "player" },
       ],
     };
-  f.env.AUTH = { idFromName: (x) => x, get: () => ({ fetch: async () => Response.json([]) }) };
+  // fake namespaces in place of the ones environment() made; worker.fetch reads them the same way
+  f.env.AUTH = {
+    idFromName: (x: string) => x,
+    get: () => ({ fetch: async () => Response.json([]) }),
+  } as unknown as typeof f.env.AUTH; // a test fake in place of the binding, as explained above
   f.env.ROOMS = {
-    idFromName: (x) => x,
-    get: (channel) => ({
-      async fetch(url) {
+    idFromName: (x: string) => x,
+    get: (channel: string) => ({
+      async fetch(url: string) {
         const path = new URL(url).pathname;
         if (path === "/leaderboard") return Response.json(boards[channel] || []);
         if (path === "/catalog")
@@ -227,14 +249,14 @@ test("/api/picker lists every channel with its top three ranked fighters in one 
         return Response.json({});
       },
     }),
-  };
+  } as unknown as typeof f.env.ROOMS; // a test fake in place of the binding, as explained above
   const r = await worker.fetch(req("/api/picker"), f.env),
-    data = await r.json();
+    data = await r.json<Loose>(); // Loose: the picker body, read by field below
   assert.equal(r.status, 200);
   assert.deepEqual(data.catalog, [{ id: "player" }], "built-in catalog once");
-  const [ness, mio] = ["nesszerra", "miolafff"].map((c) => data.channels.find((x) => x.login === c));
+  const [ness, mio] = ["nesszerra", "miolafff"].map((c) => data.channels.find((x: { login: string }) => x.login === c));
   assert.deepEqual(
-    ness.top.map((p) => p.username),
+    ness.top.map((p: { username: string }) => p.username),
     ["u1", "u2", "u3"],
   );
   assert.deepEqual(Object.keys(ness.top[0]).sort(), ["avatar", "displayName", "elo", "username"], "no dollars or ids");
@@ -269,15 +291,15 @@ test("connect=1 asks for the chat scopes the EventSub webhook needs", async () =
   const f = environment();
   const r = await worker.fetch(req("/auth/login?connect=1"), f.env);
   assert.equal(r.status, 302);
-  assert.deepEqual(new URL(r.headers.get("Location")).searchParams.get("scope").split(" "), CONNECT_SCOPES);
+  assert.deepEqual(must(new URL(must(r.headers.get("Location"))).searchParams.get("scope")).split(" "), CONNECT_SCOPES);
   assert.deepEqual(CONNECT_SCOPES, ["moderation:read", "user:read:chat", "user:bot", "channel:bot"]);
   assert.equal(
-    new URL((await worker.fetch(req("/auth/login"), f.env)).headers.get("Location")).searchParams.get("scope"),
+    new URL(must((await worker.fetch(req("/auth/login"), f.env)).headers.get("Location"))).searchParams.get("scope"),
     "",
     "plain sign-in asks for nothing",
   );
   assert.equal(
-    new URL(r.headers.get("Location")).searchParams.has("force_verify"),
+    new URL(must(r.headers.get("Location"))).searchParams.has("force_verify"),
     false,
     "only sign-up shows the account picker",
   );
@@ -285,8 +307,8 @@ test("connect=1 asks for the chat scopes the EventSub webhook needs", async () =
 test("a connect=1 callback without every chat scope is refused with a restart hint", async (t) => {
   const f = environment();
   const login = await worker.fetch(req("/auth/login?connect=1"), f.env);
-  const state = new URL(login.headers.get("Location")).searchParams.get("state");
-  t.mock.method(globalThis, "fetch", async (url) => {
+  const state = new URL(must(login.headers.get("Location"))).searchParams.get("state");
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     const u = String(url);
     if (u.endsWith("/oauth2/token")) return Response.json({ access_token: "user-token", refresh_token: "r" });
     if (u.endsWith("/oauth2/validate"))
@@ -300,7 +322,10 @@ test("a connect=1 callback without every chat scope is refused with a restart hi
     f.env,
   );
   assert.equal(r.status, 403);
-  assert.match((await r.json()).error, /user:bot, channel:bot\. Restart at \/auth\/login\?connect=1/);
+  assert.match(
+    (await r.json<{ error: string }>()).error,
+    /user:bot, channel:bot\. Restart at \/auth\/login\?connect=1/,
+  );
   assert.equal(f.entries.has("broadcaster:nesszerra"), false);
 });
 test("OAuth state mismatch is rejected without a token exchange", async () => {
@@ -326,7 +351,7 @@ test("a moderator check is cached for a minute, so repeat page loads do not call
   );
   const realFetch = globalThis.fetch;
   let helix = 0;
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url: string | URL | Request) => {
     if (String(url).includes("/helix/moderation/moderators")) {
       helix++;
       return Response.json({ data: [{ user_id: "2" }] });
@@ -336,7 +361,11 @@ test("a moderator check is cached for a minute, so repeat page loads do not call
   try {
     for (let i = 0; i < 3; i++)
       assert.equal(
-        (await (await worker.fetch(req("/api/access/nesszerra", "GET", undefined, cookie), f.env)).json()).canManage,
+        (
+          await (
+            await worker.fetch(req("/api/access/nesszerra", "GET", undefined, cookie), f.env)
+          ).json<{ canManage: boolean }>()
+        ).canManage,
         true,
       );
   } finally {
@@ -348,8 +377,8 @@ test("a moderator check is cached for a minute, so repeat page loads do not call
 test("viewers can still sign in when Twitch fails to look up the channel owner", async (t) => {
   const f = environment();
   const login = await worker.fetch(req("/auth/login"), f.env);
-  const state = new URL(login.headers.get("Location")).searchParams.get("state");
-  t.mock.method(globalThis, "fetch", async (url) => {
+  const state = new URL(must(login.headers.get("Location"))).searchParams.get("state");
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     const u = String(url);
     if (u.endsWith("/oauth2/token")) return Response.json({ access_token: "user-token", refresh_token: "r" });
     if (u.endsWith("/oauth2/validate")) return Response.json({ client_id: "test-app", user_id: "2", scopes: [] });
@@ -363,15 +392,19 @@ test("viewers can still sign in when Twitch fails to look up the channel owner",
     f.env,
   );
   assert.equal(r.status, 303);
-  assert.match(r.headers.get("Set-Cookie"), /mini_session=/);
-  assert.match(r.headers.get("Set-Cookie"), /mini_session=[a-f0-9]{64};[^,]*Max-Age=2592000/, "sign-in lasts 30 days");
+  assert.match(must(r.headers.get("Set-Cookie")), /mini_session=/);
+  assert.match(
+    must(r.headers.get("Set-Cookie")),
+    /mini_session=[a-f0-9]{64};[^,]*Max-Age=2592000/,
+    "sign-in lasts 30 days",
+  );
 });
 
 // Signs in through /auth/login?<query> as a viewer and returns where the callback sends the browser.
-async function signInFrom(t, f, query) {
+async function signInFrom(t: TestContext, f: Fixture, query: string | URLSearchParams) {
   const login = await worker.fetch(req("/auth/login?" + query), f.env);
-  const state = new URL(login.headers.get("Location")).searchParams.get("state");
-  t.mock.method(globalThis, "fetch", async (url) => {
+  const state = new URL(must(login.headers.get("Location"))).searchParams.get("state");
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     const u = String(url);
     if (u.endsWith("/oauth2/token")) return Response.json({ access_token: "user-token", refresh_token: "r" });
     if (u.endsWith("/oauth2/validate")) return Response.json({ client_id: "test-app", user_id: "2", scopes: [] });
@@ -397,7 +430,8 @@ async function signInFrom(t, f, query) {
 }
 test("sign-in comes back to the page, channel and tab it started on, never to another site", async (t) => {
   const f = environment(),
-    from = (next, channel) => signInFrom(t, f, new URLSearchParams({ ...(channel ? { channel } : {}), next }));
+    from = (next: string, channel?: string) =>
+      signInFrom(t, f, new URLSearchParams({ ...(channel ? { channel } : {}), next }));
   assert.equal(await from("/?channel=miolafff#looks", "miolafff"), "/?channel=miolafff&signed_in=1#looks");
   assert.equal(
     await from("/admin/?channel=miolafff#settings", "miolafff"),
@@ -437,15 +471,18 @@ test("sign-out clears the session and leaves the page where it is (the page relo
   const r = await worker.fetch(req("/auth/logout", "POST", {}, cookie, "https://chat.miolaf.xyz"), f.env);
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true });
-  assert.match(r.headers.get("Set-Cookie"), /mini_session=;.*Max-Age=0/);
+  assert.match(must(r.headers.get("Set-Cookie")), /mini_session=;.*Max-Age=0/);
   assert.equal(f.entries.has("session:" + (await digest("1".repeat(64)))), false);
 });
 test("pages: / is the intro, /?channel= the fighter page, /play/ the picker, and /intro/ moves to /", async () => {
   const f = environment();
-  f.env.ASSETS = { fetch: async (r) => new Response("asset " + new URL(r.url).pathname) };
-  const get = (path) => worker.fetch(req(path), f.env),
-    body = async (path) => (await get(path)).text();
-  const moved = async (path, status) => {
+  // a fake asset binding that echoes the path it was asked for
+  f.env.ASSETS = {
+    fetch: async (r: Request) => new Response("asset " + new URL(r.url).pathname),
+  } as typeof f.env.ASSETS; // a test fake in place of the binding, as explained above
+  const get = (path: string) => worker.fetch(req(path), f.env),
+    body = async (path: string) => (await get(path)).text();
+  const moved = async (path: string, status: number) => {
     const r = await get(path);
     assert.equal(r.status, status, path);
     return r.headers.get("Location");
@@ -463,7 +500,10 @@ test("pages: / is the intro, /?channel= the fighter page, /play/ the picker, and
 });
 test("a streamer opening the bare mod page goes straight to their own channel; others get the page", async () => {
   const f = environment();
-  f.env.ASSETS = { fetch: async (r) => new Response("asset " + new URL(r.url).pathname) };
+  // a fake asset binding that echoes the path it was asked for
+  f.env.ASSETS = {
+    fetch: async (r: Request) => new Response("asset " + new URL(r.url).pathname),
+  } as typeof f.env.ASSETS; // a test fake in place of the binding, as explained above
   const owner = await signedIn(f, true);
   const r = await worker.fetch(req("/admin/?signed_in=1", "GET", undefined, owner), f.env);
   assert.equal(r.status, 302);

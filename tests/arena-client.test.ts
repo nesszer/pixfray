@@ -2,14 +2,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createArenaClient } from "../src/served/arena-client.ts";
+import type { JsonRecord } from "../src/served/arena-client.ts";
+import { must } from "./fakes.ts";
+import type { Loose } from "./fakes.ts";
 
+/** The client's socket constructor; the fakes below are plain constructor functions. */
+type SocketConstructor = new (url: string) => WebSocket;
+/** A message as the client's onmessage reads it. */
+type FakeMessage = { data: string };
+
+/** The socket harness() hands the client: onmessage is set by the client before any message arrives. */
+type FakeSocket = { close(): void; onmessage(message: FakeMessage): void };
 function harness() {
-  globalThis.location = { protocol: "https:", host: "test.example" };
-  const sockets = [],
-    events = [],
-    snapshots = [],
-    looks = [];
-  function FakeSocket() {
+  // a partial Location on purpose: the client reads only protocol and host
+  globalThis.location = { protocol: "https:", host: "test.example" } as Location;
+  const sockets: FakeSocket[] = [],
+    // Loose: events and snapshots are the client's output, which the tests read by property
+    events: Loose[] = [],
+    snapshots: Loose[] = [], // Loose: as above
+    looks: JsonRecord[] = [];
+  function FakeSocket(this: FakeSocket) {
     this.close = () => {};
     sockets.push(this);
   }
@@ -18,10 +30,11 @@ function harness() {
     onSnapshot: (s) => snapshots.push(s),
     onEvent: (e) => events.push(e),
     onLooks: (m) => looks.push(m),
-    fetchImpl: () => new Promise(() => {}),
-    WebSocketImpl: FakeSocket,
+    fetchImpl: () => new Promise<Response>(() => {}),
+    // a constructor function standing in for WebSocket: the client calls only close and sets onmessage
+    WebSocketImpl: FakeSocket as unknown as SocketConstructor,
   });
-  const send = (payload) => sockets.at(-1).onmessage({ data: JSON.stringify(payload) });
+  const send = (payload: unknown) => must(sockets.at(-1)).onmessage({ data: JSON.stringify(payload) });
   return { client, events, snapshots, looks, send };
 }
 
@@ -71,13 +84,24 @@ test("arena client: snapshots without serverNow pass through unchanged", () => {
 
 // Ping and watchdog: the client sends "ping" every 20 s, the room's auto-response answers "pong", and a socket with no
 // message at all for 45 s is half open, so it gets replaced. No /api/state polling.
+/** The socket watchdogHarness() hands the client: onopen and onmessage are set by the client. */
+type WatchedSocket = {
+  readyState: number;
+  sent: string[];
+  closed: boolean;
+  send(message: string): void;
+  close(): void;
+  onopen(): void;
+  onmessage(message: FakeMessage): void;
+};
 function watchdogHarness() {
-  globalThis.location = { protocol: "https:", host: "test.example" };
-  const sockets = [],
-    snapshots = [],
-    events = [],
-    fetches = [];
-  function FakeSocket() {
+  // a partial Location on purpose: the client reads only protocol and host
+  globalThis.location = { protocol: "https:", host: "test.example" } as Location;
+  const sockets: WatchedSocket[] = [],
+    snapshots: JsonRecord[] = [],
+    events: unknown[] = [],
+    fetches: (RequestInfo | URL)[] = [];
+  function FakeSocket(this: WatchedSocket) {
     this.readyState = 0;
     this.sent = [];
     this.closed = false;
@@ -94,16 +118,18 @@ function watchdogHarness() {
     onEvent: (e) => events.push(e),
     fetchImpl: (url) => {
       fetches.push(url);
-      return new Promise(() => {});
+      return new Promise<Response>(() => {});
     },
-    WebSocketImpl: FakeSocket,
+    // a constructor function standing in for WebSocket: the client calls send and close and reads readyState
+    WebSocketImpl: FakeSocket as unknown as SocketConstructor,
   });
   const open = () => {
-    const ws = sockets.at(-1);
+    const ws = must(sockets.at(-1));
     ws.readyState = 1;
     ws.onopen();
   };
-  const send = (data) => sockets.at(-1).onmessage({ data: typeof data === "string" ? data : JSON.stringify(data) });
+  const send = (data: unknown) =>
+    must(sockets.at(-1)).onmessage({ data: typeof data === "string" ? data : JSON.stringify(data) });
   return { client, sockets, snapshots, events, fetches, open, send };
 }
 
@@ -117,7 +143,7 @@ test('arena client ping: an open socket sends "ping" every 20 s, and "pong" keep
     t.mock.timers.tick(20_000);
     h.send("pong");
   }
-  assert.equal(h.sockets[0].sent.filter((m) => m === "ping").length, 6, "one ping per 20 s");
+  assert.equal(must(h.sockets[0]).sent.filter((m) => m === "ping").length, 6, "one ping per 20 s");
   assert.equal(h.sockets.length, 1, "answered pings keep the socket");
   assert.equal(h.fetches.length, fetched, "no /api/state polling");
   assert.equal(h.snapshots.length, 1, "pong is not a snapshot");
@@ -135,15 +161,15 @@ test("arena client watchdog: 45 s with no pong or message replaces the socket", 
   assert.equal(h.sockets.length, 1, "two pings unanswered is not yet 45 s");
   t.mock.timers.tick(1);
   assert.equal(h.sockets.length, 2, "a fresh socket was opened");
-  assert.equal(h.sockets[0].closed, true, "the silent one was dropped");
+  assert.equal(must(h.sockets[0]).closed, true, "the silent one was dropped");
   assert.equal(
     h.fetches.length,
     fetched,
     "the watchdog itself fetches nothing; the new socket asks for state once it opens",
   );
   t.mock.timers.tick(20_000);
-  assert.equal(h.sockets[0].sent.length, 2, "the dropped socket gets no more pings");
-  assert.equal(h.sockets[1].sent.length, 0, "a socket that is still connecting gets none either");
+  assert.equal(must(h.sockets[0]).sent.length, 2, "the dropped socket gets no more pings");
+  assert.equal(must(h.sockets[1]).sent.length, 0, "a socket that is still connecting gets none either");
   h.client.disconnect();
 });
 
@@ -156,8 +182,8 @@ test("arena client watchdog: every message restarts the 45 s wait, and disconnec
   t.mock.timers.tick(40_000);
   assert.equal(h.sockets.length, 1, "40 s after the last message is not silence yet");
   h.client.disconnect();
-  const sent = h.sockets[0].sent.length;
+  const sent = must(h.sockets[0]).sent.length;
   t.mock.timers.tick(200_000);
   assert.equal(h.sockets.length, 1, "no reconnect after disconnect");
-  assert.equal(h.sockets[0].sent.length, sent, "no pings after disconnect");
+  assert.equal(must(h.sockets[0]).sent.length, sent, "no pings after disconnect");
 });

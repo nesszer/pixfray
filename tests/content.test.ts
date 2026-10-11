@@ -1,15 +1,35 @@
 // Lane D: the static character catalog, its atlases, licenses and the reserve list.
-// Run with: node --import ./tests/register.mjs --test tests/content.test.mjs
+// Run with: node --import ./tests/register.ts --test tests/content.test.ts
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
+import { URL as NodeURL } from "node:url";
 import { readPng } from "../server/uploads.ts";
+import type { Frame } from "../server/uploads.ts";
+import { must } from "./fakes.ts";
 
-const root = new URL("../", import.meta.url);
-const read = (p) => readFileSync(new URL(p, root));
-const catalog = JSON.parse(read("public/assets/characters.json").toString("utf8"));
+/** One entry of public/assets/characters.json, as the assertions below read it. */
+type Character = {
+  id: string;
+  label: string;
+  url: string;
+  frames: Frame[];
+  fps: number;
+  anchor: { x: number; y: number };
+  license: string;
+  source: string;
+  animations?: Record<string, Frame[]>;
+  combatFallback?: string;
+};
+
+const root = new NodeURL("../", import.meta.url);
+// Return type: under Workers + Node types, Buffer's toString(encoding) resolves to Uint8Array's toString(), so the
+// signature names the call these tests make on the Buffer.
+const read = (p: string): { toString(encoding: BufferEncoding): string } => readFileSync(new NodeURL(p, root));
+const catalog: Character[] = JSON.parse(read("public/assets/characters.json").toString("utf8"));
 const licenses = read("docs/ASSET_LICENSES.md").toString("utf8");
-const rect = (f) => f && [f.x, f.y, f.w, f.h].every(Number.isInteger) && f.w > 0 && f.h > 0 && f.x >= 0 && f.y >= 0;
+const rect = (f: Frame | undefined) =>
+  f && [f.x, f.y, f.w, f.h].every(Number.isInteger) && f.w > 0 && f.h > 0 && f.x >= 0 && f.y >= 0;
 
 test("the roster has 15 launch characters plus the v3 additions, with unique ids", () => {
   assert.ok(Array.isArray(catalog));
@@ -41,10 +61,10 @@ test("every entry has the CatalogEntry shape", () => {
 
 test("every frame rectangle sits inside its atlas image", () => {
   for (const c of catalog) {
-    const file = new URL("public" + c.url, root);
+    const file = new NodeURL("public" + c.url, root);
     assert.ok(existsSync(file), c.url + " exists");
     const { width, height } = readPng(new Uint8Array(readFileSync(file))); // also proves the file is a real PNG
-    const all = [["frames", c.frames], ...Object.entries(c.animations || {})];
+    const all: [string, Frame[]][] = [["frames", c.frames], ...Object.entries(c.animations || {})];
     for (const [name, list] of all) {
       assert.ok(Array.isArray(list) && list.length, c.id + " " + name + " is a non-empty list");
       for (const f of list) {
@@ -65,7 +85,11 @@ test("combat-ready characters exist and every character is licensed in ASSET_LIC
   );
   for (const c of catalog) {
     assert.ok(licenses.includes("`" + c.id + "`"), c.id + " is listed in ASSET_LICENSES.md");
-    assert.ok(licenses.includes(c.url.split("/").pop()), c.url + " file is listed in ASSET_LICENSES.md");
+    assert.ok(
+      // as string: split always returns at least one item, so pop() has one
+      licenses.includes(c.url.split("/").pop() as string),
+      c.url + " file is listed in ASSET_LICENSES.md",
+    );
     assert.ok(licenses.includes(c.source), c.source + " is listed in ASSET_LICENSES.md");
   }
   for (const notice of [
@@ -93,8 +117,7 @@ test("the reserve lists at least 25 characters, each with a source and license",
   assert.ok(packs.length >= 1);
   for (const p of packs) assert.match(p, /CC0/);
   const packNames = packs.map((p) =>
-    p
-      .split("|")[1]
+    must(p.split("|")[1])
       .trim()
       .replace(/ \(.*\)$/, ""),
   );
@@ -105,5 +128,5 @@ test("the reserve lists at least 25 characters, each with a source and license",
     );
   const launched = new Set(catalog.map((c) => c.label.toLowerCase()));
   for (const r of rows)
-    assert.ok(!launched.has(r.split("|")[2].trim().toLowerCase()), "reserve does not repeat a launch character");
+    assert.ok(!launched.has(must(r.split("|")[2]).trim().toLowerCase()), "reserve does not repeat a launch character");
 });

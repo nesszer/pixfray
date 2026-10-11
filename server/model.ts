@@ -329,3 +329,6 @@ export type Snapshot = {
   /** Server clock when sent. */
   serverNow: number;
 };
+
+/** Whether Twitch posted a line, and its drop_reason code (or the error) when it didn't. */
+export type SendResult = { sent: boolean; reason: string };

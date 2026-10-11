@@ -11,7 +11,7 @@ import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cookies, users } from "./seed-local.mjs";
-import { enforceCsp } from "./csp-helper.mjs";
+import { enforceCsp } from "./csp-helper.ts";
 import { defaultConfig } from "../server/game.ts";
 
 // The duel script below counts hits for the first preset (strike 10 every 3 s, heavy 25 every 8 s, heal 15 every 10 s).
@@ -135,7 +135,7 @@ const presence = (user, text = "hi") => say(user, text);
 
 const errors = [];
 const browser = await chromium.launch(chromeOptions(["--disable-features=LocalNetworkAccessChecks"]));
-// enforceCsp (csp-helper.mjs) serves the overlay through a Playwright route, which Chrome treats as a public page, so its
+// enforceCsp (csp-helper.ts) serves the overlay through a Playwright route, which Chrome treats as a public page, so its
 // Local Network Access check would block the socket to 127.0.0.1. The deployed overlay is same-origin and never hits it.
 try {
   // 0. Seeded sessions: owner and three viewers.

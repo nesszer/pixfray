@@ -12,8 +12,28 @@ import {
   mainVersion,
   run,
 } from "../scripts/release.mjs";
+import type { Loose } from "./fakes.ts";
 
-const V = (n) => `0000000${n}-0000-4000-8000-000000000000`;
+// scripts/release.mjs is untyped JavaScript; these are the shapes the tests read back from it.
+type ReleaseOpts = { command: string; target: string; tag: string; percentage: number; message: string };
+type RunResult = {
+  previous: string | null;
+  target?: string | null;
+  versionId?: string;
+  versions?: { version_id: string; percentage: number }[];
+};
+type FakeInit = { method?: string; body?: string; headers: Record<string, string> };
+// A workflow step and job as the YAML tests read them.
+type Step = {
+  id?: string;
+  name?: string;
+  run?: string;
+  uses?: string;
+  with?: { cache?: unknown; "no-cache"?: unknown };
+};
+type Job = { steps: Step[] };
+
+const V = (n: number) => `0000000${n}-0000-4000-8000-000000000000`;
 const ENV = { CLOUDFLARE_API_TOKEN: "test-only-cf", CLOUDFLARE_ACCOUNT_ID: "a".repeat(32) };
 const deployments = [
   { id: "d1", created_on: "2026-09-29T00:00:00Z", versions: [{ version_id: V(1), percentage: 100 }] },
@@ -36,8 +56,16 @@ test("release arguments are validated", () => {
     percentage: 100,
     message: "",
   });
-  assert.equal(parseArgs(["deploy", "--target", "production", "--percentage", "25"]).percentage, 25);
-  assert.equal(parseArgs(["deploy", "--target", "production", "--tag", "x".repeat(40)]).tag.length, 25);
+  assert.equal(
+    // parseArgs builds its result by key in untyped JS, so its inferred type lists only `command`
+    (parseArgs(["deploy", "--target", "production", "--percentage", "25"]) as ReleaseOpts).percentage,
+    25,
+  );
+  assert.equal(
+    // same untyped parseArgs result as above
+    (parseArgs(["deploy", "--target", "production", "--tag", "x".repeat(40)]) as ReleaseOpts).tag.length,
+    25,
+  );
   for (const argv of [
     [],
     ["ship", "--target", "test"],
@@ -49,7 +77,8 @@ test("release arguments are validated", () => {
     ["rollback", "--target", "test", "--version", "v1"],
     ["deploy", "--target", "test", "--force"],
   ])
-    assert.throws(() => parseArgs(argv), undefined, argv.join(" "));
+    // node:assert treats an undefined matcher as "any error"; @types/node's overloads leave undefined out
+    assert.throws(() => parseArgs(argv), undefined as never, argv.join(" "));
 });
 
 test("deploy and rollback plans pick the right versions", () => {
@@ -86,8 +115,10 @@ test("deploy and rollback plans pick the right versions", () => {
 });
 
 function fakeCloudflare(versionBindings = [{ name: "AUTH_SECRET" }, { name: "INTERNAL_SECRET" }]) {
-  const calls = [];
-  const fetch = async (url, init = {}) => {
+  // stub call records: the tests read them by property
+  const calls: Loose[] = [];
+  // api() always passes init with headers; the empty default only mirrors fetch's signature
+  const fetch = async (url: string, init: FakeInit = {} as FakeInit) => {
     const u = new URL(url),
       method = init.method || "GET";
     calls.push({
@@ -96,7 +127,7 @@ function fakeCloudflare(versionBindings = [{ name: "AUTH_SECRET" }, { name: "INT
       body: init.body ? JSON.parse(init.body) : undefined,
       auth: init.headers.Authorization,
     });
-    const ok = (result) => new Response(JSON.stringify({ success: true, result }));
+    const ok = (result: unknown) => new Response(JSON.stringify({ success: true, result }));
     if (u.pathname.endsWith("/deployments") && method === "GET") return ok({ deployments });
     if (u.pathname.endsWith("/deployments") && method === "POST") return ok({ id: "new" });
     if (u.pathname.endsWith("/versions"))
@@ -117,9 +148,9 @@ function fakeCloudflare(versionBindings = [{ name: "AUTH_SECRET" }, { name: "INT
 
 test("deploy uploads, verifies secrets, then moves traffic on the right Worker", async () => {
   const cf = fakeCloudflare(),
-    uploads = [],
-    logs = [];
-  const result = await run(
+    uploads: unknown[] = [],
+    logs: string[] = [];
+  const result: RunResult = await run(
     parseArgs([
       "deploy",
       "--target",
@@ -132,7 +163,7 @@ test("deploy uploads, verifies secrets, then moves traffic on the right Worker",
       "promote #7",
     ]),
     ENV,
-    { fetch: cf.fetch, upload: (o) => uploads.push(o), summary: (l) => logs.push(...l) },
+    { fetch: cf.fetch, upload: (o: unknown) => uploads.push(o), summary: (l: string[]) => logs.push(...l) },
   );
   assert.equal(uploads.length, 1);
   assert.equal(result.versionId, V(7));
@@ -167,7 +198,7 @@ test("deploy refuses to move traffic to a version without the Worker secrets", a
 
 test("rollback points all traffic at the previous version; dry run changes nothing", async () => {
   const cf = fakeCloudflare();
-  const plan = await run(parseArgs(["rollback", "--target", "production", "--message", "bad deploy"]), ENV, {
+  const plan: RunResult = await run(parseArgs(["rollback", "--target", "production", "--message", "bad deploy"]), ENV, {
     fetch: cf.fetch,
     summary() {},
   });
@@ -184,7 +215,7 @@ test("rollback points all traffic at the previous version; dry run changes nothi
 
 // Bun parses the YAML (YAML 1.2, so `on` stays a string). Bun runs every script here, so a missing Bun fails the
 // test instead of skipping it.
-function loadYaml(file) {
+function loadYaml(file: string) {
   const out = spawnSync(
     "bun",
     ["-e", "console.log(JSON.stringify(Bun.YAML.parse(await Bun.file(process.argv[1]).text())))", file],
@@ -213,7 +244,7 @@ test("deploy workflow parses and exposes the inputs /api/dev dispatches", () => 
   assert.deepEqual(Object.keys(wf.jobs).sort(), ["check", "release", "rollback"]);
   assert.deepEqual(wf.permissions, { contents: "read" });
   assert.match(wf["run-name"], /inputs\.request_id/);
-  for (const job of Object.values(wf.jobs))
+  for (const job of Object.values<Job>(wf.jobs))
     for (const step of job.steps) {
       // Untrusted inputs must reach shell only through env.
       if (step.run) assert.doesNotMatch(step.run, /\$\{\{/, step.name || step.run);
@@ -233,26 +264,26 @@ test("deploy workflow keeps the Cloudflare token out of check and deploys the co
   assert.equal(check.environment, undefined, "check has no environment");
   assert.deepEqual(check.permissions, { contents: "read" });
   assert.deepEqual(
-    release.steps.filter((s) => JSON.stringify(s).includes("CLOUDFLARE_API_TOKEN")),
+    release.steps.filter((s: Step) => JSON.stringify(s).includes("CLOUDFLARE_API_TOKEN")),
     [release.steps.at(-1)],
   );
-  const releaseRuns = release.steps.map((s) => s.run || "").join("\n");
+  const releaseRuns = release.steps.map((s: Step) => s.run || "").join("\n");
   assert.doesNotMatch(releaseRuns, /\bbun (run (check|format|lint|test|typecheck)|test)\b/);
   assert.equal(release.needs, "check");
   assert.equal(check.outputs.sha, "${{ steps.verify.outputs.sha }}");
-  const index = (match) => check.steps.findIndex(match);
-  const verify = index((s) => s.id === "verify");
-  const install = index((s) => s.run === "bun install --frozen-lockfile");
-  const runCheck = index((s) => s.run === "bun run check");
+  const index = (match: (s: Step) => boolean) => check.steps.findIndex(match);
+  const verify = index((s: Step) => s.id === "verify");
+  const install = index((s: Step) => s.run === "bun install --frozen-lockfile");
+  const runCheck = index((s: Step) => s.run === "bun run check");
   assert.ok(verify >= 0 && verify < install && install < runCheck, "verify runs before install and check");
-  const checkout = release.steps.find((s) => String(s.uses).startsWith("actions/checkout@"));
+  const checkout = release.steps.find((s: Step) => String(s.uses).startsWith("actions/checkout@"));
   assert.equal(checkout.with.ref, "${{ needs.check.outputs.sha }}");
   assert.equal(release.if, "inputs.operation == 'deploy'", "release never runs after check fails");
   assert.deepEqual(release.permissions, { contents: "read" });
   assert.doesNotMatch(JSON.stringify(check), /secrets\./, "check reads no secrets");
   assert.equal(release.env.VERIFIED_SHA, "${{ needs.check.outputs.sha }}");
   assert.match(releaseRuns, /test "\$SHA" = "\$VERIFIED_SHA"/, "release re-checks the checkout");
-  const restoresCache = (s) =>
+  const restoresCache = (s: Step) =>
     String(s.uses).startsWith("actions/cache") ||
     (String(s.uses).startsWith("oven-sh/setup-bun@") && s.with?.["no-cache"] !== true) ||
     (String(s.uses).startsWith("actions/setup-node@") && s.with?.cache !== undefined);
@@ -269,17 +300,17 @@ test("CI workflow checks every push to main, scans for secrets and never sees se
   const wf = loadYaml(".github/workflows/ci.yml");
   const on = wf.on;
   assert.ok(on.push.branches.includes("main"));
-  assert.ok(wf.jobs.test.steps.some((s) => s.run === "bun run check"));
+  assert.ok(wf.jobs.test.steps.some((s: Step) => s.run === "bun run check"));
   assert.ok(
-    wf.jobs.test.steps.some((s) => s.run === "bun run audit"),
+    wf.jobs.test.steps.some((s: Step) => s.run === "bun run audit"),
     "dependencies are audited",
   );
   const scan = wf.jobs.secrets;
   assert.equal(scan.steps[0].with["fetch-depth"], 0, "the secret scan sees the whole history");
   assert.ok(
-    scan.steps.some((s) => /sha256sum -c/.test(s.run || "")),
+    scan.steps.some((s: Step) => /sha256sum -c/.test(s.run || "")),
     "the gitleaks binary is checksum-pinned",
   );
-  assert.ok(scan.steps.some((s) => /gitleaks git --config \.gitleaks\.toml --redact/.test(s.run || "")));
+  assert.ok(scan.steps.some((s: Step) => /gitleaks git --config \.gitleaks\.toml --redact/.test(s.run || "")));
   assert.doesNotMatch(readFileSync(".github/workflows/ci.yml", "utf8"), /secrets\./);
 });
