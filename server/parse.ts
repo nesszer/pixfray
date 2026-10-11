@@ -1,8 +1,7 @@
 import { COSMETIC_KINDS, COSMETIC_FIELDS, MAX_BUILDS } from "./cosmetics.ts";
-import type { AbilityName, ChatEvent, SendResult } from "./model.ts";
+import type { AbilityName, BackupExport, ChatEvent, SendResult } from "./model.ts";
 import type { HelixUser } from "./auth.ts";
 import type { ChannelRecord, ChannelRow } from "./channels.ts";
-import type { BackupExport } from "./backups.ts";
 
 // Inbound request bodies, checked once at the edge (the Worker route or the room route that reads them), so the code
 // behind takes typed values. Each parser answers { ok: true, value } or { ok: false, error } like validateConfigPatch

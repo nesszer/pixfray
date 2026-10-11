@@ -332,3 +332,15 @@ export type Snapshot = {
 
 /** Whether Twitch posted a line, and its drop_reason code (or the error) when it didn't. */
 export type SendResult = { sent: boolean; reason: string };
+
+/**
+ * A channel room's export as backups.ts stores it (the owner page's download). Only the fields developer.ts reads
+ * are named; the room's export code is the full shape. exportedAt is the ISO time of exportHead in developer.ts.
+ */
+export type BackupExport = {
+  exportedAt: string;
+  profiles: { userId: string; username: string }[];
+  purchases: { userId: string }[];
+  builds: { userId: string }[];
+  [key: string]: unknown;
+};

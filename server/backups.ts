@@ -9,6 +9,7 @@ import { listRecords } from "./channels.ts";
 import { parseBackupExport } from "./parse.ts";
 import type { Env } from "./env.ts";
 import type { Parsed } from "./parse.ts";
+import type { BackupExport } from "./model.ts";
 
 /** One channel's outcome in a backup run. */
 export type BackupResult =
@@ -16,17 +17,6 @@ export type BackupResult =
   | { channel: string; ok: false; reason: string };
 /** A stored day, newest first in listBackups. */
 export type BackupRow = { day: string; at: number; bytes: number };
-/**
- * A channel room's export, as stored (the owner page's download). Only the fields developer.ts reads are named;
- * the room's export code is the full shape. exportedAt is the ISO time of exportHead in developer.ts.
- */
-export type BackupExport = {
-  exportedAt: string;
-  profiles: { userId: string; username: string }[];
-  purchases: { userId: string }[];
-  builds: { userId: string }[];
-  [key: string]: unknown;
-};
 /** What a room answers to POST /dev/backup. */
 type BackupReply = { bytes?: number; reason?: string; error?: string };
 
