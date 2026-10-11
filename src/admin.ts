@@ -509,8 +509,15 @@ async function init() {
   ($("#dev-link") as HTMLAnchorElement).hidden = ($("#dev-section") as HTMLElement).hidden = !S.access.owner;
   // element type from the page HTML
   ($("#owner-chat") as HTMLDivElement).hidden = !S.access.owner || CHANNEL !== site.defaultChannel;
-  await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets(), loadSprites()]);
-  if (S.admin?.channelState !== "paused") connectLive();
+  const [loaded] = await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets(), loadSprites()]);
+  // every control reads S.admin, so without the arena the gate stays up (load already gated a 401 or 403)
+  if (!S.admin)
+    return loaded === false
+      ? gate("Couldn't load the arena right now. Try again in a minute.", [
+          h("button", { class: "btn btn-primary", type: "button", onclick: () => location.reload() }, "Try again"),
+        ])
+      : undefined;
+  if (S.admin.channelState !== "paused") connectLive();
   // Back from "Connect mod access" (/auth/login?connect=mods)
   const mods = new URLSearchParams(location.search).get("mods");
   const MODS: Record<string, string | undefined> = {
