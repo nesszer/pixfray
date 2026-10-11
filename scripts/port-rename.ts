@@ -132,7 +132,7 @@ function main(): number {
     console.log(`updated ${file}${imports > 0 ? ` (${imports} import${imports === 1 ? "" : "s"})` : ""}`);
   }
   console.log(
-    `Next: annotate the .ts files, add them to tsconfig.strict.json "files", run node scripts/port-check.ts --base origin/main`,
+    `Next: annotate the .ts files, add them to "files" in tsconfig.strict.json (Worker, Node) or tsconfig.strict-web.json (browser), run node scripts/port-check.ts --base origin/main`,
   );
   return 0;
 }
