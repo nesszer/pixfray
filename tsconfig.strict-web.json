@@ -34,6 +34,7 @@
     "src/intro/main.ts",
     "src/served/hats.ts",
     "src/served/atlas.ts",
+    "src/served/parse.ts",
     "src/served/chat.ts",
     "src/served/arena-client.ts",
     "src/served/pets.ts",

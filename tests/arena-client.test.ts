@@ -2,7 +2,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createArenaClient } from "../src/served/arena-client.ts";
-import type { JsonRecord } from "../src/served/arena-client.ts";
+import { resetWarnings } from "../src/served/parse.ts";
+import type { ArenaSnapshot, LooksMessage } from "../src/served/parse.ts";
 import { must } from "./fakes.ts";
 import type { Loose } from "./fakes.ts";
 
@@ -20,7 +21,7 @@ function harness() {
     // Loose: events and snapshots are the client's output, which the tests read by property
     events: Loose[] = [],
     snapshots: Loose[] = [], // Loose: as above
-    looks: JsonRecord[] = [];
+    looks: LooksMessage[] = [];
   function FakeSocket(this: FakeSocket) {
     this.close = () => {};
     sockets.push(this);
@@ -82,6 +83,59 @@ test("arena client: snapshots without serverNow pass through unchanged", () => {
   h.client.disconnect();
 });
 
+// Parsing (src/served/parse.ts): a malformed frame is dropped whole, after one warning per kind, and changes nothing.
+test("arena client: malformed frames are dropped and leave the revision, seen events and clock alone", (t) => {
+  resetWarnings();
+  const warn = t.mock.method(console, "warn", () => {});
+  const h = harness();
+  const at = Date.now() - 2000;
+  h.send({ type: "snapshot", revision: 5, players: [], events: [{ id: "5", type: "challenge_created", at }] });
+  // a server clock a minute behind would shift event times, if this frame were taken
+  h.send({
+    type: "snapshot",
+    revision: 9,
+    serverNow: Date.now() - 60_000,
+    players: "nobody",
+    events: [{ id: "9", type: "challenge_created", at }],
+  });
+  h.send({ type: "snapshot", revision: 10, paused: "yes", players: [], events: [] });
+  h.send("{not json");
+  assert.equal(h.client.revision, 5, "the revision stays at the last good snapshot");
+  assert.equal(h.snapshots.length, 1, "no snapshot reached the overlay");
+  assert.equal(h.events.length, 1, "no event from a dropped frame played");
+  assert.equal(warn.mock.callCount(), 2, "one warning for both bad snapshots, one for the broken JSON");
+  h.send({ type: "event", revision: 9, event: { id: "9", type: "challenge_created", at } });
+  assert.equal(h.events.length, 2, "event 9 was never marked as seen, so it plays now");
+  assert.equal(h.events[1].at, at, "the dropped frame's serverNow did not shift the clock");
+  assert.equal(h.client.revision, 9);
+  h.client.disconnect();
+});
+
+test("arena client: one bad event or player in a snapshot is dropped and the rest still play", (t) => {
+  resetWarnings();
+  const warn = t.mock.method(console, "warn", () => {});
+  const h = harness();
+  const at = Date.now() - 1000;
+  h.send({
+    type: "snapshot",
+    revision: 3,
+    players: [{ userId: "a", username: "a" }, { userId: "b", elo: "lots" }, "c"],
+    events: [
+      { id: "1", type: "challenge_created", at, a: "a", b: "b" },
+      { id: "2", type: "duel_action", at, amount: "9" },
+      { id: "3", type: "challenge_declined", at, declinedBy: "b" },
+    ],
+  });
+  assert.deepEqual(
+    h.events.map((e) => e.id),
+    ["1", "3"],
+  );
+  assert.deepEqual(h.snapshots[0].players, [{ userId: "a", username: "a" }]);
+  assert.equal(h.client.revision, 3);
+  assert.equal(warn.mock.callCount(), 2, "one warning for players, one for events");
+  h.client.disconnect();
+});
+
 // Ping and watchdog: the client sends "ping" every 20 s, the room's auto-response answers "pong", and a socket with no
 // message at all for 45 s is half open, so it gets replaced. No /api/state polling.
 /** The socket watchdogHarness() hands the client: onopen and onmessage are set by the client. */
@@ -98,7 +152,7 @@ function watchdogHarness() {
   // a partial Location on purpose: the client reads only protocol and host
   globalThis.location = { protocol: "https:", host: "test.example" } as Location;
   const sockets: WatchedSocket[] = [],
-    snapshots: JsonRecord[] = [],
+    snapshots: ArenaSnapshot[] = [],
     events: unknown[] = [],
     fetches: (RequestInfo | URL)[] = [];
   function FakeSocket(this: WatchedSocket) {
