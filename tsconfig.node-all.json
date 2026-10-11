@@ -1,0 +1,21 @@
+// Tests that need Workers and DOM types at once: unit tests that import a Worker module and a DOM module, and browser
+// tests that import a Worker module. Workers, DOM and Node types. One entry per file; keep a test on one side where
+// you can, since neither side's globals are kept out here.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "lib": ["esnext", "dom", "dom.iterable"], "types": ["@cloudflare/workers-types", "node"] },
+  "files": [
+    "types/lib-guards.ts",
+    "types/site.ts",
+    "site.config.js",
+    "types/dom.ts",
+    "tests/arena-client.test.ts",
+    "tests/atlas.test.ts",
+    "tests/cosmetics.test.ts",
+    "tests/spritify.test.ts",
+    "tests/e2e-local.ts",
+    "tests/smoke.ts",
+    "tests/ui.ts",
+    "tests/arena-browser.ts"
+  ]
+}

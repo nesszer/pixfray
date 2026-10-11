@@ -1,6 +1,7 @@
-// The Cloudflare Worker and its Durable Objects (server/).
+// The Cloudflare Worker and its Durable Objects (server/): Workers types only, so server code can't use Node or DOM
+// globals.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "lib": ["esnext"], "types": ["@cloudflare/workers-types"] },
-  "include": ["server/**/*.ts", "site.config.js", "types/lib-guards.ts"]
+  "include": ["server/**/*.ts", "types/lib-guards.ts", "types/site.ts", "site.config.js"]
 }

@@ -366,7 +366,7 @@ for (const size of sizes) {
   await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("#editor")!.value.includes("overlay"));
   await page.click("#save-file");
   await page.waitForFunction(() =>
-    // !: the element is on the page, so its textContent is a string
+    // !: #code-status is on the page, and an element's textContent is a string, never null
     /Saved to live-fix\/overlay-text/.test(document.querySelector("#code-status")!.textContent!),
   );
   await page.click("#deploy-test");

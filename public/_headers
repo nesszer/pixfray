@@ -1,17 +1,17 @@
-# Static responses only; /api/* and /auth/* set their own headers in server/worker.js.
-# The Content-Security-Policy lines repeat server/security.js (PAGE_CSP, OVERLAY_CSP); tests/security.test.mjs checks they match.
+# Static responses only; /api/* and /auth/* set their own headers in server/worker.ts.
+# The Content-Security-Policy lines repeat server/security.ts (PAGE_CSP, OVERLAY_CSP); tests/security.test.ts checks they match.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
 
-# Vite's bundles have a content hash in the name (vite.config.js assetsDir), so a new build gets new URLs.
+# Vite's bundles have a content hash in the name (vite.config.ts assetsDir), so a new build gets new URLs.
 /assets/build/*
   Cache-Control: public, max-age=31536000, immutable
 
 # Pages with sign-in and mod actions can't be framed by other sites (clickjacking). The overlay stays frameable for OBS
 # and for the demo on /start. The pages in runWorkerFirst now pass through the Worker, which sets these itself
-# (server/worker.js page()); these rules cover them if assets ever answer directly. The home page (/) serves the intro.
+# (server/worker.ts page()); these rules cover them if assets ever answer directly. The home page (/) serves the intro.
 /
   Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'
   X-Frame-Options: DENY
@@ -27,7 +27,7 @@
 
 # no-transform keeps Cloudflare from adding its Web Analytics beacon, which OVERLAY_CSP blocks (a console error in OBS
 # and in the /start demo on every load). max-age=0 and must-revalidate are the assets default, so a new build still loads.
-# The OBS overlay stays out of search results. The test site's pages and robots.txt say noindex from the Worker (server/worker.js).
+# The OBS overlay stays out of search results. The test site's pages and robots.txt say noindex from the Worker (server/worker.ts).
 /overlay*
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' wss://irc-ws.chat.twitch.tv
   X-Robots-Tag: noindex, nofollow

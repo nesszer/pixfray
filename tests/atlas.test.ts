@@ -1,6 +1,6 @@
 // Lane D: the browser atlas packer (src/served/atlas.ts) against the server's upload limits and validation
 // (server/uploads.ts). Its own file because it imports both a Worker module and a DOM module
-// (tsconfig.strict-tests-shared.json).
+// (tsconfig.node-all.json).
 // Run with: node --import ./tests/register.ts --test tests/atlas.test.ts
 import test from "node:test";
 import assert from "node:assert/strict";

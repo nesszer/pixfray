@@ -107,7 +107,7 @@ async function repo(files: Fixture, dir?: string): Promise<string> {
   return dir;
 }
 
-/** The options port-check requires tsconfig.strict.json to set (STRICT_ON in scripts/port-check.ts). */
+/** The options port-check requires every strict config to set (STRICT_ON in scripts/port-check.ts). */
 const STRICT_OPTIONS = {
   strict: true,
   noUncheckedIndexedAccess: true,
@@ -116,7 +116,7 @@ const STRICT_OPTIONS = {
   erasableSyntaxOnly: true,
 };
 
-/** A tsconfig.strict.json with the required options plus `options`, any other top-level keys in `more`, then `files`
+/** A strict config with the required options plus `options`, any other top-level keys in `more`, then `files`
  * (left out when null), as JSONC with a comment and a trailing comma. */
 function strictConfig({
   files = [],
@@ -164,8 +164,8 @@ async function buildRepo(files: Record<string, string | Uint8Array | null>, head
     "vite.config.js": `import { cloudflare } from "${PLUGIN}";\nexport default { plugins: [cloudflare()] };\n`,
     "cloudflare.config.ts": cloudflareConfig(),
     ".gitignore": "node_modules/\n.cloudflare/\n.wrangler/\n.port-check/\n",
-    "tsconfig.strict.json": strictList(),
-    "tsconfig.node.json": '{ "include": ["vite.config.js", "cloudflare.config.ts"] }\n',
+    "tsconfig.worker.json": strictList(),
+    "tsconfig.node.json": strictList("cloudflare.config.ts"),
     "index.html": PAGE,
     "src/main.js": 'console.log("page");\n',
     "server/worker.js": 'export default { fetch() { return new Response("ok"); } };\n',
@@ -298,7 +298,7 @@ describe("port-check", { concurrency: true }, () => {
   });
   test("annotations, comments and type-only code strip to the same JavaScript", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("pair.ts", "sum.ts"),
+      "tsconfig.worker.json": strictList("pair.ts", "sum.ts"),
       "pair.ts": "export type Pair = [number, number];\n",
       "sum.ts": "// Adds two numbers.\nconst ZERO = 0;\nexport function sum(a, b) {\n  return a + b + ZERO;\n}\n",
     });
@@ -320,7 +320,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a script with a hashbang ported from .mjs to .ts is identical: oxc parses the hashbang apart only in .ts", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("tool.ts"),
+      "tsconfig.worker.json": strictList("tool.ts"),
       "tool.mjs":
         '#!/usr/bin/env node\n// Prints its arguments.\nimport { argv } from "node:process";\nconsole.log(argv);\n',
     });
@@ -334,7 +334,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("an added typeof check is a runtime difference, reported at its source lines", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("num.ts"),
+      "tsconfig.worker.json": strictList("num.ts"),
       "num.js": "/**\n * @param {unknown} v\n */\nexport const toInt = (v) => (Number.isInteger(v) ? v : 0);\n",
     });
     renameSync(path.join(dir, "num.js"), path.join(dir, "num.ts"));
@@ -357,7 +357,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a renamed file whose importers switch from .js to .ts specifiers is identical", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("lib/util.ts", "main.ts"),
+      "tsconfig.worker.json": strictList("lib/util.ts", "main.ts"),
       "lib/util.js": "export function double(n) {\n  return n * 2;\n}\n",
       "main.js": 'import { double } from "./lib/util.js";\nexport const four = double(2);\n',
     });
@@ -373,7 +373,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("files moved to another folder pair by name, with their importers' paths followed", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("src/served/overlay.ts"),
+      "tsconfig.worker.json": strictList("src/served/overlay.ts"),
       "web/chat.js": "export const say = (text) => text.trim();\n",
       "web/overlay.js":
         'import { say } from "./chat.js";\nimport { clamp } from "../server/game.js";\nexport const hello = say(" hi ") + clamp(1);\n',
@@ -394,7 +394,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a moved file that git sees as a deletion plus an addition is still compared", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("lib/rank.ts"),
+      "tsconfig.worker.json": strictList("lib/rank.ts"),
       "server/rank.js": "export const START = 1000;\nexport const next = (elo) => elo + 16;\n",
     });
     moveOut(dir, "server/rank.js");
@@ -422,7 +422,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a code file gone at head with nothing to pair fails, naming it", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "gone.js": "export const gone = true;\n",
       "kept.js": "export const kept = true;\n",
     });
@@ -436,7 +436,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a new file passes only when it strips to no runtime code", async () => {
-    const dir = await repo({ "tsconfig.strict.json": strictList("server/model.ts", "server/extra.ts") });
+    const dir = await repo({ "tsconfig.worker.json": strictList("server/model.ts", "server/extra.ts") });
     write(dir, {
       "server/model.ts": "export type Fighter = { id: string; elo: number };\n",
       "server/extra.ts": "export type Id = string;\nexport const id = (value: string): Id => value;\n",
@@ -450,7 +450,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("two files that could pair by the same name fail instead of guessing", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("c/x.ts"),
+      "tsconfig.worker.json": strictList("c/x.ts"),
       "a/x.js": "export const x = 1;\n",
       "b/x.js": "export const x = 2;\n",
     });
@@ -467,7 +467,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("edited .js, .mjs and .cjs files are compared", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "app.js": 'import { LIMIT } from "./config.js";\nexport const cap = LIMIT * 2;\n',
       "config.js": "export const LIMIT = 10;\n",
       "legacy.cjs": "module.exports = { retries: 3 };\n",
@@ -499,7 +499,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test(".mts, .cts and .tsx ports are compared and must be in the strict list", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("util.mts", "old.cts"),
+      "tsconfig.worker.json": strictList("util.mts", "old.cts"),
       "util.mjs": "export const half = (n) => n / 2;\n",
       "old.cjs": "const x = 1;\nmodule.exports = { x };\n",
       "view.jsx": "export const View = () => <b>hi</b>;\n",
@@ -514,14 +514,14 @@ describe("port-check", { concurrency: true }, () => {
     });
     assert.deepEqual(await portCheck(dir), {
       status: 1,
-      stdout: "view.tsx is not in tsconfig.strict.json\n3 files compared, 0 different, 1 other problems\n",
+      stdout: "view.tsx is not in tsconfig.worker.json\n3 files compared, 0 different, 1 other problems\n",
       stderr: "",
     });
   });
 
   test("an import switched from .mjs to a different .js module is a difference", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("main.ts"),
+      "tsconfig.worker.json": strictList("main.ts"),
       "b.mjs": "export const b = 1;\n",
       "b.js": "export const b = 2;\n",
       "main.js": 'import { b } from "./b.mjs";\nexport const value = b;\n',
@@ -543,7 +543,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("bundler annotation comments are compared, not stripped", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("pure.ts", "lazy.ts"),
+      "tsconfig.worker.json": strictList("pure.ts", "lazy.ts"),
       "pure.js": "export const store = /*#__PURE__*/ makeStore();\n",
       "lazy.js": "export const mod = (url) => import(/* @vite-ignore */ url);\n",
     });
@@ -571,7 +571,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a relative import of a file that is not at head fails, naming the importer, line and path", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("u.ts", "n.ts"),
+      "tsconfig.worker.json": strictList("u.ts", "n.ts"),
       "u.js": "export const half = (n) => n / 2;\n",
       "m.js":
         'import { half } from "./u.js";\nexport const one = half(2);\nexport const lazy = () => import(`./u.js`);\n',
@@ -600,7 +600,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("changed, new and gone files that ship fail, naming each", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "index.html": '<body>\n<script type="module" src="/src/main.js"></script>\n</body>\n',
       "src/main.js": "export const main = 1;\n",
       "data.json": '{ "cap": 50 }\n',
@@ -633,7 +633,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("files that don't ship are allowed, and shipped text whose only change is a renamed path passes", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("src/main.ts", "web/overlay.ts"),
+      "tsconfig.worker.json": strictList("src/main.ts", "web/overlay.ts"),
       "src/main.js": "export const main = 1;\n",
       "web/overlay.js": "export const overlay = 1;\n",
       "index.html": '<body>\n<script type="module" src="/src/main.js"></script>\n</body>\n',
@@ -650,7 +650,7 @@ describe("port-check", { concurrency: true }, () => {
       "package.json": '{ "scripts": { "main": "node src/main.ts" } }\n',
       "docs/notes.md": "Start in src/main.ts, the entry point.\n",
       ".coderabbit.yaml": "reviews: { profile: chill }\n",
-      "tsconfig.strict.json": strictList("src/main.ts", "web/overlay.ts", "types/extra.d.ts"),
+      "tsconfig.worker.json": strictList("src/main.ts", "web/overlay.ts", "types/extra.d.ts"),
       "types/extra.d.ts": "export type Extra = string;\n",
     });
     assert.deepEqual(await portCheck(dir), {
@@ -660,7 +660,7 @@ describe("port-check", { concurrency: true }, () => {
         "allowed: docs/notes.md (documentation, does not ship)",
         "allowed: index.html (only renamed paths changed)",
         "allowed: package.json (only renamed paths changed)",
-        "allowed: tsconfig.strict.json (no build config reads it)",
+        "allowed: tsconfig.worker.json (no build config reads it)",
         "allowed: web/overlay.html (only renamed paths changed)",
         "6 files compared, 0 different",
         "",
@@ -671,7 +671,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a re-export of inline types only fails, and oxlint fails the import form", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("x.ts", "m.ts"),
+      "tsconfig.worker.json": strictList("x.ts", "m.ts"),
       "x.js": "export const X = 1;\n",
       "m.js": "export const m = 1;\n",
     });
@@ -702,7 +702,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a port left with types only says the head has no runtime code", async () => {
-    const dir = await repo({ "tsconfig.strict.json": strictList("k.ts"), "k.js": "export const K = 1;\n" });
+    const dir = await repo({ "tsconfig.worker.json": strictList("k.ts"), "k.js": "export const K = 1;\n" });
     await git(dir, "mv", "k.js", "k.ts");
     write(dir, { "k.ts": "export type K = number;\n" });
     assert.deepEqual(await portCheck(dir), {
@@ -721,16 +721,16 @@ describe("port-check", { concurrency: true }, () => {
   test("without a build config, a tsconfig change is allowed but for the strict options, and a tsconfig under public/ compares byte for byte", async () => {
     const dir = await repo({
       "tsconfig.base.json": `${JSON.stringify({ compilerOptions: { target: "esnext", ...STRICT_OPTIONS } })}\n`,
-      "tsconfig.strict.json":
+      "tsconfig.worker.json":
         '// Strict.\n{ "extends": "./tsconfig.base.json", "compilerOptions": { "strict": true }, "files": [] }\n',
-      "tsconfig.web.json": '{ "extends": "./tsconfig.base.json", "include": ["src/**/*.js"] }\n',
+      "tsconfig.app.json": '{ "extends": "./tsconfig.base.json", "include": ["src/**/*.js"] }\n',
       "public/tsconfig.json": '{ "compilerOptions": {} }\n',
     });
     write(dir, {
-      "tsconfig.json": '{ "files": [], "references": [{ "path": "./tsconfig.web.json" }] }\n',
-      "tsconfig.strict.json":
+      "tsconfig.json": '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }\n',
+      "tsconfig.worker.json":
         '{\n  "extends": "./tsconfig.base.json",\n  "compilerOptions": { "strict": true, "useDefineForClassFields": false },\n  "files": [],\n}\n',
-      "tsconfig.web.json":
+      "tsconfig.app.json":
         '// Browser code.\n{ "extends": "./tsconfig.base.json", "include": ["src/**/*.js", "public/*.js"], "exclude": ["dist"] }\n',
       "public/tsconfig.json": '{ "compilerOptions": { "strict": true } }\n',
     });
@@ -740,10 +740,10 @@ describe("port-check", { concurrency: true }, () => {
         "public/tsconfig.json differs (line 1; public/ is served as written)",
         '  base: { "compilerOptions": {} }',
         '  head: { "compilerOptions": { "strict": true } }',
+        "allowed: tsconfig.app.json (no build config reads it)",
         "allowed: tsconfig.json (no build config reads it)",
-        "allowed: tsconfig.strict.json (no build config reads it)",
-        "allowed: tsconfig.web.json (no build config reads it)",
-        "tsconfig.strict.json changes useDefineForClassFields from the base (base not set, head false); a port changes only its files list",
+        "allowed: tsconfig.worker.json (no build config reads it)",
+        "tsconfig.worker.json changes useDefineForClassFields from the base (base not set, head false); a port changes only its files list",
         "1 files compared, 1 different, 1 other problems",
         "",
       ].join("\n"),
@@ -752,16 +752,16 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("with a build config, a changed tsconfig is left to the build diff, and a new root tsconfig.json fails", async () => {
-    const dir = await buildRepo({ "tsconfig.web.json": '{ "include": ["src/**/*.js"] }\n' });
+    const dir = await buildRepo({ "tsconfig.app.json": '{ "include": ["src/**/*.js"] }\n' });
     write(dir, {
-      "tsconfig.json": '{ "files": [], "references": [{ "path": "./tsconfig.web.json" }] }\n',
-      "tsconfig.web.json": '// Browser code.\n{ "include": ["src/**/*.js"] }\n',
+      "tsconfig.json": '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }\n',
+      "tsconfig.app.json": '// Browser code.\n{ "include": ["src/**/*.js"] }\n',
     });
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
+        "allowed: tsconfig.app.json (the build diff compares what the build makes with it)",
         "tsconfig.json is new at the repo root, where the base build would read it too, so the build diff cannot see what it changes; add it in a change of its own",
-        "allowed: tsconfig.web.json (the build diff compares what the build makes with it)",
         "1 files compared, 1 different; 8 build output files compared, 0 different",
         "",
       ].join("\n"),
@@ -807,13 +807,13 @@ describe("port-check", { concurrency: true }, () => {
       "server/worker.js":
         'import { Thing } from "./thing.ts";\nexport default { fetch() { return new Response(String(new Thing(1).size)); } };\n',
       "server/tsconfig.json": '{ "include": ["*.ts"] }\n',
-      "tsconfig.strict.json": strictList("server/thing.ts"),
+      "tsconfig.worker.json": strictList("server/thing.ts"),
     });
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
         "allowed: server/tsconfig.json (the build diff compares what the build makes with it)",
-        "allowed: tsconfig.strict.json (the build diff compares what the build makes with it)",
+        "allowed: tsconfig.worker.json (the build diff compares what the build makes with it)",
         ".cloudflare/output/v0/workers/default/bundle/index.js differs (line 2)",
         "  base: globalThis.sideLoaded = true;",
         "  head: var Thing = class {",
@@ -830,12 +830,12 @@ describe("port-check", { concurrency: true }, () => {
     write(dir, {
       "server/worker.ts": 'export default { fetch(): Response { return new Response("ok"); } };\n',
       "cloudflare.config.ts": cloudflareConfig("./server/worker.ts"),
-      "tsconfig.strict.json": strictList("server/worker.ts"),
+      "tsconfig.worker.json": strictList("server/worker.ts"),
     });
     assert.deepEqual(await portCheck(dir), {
       status: 0,
       stdout: [
-        "allowed: tsconfig.strict.json (the build diff compares what the build makes with it)",
+        "allowed: tsconfig.worker.json (the build diff compares what the build makes with it)",
         "2 files compared, 0 different; 8 build output files compared, 0 different",
         "",
       ].join("\n"),
@@ -849,7 +849,7 @@ describe("port-check", { concurrency: true }, () => {
     write(dir, {
       "server/worker.ts": 'export default { fetch(): Response { return new Response("ok"); } };\n',
       "server/tsconfig.json": '{ "extends": "./missing.json" }\n',
-      "tsconfig.strict.json": strictList("server/worker.ts"),
+      "tsconfig.worker.json": strictList("server/worker.ts"),
     });
     const { status, stdout, stderr } = await portCheck(dir);
     const lines = stdout.split("\n");
@@ -861,7 +861,7 @@ describe("port-check", { concurrency: true }, () => {
         stderr: "",
         first: [
           "allowed: server/tsconfig.json (the build diff compares what the build makes with it)",
-          "allowed: tsconfig.strict.json (the build diff compares what the build makes with it)",
+          "allowed: tsconfig.worker.json (the build diff compares what the build makes with it)",
           "the head build failed (bunx cf build):",
         ],
         last: ["1 files compared, 0 different; the build failed, 1 other problems", ""],
@@ -900,7 +900,7 @@ describe("port-check", { concurrency: true }, () => {
       "server/worker.ts": 'export default { fetch(): Response { return new Response("ok"); } };\n',
       "server/tsconfig.json": '{ "extends": "./missing.json" }\n',
       "cloudflare.config.ts": cloudflareConfig("./server/worker.ts"),
-      "tsconfig.strict.json": strictList("server/worker.ts"),
+      "tsconfig.worker.json": strictList("server/worker.ts"),
     });
     write(dir, { "server/tsconfig.json": "{}\n" });
     const sha = (await git(dir, "rev-parse", "main")).trim();
@@ -922,7 +922,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a committed .port-check/ fails, since no check compares what is in it", async () => {
-    const dir = await repo({ "tsconfig.strict.json": strictList() });
+    const dir = await repo({ "tsconfig.worker.json": strictList() });
     write(dir, {
       ".port-check/0123abc/server/worker.js": "export default {};\n",
       ".port-check/0123abc/index.html": PAGE,
@@ -941,7 +941,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a file committed at exactly .port-check fails", async () => {
-    const dir = await repo({ "tsconfig.strict.json": strictList() });
+    const dir = await repo({ "tsconfig.worker.json": strictList() });
     write(dir, { ".port-check": "not a folder\n" });
     await git(dir, "add", "-f", "--", ".port-check");
     await git(dir, "commit", "-q", "-m", "cache file");
@@ -957,7 +957,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a symlink committed at exactly .port-check fails", async () => {
-    const dir = await repo({ "tsconfig.strict.json": strictList() });
+    const dir = await repo({ "tsconfig.worker.json": strictList() });
     // A symlink entry needs no symlink support on disk: the index takes it as is. Its target is a blob, written from a
     // file next to the repo so the working tree stays clean.
     writeFileSync(`${dir}-link`, "elsewhere");
@@ -976,7 +976,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a folder named .port-check with a Kelvin sign for its k is checked like any other: only ASCII letters fold", async () => {
-    const dir = await repo({ "tsconfig.strict.json": strictList() });
+    const dir = await repo({ "tsconfig.worker.json": strictList() });
     const file = `.port-chec${String.fromCodePoint(0x212a)}/evil.js`;
     write(dir, { [file]: 'globalThis.evil = "ships";\n' });
     await git(dir, "add", "-A");
@@ -1118,7 +1118,7 @@ describe("port-check", { concurrency: true }, () => {
   test("text whose bytes change but decode the same fails instead of passing as a renamed path, and so does a BOM", async () => {
     const latin1 = (text: string) => Buffer.from(text, "latin1");
     const dir = await repo({
-      "tsconfig.strict.json": strictList("src/main.ts"),
+      "tsconfig.worker.json": strictList("src/main.ts"),
       "src/main.js": "export const main = 1;\n",
       "index.html": latin1('<script type="module" src="/src/main.js"></script>\n<p>caf\xe9</p>\n'),
       "notes.txt": latin1("caf\xe9\n"),
@@ -1148,7 +1148,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a Markdown file under public/ ships, so a change to it fails", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "public/notes.md": "Duel rules.\n",
       "docs/notes.md": "Docs.\n",
     });
@@ -1220,7 +1220,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a renamed path next to invalid UTF-8 at head, where the base was valid, fails", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("src/main.ts"),
+      "tsconfig.worker.json": strictList("src/main.ts"),
       "src/main.js": "export const main = 1;\n",
       "index.html": pageWith("/src/main.js", REPLACEMENT),
     });
@@ -1235,7 +1235,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a renamed path next to valid UTF-8 at head, where the base was invalid, fails", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("src/main.ts"),
+      "tsconfig.worker.json": strictList("src/main.ts"),
       "src/main.js": "export const main = 1;\n",
       "index.html": pageWith("/src/main.js", INVALID),
     });
@@ -1297,7 +1297,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a file under public/ compares byte for byte: a comment edit, a new comment-only module and a renamed path fail", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "src/main.js": "export const main = 1;\n",
       "public/overlay.js": "// The overlay.\nexport const overlay = 1;\n",
       "public/_headers": "# Mirrors src/main.js.\n/*\n  X-Frame-Options: DENY\n",
@@ -1308,7 +1308,7 @@ describe("port-check", { concurrency: true }, () => {
       "public/overlay.js": "// The OBS overlay.\nexport const overlay = 1;\n",
       "public/x.js": "// Reserved for the next duel effect.\n",
       "public/_headers": "# Mirrors src/main.ts.\n/*\n  X-Frame-Options: DENY\n",
-      "tsconfig.strict.json": strictList("src/main.ts"),
+      "tsconfig.worker.json": strictList("src/main.ts"),
     });
     assert.deepEqual(await portCheck(dir), {
       status: 1,
@@ -1320,7 +1320,7 @@ describe("port-check", { concurrency: true }, () => {
         "  base: // The overlay.",
         "  head: // The OBS overlay.",
         "public/x.js is new and ships",
-        "allowed: tsconfig.strict.json (no build config reads it)",
+        "allowed: tsconfig.worker.json (no build config reads it)",
         "4 files compared, 3 different",
         "",
       ].join("\n"),
@@ -1330,7 +1330,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a test or script may update a string naming a ported file, and any other string change fails", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "src/ui.js": "export const ui = 1;\n",
       "src/files.js": 'export const FILES = ["src/ui.js"];\n',
       "tests/ui.test.mjs":
@@ -1341,11 +1341,11 @@ describe("port-check", { concurrency: true }, () => {
       "src/ui.ts": "export const ui: number = 1;\n",
       "tests/ui.test.mjs":
         'import { readFileSync } from "node:fs";\nconst text = readFileSync("src/ui.ts", "utf8");\nif (!text.includes("ui")) throw new Error("ui");\n',
-      "tsconfig.strict.json": strictList("src/ui.ts"),
+      "tsconfig.worker.json": strictList("src/ui.ts"),
     });
     assert.deepEqual(await portCheck(dir), {
       status: 0,
-      stdout: "allowed: tsconfig.strict.json (no build config reads it)\n2 files compared, 0 different\n",
+      stdout: "allowed: tsconfig.worker.json (no build config reads it)\n2 files compared, 0 different\n",
       stderr: "",
     });
     write(dir, {
@@ -1362,7 +1362,7 @@ describe("port-check", { concurrency: true }, () => {
         "tests/ui.test.mjs differs (base line 2, head line 2)",
         '  base: const text = readFileSync("src/ui.js", "utf8");',
         '  head: const text = readFileSync("src/ui.js", "latin1");',
-        "allowed: tsconfig.strict.json (no build config reads it)",
+        "allowed: tsconfig.worker.json (no build config reads it)",
         "3 files compared, 2 different",
         "",
       ].join("\n"),
@@ -1372,7 +1372,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a test string that named the .ts path before the port passes unchanged", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "src/ui.js": "export const ui = 1;\n",
       "tests/paths.test.mjs":
         'import { ui } from "../src/ui.js";\nconst SOURCES = ["src/ui.ts", "src/ui.js"];\nif (SOURCES.length !== ui + 1) throw new Error("paths");\n',
@@ -1382,11 +1382,11 @@ describe("port-check", { concurrency: true }, () => {
       "src/ui.ts": "export const ui: number = 1;\n",
       "tests/paths.test.mjs":
         'import { ui } from "../src/ui.ts";\nconst SOURCES = ["src/ui.ts", "src/ui.ts"];\nif (SOURCES.length !== ui + 1) throw new Error("paths");\n',
-      "tsconfig.strict.json": strictList("src/ui.ts"),
+      "tsconfig.worker.json": strictList("src/ui.ts"),
     });
     assert.deepEqual(await portCheck(dir), {
       status: 0,
-      stdout: "allowed: tsconfig.strict.json (no build config reads it)\n2 files compared, 0 different\n",
+      stdout: "allowed: tsconfig.worker.json (no build config reads it)\n2 files compared, 0 different\n",
       stderr: "",
     });
     write(dir, {
@@ -1399,7 +1399,7 @@ describe("port-check", { concurrency: true }, () => {
         "tests/paths.test.mjs differs (base line 2, head line 2)",
         '  base: const SOURCES = ["src/ui.js", "src/ui.js"];',
         '  head: const SOURCES = ["src/ui.js", "src/ui.mjs"];',
-        "allowed: tsconfig.strict.json (no build config reads it)",
+        "allowed: tsconfig.worker.json (no build config reads it)",
         "2 files compared, 1 different",
         "",
       ].join("\n"),
@@ -1409,7 +1409,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("a code file under public/ fails when renamed, moved in or out, or turned into TypeScript", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "public/hats.js": "export const HATS = [];\n",
       "public/fx.js": "export const fx = 1;\n",
       "public/overlay.js":
@@ -1424,7 +1424,7 @@ describe("port-check", { concurrency: true }, () => {
       "public/hats.ts": "export const HATS: string[] = [];\n",
       "public/overlay.js":
         'import { HATS } from "./hats.ts";\nimport { fx } from "../src/served/fx.js";\nexport const n = HATS.length + fx;\n',
-      "tsconfig.strict.json": strictList("public/hats.ts"),
+      "tsconfig.worker.json": strictList("public/hats.ts"),
     });
     assert.deepEqual(await portCheck(dir), {
       status: 1,
@@ -1435,7 +1435,7 @@ describe("port-check", { concurrency: true }, () => {
         '  base: import { HATS } from "./hats.js";',
         '  head: import { HATS } from "./hats.ts";',
         "public/fx.js -> src/served/fx.js changes a path under public/, which serves code as written",
-        "allowed: tsconfig.strict.json (no build config reads it)",
+        "allowed: tsconfig.worker.json (no build config reads it)",
         "public/hats.ts is TypeScript under public/, which serves code as written",
         "1 files compared, 1 different, 4 other problems",
         "",
@@ -1445,7 +1445,7 @@ describe("port-check", { concurrency: true }, () => {
   });
 
   test("a --base that names no commit is bad usage, reported in one line", async () => {
-    const dir = await repo({ "tsconfig.strict.json": strictList() });
+    const dir = await repo({ "tsconfig.worker.json": strictList() });
     assert.deepEqual(await node(dir, SCRIPT, "--base", "no-such-ref"), {
       status: 2,
       stdout: "",
@@ -1463,7 +1463,7 @@ describe("port-check", { concurrency: true }, () => {
     const csp = (src: string) =>
       `  Content-Security-Policy: default-src 'self'; ${"img-src 'self' data: https://static-cdn.jtvnw.net; ".repeat(3)}connect-src 'self' ${src}\n`;
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
+      "tsconfig.worker.json": strictList(),
       "public/_headers": `/*\n${csp("wss://a.example")}`,
     });
     write(dir, { "public/_headers": `/*\n${csp("wss://b.example")}` });
@@ -1482,8 +1482,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("--strict-list fails each TypeScript file no program checks", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("a.ts"),
-      "tsconfig.node.json": '{ "include": ["vite.config.js"] }\n',
+      "tsconfig.worker.json": strictList("a.ts"),
       "a.ts": "export const a = 1;\n",
       "cloudflare.config.ts": "export default {};\n",
       "lib/x.mts": "export const x = 1;\n",
@@ -1492,9 +1491,9 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 1,
       stdout: [
-        "cloudflare.config.ts is left out of tsconfig.strict.json for tsconfig.node.json, which does not list it",
-        "lib/x.mts is not in tsconfig.strict.json",
-        "server/foo.ts is not in tsconfig.strict.json",
+        "cloudflare.config.ts is not in tsconfig.worker.json",
+        "lib/x.mts is not in tsconfig.worker.json",
+        "server/foo.ts is not in tsconfig.worker.json",
         "",
       ].join("\n"),
       stderr: "",
@@ -1503,80 +1502,82 @@ describe("port-check", { concurrency: true }, () => {
 
   test("--strict-list reads the program from tsc, so exclude takes a file out and a glob include puts one in", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictConfig({ files: null, include: ["**/*.ts"], exclude: ["server/rank.ts"] }),
+      "tsconfig.worker.json": strictConfig({ files: null, include: ["**/*.ts"], exclude: ["server/rank.ts"] }),
       "a.ts": "export const a = 1;\n",
       "server/rank.ts": "export const rank = 1;\n",
     });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 1,
-      stdout: "server/rank.ts is not in tsconfig.strict.json\n",
+      stdout: "server/rank.ts is not in tsconfig.worker.json\n",
       stderr: "",
     });
-    write(dir, { "tsconfig.strict.json": strictConfig({ files: null, include: ["**/*.ts"] }) });
+    write(dir, { "tsconfig.worker.json": strictConfig({ files: null, include: ["**/*.ts"] }) });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 0,
-      stdout: "tsconfig.strict.json covers every TypeScript file\n",
+      stdout: "tsconfig.worker.json covers every TypeScript file\n",
       stderr: "",
     });
   });
 
-  test("--strict-list passes a TypeScript file listed only in tsconfig.strict-web.json, and names both lists for one in neither", async () => {
+  test("--strict-list passes a TypeScript file listed only in tsconfig.web.json, and names both lists for one in neither", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("a.ts"),
-      "tsconfig.strict-web.json": strictList("src/view.ts"),
+      "tsconfig.worker.json": strictList("a.ts"),
+      "tsconfig.web.json": strictList("src/view.ts"),
       "a.ts": "export const a = 1;\n",
       "src/view.ts": "export const view = 1;\n",
     });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 0,
-      stdout: "tsconfig.strict.json and tsconfig.strict-web.json cover every TypeScript file\n",
+      stdout: "tsconfig.worker.json and tsconfig.web.json cover every TypeScript file\n",
       stderr: "",
     });
     write(dir, { "src/other.ts": "export const other = 1;\n" });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 1,
-      stdout: "src/other.ts is not in tsconfig.strict.json or tsconfig.strict-web.json\n",
+      stdout: "src/other.ts is not in tsconfig.worker.json or tsconfig.web.json\n",
       stderr: "",
     });
   });
 
-  test("--strict-list passes a test file listed only in tsconfig.strict-tests.json, and names every list for one in none", async () => {
+  test("--strict-list passes a test file listed only in tsconfig.node-dom.json, and names every list for one in none", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("a.ts"),
-      "tsconfig.strict-tests.json": strictList("tests/view.test.ts"),
+      "tsconfig.worker.json": strictList("a.ts"),
+      "tsconfig.node-dom.json": strictList("tests/view.test.ts"),
       "a.ts": "export const a = 1;\n",
       "tests/view.test.ts": "export const view = 1;\n",
     });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 0,
-      stdout: "tsconfig.strict.json and tsconfig.strict-tests.json cover every TypeScript file\n",
+      stdout: "tsconfig.worker.json and tsconfig.node-dom.json cover every TypeScript file\n",
       stderr: "",
     });
     write(dir, {
-      "tsconfig.strict-web.json": strictList("src/view.ts"),
-      "tsconfig.strict-tests-shared.json": strictList("tests/both.test.ts"),
+      "tsconfig.web.json": strictList("src/view.ts"),
+      "tsconfig.node.json": strictList("scripts/tool.ts"),
+      "tsconfig.node-all.json": strictList("tests/both.test.ts"),
       "src/view.ts": "export const view = 1;\n",
+      "scripts/tool.ts": "export const tool = 1;\n",
       "tests/both.test.ts": "export const both = 1;\n",
     });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 0,
       stdout:
-        "tsconfig.strict.json, tsconfig.strict-web.json, tsconfig.strict-tests.json and tsconfig.strict-tests-shared.json cover every TypeScript file\n",
+        "tsconfig.worker.json, tsconfig.web.json, tsconfig.node.json, tsconfig.node-dom.json and tsconfig.node-all.json cover every TypeScript file\n",
       stderr: "",
     });
     write(dir, { "tests/other.test.ts": "export const other = 1;\n" });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 1,
       stdout:
-        "tests/other.test.ts is not in tsconfig.strict.json, tsconfig.strict-web.json, tsconfig.strict-tests.json or tsconfig.strict-tests-shared.json\n",
+        "tests/other.test.ts is not in tsconfig.worker.json, tsconfig.web.json, tsconfig.node.json, tsconfig.node-dom.json or tsconfig.node-all.json\n",
       stderr: "",
     });
   });
 
-  test("--strict-list holds tsconfig.strict-web.json to the strict options and reads its files' comments once", async () => {
+  test("--strict-list holds tsconfig.web.json to the strict options and reads its files' comments once", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("a.ts", "shared.ts"),
-      "tsconfig.strict-web.json": strictConfig({
+      "tsconfig.worker.json": strictList("a.ts", "shared.ts"),
+      "tsconfig.web.json": strictConfig({
         files: ["shared.ts", "src/view.ts"],
         options: { exactOptionalPropertyTypes: false },
       }),
@@ -1587,36 +1588,32 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 1,
       stdout: [
-        "shared.ts:1 has @ts-nocheck, which turns type checking off; files on tsconfig.strict.json are checked whole",
-        "tsconfig.strict-web.json must set exactOptionalPropertyTypes to true (it is false)",
-        "src/view.ts:1 has @ts-nocheck, which turns type checking off; files on tsconfig.strict-web.json are checked whole",
+        "shared.ts:1 has @ts-nocheck, which turns type checking off; files on tsconfig.worker.json are checked whole",
+        "tsconfig.web.json must set exactOptionalPropertyTypes to true (it is false)",
+        "src/view.ts:1 has @ts-nocheck, which turns type checking off; files on tsconfig.web.json are checked whole",
         "",
       ].join("\n"),
       stderr: "",
     });
   });
 
-  test("a port changes only tsconfig.strict-web.json's files list, and keeps the file once the base has it", async () => {
+  test("a port changes only tsconfig.web.json's files list, and keeps the file once the base has it", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList(),
-      "tsconfig.strict-web.json": strictList("src/a.ts"),
+      "tsconfig.worker.json": strictList(),
+      "tsconfig.web.json": strictList("src/a.ts"),
       "src/a.ts": "export const a = 1;\n",
     });
     write(dir, {
-      "tsconfig.strict-web.json": strictList("src/a.ts", "src/b.ts"),
+      "tsconfig.web.json": strictList("src/a.ts", "src/b.ts"),
       "src/b.ts": "export type B = string;\n",
     });
     assert.deepEqual(await portCheck(dir), {
       status: 0,
-      stdout: [
-        "allowed: tsconfig.strict-web.json (no build config reads it)",
-        "1 files compared, 0 different",
-        "",
-      ].join("\n"),
+      stdout: ["allowed: tsconfig.web.json (no build config reads it)", "1 files compared, 0 different", ""].join("\n"),
       stderr: "",
     });
     write(dir, {
-      "tsconfig.strict-web.json": strictConfig({
+      "tsconfig.web.json": strictConfig({
         files: ["src/a.ts", "src/b.ts"],
         options: { useDefineForClassFields: false },
       }),
@@ -1624,21 +1621,21 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
-        "allowed: tsconfig.strict-web.json (no build config reads it)",
-        "tsconfig.strict-web.json changes useDefineForClassFields from the base (base not set, head false); a port changes only its files list",
+        "allowed: tsconfig.web.json (no build config reads it)",
+        "tsconfig.web.json changes useDefineForClassFields from the base (base not set, head false); a port changes only its files list",
         "1 files compared, 0 different, 1 other problems",
         "",
       ].join("\n"),
       stderr: "",
     });
-    moveOut(dir, "tsconfig.strict-web.json");
+    moveOut(dir, "tsconfig.web.json");
     assert.deepEqual(await portCheck(dir), {
       status: 1,
       stdout: [
-        "allowed: tsconfig.strict-web.json (no build config reads it)",
-        "tsconfig.strict-web.json is gone at head; the base has it, so a port keeps it",
-        "src/a.ts is not in tsconfig.strict.json",
-        "src/b.ts is not in tsconfig.strict.json",
+        "allowed: tsconfig.web.json (no build config reads it)",
+        "tsconfig.web.json is gone at head; the base has it, so a port keeps it",
+        "src/a.ts is not in tsconfig.worker.json",
+        "src/b.ts is not in tsconfig.worker.json",
         "1 files compared, 0 different, 3 other problems",
         "",
       ].join("\n"),
@@ -1661,14 +1658,14 @@ describe("port-check", { concurrency: true }, () => {
     },
   ];
   for (const { options, line } of loose) {
-    test(`--strict-list fails a tsconfig.strict.json that ${line.replace(/ \(.*|, which.*/, "")}`, async () => {
+    test(`--strict-list fails a tsconfig.worker.json that ${line.replace(/ \(.*|, which.*/, "")}`, async () => {
       const dir = await repo({
-        "tsconfig.strict.json": strictConfig({ files: ["a.ts"], options }),
+        "tsconfig.worker.json": strictConfig({ files: ["a.ts"], options }),
         "a.ts": "export const a = 1;\n",
       });
       assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
         status: 1,
-        stdout: `tsconfig.strict.json ${line}\n`,
+        stdout: `tsconfig.worker.json ${line}\n`,
         stderr: "",
       });
     });
@@ -1677,15 +1674,15 @@ describe("port-check", { concurrency: true }, () => {
   test("--strict-list reads options through extends, and fails a declaration file skipLibCheck would skip", async () => {
     const dir = await repo({
       "tsconfig.base.json": '{ "compilerOptions": { "strictBindCallApply": false, "skipLibCheck": true } }\n',
-      "tsconfig.strict.json": strictConfig({ extends: "./tsconfig.base.json", files: ["a.ts", "types/x.d.ts"] }),
+      "tsconfig.worker.json": strictConfig({ extends: "./tsconfig.base.json", files: ["a.ts", "types/x.d.ts"] }),
       "a.ts": "export const a = 1;\n",
       "types/x.d.ts": "export type X = string;\n",
     });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 1,
       stdout: [
-        "tsconfig.strict.json sets strictBindCallApply to false, which checks less",
-        "types/x.d.ts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.strict.json; name it .ts",
+        "tsconfig.worker.json sets strictBindCallApply to false, which checks less",
+        "types/x.d.ts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.worker.json; name it .ts",
         "",
       ].join("\n"),
       stderr: "",
@@ -1694,12 +1691,12 @@ describe("port-check", { concurrency: true }, () => {
 
   test("--strict-list fails on each error tsc prints reading the strict list", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictConfig({ files: ["a.ts", "gone.ts"] }),
+      "tsconfig.worker.json": strictConfig({ files: ["a.ts", "gone.ts"] }),
       "a.ts": "export const a = 1;\n",
     });
     const { status, stdout, stderr } = await node(dir, SCRIPT, "--strict-list");
     assert.deepEqual({ status, stderr }, { status: 1, stderr: "" });
-    assert.match(stdout, /^tsc -p tsconfig\.strict\.json: error TS6053: File '[^']*\/gone\.ts' not found\.\n$/);
+    assert.match(stdout, /^tsc -p tsconfig.worker.json: error TS6053: File '[^']*\/gone\.ts' not found\.\n$/);
   });
 
   // Every option port-check requires on (STRICT_ON) and every `no*` option that turns checking off (NO_TURNS_OFF),
@@ -1719,19 +1716,19 @@ describe("port-check", { concurrency: true }, () => {
     ...Object.keys(STRICT_OPTIONS).map((name) => ({
       name,
       value: false,
-      lines: [`tsconfig.strict.json must set ${name} to true (it is false)`],
+      lines: [`tsconfig.worker.json must set ${name} to true (it is false)`],
     })),
     ...NO_TURNS_OFF.map((name) => ({
       name,
       value: true,
       // tsc 7 dropped noStrictGenericChecks: it reads the option as unknown, and that error refuses the list instead.
-      lines: [`tsconfig.strict.json sets ${name} to true, which checks less`, `Unknown compiler option '${name}'.`],
+      lines: [`tsconfig.worker.json sets ${name} to true, which checks less`, `Unknown compiler option '${name}'.`],
     })),
   ];
   for (const { name, value, lines } of turnedOff) {
-    test(`--strict-list fails a tsconfig.strict.json with ${name} set to ${value}`, async () => {
+    test(`--strict-list fails a tsconfig.worker.json with ${name} set to ${value}`, async () => {
       const dir = await repo({
-        "tsconfig.strict.json": strictConfig({ files: ["a.ts"], options: { [name]: value } }),
+        "tsconfig.worker.json": strictConfig({ files: ["a.ts"], options: { [name]: value } }),
         "a.ts": "export const a = 1;\n",
       });
       const { status, stdout, stderr } = await node(dir, SCRIPT, "--strict-list");
@@ -1746,7 +1743,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("--strict-list fails .d.mts and .d.cts files, which skipLibCheck would skip as it does .d.ts", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictConfig({
+      "tsconfig.worker.json": strictConfig({
         files: ["a.ts", "types/x.d.mts", "types/y.d.cts"],
         options: { skipLibCheck: true },
       }),
@@ -1757,17 +1754,17 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 1,
       stdout: [
-        "types/x.d.mts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.strict.json; name it .ts",
-        "types/y.d.cts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.strict.json; name it .ts",
+        "types/x.d.mts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.worker.json; name it .ts",
+        "types/y.d.cts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.worker.json; name it .ts",
         "",
       ].join("\n"),
       stderr: "",
     });
   });
 
-  const nocheckWhy = "which turns type checking off; files on tsconfig.strict.json are checked whole";
+  const nocheckWhy = "which turns type checking off; files on tsconfig.worker.json are checked whole";
   const lintWhy =
-    "which can turn off any lint rule, ban-ts-comment included; files on tsconfig.strict.json take no lint directives";
+    "which can turn off any lint rule, ban-ts-comment included; files on tsconfig.worker.json take no lint directives";
   const offSwitches = [
     { text: "/// @ts-nocheck\nexport const a = 1;\n", lines: [`a.ts:1 has @ts-nocheck, ${nocheckWhy}`] },
     { text: "// @TS-NOCHECK\nexport const a = 1;\n", lines: [`a.ts:1 has @TS-NOCHECK, ${nocheckWhy}`] },
@@ -1798,7 +1795,7 @@ describe("port-check", { concurrency: true }, () => {
   ];
   for (const { text, lines } of offSwitches) {
     test(`--strict-list fails a strict-list file with ${JSON.stringify(text.split("\n")[0])}`, async () => {
-      const dir = await repo({ "tsconfig.strict.json": strictList("a.ts"), "a.ts": text });
+      const dir = await repo({ "tsconfig.worker.json": strictList("a.ts"), "a.ts": text });
       assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
         status: 1,
         stdout: [...lines, ""].join("\n"),
@@ -1809,7 +1806,7 @@ describe("port-check", { concurrency: true }, () => {
 
   test("--strict-list reads comments in every file on the list, JavaScript too, and only comments", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictConfig({
+      "tsconfig.worker.json": strictConfig({
         files: ["a.ts", "site.config.js"],
         options: { allowJs: true, noEmit: true },
       }),
@@ -1824,27 +1821,27 @@ describe("port-check", { concurrency: true }, () => {
     write(dir, { "site.config.js": "// The site config.\nexport default {};\n" });
     assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
       status: 0,
-      stdout: "tsconfig.strict.json covers every TypeScript file\n",
+      stdout: "tsconfig.worker.json covers every TypeScript file\n",
       stderr: "",
     });
   });
 
   const changedOption = (name: string, base: string, head: string) =>
-    `tsconfig.strict.json changes ${name} from the base (base ${base}, head ${head}); a port changes only its files list`;
+    `tsconfig.worker.json changes ${name} from the base (base ${base}, head ${head}); a port changes only its files list`;
   /** The strict list below, extending tsconfig.base.json, with `options` added. */
   const strictOn = (options: Record<string, unknown> = {}, files: string[] = ["a.ts"]) =>
     strictConfig({ extends: "./tsconfig.base.json", files, options });
   const optionChanges = [
     {
       what: "adds paths",
-      head: { "tsconfig.strict.json": strictOn({ paths: { "#x/*": ["./x/*"] } }) },
-      allowed: ["tsconfig.strict.json"],
+      head: { "tsconfig.worker.json": strictOn({ paths: { "#x/*": ["./x/*"] } }) },
+      allowed: ["tsconfig.worker.json"],
       line: changedOption("paths", "not set", '{"#x/*":["./x/*"]}'),
     },
     {
       what: "adds types",
-      head: { "tsconfig.strict.json": strictOn({ types: [] }) },
-      allowed: ["tsconfig.strict.json"],
+      head: { "tsconfig.worker.json": strictOn({ types: [] }) },
+      allowed: ["tsconfig.worker.json"],
       line: changedOption("types", "not set", "[]"),
     },
     {
@@ -1855,10 +1852,10 @@ describe("port-check", { concurrency: true }, () => {
     },
   ];
   for (const { what, head, allowed, line } of optionChanges) {
-    test(`once the base has tsconfig.strict.json, a head that ${what} fails`, async () => {
+    test(`once the base has tsconfig.worker.json, a head that ${what} fails`, async () => {
       const dir = await repo({
         "tsconfig.base.json": '{ "compilerOptions": { "lib": ["esnext"] } }\n',
-        "tsconfig.strict.json": strictOn(),
+        "tsconfig.worker.json": strictOn(),
         "a.ts": "export const a = 1;\n",
       });
       write(dir, head);
@@ -1875,16 +1872,16 @@ describe("port-check", { concurrency: true }, () => {
     });
   }
 
-  test("once the base has tsconfig.strict.json, a head that only adds a file to it passes", async () => {
+  test("once the base has tsconfig.worker.json, a head that only adds a file to it passes", async () => {
     const dir = await repo({
       "tsconfig.base.json": '{ "compilerOptions": { "lib": ["esnext"] } }\n',
-      "tsconfig.strict.json": strictOn(),
+      "tsconfig.worker.json": strictOn(),
       "a.ts": "export const a = 1;\n",
     });
-    write(dir, { "tsconfig.strict.json": strictOn({}, ["a.ts", "b.ts"]), "b.ts": "export type B = string;\n" });
+    write(dir, { "tsconfig.worker.json": strictOn({}, ["a.ts", "b.ts"]), "b.ts": "export type B = string;\n" });
     assert.deepEqual(await portCheck(dir), {
       status: 0,
-      stdout: "allowed: tsconfig.strict.json (no build config reads it)\n1 files compared, 0 different\n",
+      stdout: "allowed: tsconfig.worker.json (no build config reads it)\n1 files compared, 0 different\n",
       stderr: "",
     });
   });
@@ -1999,7 +1996,7 @@ describe("port-rename", () => {
         "server/rank.js -> server/rank.ts",
         "updated docs/notes.md",
         "updated server/main.js (1 import)",
-        'Next: annotate the .ts files, add them to "files" in tsconfig.strict.json (Worker, Node) or tsconfig.strict-web.json (browser), run node scripts/port-check.ts --base origin/main',
+        'Next: annotate the .ts files, add any outside server/ and src/ to "files" in tsconfig.node.json, tsconfig.node-dom.json or tsconfig.node-all.json, run node scripts/port-check.ts --base origin/main',
         "",
       ].join("\n"),
       stderr: "",
@@ -2026,7 +2023,7 @@ describe("port-rename", () => {
         "updated server/d.tsx (1 import)",
         "updated server/e.cts (1 import)",
         "updated types/rank.d.ts (1 import)",
-        'Next: annotate the .ts files, add them to "files" in tsconfig.strict.json (Worker, Node) or tsconfig.strict-web.json (browser), run node scripts/port-check.ts --base origin/main',
+        'Next: annotate the .ts files, add any outside server/ and src/ to "files" in tsconfig.node.json, tsconfig.node-dom.json or tsconfig.node-all.json, run node scripts/port-check.ts --base origin/main',
         "",
       ].join("\n"),
       stderr: "",
@@ -2035,7 +2032,7 @@ describe("port-rename", () => {
 
   test("follows template-literal and query-string imports, and port-check reads them back as the base paths", async () => {
     const dir = await repo({
-      "tsconfig.strict.json": strictList("u.ts"),
+      "tsconfig.worker.json": strictList("u.ts"),
       "u.js": "export const u = 1;\n",
       "m.js":
         'export const a = () => import(`./u.js`);\nexport const b = () => import("./u.js?v=1#top");\nexport const c = (x) => import(`./${x}.js`);\n',
@@ -2045,7 +2042,7 @@ describe("port-rename", () => {
       stdout: [
         "u.js -> u.ts",
         "updated m.js (2 imports)",
-        'Next: annotate the .ts files, add them to "files" in tsconfig.strict.json (Worker, Node) or tsconfig.strict-web.json (browser), run node scripts/port-check.ts --base origin/main',
+        'Next: annotate the .ts files, add any outside server/ and src/ to "files" in tsconfig.node.json, tsconfig.node-dom.json or tsconfig.node-all.json, run node scripts/port-check.ts --base origin/main',
         "",
       ].join("\n"),
       stderr: "",
@@ -2084,7 +2081,7 @@ describe("port-rename", () => {
         "note: public/overlay.html:1 names a renamed file; left as is, since public/ is served as written",
         "note: public/overlay.js:1 names a renamed file; left as is, since public/ is served as written",
         "note: public/overlay.js:2 names a renamed file; left as is, since public/ is served as written",
-        'Next: annotate the .ts files, add them to "files" in tsconfig.strict.json (Worker, Node) or tsconfig.strict-web.json (browser), run node scripts/port-check.ts --base origin/main',
+        'Next: annotate the .ts files, add any outside server/ and src/ to "files" in tsconfig.node.json, tsconfig.node-dom.json or tsconfig.node-all.json, run node scripts/port-check.ts --base origin/main',
         "",
       ].join("\n"),
       stderr: "",
