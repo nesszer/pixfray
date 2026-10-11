@@ -42,6 +42,11 @@ export function scanModule(filename: string, code: string): { specifiers: Specif
   }
   specifiers.sort((a, b) => a.start - b.start);
   const comments = parsed.comments.map(({ start, end }) => ({ start, end }));
+  // oxc lists a hashbang (`#!/usr/bin/env node`) as a comment in JavaScript but only as program.hashbang in
+  // TypeScript, so a ported script would keep it at head while the base blanks it. Count it as a comment in both.
+  const { hashbang } = parsed.program;
+  if (hashbang && !comments.some(({ start }) => start === hashbang.start))
+    comments.unshift({ start: hashbang.start, end: hashbang.end });
   return { specifiers, comments };
 }
 
