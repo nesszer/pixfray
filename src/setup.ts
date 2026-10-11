@@ -1,5 +1,5 @@
 // OBS Browser Source link for this channel (mod controls, Stream setup tab).
-// Duel announcements and the on-screen limit are channel settings (src/admin.js), not part of the link, so they change without touching OBS.
+// Duel announcements and the on-screen limit are channel settings (src/admin.ts), not part of the link, so they change without touching OBS.
 import { CHANNEL } from "./ui.ts";
 const size = document.querySelector("#size") as HTMLInputElement; // element type from the page HTML
 function update() {

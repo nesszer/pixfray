@@ -495,7 +495,7 @@ subset of fields. Versioning works like this:
 | A (backend core) | `server/worker.ts`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
 | B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.js` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.ts`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
-| E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.js` | The signatures below |
+| E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.ts` | The signatures below |
 
 Keep these signatures; worker.ts and channel.ts call them.
 
@@ -591,9 +591,9 @@ bun run test:all           # everything below, in order (scripts/test-all.mjs)
   between them, and in `public/*.html`, to `./<name>.js?v=<hash>`: the first 10 hex digits of a SHA-256 over
   each module's name and served code. The overlay compares the `?v=` it was loaded with against the one in
   `overlay.html` after a deploy and reloads itself between duels when they differ (`overlayVersionFromUrl`).
-  Pages bundled by Vite (`src/ui.ts`, `src/admin.js`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
+  Pages bundled by Vite (`src/ui.ts`, `src/admin.ts`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
   `/upload.js` by full URL at run time, without a version. URLs, `public/overlay.html` and `public/_headers`
-  stay as they are; `src/dev.js` is the owner page's bundled entry (`admin/dev/index.html`).
+  stay as they are; `src/dev.ts` is the owner page's bundled entry (`admin/dev/index.html`).
 - Bindings: ASSETS, ROOMS, AUTH, `CF_VERSION_METADATA` (version metadata), `PUBLIC_ORIGIN`
   (the EventSub callback and OAuth redirect origin), `OWNER_TWITCH_ID` (text, nesszerra's Twitch id; left out under `MINI_LOCAL_TEST=1`) and the secrets
   `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET`, `INTERNAL_SECRET`. `GITHUB_TOKEN`,
