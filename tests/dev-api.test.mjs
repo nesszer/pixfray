@@ -991,7 +991,7 @@ test("code editor request validation happens before GitHub is called", async (t)
     "site.config.ts",
     "tsconfig.json",
     "tsconfig.strict.json",
-    "types/lib-guards.ts",
+    "types/lib-guards.d.ts",
     "scripts/release.mjs",
     "scripts/lib/zip-read.mjs",
   ]) {
