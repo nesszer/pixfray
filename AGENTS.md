@@ -40,7 +40,7 @@ It is not wrangler: never `wrangler deploy` or `--env`.
   refuses on its own.
 - **Every behavior change gets a unit test** in `tests/*.test.ts` and a doc update: routes, rules and config in
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
-- **Strict TypeScript.** New and ported code is `.ts` with `.ts` imports. A port PR changes no runtime code
+- **Strict TypeScript.** New code is `.ts` with `.ts` imports. A port PR changes no runtime code
   (`bun run port-check`). Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
 - **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.ts`. Don't set `HEADLESS=1`.
 - **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in

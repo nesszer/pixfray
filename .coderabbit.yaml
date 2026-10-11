@@ -40,7 +40,7 @@ reviews:
         on the overlay but fighters, nameplates, bubbles and duel effects.
     - path: "**/*.{ts,mts,cts,tsx}"
       instructions: >-
-        Strict TypeScript (tsconfig.strict.json lists each new or ported file) with .ts import paths and erasable syntax
+        Strict TypeScript (every file is in a tsconfig program that bun run typecheck checks) with .ts import paths and erasable syntax
         only. A pull request from a port/ branch changes no runtime code; port-check proves it in CI. Flag every
         any, as cast or ! assertion without a reason in a comment on that line or the line above.
     - path: "tests/**"
