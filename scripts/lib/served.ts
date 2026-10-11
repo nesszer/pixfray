@@ -45,11 +45,13 @@ export function linkServed(text: string, names: readonly string[], version: stri
 }
 
 /** One version for all served modules: the first 10 lowercase hex digits of a SHA-256 over each module's URL name
- * and served code, in name order. It changes only when served code does; the overlay's check reads 6 to 64 hex
- * digits (src/served/overlay.js overlayVersionFromUrl). */
+ * and served code with its imports linked unversioned, in name order, so `./x.ts` and `./x.js` hash alike. It
+ * changes only when served code does; the overlay's check reads 6 to 64 hex digits (src/served/overlay.js
+ * overlayVersionFromUrl). */
 export function servedVersion(modules: readonly { name: string; code: string }[]): string {
-  const hash = createHash("sha256");
+  const hash = createHash("sha256"),
+    names = modules.map((m) => m.name);
   for (const { name, code } of [...modules].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)))
-    hash.update(`${name}.js`).update(code);
+    hash.update(`${name}.js`).update(linkServed(code, names, ""));
   return hash.digest("hex").slice(0, 10);
 }

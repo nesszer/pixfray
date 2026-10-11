@@ -63,6 +63,17 @@ test("served version: 10 lowercase hex digits the overlay's own check reads, cha
     v,
   );
   assert.notEqual(servedVersion([{ name: "hats", code: js }]), v, "a module added or removed changes it");
+  assert.equal(
+    servedVersion([
+      { name: "overlay", code: 'import { HATS } from "./hats.ts";\n' },
+      { name: "hats", code: js },
+    ]),
+    servedVersion([
+      { name: "overlay", code: 'import { HATS } from "./hats.js";\n' },
+      { name: "hats", code: js },
+    ]),
+    "a port that switches ./hats.js to ./hats.ts keeps the version",
+  );
   const html = linkServed('<script type="module" src="./overlay.js"></script>', NAMES, v);
   assert.equal(overlayVersionFromHtml(html), v);
   assert.equal(overlayVersionFromUrl(`https://pixfray.xyz/overlay.js?v=${v}`), v);
