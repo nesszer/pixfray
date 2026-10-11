@@ -258,9 +258,12 @@ async function login() {
   fail("the code expired; run login again");
 }
 
+// This script's path for the messages that tell how to run it, as its own literal so a rename can follow it.
+const SELF = "scripts/devtools.mjs";
+
 async function altToken() {
   const file = readJson(ALT_FILE);
-  if (!file?.alt) fail("no alt account yet; run `node scripts/devtools.mjs login` first");
+  if (!file?.alt) fail("no alt account yet; run `node " + SELF + " login` first");
   const alt = file.alt;
   if (alt.expires_at - Date.now() > 60_000) return alt;
   const app = twitchApp();
@@ -346,7 +349,7 @@ async function realDuel() {
   console.log(`${target.username}: !fight\n  -> ${await say(target, "!fight", "se")}`);
 }
 
-const usage = `Usage: node scripts/devtools.mjs <command> [--channel ${siteConfig.defaultChannel}]   (site: ${BASE})
+const usage = `Usage: node ${SELF} <command> [--channel ${siteConfig.defaultChannel}]   (site: ${BASE})
 
 Bots on the test site
   seed [--bots 2..4]          save fighters for testbot_a… and put them in the arena
