@@ -591,7 +591,7 @@ bun run test:all           # everything below, in order (scripts/test-all.mjs)
   between them, and in `public/*.html`, to `./<name>.js?v=<hash>`: the first 10 hex digits of a SHA-256 over
   each module's name and served code. The overlay compares the `?v=` it was loaded with against the one in
   `overlay.html` after a deploy and reloads itself between duels when they differ (`overlayVersionFromUrl`).
-  Pages bundled by Vite (`src/ui.js`, `src/admin.js`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
+  Pages bundled by Vite (`src/ui.ts`, `src/admin.js`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
   `/upload.js` by full URL at run time, without a version. URLs, `public/overlay.html` and `public/_headers`
   stay as they are; `src/dev.js` is the owner page's bundled entry (`admin/dev/index.html`).
 - Bindings: ASSETS, ROOMS, AUTH, `CF_VERSION_METADATA` (version metadata), `PUBLIC_ORIGIN`
