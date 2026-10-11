@@ -3,7 +3,7 @@
 // No inline script runs anywhere (every page loads <script type="module" src>), so script-src is 'self' (pages add Cloudflare's analytics beacon): no hashes,
 // no 'unsafe-inline', no 'wasm-unsafe-eval' (three.js uses WebGL only). Inline JSON-LD would not be executed, so it needs nothing.
 export const HSTS = "max-age=31536000; includeSubDomains";
-// style-src keeps 'unsafe-inline': overlay.html has an inline <style>, and intro/main.js writes style="--i:n" attributes.
+// style-src keeps 'unsafe-inline': overlay.html has an inline <style>, and intro/main.ts writes style="--i:n" attributes.
 // img/media blob: and data: cover canvas textures and Vite-inlined assets; connect 'self' covers fetch and the same-origin WebSocket.
 const BASE = [
   "style-src 'self' 'unsafe-inline'",

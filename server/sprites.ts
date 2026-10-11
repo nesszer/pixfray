@@ -1,4 +1,4 @@
-// Viewer sprites: any signed-in viewer turns an image into a pixel sprite on /play/ (public/spritify.js does the
+// Viewer sprites: any signed-in viewer turns an image into a pixel sprite on /play/ (src/spritify.ts does the
 // pixelating in the browser, and the optional AI redraw runs on Workers AI here). A sprite waits for a moderator on
 // /admin/; once approved it joins the channel catalog (ids "v-...", with `owner`), only its uploader can wear it, and
 // it goes on their saved fighter. A viewer has at most one approved sprite and one waiting.
