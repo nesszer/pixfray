@@ -3,22 +3,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { readFileSync } from "node:fs";
+import { URL as NodeURL } from "node:url";
 import worker from "../server/worker.ts";
 import { AuthStore, digest, record } from "../server/auth.ts";
 import { hit, WRITE_LIMIT } from "../server/ratelimit.ts";
 import { secure, PAGE_CSP, OVERLAY_CSP, API_CSP, HSTS } from "../server/security.ts";
 import { forgetChannel } from "../server/channels.ts";
+import type { Env } from "../server/env.ts";
+import { asEnv, must, type FakeSql, type Loose } from "./fakes.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz",
   SECRET = "test-only-internal-key",
   DEV_TOKEN = "d".repeat(40);
-function sqlCtx() {
+/** AuthStore's context: real SQLite and a recorded alarm. */
+type SqlCtx = {
+  storage: {
+    sql: FakeSql;
+    alarm: number | null;
+    getAlarm(): Promise<number | null>;
+    setAlarm(t: number): Promise<void>;
+  };
+};
+function sqlCtx(): SqlCtx & DurableObjectState {
   const db = new DatabaseSync(":memory:");
   return {
     storage: {
       sql: {
-        exec(q, ...p) {
+        exec(q: string, ...p: SQLInputValue[]) {
           const rows = db
             .prepare(q)
             .all(...p)
@@ -30,18 +43,20 @@ function sqlCtx() {
       async getAlarm() {
         return this.alarm;
       },
-      async setAlarm(t) {
+      async setAlarm(t: number) {
         this.alarm = t;
       },
     },
-  };
+    // checked as SqlCtx, then handed over as the DurableObjectState AuthStore takes: it has only the calls AuthStore
+    // and hit() make
+  } satisfies SqlCtx as SqlCtx as SqlCtx & DurableObjectState;
 }
-function environment(extra = {}) {
+function environment(extra: object = {}) {
   forgetChannel();
   const ctx = sqlCtx(),
-    auth = new AuthStore(ctx, { INTERNAL_SECRET: SECRET }),
-    rooms = [],
-    hits = [];
+    auth = new AuthStore(ctx, asEnv({ INTERNAL_SECRET: SECRET })),
+    rooms: { channel: string; path: string }[] = [],
+    hits: number[] = [];
   const env = {
     AUTH_SECRET: "test-only-auth-key",
     INTERNAL_SECRET: SECRET,
@@ -49,18 +64,18 @@ function environment(extra = {}) {
     TWITCH_CLIENT_ID: "test-app",
     TWITCH_CLIENT_SECRET: "test-secret",
     AUTH: {
-      idFromName: (x) => x,
+      idFromName: (x: string) => x,
       get: () => ({
-        fetch: (url, init) => {
+        fetch: (url: string, init?: RequestInit) => {
           if (new URL(url).pathname === "/hit") hits.push(1);
           return auth.fetch(new Request(url, init));
         },
       }),
     },
     ROOMS: {
-      idFromName: (x) => x,
-      get: (channel) => ({
-        async fetch(url) {
+      idFromName: (x: string) => x,
+      get: (channel: string) => ({
+        async fetch(url: string) {
           const path = new URL(url).pathname;
           rooms.push({ channel, path });
           return Response.json(path === "/catalog" ? [] : { ok: true, path });
@@ -68,7 +83,7 @@ function environment(extra = {}) {
       }),
     },
     ASSETS: {
-      fetch: async (request) =>
+      fetch: async (request: Request) =>
         new Response(
           new URL(request.url).pathname.startsWith("/assets/characters")
             ? '[{"id":"player"}]'
@@ -82,9 +97,11 @@ function environment(extra = {}) {
     },
     ...extra,
   };
-  return { env, auth, ctx, rooms, hits };
+  // a partial Env on purpose: the fakes cover the bindings worker.fetch reads; their own call shapes stay readable
+  return { env: env as typeof env & Env, auth, ctx, rooms, hits };
 }
-async function signIn(env, user) {
+type User = { id: string; login: string; displayName: string };
+async function signIn(env: Env, user: User) {
   const cookie = String(user.id)
     .padStart(64, "c")
     .slice(-64)
@@ -95,7 +112,7 @@ async function signIn(env, user) {
 const OWNER = { id: "1", login: "nesszerra", displayName: "nesszerra" },
   VIEWER = { id: "2", login: "viewer", displayName: "Viewer" },
   OTHER = { id: "3", login: "other", displayName: "Other" };
-function req(path, method = "GET", data, cookie, extra = {}) {
+function req(path: string, method = "GET", data?: unknown, cookie?: string, extra: Record<string, string> = {}) {
   return new Request(ORIGIN + path, {
     method,
     headers: {
@@ -142,8 +159,11 @@ test("no page runs inline script, so script-src needs no hashes", () => {
     "public/overlay.html",
     "public/404.html",
   ]) {
-    const html = readFileSync(new URL("../" + file, import.meta.url), "utf8");
-    for (const [, attrs, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    const html = readFileSync(new NodeURL("../" + file, import.meta.url), "utf8");
+    // both groups always take part in a match, so each entry holds two strings
+    for (const [, attrs, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi) as unknown as Iterable<
+      [string, string, string]
+    >) {
       if (/\bsrc=/.test(attrs)) assert.equal(body.trim(), "", file + ": a script with src has no inline body");
       else
         assert.match(
@@ -158,9 +178,9 @@ test("no page runs inline script, so script-src needs no hashes", () => {
 });
 
 test("public/_headers repeats the Worker policies for pages assets serve without the Worker", () => {
-  const rules = {};
+  const rules: Record<string, Loose> = {}; // Loose: path -> header -> value, read by name below
   let at = "";
-  for (const line of readFileSync(new URL("../public/_headers", import.meta.url), "utf8").split(/\r?\n/)) {
+  for (const line of readFileSync(new NodeURL("../public/_headers", import.meta.url), "utf8").split(/\r?\n/)) {
     if (!line.trim() || line.startsWith("#")) continue;
     if (!/^\s/.test(line)) {
       at = line.trim();
@@ -210,7 +230,8 @@ test("HSTS goes on every https response, a locked-down CSP on /api and /auth, th
 });
 
 test("secure() leaves WebSocket upgrades alone and copes with immutable headers", () => {
-  const upgrade = { status: 101, webSocket: {}, headers: new Headers() };
+  // a stand-in for a 101 upgrade, which Response cannot construct here; secure() reads only status and webSocket
+  const upgrade = { status: 101, webSocket: {}, headers: new Headers() } as unknown as Response;
   assert.equal(secure(upgrade, new URL(ORIGIN + "/api/live/x"), API_CSP), upgrade);
   const redirect = secure(Response.redirect(ORIGIN + "/", 302), new URL(ORIGIN + "/"), API_CSP);
   assert.equal(redirect.status, 302);
@@ -230,7 +251,8 @@ test("public health check says only whether the server is up", async () => {
   const r = await worker.fetch(req("/api/health"), f.env);
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true });
-  const broken = await worker.fetch(req("/api/health"), { ...f.env, AUTH_SECRET: undefined });
+  // a missing secret on purpose: the test checks the 503
+  const broken = await worker.fetch(req("/api/health"), asEnv({ ...f.env, AUTH_SECRET: undefined }));
   assert.equal(broken.status, 503);
   assert.deepEqual(await broken.json(), { ok: false });
   const noInternal = await worker.fetch(req("/api/health"), { ...f.env, INTERNAL_SECRET: "" });
@@ -241,7 +263,7 @@ test("public health check says only whether the server is up", async () => {
 test("hit(): the 31st write in a minute is refused; the window slides instead of resetting all at once", async () => {
   const ctx = sqlCtx(),
     T = 10 * 60000; // the start of a window
-  new AuthStore(ctx, { INTERNAL_SECRET: SECRET }); // creates the entries table
+  new AuthStore(ctx, asEnv({ INTERNAL_SECRET: SECRET })); // creates the entries table
   for (let i = 0; i < WRITE_LIMIT; i++)
     assert.equal((await hit(ctx, "a", 30, 60000, T + i)).limited, false, "write " + (i + 1));
   const refused = await hit(ctx, "a", 30, 60000, T + 30);
@@ -264,7 +286,7 @@ test("hit(): the 31st write in a minute is refused; the window slides instead of
   // after a full quiet minute everything is open again
   assert.equal((await hit(ctx, "a", 30, 60000, T + 3 * 60000)).limited, false);
   // counts expire with AuthStore's hourly sweep, and it is scheduled
-  assert.ok(ctx.storage.alarm > 0);
+  assert.ok((ctx.storage.alarm as number) > 0); // null fails the comparison, as it did before types
   assert.ok(ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM entries WHERE key LIKE 'rl:%'").toArray()[0].n > 0);
 });
 
@@ -272,7 +294,7 @@ test("profile saves: the 31st in a minute is 429 with Retry-After; reads are not
   const f = environment(),
     viewer = await signIn(f.env, VIEWER),
     other = await signIn(f.env, OTHER);
-  const save = (cookie) => worker.fetch(req("/api/profile/nesszerra", "POST", profile, cookie), f.env);
+  const save = (cookie: string) => worker.fetch(req("/api/profile/nesszerra", "POST", profile, cookie), f.env);
   for (let i = 0; i < 40; i++)
     assert.equal(
       (await worker.fetch(req("/api/profile/nesszerra", "GET", undefined, viewer), f.env)).status,
@@ -284,7 +306,7 @@ test("profile saves: the 31st in a minute is 429 with Retry-After; reads are not
   const before = f.rooms.length;
   const refused = await save(viewer);
   assert.equal(refused.status, 429);
-  const body = await refused.json();
+  const body = await refused.json<Loose>(); // Loose: the error body, read by field below
   assert.equal(body.reason, "rate_limited");
   assert.match(body.error, /Too many/);
   assert.ok(Number.isInteger(body.retryAfter) && body.retryAfter >= 1 && body.retryAfter <= 125);
@@ -311,7 +333,7 @@ test("shop buys, uploads and admin changes share the user's 30 writes a minute, 
     () => req("/api/profile/miolafff", "POST", profile, owner),
   ];
   for (let i = 0; i < 30; i++)
-    assert.notEqual((await worker.fetch(calls[i % calls.length](), f.env)).status, 429, "write " + (i + 1));
+    assert.notEqual((await worker.fetch(must(calls[i % calls.length])(), f.env)).status, 429, "write " + (i + 1));
   for (const call of calls) assert.equal((await worker.fetch(call(), f.env)).status, 429, call().url);
   // GETs on the same routes still work
   assert.equal((await worker.fetch(req("/api/admin/nesszerra", "GET", undefined, owner), f.env)).status, 200);
@@ -342,11 +364,11 @@ test("if AuthStore cannot count, the write goes through instead of failing", asy
   f.env.AUTH = {
     idFromName: real.idFromName,
     get: () => ({
-      fetch: (url, init) => {
+      fetch: (url: string, init?: RequestInit) => {
         if (new URL(url).pathname === "/hit") throw new Error("down");
         return real.get().fetch(url, init);
       },
     }),
-  };
+  } as typeof real; // a fake namespace in place of the AUTH binding, as in environment()
   assert.equal((await worker.fetch(req("/api/profile/nesszerra", "POST", profile, viewer), f.env)).status, 200);
 });

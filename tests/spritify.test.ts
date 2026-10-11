@@ -15,15 +15,19 @@ import {
   OUTLINE,
 } from "../src/spritify.ts";
 import { validateSprite, validateRedrawImage, jpegSize, spriteDay, SPRITE_LIMITS } from "../server/sprites.ts";
-import { makePng, b64 } from "./upload-helpers.mjs";
+import type { Img } from "../src/spritify.ts";
+import { makePng, b64 } from "./upload-helpers.ts";
+import { must } from "./fakes.ts";
 
 // A w x h picture: `pixel(x, y)` gives [r, g, b, a].
-function picture(w, h, pixel) {
+function picture(w: number, h: number, pixel: (x: number, y: number) => readonly number[]): Img {
   const data = new Uint8ClampedArray(w * h * 4);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) data.set(pixel(x, y), (y * w + x) * 4);
   return { width: w, height: h, data };
 }
-const at = (img, x, y) => [...img.data.subarray((y * img.width + x) * 4, (y * img.width + x) * 4 + 4)];
+const at = (img: Img, x: number, y: number) => [
+  ...img.data.subarray((y * img.width + x) * 4, (y * img.width + x) * 4 + 4),
+];
 // A red ball with a blue stripe on a white photo background, touching nothing.
 const ball = (w = 300, h = 200) =>
   picture(w, h, (x, y) =>
@@ -74,17 +78,19 @@ test("spritify: palette, outline and pixel doubling", () => {
 });
 
 test("spritify: a photo becomes a small hard-edged sprite inside 128 px that the server accepts", () => {
-  const sprite = spritify(ball());
+  const sprite = must(spritify(ball()));
   assert.ok(sprite.width <= SPRITE_MAX && sprite.height <= SPRITE_MAX);
   assert.equal(sprite.height, (56 + 2) * 2);
   for (let i = 3; i < sprite.data.length; i += 4) assert.ok(sprite.data[i] === 0 || sprite.data[i] === 255);
   const colors = new Set();
   for (let i = 0; i < sprite.data.length; i += 4)
     if (sprite.data[i + 3]) colors.add(sprite.data.slice(i, i + 3).join());
-  assert.ok(colors.size <= 15, colors.size);
+  assert.ok(colors.size <= 15, String(colors.size));
   // A wide subject is limited by width.
-  const wide = spritify(
-    picture(400, 40, (x, y) => (y > 10 && y < 30 && x > 10 && x < 390 ? [0, 120, 0, 255] : [255, 255, 255, 255])),
+  const wide = must(
+    spritify(
+      picture(400, 40, (x, y) => (y > 10 && y < 30 && x > 10 && x < 390 ? [0, 120, 0, 255] : [255, 255, 255, 255])),
+    ),
   );
   assert.ok(wide.width <= SPRITE_MAX);
   // Nothing left after the background goes.

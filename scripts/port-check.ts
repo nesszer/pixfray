@@ -1,5 +1,7 @@
 // Proves a TypeScript port changes no runtime code, and that the strict programs check every TypeScript file:
-// tsconfig.strict.json (the Worker, scripts and shared files) and tsconfig.strict-web.json (browser code).
+// tsconfig.strict.json (the Worker, scripts, shared files and most unit tests), tsconfig.strict-web.json (browser code),
+// tsconfig.strict-tests.json (unit tests of DOM modules) and tsconfig.strict-tests-shared.json (unit tests that import
+// both a Worker module and a DOM module).
 //
 // `--base <ref>` pairs every file at the merge base with `<ref>` against the working tree. Code files are stripped to
 // JavaScript with oxc and compared. A file pairs with the same path; a code file gone at head pairs with a new code file
@@ -40,9 +42,24 @@ const STRICT_CONFIG = "tsconfig.strict.json";
 /** The strict program for browser code: DOM types, and none of the Worker's or Node's. */
 const STRICT_WEB_CONFIG = "tsconfig.strict-web.json";
 
-/** The strict programs, in the order their problems print. A file passes the strict list in either; a config the
+/** The strict program for unit tests that import a DOM module: DOM and Node types, no Worker types. */
+const STRICT_TESTS_CONFIG = "tsconfig.strict-tests.json";
+
+/** The strict program for unit tests that import both a Worker module and a DOM module: all three type sets. */
+const STRICT_TESTS_SHARED_CONFIG = "tsconfig.strict-tests-shared.json";
+
+/** The strict programs, in the order their problems print. A file passes the strict list in any of them; a config the
  * working tree lacks is skipped. */
-const STRICT_CONFIGS = [STRICT_CONFIG, STRICT_WEB_CONFIG];
+const STRICT_CONFIGS = [STRICT_CONFIG, STRICT_WEB_CONFIG, STRICT_TESTS_CONFIG, STRICT_TESTS_SHARED_CONFIG];
+
+/** The strict configs a message names: tsconfig.strict.json always, then each other one `root` has, as "a", "a or b",
+ * or "a, b or c" (with `and` for "and"). */
+function strictNames(root: string, and = false): { names: string; count: number } {
+  const present = STRICT_CONFIGS.filter((config) => config === STRICT_CONFIG || existsSync(path.join(root, config)));
+  const last = present.at(-1) ?? STRICT_CONFIG;
+  const names = present.length > 1 ? `${present.slice(0, -1).join(", ")} ${and ? "and" : "or"} ${last}` : STRICT_CONFIG;
+  return { names, count: present.length };
+}
 
 /** oxc's language for each code extension. */
 const LANG = {
@@ -351,7 +368,7 @@ function offSwitches(root: string, files: Iterable<string>, config: string): str
 /** One line per TypeScript file in the working tree that no strict program checks, and for each strict config the
  * working tree has (STRICT_CONFIGS, in order): per error tsc prints reading it, per option that loosens it
  * (looseOptions) or, given the base's options for it in `bases`, differs from them (changedOptions), and per comment
- * in its program that turns a check off (offSwitches; a file in both programs is read once, for the first). The tsc
+ * in its program that turns a check off (offSwitches; a file in several programs is read once, for the first). The tsc
  * runs overlap. */
 async function strictListProblems(
   root: string,
@@ -382,9 +399,7 @@ async function strictListProblems(
     problems.push(...errors, ...(await loose), ...(await changed), ...offSwitches(root, unread, config));
     for (const file of listed) checked.add(file);
   }
-  const lists = existsSync(path.join(root, STRICT_WEB_CONFIG))
-    ? `${STRICT_CONFIG} or ${STRICT_WEB_CONFIG}`
-    : STRICT_CONFIG;
+  const lists = strictNames(root).names;
   for (const file of typescript) {
     if (checked.has(file)) continue;
     const program = STRICT_EXCLUSIONS[file];
@@ -1078,12 +1093,8 @@ async function main(): Promise<number> {
     const problems = await strictListProblems(top, headFiles(top));
     for (const line of problems) console.log(line);
     if (problems.length === 0) {
-      const web = existsSync(path.join(top, STRICT_WEB_CONFIG));
-      console.log(
-        web
-          ? `${STRICT_CONFIG} and ${STRICT_WEB_CONFIG} cover every TypeScript file`
-          : `${STRICT_CONFIG} covers every TypeScript file`,
-      );
+      const { names, count } = strictNames(top, true);
+      console.log(`${names} ${count > 1 ? "cover" : "covers"} every TypeScript file`);
     }
     return problems.length > 0 ? 1 : 0;
   }

@@ -1501,6 +1501,39 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
+  test("--strict-list passes a test file listed only in tsconfig.strict-tests.json, and names every list for one in none", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("a.ts"),
+      "tsconfig.strict-tests.json": strictList("tests/view.test.ts"),
+      "a.ts": "export const a = 1;\n",
+      "tests/view.test.ts": "export const view = 1;\n",
+    });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 0,
+      stdout: "tsconfig.strict.json and tsconfig.strict-tests.json cover every TypeScript file\n",
+      stderr: "",
+    });
+    write(dir, {
+      "tsconfig.strict-web.json": strictList("src/view.ts"),
+      "tsconfig.strict-tests-shared.json": strictList("tests/both.test.ts"),
+      "src/view.ts": "export const view = 1;\n",
+      "tests/both.test.ts": "export const both = 1;\n",
+    });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 0,
+      stdout:
+        "tsconfig.strict.json, tsconfig.strict-web.json, tsconfig.strict-tests.json and tsconfig.strict-tests-shared.json cover every TypeScript file\n",
+      stderr: "",
+    });
+    write(dir, { "tests/other.test.ts": "export const other = 1;\n" });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 1,
+      stdout:
+        "tests/other.test.ts is not in tsconfig.strict.json, tsconfig.strict-web.json, tsconfig.strict-tests.json or tsconfig.strict-tests-shared.json\n",
+      stderr: "",
+    });
+  });
+
   test("--strict-list holds tsconfig.strict-web.json to the strict options and reads its files' comments once", async () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList("a.ts", "shared.ts"),

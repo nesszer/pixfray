@@ -73,15 +73,19 @@ test("overlay: clipName cuts nameplates at 24 characters with a whole-character 
   );
 });
 
-function luminance(hex) {
+/** The red, green and blue channels of a #rrggbb color. */
+type Channels = [number, number, number];
+function luminance(hex: string) {
   const c = [1, 3, 5]
     .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
-    .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    // as Channels: mapping the three channel offsets gives three numbers
+    .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)) as Channels;
   return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 }
-const contrast = (hex) => (luminance(hex) + 0.05) / (0.0053 + 0.05);
-function hue(hex) {
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255),
+const contrast = (hex: string) => (luminance(hex) + 0.05) / (0.0053 + 0.05);
+function hue(hex: string) {
+  // as Channels: mapping the three channel offsets gives three numbers
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255) as Channels,
     max = Math.max(r, g, b),
     d = max - Math.min(r, g, b);
   return d === 0 ? 0 : 60 * (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4);
@@ -103,7 +107,8 @@ test("overlay: readableColor leaves readable colors alone and lightens dark ones
   }
   assert.equal(readableColor("#0000FF"), readableColor("#0000ff"), "case does not matter");
   assert.equal(readableColor("nonsense"), "nonsense", "invalid values pass through for the caller to reject");
-  assert.equal(readableColor(undefined), undefined);
+  // wrong type on purpose: the test checks that a missing color passes through
+  assert.equal(readableColor(undefined as unknown as string), undefined);
 });
 
 test("overlay: the overlay version is the ?v= hash on its own script URL and on the overlay page", () => {

@@ -2,58 +2,27 @@
 // even when the second delivery lands on a fresh room instance (a new isolate sharing the same Durable Object storage).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
 import { ChannelRoom } from "../server/channel.ts";
 import { claimMessage, releaseMessage, EVENTSUB_DEDUPE_MS } from "../server/dedupe.ts";
+import { fakeCtx, fakeSql } from "./fakes.ts";
+import type { FakeState, Loose } from "./fakes.ts";
+import type { Env } from "../server/env.ts";
 
 const SECRET = "test-only-internal-secret-0123456789";
-function sqlHandle() {
-  const db = new DatabaseSync(":memory:");
-  return {
-    exec(query, ...params) {
-      const rows = db
-        .prepare(query)
-        .all(...params)
-        .map((r) => ({ ...r }));
-      return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() };
-    },
-  };
-}
-function fakeCtx(sql = sqlHandle()) {
-  let depth = 0;
-  const storage = {
-    sql,
-    transactionSync(fn) {
-      if (depth) return fn();
-      depth++;
-      sql.exec("BEGIN");
-      try {
-        const v = fn();
-        sql.exec("COMMIT");
-        return v;
-      } catch (e) {
-        sql.exec("ROLLBACK");
-        throw e;
-      } finally {
-        depth--;
-      }
-    },
-    alarm: null,
-    async setAlarm(t) {
-      this.alarm = t;
-    },
-    async getAlarm() {
-      return this.alarm ?? null;
-    },
-    async deleteAlarm() {
-      this.alarm = null;
-    },
-  };
-  return { storage, acceptWebSocket() {}, getWebSockets: () => [], sockets: [] };
-}
 // A room over `ctx`; calling again with the same ctx is a restart / another isolate on the same storage.
-function roomOn(ctx, env = {}) {
-  const r = new ChannelRoom(ctx, { INTERNAL_SECRET: SECRET, CHAT_BOT: "1", ...env });
+type CallOptions = { method?: string; body?: unknown; userId?: string };
+// Loose: the body is the room's JSON (or text) reply, which each test reads by property and asserts on
+type CallResult = { status: number; body: Loose };
+type DeliverOptions = { id?: string; login?: string; bot?: boolean; timestamp?: number };
+/** A ChannelRoom with the request helpers roomOn() attaches. */
+type TestRoom = ChannelRoom & {
+  call(path: string, options?: CallOptions): Promise<CallResult>;
+  deliver(messageId: string, text: string, options?: DeliverOptions): Promise<CallResult>;
+};
+
+function roomOn(ctx: FakeState, env: Partial<Env> = {}): TestRoom {
+  // TestRoom: roomOn() attaches call and deliver below before returning; Env: a partial Env on purpose
+  const r = new ChannelRoom(ctx, { INTERNAL_SECRET: SECRET, CHAT_BOT: "1", ...env } as Env) as TestRoom;
   r.call = async (path, { method = "GET", body, userId } = {}) => {
     const headers = {
       "X-Mini-Internal": SECRET,
@@ -70,7 +39,8 @@ function roomOn(ctx, env = {}) {
     );
     return {
       status: res.status,
-      body: (res.headers.get("content-type") || "").includes("json") ? await res.json() : await res.text(),
+      // Loose: the JSON reply body, which the tests read by property
+      body: (res.headers.get("content-type") || "").includes("json") ? await res.json<Loose>() : await res.text(),
     };
   };
   r.deliver = (messageId, text, { id = "u1", login = "alice", bot = true, timestamp = Date.now() } = {}) =>
@@ -94,19 +64,19 @@ function roomOn(ctx, env = {}) {
     });
   return r;
 }
-const connect = (r) =>
+const connect = (r: TestRoom) =>
   r.call("/chat", {
     method: "POST",
     body: { action: "connected", subscriptionId: "sub-bot", status: "enabled", createdAt: Date.now() },
   });
-const rows = (ctx) =>
+const rows = (ctx: FakeState) =>
   ctx.storage.sql
     .exec("SELECT id FROM eventsub_seen ORDER BY id")
     .toArray()
     .map((r) => r.id);
 
 test("claimMessage(): new ids are claimed once, expire after 10 minutes, and can be released", () => {
-  const sql = sqlHandle(),
+  const sql = fakeSql(),
     T = 1_000_000;
   assert.equal(claimMessage(sql, "a", T), true);
   assert.equal(claimMessage(sql, "a", T + 1), false, "a redelivery");
@@ -122,7 +92,7 @@ test("claimMessage(): new ids are claimed once, expire after 10 minutes, and can
 });
 
 test("claimMessage(): expired rows are swept so the table stays small", () => {
-  const sql = sqlHandle(),
+  const sql = fakeSql(),
     T = 5_000_000;
   for (let i = 0; i < 20; i++) claimMessage(sql, "old" + i, T);
   claimMessage(sql, "new", T + EVENTSUB_DEDUPE_MS + 120_000);
@@ -160,7 +130,8 @@ test("a command delivered twice, the second time to a fresh room instance, runs 
   const fresh = roomOn(ctx); // a restarted room: its in-memory Map is empty
   const second = await fresh.deliver("msg-1", "!ranks");
   assert.deepEqual(second.body, { ok: true, duplicate: true }, "fresh instance on the same storage");
-  assert.equal(second.body.reply, undefined, "no second bot reply");
+  // Loose: the deepEqual above narrowed body to its expected shape; reply is the field this line proves absent
+  assert.equal((second.body as Loose).reply, undefined, "no second bot reply");
   const other = await fresh.deliver("msg-2", "!ranks");
   assert.ok(other.body.reply, "a different message id still plays");
   assert.deepEqual(rows(ctx), ["msg-1", "msg-2"]);
@@ -172,7 +143,7 @@ test("a duel command redelivered after a restart does not challenge twice", asyn
   for (const [id, name] of [
     ["u1", "alice"],
     ["u2", "bob"],
-  ])
+  ] satisfies [string, string][])
     await first.call("/profile", {
       method: "POST",
       userId: id,

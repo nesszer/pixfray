@@ -538,13 +538,16 @@ gitleaks git --config .gitleaks.toml --redact .   # secret scan; CI scans the wh
 bun run audit              # bun audit --audit-level=high; CI fails on a high or critical advisory
 bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
-bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), then two strict programs split by
-                           # runtime: tsconfig.strict.json (Worker and Node types: server/, scripts/,
-                           # site.config.js, shared types) and tsconfig.strict-web.json (DOM types: src/,
-                           # types/dom.ts); then port-check --strict-list. It requires every TypeScript file in
-                           # the program tsc reads from either strict config, except cloudflare.config.ts
-                           # (tsconfig.node.json) and types/browser.d.ts (tsconfig.web.json). It fails a tsc
-                           # error reading either, a strict option off in either, a .d.ts, .d.mts or .d.cts
+bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), then four strict programs split by
+                           # globals: tsconfig.strict.json (Worker and Node types: server/, scripts/,
+                           # site.config.js, shared types, unit tests of Worker modules and tests/fakes.ts),
+                           # tsconfig.strict-web.json (DOM types: src/, types/dom.ts), tsconfig.strict-tests.json
+                           # (DOM and Node: unit tests of DOM modules) and tsconfig.strict-tests-shared.json
+                           # (Worker, DOM and Node: unit tests that import both); then port-check --strict-list.
+                           # It requires every TypeScript file in the program tsc reads from some strict config,
+                           # except cloudflare.config.ts (tsconfig.node.json) and types/browser.d.ts
+                           # (tsconfig.web.json). It fails a tsc error reading any of them, a strict option off
+                           # in any, a .d.ts, .d.mts or .d.cts
                            # under skipLibCheck, and in any code file in those programs a comment with
                            # @ts-nocheck (any letter case) or eslint-disable / oxlint-disable (any form).
 bun run port-check         # node scripts/port-check.ts --base origin/main. Exits 1 on a difference or problem,
@@ -556,8 +559,8 @@ bun run port-check         # node scripts/port-check.ts --base origin/main. Exit
                            #   bunx cf build, offline, and compares every .cloudflare/output file (JS without
                            #   comments, the rest byte for byte).
                            # - Leaves tsconfig*.json changes to that build diff, but fails a new root
-                           #   tsconfig.json. For each strict config the merge base has (tsconfig.strict.json,
-                           #   tsconfig.strict-web.json), the head's resolved compilerOptions for it
+                           #   tsconfig.json. For each strict config the merge base has (any of the four),
+                           #   the head's resolved compilerOptions for it
                            #   (tsc --showConfig) must equal the base's; only its files list may change.
                            # - In tests/, scripts/, cloudflare.config.ts and vite.config.js, passes a string
                            #   naming a moved file's new path.
@@ -571,7 +574,7 @@ bun run port-check         # node scripts/port-check.ts --base origin/main. Exit
 node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
                                         # refuses files under public/ and never rewrites one: it lists each
                                         # line there that names a renamed file as file:line
-bun run test:unit          # node --import ./tests/register.mjs --test "tests/*.test.{mjs,ts}"
+bun run test:unit          # node --import ./tests/register.ts --test "tests/*.test.{mjs,ts}"
 bun run test:port          # node --test tests/port/port-check.test.mjs: port-check and port-rename against fixture
                            # repos in one new OS temp folder per run (the build tests run bunx cf build); not in
                            # check, for speed; CI runs it next to bun run check

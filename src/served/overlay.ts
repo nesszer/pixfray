@@ -419,7 +419,7 @@ async function start() {
   // use a command): login -> { at, look }, misses included, refetched after 5 min. Batched, 20 logins per call.
   const savedLooks = new Map<string, { at: number; look: ArenaProfile | null }>(),
     lookQueue = new Set<string>();
-  let lookTimer = 0;
+  let lookTimer: unknown = 0;
   const meetPoints = new Map<string, Meet>();
   // A quick duel is over on the server before the overlay sees it, so the overlay replays it from its events:
   // duel id -> an active duel whose hp follows the duel_action events until duel_completed.

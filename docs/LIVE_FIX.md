@@ -150,8 +150,8 @@ rules apply to them. `check` has no environment, so its checks run before anyone
 ## Unverified
 
 The GitHub REST, Cloudflare Workers versions/deployments and GraphQL analytics request shapes
-follow the public docs. They were tested only against local fakes (`tests/dev-api.test.mjs`,
-`tests/dev-release.test.mjs`), not against the live services. Expect to adjust field names on
+follow the public docs. They were tested only against local fakes (`tests/dev-api.test.ts`,
+`tests/dev-release.test.ts`), not against the live services. Expect to adjust field names on
 the first real run.
 
 ## Open items

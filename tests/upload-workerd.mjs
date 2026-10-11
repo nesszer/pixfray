@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { makePng, b64 } from "./upload-helpers.mjs";
+import { makePng, b64 } from "./upload-helpers.ts";
 
 const root = new URL("../", import.meta.url);
 const ORIGIN = "http://localhost",

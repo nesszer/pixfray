@@ -1,0 +1,22 @@
+// Strict TypeScript for unit tests that import both a Worker module and a DOM module: Worker, DOM and Node types.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": ["@cloudflare/workers-types", "node"],
+    "checkJs": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "files": [
+    "types/lib-guards.ts",
+    "types/site.ts",
+    "site.config.js",
+    "types/dom.ts",
+    "tests/arena-client.test.ts",
+    "tests/atlas.test.ts",
+    "tests/cosmetics.test.ts",
+    "tests/spritify.test.ts"
+  ]
+}

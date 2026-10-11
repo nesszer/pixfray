@@ -1,0 +1,20 @@
+// Strict TypeScript for unit tests that import a DOM module (src/served/overlay.ts) and Node, but no Worker module.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": ["node"],
+    "checkJs": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "files": [
+    "types/lib-guards.ts",
+    "types/site.ts",
+    "site.config.js",
+    "types/dom.ts",
+    "tests/overlay.test.ts",
+    "tests/served.test.ts"
+  ]
+}

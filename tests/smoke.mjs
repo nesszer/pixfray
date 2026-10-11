@@ -3,7 +3,7 @@ import { chromium } from "@playwright/test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { enforceCsp } from "./csp-helper.mjs";
+import { enforceCsp } from "./csp-helper.ts";
 const browser = await chromium.launch(chromeOptions());
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const out = fileURLToPath(new URL("../screenshots", import.meta.url));

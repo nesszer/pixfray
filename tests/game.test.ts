@@ -10,14 +10,53 @@ import {
   replayMs,
   normalizeGameState,
 } from "../server/game.ts";
+import type {
+  CommandEvent,
+  Config,
+  Duel,
+  GameEvent,
+  GameResult,
+  GameState,
+  Player,
+  ProfileInput,
+  ReduceOutput,
+  Swing,
+} from "../server/model.ts";
+import type { Stats } from "../server/upgrades.ts";
+import { asEnv, must } from "./fakes.ts";
+import type { Loose } from "./fakes.ts";
 
 const T0 = 1_800_000_000_000;
 let seq = 0;
 
+/** A profile field the harness fills in; stats may be partial (the reducer cleans them). */
+type ProfileExtra = Omit<ProfileInput, "stats"> & { stats?: Partial<Stats> };
+/** An accepted quick duel's result: it always carries the swings. */
+type QuickResult = GameResult & { swings: Swing[] };
+/** A config as stored before relayLeaseMs was dropped. */
+type LegacyConfig = Config & { relayLeaseMs?: unknown };
+/** seReplyText's options; some tests leave out origin. */
+type SeReplyArgs = Parameters<typeof import("../server/streamelements.ts").seReplyText>[0];
+type Arena = {
+  state: GameState;
+  now: number;
+  /** The last reduceGame output; arena() always applies an event before a test reads it. */
+  last: ReduceOutput;
+  apply(event: GameEvent): GameResult;
+  tick(ms: number): GameResult;
+  advance(ms: number): void;
+  say(login: string, text: string): GameResult;
+  register(login: string, extra?: ProfileExtra): GameResult;
+  player(login: string): Player;
+  duel(id: string | undefined): Duel;
+  fight(a: string, b: string): string | undefined;
+};
+
 // Small harness: keeps state and clock, applies events through the pure reducer.
 // HP-fight tests turn quick duels off; quick-duel tests pass { quick: true }.
-function arena({ chat = true, viewers = ["alice", "bob", "cara", "dan"], quick = false } = {}) {
-  const w = { state: createInitialState("nesszerra"), now: T0, last: null };
+function arena({ chat = true, viewers = ["alice", "bob", "cara", "dan"], quick = false } = {}): Arena {
+  // the methods and the first `last` are attached right below, before any test sees the object
+  const w = { state: createInitialState("nesszerra"), now: T0, last: null } as unknown as Arena;
   w.state.config.quickDuel = quick;
   w.apply = (event) => {
     const r = reduceGame(w.state, event, w.now);
@@ -58,10 +97,11 @@ function arena({ chat = true, viewers = ["alice", "bob", "cara", "dan"], quick =
         color: "#112233",
         defaultAbility: "strike",
         ...extra,
-      },
+      } as ProfileInput, // stats may be partial: the reducer cleans them (cleanStats)
     });
-  w.player = (login) => w.state.players.find((p) => p.username === login);
-  w.duel = (id) => w.state.duels.find((d) => d.id === id);
+  // as Player / as Duel: tests only ask for fighters and duels they created; a miss fails the next assertion
+  w.player = (login) => w.state.players.find((p) => p.username === login) as Player;
+  w.duel = (id) => w.state.duels.find((d) => d.id === id) as Duel; // see above
   w.fight = (a, b) => {
     const c = w.say(a, "!challenge @" + b);
     assert.equal(c.ok, true, c.reason);
@@ -225,7 +265,7 @@ test("heal has a 12 s cooldown and cooldowns are per fighter", () => {
 test("at most 5 simultaneous duels per channel (pending challenges count)", () => {
   const names = Array.from({ length: 12 }, (_, i) => "v" + i);
   const w = arena({ viewers: names });
-  for (let i = 0; i < 4; i++) w.fight(names[i * 2], names[i * 2 + 1]);
+  for (let i = 0; i < 4; i++) w.fight(must(names[i * 2]), must(names[i * 2 + 1]));
   assert.equal(w.say("v8", "!challenge @v9").ok, true, "fifth slot used by a pending challenge");
   assert.equal(w.say("v10", "!challenge @v11").reason, "channel_full");
 });
@@ -252,7 +292,7 @@ test("each accepted duel counts as one round", () => {
   assert.equal(w.state.round, 0);
 });
 
-function knockOut(w, attacker) {
+function knockOut(w: Arena, attacker: string) {
   for (let i = 0; i < 10; i++) {
     const r = w.say(attacker, "!strike");
     if (r.reason === "duel_completed") return r;
@@ -306,15 +346,15 @@ test("completed duels update wins, losses and Elo (start 1000, K=24)", () => {
   assert.equal(w.player("bob").elo, 988);
   assert.equal(w.player("alice").wins, 1);
   assert.equal(w.player("bob").losses, 1);
-  assert.deepEqual(w.duel(id).ratings["id-alice"], { before: 1000, after: 1012, delta: 12 });
+  assert.deepEqual(must(w.duel(id).ratings)["id-alice"], { before: 1000, after: 1012, delta: 12 });
   assert.deepEqual(w.last.dirtyProfileIds.length, 0, "channel persists participants on duel_completed");
   // Upset: lower-rated bob beats alice and gains more than 12.
   w.advance(30_000);
   const id2 = w.fight("bob", "alice");
   knockOut(w, "bob");
   const exp = 1 / (1 + 10 ** ((1012 - 988) / 400));
-  assert.equal(w.duel(id2).ratings["id-bob"].after, Math.round(988 + 24 * (1 - exp)));
-  assert.ok(w.duel(id2).ratings["id-bob"].delta > 12);
+  assert.equal(must(must(w.duel(id2).ratings)["id-bob"]).after, Math.round(988 + 24 * (1 - exp)));
+  assert.ok(must(must(w.duel(id2).ratings)["id-bob"]).delta > 12);
 });
 
 test("rematches between the same pair wait 30 s", () => {
@@ -392,7 +432,7 @@ test("chat disconnect pauses combat and cancels unfinished duels unscored", () =
     [w.state.chat.connected, w.state.chat.status, w.state.chat.subscriptionId],
     [false, "disconnected", ""],
   );
-  assert.equal(w.state.events.at(-1).type, "chat_disconnected");
+  assert.equal(must(w.state.events.at(-1)).type, "chat_disconnected");
   assert.equal(w.say("alice", "!challenge @bob").reason, "chat_offline", "commands are rejected while paused");
   w.apply({
     type: "chat_subscription",
@@ -402,7 +442,7 @@ test("chat disconnect pauses combat and cancels unfinished duels unscored", () =
   });
   assert.equal(w.say("alice", "!challenge @bob").reason, "chat_offline", "paused until Twitch verifies the webhook");
   assert.equal(w.apply({ type: "chat_verified", subscriptionId: "sub-2" }).reason, "chat_connected");
-  assert.equal(w.state.events.at(-1).type, "chat_connected");
+  assert.equal(must(w.state.events.at(-1)).type, "chat_connected");
   assert.equal(w.say("alice", "!challenge @bob").ok, true);
 });
 
@@ -445,7 +485,7 @@ test("a revocation records the reason and keeps duels paused", () => {
     [w.state.chat.connected, w.state.chat.status, w.state.chat.revokedReason],
     [false, "authorization_revoked", "authorization_revoked"],
   );
-  assert.equal(w.state.events.at(-1).reason, "authorization_revoked");
+  assert.equal(must(w.state.events.at(-1)).reason, "authorization_revoked");
 });
 
 test("rejected chat commands can be logged to the event list", () => {
@@ -470,7 +510,7 @@ test("stored relay state and relayLeaseMs are dropped; old configs still roll ba
   };
   const r = reduceGame(legacy, { type: "tick" }, T0);
   assert.equal(r.state.relay, undefined);
-  assert.equal(r.state.config.relayLeaseMs, undefined);
+  assert.equal((r.state.config as LegacyConfig).relayLeaseMs, undefined); // the test checks the legacy field is gone
   assert.equal(r.state.chat.connected, false);
   const rolled = reduceGame(
     r.state,
@@ -484,13 +524,13 @@ test("stored relay state and relayLeaseMs are dropped; old configs still roll ba
   );
   assert.equal(rolled.result.ok, true, rolled.result.reason);
   assert.equal(rolled.state.config.maxHp, 120);
-  assert.equal(rolled.state.config.relayLeaseMs, undefined);
+  assert.equal((rolled.state.config as LegacyConfig).relayLeaseMs, undefined); // as above
 });
 
 test("duplicate and stale chat commands are ignored", () => {
   const w = arena();
   w.say("alice", "!challenge @bob");
-  const msg = {
+  const msg: CommandEvent = {
     type: "command",
     messageId: "dup-1",
     userId: "id-bob",
@@ -628,7 +668,8 @@ test("overlay events: final blow emits duel_action before duel_completed, respaw
   const types = w.state.events.map((e) => e.type);
   const done = types.lastIndexOf("duel_completed");
   assert.equal(types[done - 1], "duel_action");
-  assert.equal(w.state.events[done - 1].hp["id-bob"], 0);
+  // a duel_action event carries the duel's hp map (userId -> hp)
+  assert.equal((must(w.state.events[done - 1]).hp as Record<string, number>)["id-bob"], 0);
   w.tick(defaultConfig().respawnMs);
   assert.deepEqual(w.state.events.at(-1), {
     id: String(w.state.revision),
@@ -705,30 +746,26 @@ test("challenging your challenger accepts the duel", () => {
 
 test("StreamElements: a bare command sends t=- and reaches the room with no target", async () => {
   const { handleStreamElements, seCommandLines } = await import("../server/streamelements.ts");
-  assert.match(seCommandLines("https://x", "nesszerra", "k1")[1].response, /t=\$\(queryescape \$\(1\|-\)\)/);
-  let sent;
+  assert.match(must(seCommandLines("https://x", "nesszerra", "k1")[1]).response, /t=\$\(queryescape \$\(1\|-\)\)/);
+  let sent: Loose; // the JSON body the handler sent; the test reads fields off it
   const url = new URL("https://x/api/se/nesszerra/accept?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
-  await handleStreamElements(
-    new Request(url),
-    {},
-    {
-      url,
-      origin: "https://x",
-      channels: ["nesszerra"],
-      roomFetch: async (c, p, init) => {
-        sent = JSON.parse(init.body);
-        return Response.json({ reply: "ok" });
-      },
+  await handleStreamElements(new Request(url), asEnv({}), {
+    url,
+    origin: "https://x",
+    channels: ["nesszerra"],
+    roomFetch: async (c, p, init) => {
+      sent = JSON.parse(init.body as string); // the handler posts a JSON string body
+      return Response.json({ reply: "ok" });
     },
-  );
+  });
   assert.equal(sent.target, "");
 });
 
 test("StreamElements !give sends its amount as a=; seAmount takes 20 or $20 only", async () => {
   const { handleStreamElements, seCommandLines, seAmount } = await import("../server/streamelements.ts");
   const lines = seCommandLines("https://x", "nesszerra", "k1");
-  assert.match(lines.find((l) => l.action === "give").response, /&a=\$\(queryescape \$\(2\|-\)\)\)$/);
-  assert.ok(!lines.find((l) => l.action === "wallet").response.includes("&a="));
+  assert.match(must(lines.find((l) => l.action === "give")).response, /&a=\$\(queryescape \$\(2\|-\)\)\)$/);
+  assert.ok(!must(lines.find((l) => l.action === "wallet")).response.includes("&a="));
   assert.deepEqual(["20", "$20", " 7 ", "-", "", "2.5", "-3", "12345678", "ten"].map(seAmount), [
     20,
     20,
@@ -740,35 +777,32 @@ test("StreamElements !give sends its amount as a=; seAmount takes 20 or $20 only
     null,
     null,
   ]);
-  let sent;
+  let sent: Loose; // the JSON body the handler sent; the test reads fields off it
   const url = new URL(
     "https://x/api/se/nesszerra/give?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=%40cara&a=%2415&m=1",
   );
-  await handleStreamElements(
-    new Request(url),
-    {},
-    {
-      url,
-      origin: "https://x",
-      channels: ["nesszerra"],
-      roomFetch: async (c, p, init) => {
-        sent = JSON.parse(init.body);
-        return Response.json({ reply: "ok" });
-      },
+  await handleStreamElements(new Request(url), asEnv({}), {
+    url,
+    origin: "https://x",
+    channels: ["nesszerra"],
+    roomFetch: async (c, p, init) => {
+      sent = JSON.parse(init.body as string); // the handler posts a JSON string body
+      return Response.json({ reply: "ok" });
     },
-  );
+  });
   assert.deepEqual([sent.action, sent.target, sent.amount], ["give", "cara", "$15"]);
 });
 
 test("StreamElements: an empty room reply (repeated message id) posts nothing; a missing one says something went wrong", async () => {
   const { handleStreamElements } = await import("../server/streamelements.ts");
   const url = new URL("https://x/api/se/nesszerra/accept?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
-  const call = (body) =>
-    handleStreamElements(
-      new Request(url),
-      {},
-      { url, origin: "https://x", channels: ["nesszerra"], roomFetch: async () => Response.json(body) },
-    ).then((r) => r.text());
+  const call = (body: unknown) =>
+    handleStreamElements(new Request(url), asEnv({}), {
+      url,
+      origin: "https://x",
+      channels: ["nesszerra"],
+      roomFetch: async () => Response.json(body),
+    }).then((r) => r.text());
   assert.equal(await call({ reply: "" }), "");
   assert.equal(await call({}), "That move didn't land. Try again in a moment!");
 });
@@ -776,26 +810,22 @@ test("StreamElements: an empty room reply (repeated message id) posts nothing; a
 test("StreamElements: when the room switches over from a Twitch subscription, the Worker is asked to delete it", async () => {
   const { handleStreamElements } = await import("../server/streamelements.ts");
   const url = new URL("https://x/api/se/nesszerra/decline?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
-  const dropped = [];
-  const call = (body) =>
-    handleStreamElements(
-      new Request(url),
-      {},
-      {
-        url,
-        origin: "https://x",
-        channels: ["nesszerra"],
-        roomFetch: async () => Response.json(body),
-        dropSubscription: (id) => dropped.push(id),
-      },
-    ).then((r) => r.text());
+  const dropped: string[] = [];
+  const call = (body: unknown) =>
+    handleStreamElements(new Request(url), asEnv({}), {
+      url,
+      origin: "https://x",
+      channels: ["nesszerra"],
+      roomFetch: async () => Response.json(body),
+      dropSubscription: (id) => dropped.push(id),
+    }).then((r) => r.text());
   assert.equal(await call({ reply: "hi", switchedFrom: "sub-1" }), "hi");
   await call({ reply: "hi" });
   assert.deepEqual(dropped, ["sub-1"]);
 });
 
 // roll r gives die 1 + floor(r * 6): 0.9 -> 6 (crit 50), 0.75 -> 5 (hit 34), 0.5 -> 4 (miss), 0.1 -> 1 (counter 34)
-function quick(rolls) {
+function quick(rolls: number[]) {
   const w = arena({ quick: true });
   const ch = w.say("alice", "!challenge @bob");
   const r = w.apply({
@@ -807,7 +837,7 @@ function quick(rolls) {
     text: "!accept",
     timestamp: w.now,
     rolls,
-  });
+  }) as QuickResult; // an accepted quick duel always returns its swings
   return { w, r, duel: w.duel(ch.duelId), actions: w.state.events.filter((e) => e.type === "duel_action") };
 }
 
@@ -862,7 +892,7 @@ test("quick duels: turns alternate, 6 crits for 50, 5 hits for 34, 1-2 counter f
     assert.equal(actions.length, c.dice.length);
     assert.equal(actions.filter((e) => e.miss).length, c.outcomes.filter((o) => o === "miss").length);
     assert.equal(actions.filter((e) => e.crit).length, c.outcomes.filter((o) => o === "crit").length);
-    assert.equal(actions.at(-1).finisher, true);
+    assert.equal(must(actions.at(-1)).finisher, true);
     assert.equal(actions.filter((e) => e.finisher).length, 1);
     assert.equal(w.player(c.winner).elo, c.flawless ? 1015 : 1012, "flawless wins add 3 Elo");
     assert.equal(w.player(loser).elo, 988);
@@ -875,12 +905,12 @@ test("quick duels: after 12 rolls more HP wins; equal HP goes to sudden death", 
   assert.equal(onHp.r.swings.length, 12);
   assert.equal(onHp.r.winnerId, "id-alice");
   assert.equal(onHp.duel.decision, "hp");
-  assert.equal(onHp.w.state.events.find((e) => e.type === "duel_completed").decision, "hp");
+  assert.equal(must(onHp.w.state.events.find((e) => e.type === "duel_completed")).decision, "hp");
   const sudden = quick([...Array(12).fill(0.5), 0.5, 0.75]);
   assert.equal(sudden.r.decision, "sudden_death");
   assert.equal(sudden.r.swings.length, 14);
   assert.equal(sudden.r.winnerId, "id-bob", "roll 14 is the swing of bob");
-  assert.equal(sudden.actions.at(-1).amount, 100, "a sudden-death blow knocks out");
+  assert.equal(must(sudden.actions.at(-1)).amount, 100, "a sudden-death blow knocks out");
   assert.equal(sudden.duel.hp["id-alice"], 0);
 });
 
@@ -923,19 +953,19 @@ test("quick duels are the default and work through a mutual challenge too", () =
 test("quick duels hide the result until the stream has played it out (revealAt)", () => {
   const w = arena({ quick: true });
   const duel = w.duel(w.fight("alice", "bob"));
-  const rolls = w.last.result.swings.length;
+  const rolls = must(w.last.result.swings).length;
   assert.equal(duel.status, "completed");
   assert.equal(duel.revealAt, w.now + replayMs(rolls) + w.state.config.streamDelayMs);
   assert.equal(replayMs(0), replayMs(1), "at least one roll is replayed");
   const hidden = hiddenResults(w.state, w.now);
-  const winner = duel.winnerId,
+  const winner = must(duel.winnerId),
     loser = winner === "id-alice" ? "id-bob" : "id-alice";
   assert.deepEqual(hidden.get(winner), { elo: 1000, wins: 1, losses: 0, dollars: 5 });
   assert.deepEqual(hidden.get(loser), { elo: 1000, wins: 0, losses: 1, dollars: 3 });
-  const saved = { userId: winner, elo: duel.ratings[winner].after, wins: 1, losses: 0 };
+  const saved = { userId: winner, elo: must(must(duel.ratings)[winner]).after, wins: 1, losses: 0 };
   assert.deepEqual(shownProfile(saved, hidden), { userId: winner, elo: 1000, wins: 0, losses: 0 });
   assert.equal(shownProfile({ ...saved, dollars: 12 }, hidden).dollars, 7, "a hidden payout stays out of !wallet");
-  assert.equal(shownProfile(null, hidden), null);
+  assert.equal(shownProfile<Loose>(null, hidden), null); // null on purpose: the test checks it passes through
   const cara = { userId: "id-cara", elo: 1000, wins: 0, losses: 0 };
   assert.equal(shownProfile(cara, hidden), cara, "fighters with nothing hidden are unchanged");
   assert.equal(hiddenResults(w.state, duel.revealAt).size, 0, "shown once the stream has played it");
@@ -947,7 +977,7 @@ test("quick duels hide the result until the stream has played it out (revealAt)"
     ["cara", "bob"],
     ["alice", "cara"],
     ["bob", "cara"],
-  ])
+  ] satisfies [string, string][])
     assert.equal(w.say(a, "!challenge @" + b).reason, "result_hidden", a + " vs " + b);
   assert.equal(
     w.say("alice", "!challenge @bob").reason,
@@ -971,7 +1001,7 @@ test("the stream delay is a channel setting (0 to 60 s) that moves revealAt", ()
     true,
   );
   const duel = w.duel(w.fight("alice", "bob"));
-  assert.equal(duel.revealAt, w.now + replayMs(w.last.result.swings.length) + 20_000);
+  assert.equal(duel.revealAt, w.now + replayMs(must(w.last.result.swings).length) + 20_000);
 });
 
 test("!rematch challenges the last finished duel's opponent, with the rematch lock; a name after it is ignored", async () => {
@@ -982,7 +1012,7 @@ test("!rematch challenges the last finished duel's opponent, with the rematch lo
   w.fight("alice", "bob");
   assert.equal(w.player("alice").lastOpponentId, "id-bob");
   assert.equal(w.player("bob").lastOpponentId, "id-alice");
-  assert.match(w.say("bob", "!rematch").reason, /^(respawning|rematch_cooldown)$/);
+  assert.match(must(w.say("bob", "!rematch").reason), /^(respawning|rematch_cooldown)$/);
   w.advance(31_000);
   const c = w.say("bob", "!rematch @cara");
   assert.equal(c.ok, true, c.reason);
@@ -1020,7 +1050,8 @@ test("!rematch challenges the last finished duel's opponent, with the rematch lo
   assert.equal(r.ok, true, r.reason);
   const { seReplyText, seHelpText, seLookText } = await import("../server/streamelements.ts");
   assert.equal(
-    seReplyText({ result: r, state: v.state, actorId: "id-alice", action: "rematch", target: "" }),
+    // no origin on purpose: the reply has no link (seReplyText's origin type is required, its code treats it as optional)
+    seReplyText({ result: r, state: v.state, actorId: "id-alice", action: "rematch", target: "" } as SeReplyArgs),
     "alice wants a rematch with @dan! @dan, type !rematch or !fight to fight, or !decline to back out within 30 s.",
   );
   assert.equal(
@@ -1030,7 +1061,7 @@ test("!rematch challenges the last finished duel's opponent, with the rematch lo
       actorId: "id-alice",
       action: "rematch",
       target: "",
-    }),
+    } as SeReplyArgs), // no origin on purpose, as above
     "alice, you have nobody to rematch yet. Start one: !challenge @name",
   );
   assert.match(
@@ -1048,20 +1079,20 @@ test("!rematch challenges the last finished duel's opponent, with the rematch lo
 test("!rematch works in the HP fight too", () => {
   const w = arena();
   w.fight("alice", "bob");
-  for (let i = 0; i < 20 && w.duel(w.state.duels.at(-1).id).status === "active"; i++) {
+  for (let i = 0; i < 20 && w.duel(must(w.state.duels.at(-1)).id).status === "active"; i++) {
     w.now += 13_000;
     w.say("alice", "!heavy");
   }
-  assert.equal(w.state.duels.at(-1).status, "completed");
+  assert.equal(must(w.state.duels.at(-1)).status, "completed");
   w.advance(31_000);
   assert.equal(w.say("alice", "!rematch").ok, true);
   assert.equal(w.say("bob", "!accept").reason, undefined, "a plain accept starts it");
-  assert.equal(w.state.duels.at(-1).status, "active");
+  assert.equal(must(w.state.duels.at(-1)).status, "active");
 });
 
 test("a command marked quick (StreamElements, no attack commands) settles at once even with quick duels off", () => {
   const w = arena({ viewers: ["alice", "bob", "cara", "dan", "eve", "fin"] });
-  const quickSay = (login, text) =>
+  const quickSay = (login: string, text: string) =>
     w.apply({
       type: "command",
       messageId: "m" + ++seq,
@@ -1097,7 +1128,7 @@ test("invisible characters that chat clients append to repeated messages are ign
 
 test("StreamElements sign-up link always names the channel", async () => {
   const { seReplyText } = await import("../server/streamelements.ts");
-  const reply = (channel) =>
+  const reply = (channel: string) =>
     seReplyText({
       result: { ok: false, reason: "target_not_found" },
       state: createInitialState(channel),
@@ -1120,17 +1151,18 @@ test('StreamElements "seeing stars" names the knocked-out fighter, not the one w
   const { seReplyText } = await import("../server/streamelements.ts");
   const state = createInitialState("nesszerra");
   state.players.push(
-    { userId: "u1", username: "alice", displayName: "Alice" },
-    { userId: "u2", username: "bob", displayName: "Bob" },
+    // partial players on purpose: the reply reads only the names
+    { userId: "u1", username: "alice", displayName: "Alice" } as Player,
+    { userId: "u2", username: "bob", displayName: "Bob" } as Player, // as above
   );
-  const reply = (result) =>
+  const reply = (result: Partial<GameResult>) =>
     seReplyText({
       result: { ok: false, reason: "respawning", ...result },
       state,
       actorId: "u1",
       action: "challenge",
       target: "bob",
-    });
+    } as SeReplyArgs); // no origin on purpose: this reply has no link
   assert.equal(reply({ userId: "u2" }), "Bob is still seeing stars. Give it a few seconds!");
   assert.equal(reply({}), "Alice is still seeing stars. Give it a few seconds!");
   // Right after a quick duel the knocked-out fighter is the loser, and the stream hasn't shown that yet.
@@ -1142,7 +1174,7 @@ test('StreamElements "seeing stars" names the knocked-out fighter, not the one w
     winnerId: "u1",
     revealAt: Date.now() + 10_000,
     ratings: { u1: { before: 1000, after: 1012 }, u2: { before: 1000, after: 988 } },
-  });
+  } as unknown as Duel); // a partial duel (ratings without delta) on purpose: the reply reads only these fields
   assert.equal(reply({ userId: "u2" }), "That fight is still playing on stream. Give it a few seconds!");
 });
 
@@ -1217,15 +1249,15 @@ test("upgrade points: one per win plus check-in points, up to 20, at most 8 per 
   assert.equal(u.hatUnlocked("sombrero", 99), false);
 });
 
-function upgraded(stats) {
+function upgraded(stats: Record<string, Partial<Stats>>) {
   const w = arena({ quick: true });
   for (const [login, s] of Object.entries(stats)) {
     w.register(login, { stats: s });
-    w.state.players.find((p) => p.username === login).wins = 10;
+    must(w.state.players.find((p) => p.username === login)).wins = 10;
   }
   return w;
 }
-function quickWith(w, rolls) {
+function quickWith(w: Arena, rolls: number[]): QuickResult {
   w.say("alice", "!challenge @bob");
   return w.apply({
     type: "command",
@@ -1236,7 +1268,7 @@ function quickWith(w, rolls) {
     text: "!accept",
     timestamp: w.now,
     rolls,
-  });
+  }) as QuickResult; // an accepted quick duel always returns its swings
 }
 
 test("quick duels: power adds 4% damage per point and guard takes 4% off per point", () => {
@@ -1252,7 +1284,7 @@ test("quick duels: power adds 4% damage per point and guard takes 4% off per poi
   // Points the wins no longer cover don't count: 5 power with 0 wins hits for the base 34.
   const w = arena({ quick: true });
   w.register("alice", { stats: { power: 5 } });
-  assert.equal(quickWith(w, hit).swings[0].damage, 34);
+  assert.equal(must(quickWith(w, hit).swings[0]).damage, 34);
 });
 
 test("quick duels: luck turns a miss into a hit with 4% per point, from a second roll", () => {
@@ -1260,11 +1292,11 @@ test("quick duels: luck turns a miss into a hit with 4% per point, from a second
   rolls[0] = 0.5; // alice rolls a 4: a miss
   rolls[24] = 0.1; // her luck roll: 0.1 < 5 x 4% -> the miss lands as a hit
   const r = quickWith(upgraded({ alice: { luck: 5 } }), rolls);
-  assert.equal(r.swings[0].outcome, "hit");
-  assert.equal(r.swings[0].lucky, true);
-  assert.equal(r.swings[0].damage, 34);
+  assert.equal(must(r.swings[0]).outcome, "hit");
+  assert.equal(must(r.swings[0]).lucky, true);
+  assert.equal(must(r.swings[0]).damage, 34);
   rolls[24] = 0.25; // above 20%: stays a miss
-  assert.equal(quickWith(upgraded({ alice: { luck: 5 } }), rolls).swings[0].outcome, "miss");
+  assert.equal(must(quickWith(upgraded({ alice: { luck: 5 } }), rolls).swings[0]).outcome, "miss");
 });
 
 test("upgrades and hat come from the saved profile; no respec while a challenge is open", () => {
@@ -1279,7 +1311,14 @@ test("upgrades and hat come from the saved profile; no respec while a challenge 
     displayName: "alice",
     text: "hi",
     timestamp: w.now,
-    profile: { userId: "id-alice", username: "alice", registered: true, wins: 10, stats: { power: 4 }, hat: "crown" },
+    profile: {
+      userId: "id-alice",
+      username: "alice",
+      registered: true,
+      wins: 10,
+      stats: { power: 4 } as Stats, // partial stats on purpose: the reducer fills the rest
+      hat: "crown",
+    },
   });
   assert.equal(w.player("alice").stats.power, 4);
   assert.equal(w.player("alice").hat, "crown");
@@ -1324,12 +1363,12 @@ test("a pair gets 5 rated duels a day; later ones are just for fun", () => {
   for (const [login, was] of [
     ["alice", before.a],
     ["bob", before.b],
-  ]) {
+  ] satisfies [string, Player][]) {
     const p = w.player(login);
     assert.deepEqual([p.elo, p.wins, p.losses], [was.elo, was.wins, was.losses], `${login} unchanged`);
   }
   const done = w.state.events.filter((e) => e.type === "duel_completed").at(-1);
-  assert.equal(done.unrated, "pair_cap");
+  assert.equal(must(done).unrated, "pair_cap");
   assert.equal(w.state.pairPlays.length, 5, "unrated duels are not counted");
   const reset = structuredClone(w.state);
   assert.equal(
@@ -1361,7 +1400,7 @@ test("duels with an account younger than 7 days are unrated", () => {
     timestamp: w.now,
     newAccounts: ["id-bob"],
   });
-  const duel = w.state.duels.at(-1);
+  const duel = must(w.state.duels.at(-1));
   assert.equal(duel.status, "completed");
   assert.equal(duel.unrated, "new_account");
   assert.equal(duel.payout, undefined);

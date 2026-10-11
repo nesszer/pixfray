@@ -7,7 +7,7 @@ scripted duels, and an alt account that types in real Twitch chat. Production ha
 
 - `DEV_TOOLS_TOKEN` is a Worker secret declared only by `cf deploy --mode test`
   (`cloudflare.config.ts`). The production Worker has no such binding, so no token can match there.
-  `tests/worker.test.mjs` checks both configs.
+  `tests/worker.test.ts` checks both configs.
 - A request with `Authorization: Bearer <token>` acts as the owner for `/api/dev/*` and
   `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live|shop|export)`. A wrong or short
   token gets 401; an owner session without the token gets 404 from `/api/devtools`.

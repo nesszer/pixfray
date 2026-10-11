@@ -3,18 +3,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import type { TestContext } from "node:test";
 import worker from "../server/worker.ts";
 import { AuthStore, digest, record } from "../server/auth.ts";
 import { forgetChannel, isFull, MAX_CHANNELS } from "../server/channels.ts";
 import { OFF_TEXT } from "../server/streamelements.ts";
+import type { HelixUser } from "../server/auth.ts";
+import type { HelixPage } from "../server/channels.ts";
+import type { Env } from "../server/env.ts";
+import { asEnv, must, type FakeSql, type Loose } from "./fakes.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz";
-function store() {
+/** AuthStore's context: real SQLite and a recorded alarm. */
+type StoreCtx = {
+  storage: {
+    sql: FakeSql;
+    alarm: number | null;
+    getAlarm(): Promise<number | null>;
+    setAlarm(t: number): Promise<void>;
+  };
+};
+/** The store with its context readable: tests check the alarm it set. */
+type TestStore = Omit<AuthStore, never> & { ctx: StoreCtx };
+function store(): TestStore {
   const db = new DatabaseSync(":memory:");
-  const ctx = {
+  const ctx: StoreCtx = {
     storage: {
       sql: {
-        exec(q, ...p) {
+        exec(q: string, ...p: SQLInputValue[]) {
           const rows = db
             .prepare(q)
             .all(...p)
@@ -26,28 +43,36 @@ function store() {
       async getAlarm() {
         return this.alarm;
       },
-      async setAlarm(t) {
+      async setAlarm(t: number) {
         this.alarm = t;
       },
     },
   };
-  return new AuthStore(ctx, { INTERNAL_SECRET: "test-only-internal-key" });
+  // as unknown as TestStore: the store's protected ctx is opened for reading
+  return new AuthStore(
+    // the fake context has only the sql and alarm calls AuthStore makes
+    ctx as StoreCtx & DurableObjectState,
+    asEnv({ INTERNAL_SECRET: "test-only-internal-key" }),
+  ) as unknown as TestStore;
 }
 function environment() {
   forgetChannel();
   const auth = store(),
-    rooms = [];
+    rooms: { channel: string; path: string }[] = [];
   const env = {
     AUTH_SECRET: "test-only-auth-key",
     INTERNAL_SECRET: "test-only-internal-key",
     OWNER_TWITCH_ID: "1",
     TWITCH_CLIENT_ID: "test-app",
     TWITCH_CLIENT_SECRET: "test-secret",
-    AUTH: { idFromName: (x) => x, get: () => ({ fetch: (url, init) => auth.fetch(new Request(url, init)) }) },
+    AUTH: {
+      idFromName: (x: string) => x,
+      get: () => ({ fetch: (url: string, init?: RequestInit) => auth.fetch(new Request(url, init)) }),
+    },
     ROOMS: {
-      idFromName: (x) => x,
-      get: (channel) => ({
-        async fetch(url) {
+      idFromName: (x: string) => x,
+      get: (channel: string) => ({
+        async fetch(url: string) {
           rooms.push({ channel, path: new URL(url).pathname });
           return Response.json(new URL(url).pathname === "/se" ? { reply: "room answered" } : { channel });
         },
@@ -55,9 +80,11 @@ function environment() {
     },
     ASSETS: { fetch: async () => new Response("page") },
   };
-  return { env, auth, rooms };
+  // a partial Env on purpose: the fakes cover the bindings worker.fetch reads; their own call shapes stay readable
+  return { env: env as typeof env & Env, auth, rooms };
 }
-async function signIn(env, user) {
+type User = { id: string; login: string; displayName: string };
+async function signIn(env: Env, user: User) {
   const cookie = String(user.id)
     .padStart(64, "c")
     .slice(-64)
@@ -67,7 +94,7 @@ async function signIn(env, user) {
 }
 const OWNER = { id: "1", login: "nesszerra", displayName: "nesszerra" };
 const STREAMER = { id: "55", login: "newstreamer", displayName: "NewStreamer" };
-function req(path, method = "GET", data, cookie) {
+function req(path: string, method = "GET", data?: unknown, cookie?: string) {
   return new Request(ORIGIN + path, {
     method,
     headers: {
@@ -78,8 +105,9 @@ function req(path, method = "GET", data, cookie) {
   });
 }
 // Twitch, as seen by the callback: `as` is the account that signs in, `scopes` what it granted.
-function twitch(t, as, scopes) {
-  t.mock.method(globalThis, "fetch", async (url) => {
+type Account = User & { videos?: number | "fail"; createdAt?: string; type?: string };
+function twitch(t: TestContext, as: Account, scopes: string[]) {
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     const u = String(url);
     if (u.endsWith("/oauth2/token")) return Response.json({ access_token: "user-token", refresh_token: "r" });
     if (u.endsWith("/oauth2/validate")) return Response.json({ client_id: "test-app", user_id: as.id, scopes });
@@ -102,18 +130,18 @@ function twitch(t, as, scopes) {
     });
   });
 }
-async function login(env, query) {
+async function login(env: Env, query: string) {
   const r = await worker.fetch(req("/auth/login?" + query), env);
-  return { r, state: r.status === 302 ? new URL(r.headers.get("Location")).searchParams.get("state") : "" };
+  return { r, state: r.status === 302 ? new URL(must(r.headers.get("Location"))).searchParams.get("state") : "" };
 }
-const callback = (env, state, query = "code=c") =>
+const callback = (env: Env, state: string | null, query = "code=c") =>
   worker.fetch(
     new Request(ORIGIN + "/auth/callback?" + query + "&state=" + state, { headers: { Cookie: "mini_oauth=" + state } }),
     env,
   );
 test("AuthStore lists only the channel prefix; only channel rows may live for years", async () => {
   const { env } = environment();
-  const list = (key) =>
+  const list = (key: string) =>
     env.AUTH.get().fetch("https://auth/list?key=" + encodeURIComponent(key), {
       headers: { "X-Mini-Internal": env.INTERNAL_SECRET },
     });
@@ -131,9 +159,9 @@ test("sign-up: any streamer signs in with moderation:read and their own channel 
   assert.equal((await worker.fetch(req("/api/state/newstreamer"), env)).status, 403, "not on before sign-up");
   const { r, state } = await login(env, "signup=1");
   assert.equal(r.status, 302);
-  assert.equal(new URL(r.headers.get("Location")).searchParams.get("scope"), "moderation:read");
+  assert.equal(new URL(must(r.headers.get("Location"))).searchParams.get("scope"), "moderation:read");
   assert.equal(
-    new URL(r.headers.get("Location")).searchParams.get("force_verify"),
+    new URL(must(r.headers.get("Location"))).searchParams.get("force_verify"),
     "true",
     "sign-up shows the account picker",
   );
@@ -141,12 +169,12 @@ test("sign-up: any streamer signs in with moderation:read and their own channel 
   const done = await callback(env, state);
   assert.equal(done.status, 303);
   assert.equal(done.headers.get("Location"), "/admin/?channel=newstreamer&signed_in=1#chat");
-  assert.match(done.headers.get("Set-Cookie"), /mini_session=[a-f0-9]{64}/);
+  assert.match(must(done.headers.get("Set-Cookie")), /mini_session=[a-f0-9]{64}/);
   const channel = await record(env, "channel:newstreamer");
   assert.deepEqual([channel.id, channel.login], ["55", "newstreamer"]);
   assert.ok(await record(env, "broadcaster:newstreamer"), "mods can be checked");
   assert.equal((await worker.fetch(req("/api/state/newstreamer"), env)).status, 200);
-  assert.equal(rooms.at(-1).channel, "newstreamer");
+  assert.equal(must(rooms.at(-1)).channel, "newstreamer");
   // signing up again keeps the first record
   t.mock.restoreAll();
   const again = await login(env, "signup=1");
@@ -189,13 +217,13 @@ test("a renamed Twitch name: the new holder of the login gets no say over the ol
     (
       await (
         await worker.fetch(req("/api/access/newstreamer", "GET", undefined, await signIn(env, STREAMER)), env)
-      ).json()
+      ).json<{ broadcaster: boolean }>()
     ).broadcaster,
     true,
   );
   // the cleanup alarm is set once, not pushed back by every write
   const first = auth.ctx.storage.alarm;
-  assert.ok(first > Date.now());
+  assert.ok((first as number) > Date.now()); // null fails the comparison, as it did before types
   await new Promise((r) => setTimeout(r, 5));
   await record(env, "session:x", { user: STREAMER }, Date.now() + 60000);
   assert.equal(auth.ctx.storage.alarm, first);
@@ -206,7 +234,7 @@ test("sign-up on a bot site also asks for channel:bot and comes back with bot=al
   env.CHAT_BOT = "1";
   env.BOT_LOGIN = "pixfray";
   const { r, state } = await login(env, "signup=1");
-  assert.equal(new URL(r.headers.get("Location")).searchParams.get("scope"), "moderation:read channel:bot");
+  assert.equal(new URL(must(r.headers.get("Location"))).searchParams.get("scope"), "moderation:read channel:bot");
   twitch(t, STREAMER, ["moderation:read", "channel:bot"]);
   assert.equal(
     (await callback(env, state)).headers.get("Location"),
@@ -222,13 +250,13 @@ test("sign-up on a bot site also asks for channel:bot and comes back with bot=al
   );
   t.mock.restoreAll();
   const bare = await login(env, "signup=1&mods=0");
-  assert.equal(new URL(bare.r.headers.get("Location")).searchParams.get("scope"), "", "mods=0 asks for neither");
+  assert.equal(new URL(must(bare.r.headers.get("Location"))).searchParams.get("scope"), "", "mods=0 asks for neither");
 });
 
 test("sign-up without mod access (mods=0) asks for no scope and stores no broadcaster token", async (t) => {
   const { env } = environment();
   const { r, state } = await login(env, "signup=1&mods=0");
-  assert.equal(new URL(r.headers.get("Location")).searchParams.get("scope"), "");
+  assert.equal(new URL(must(r.headers.get("Location"))).searchParams.get("scope"), "");
   twitch(t, STREAMER, []);
   assert.equal((await callback(env, state)).status, 303);
   assert.ok(await record(env, "channel:newstreamer"));
@@ -240,7 +268,7 @@ test("a cancelled consent goes back to /start with no channel and no session", a
   const { state } = await login(env, "signup=1");
   const denied = await callback(env, state, "error=access_denied&error_description=x");
   assert.equal(denied.headers.get("Location"), "/start/?error=denied");
-  assert.equal(denied.headers.get("Set-Cookie").includes("mini_session"), false);
+  assert.equal(must(denied.headers.get("Set-Cookie")).includes("mini_session"), false);
   assert.equal(await record(env, "channel:newstreamer"), null);
 });
 
@@ -259,7 +287,7 @@ test("sign-up: a Twitch account under 30 days old or that never streamed waits, 
   twitch(t, young, ["moderation:read"]);
   const r = await callback(env, state);
   assert.equal(r.headers.get("Location"), "/start/?error=review");
-  assert.equal(r.headers.get("Set-Cookie").includes("mini_session"), false);
+  assert.equal(must(r.headers.get("Set-Cookie")).includes("mini_session"), false);
   assert.equal(await record(env, "broadcaster:newstreamer"), null, "no mod access until approved");
   const rec = await record(env, "channel:newstreamer");
   assert.deepEqual(rec.review.reasons, ["young", "never_streamed"]);
@@ -272,8 +300,12 @@ test("sign-up: a Twitch account under 30 days old or that never streamed waits, 
   assert.equal((await callback(env, again.state)).headers.get("Location"), "/start/?error=review");
   // the owner sees why on the owner page and turns it on, which approves it
   const owner = await signIn(env, OWNER);
-  const list = await (await worker.fetch(req("/api/dev/channels", "GET", undefined, owner), env)).json();
-  assert.deepEqual(list.channels.find((c) => c.login === "newstreamer").review.reasons, ["young", "never_streamed"]);
+  // Loose: the owner's channel list, read by field below
+  const list = await (await worker.fetch(req("/api/dev/channels", "GET", undefined, owner), env)).json<Loose>();
+  assert.deepEqual(list.channels.find((c: { login: string }) => c.login === "newstreamer").review.reasons, [
+    "young",
+    "never_streamed",
+  ]);
   assert.equal(
     (await worker.fetch(req("/api/dev/channels", "POST", { action: "resume", login: "newstreamer" }, owner), env))
       .status,
@@ -292,7 +324,14 @@ test("sign-up: a Twitch account under 30 days old or that never streamed waits, 
 });
 
 test("the streamer check: Affiliates and Partners skip the past-broadcast lookup; a failed lookup goes to review", async () => {
-  const { reviewReasons } = await import("../server/channels.ts");
+  // the identities below hold only the fields reviewReasons reads (id, created_at, broadcaster_type)
+  const { reviewReasons } = (await import("../server/channels.ts")) as {
+    reviewReasons: (
+      identity: Partial<HelixUser>,
+      helix: (path: string) => Promise<HelixPage | null | undefined>,
+      now?: number,
+    ) => Promise<string[]>;
+  };
   const now = Date.parse("2026-10-07T00:00:00Z"),
     old = "2025-01-01T00:00:00Z";
   const never = () => {
@@ -342,7 +381,7 @@ test(`the registry is capped at ${MAX_CHANNELS} channels that are on`, async (t)
   twitch(t, STREAMER, ["moderation:read"]);
   const full = await callback(env, state);
   assert.equal(full.headers.get("Location"), "/start/?error=full");
-  assert.equal(full.headers.get("Set-Cookie").includes("mini_session"), false);
+  assert.equal(must(full.headers.get("Set-Cookie")).includes("mini_session"), false);
   assert.equal(await record(env, "channel:newstreamer"), null);
   assert.equal(await isFull(env), true, "the /play/ search stops inviting (picker full)");
 });
@@ -385,7 +424,7 @@ test("turning a channel off keeps its admin page; overlay feed, viewer page and 
   );
   const admin = await worker.fetch(req("/api/admin/newstreamer", "GET", undefined, streamer), env);
   assert.equal(admin.status, 200);
-  assert.equal((await admin.json()).channelState, "paused");
+  assert.equal((await admin.json<{ channelState: string }>()).channelState, "paused");
   // the broadcaster can still sign in to turn it back on
   assert.equal((await login(env, "channel=newstreamer&next=/admin/")).r.status, 302);
   await worker.fetch(req("/api/admin/newstreamer", "POST", { action: "resumeChannel" }, streamer), env);
@@ -413,8 +452,11 @@ test("owner Channels box: list, turn a channel off and on; the owner's off stick
   await record(env, "channel:live1", { id: "5", login: "live1", enabledAt: 2 }, Date.now() + 86400000);
   const owner = await signIn(env, OWNER),
     streamer = await signIn(env, { id: "5", login: "live1", displayName: "live1" });
-  const post = (data) => worker.fetch(req("/api/dev/channels", "POST", data, owner), env).then((r) => r.json());
-  const list = await (await worker.fetch(req("/api/dev/channels", "GET", undefined, owner), env)).json();
+  const post = (data: object) =>
+    // Loose: the channel action's reply, read by field below
+    worker.fetch(req("/api/dev/channels", "POST", data, owner), env).then((r) => r.json<Loose>());
+  // Loose: the owner's channel list, read by field below
+  const list = await (await worker.fetch(req("/api/dev/channels", "GET", undefined, owner), env)).json<Loose>();
   assert.deepEqual(list.builtin, ["nesszerra", "miolafff"]);
   assert.deepEqual(list.channels, [{ login: "live1", enabledAt: 2, pausedAt: 0, pausedBy: "" }]);
   assert.equal("invites" in list, false);
@@ -424,7 +466,7 @@ test("owner Channels box: list, turn a channel off and on; the owner's off stick
   // the streamer can't undo the owner's off
   const refused = await worker.fetch(req("/api/admin/live1", "POST", { action: "resumeChannel" }, streamer), env);
   assert.equal(refused.status, 403);
-  const refusedBody = await refused.json();
+  const refusedBody = await refused.json<{ error: string; reason: string }>();
   assert.match(refusedBody.error, /site owner turned PixFray off/);
   assert.equal(refusedBody.reason, "owner_off");
   assert.equal((await post({ action: "resume", login: "live1" })).channels[0].pausedAt, 0);
@@ -441,7 +483,7 @@ test("connect=mods: only the broadcaster can store the mod-list permission later
   const { env } = environment();
   await record(env, "channel:newstreamer", { id: "55", login: "newstreamer", enabledAt: 1 }, Date.now() + 86400000);
   let { r, state } = await login(env, "channel=newstreamer&connect=mods");
-  assert.equal(new URL(r.headers.get("Location")).searchParams.get("scope"), "moderation:read");
+  assert.equal(new URL(must(r.headers.get("Location"))).searchParams.get("scope"), "moderation:read");
   twitch(t, { id: "9", login: "viewer", displayName: "viewer" }, ["moderation:read"]);
   assert.equal(
     (await callback(env, state)).headers.get("Location"),

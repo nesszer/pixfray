@@ -38,7 +38,7 @@ It is not wrangler: never `wrangler deploy` or `--env`.
 - **Real Twitch chat:** post only while that channel is offline. Check
   `curl -s https://decapi.me/twitch/uptime/<login>` (it must say offline) right before posting. `bun run test:live`
   refuses on its own.
-- **Every behavior change gets a unit test** in `tests/*.test.{mjs,ts}` and a doc update: routes, rules and config in
+- **Every behavior change gets a unit test** in `tests/*.test.ts` and a doc update: routes, rules and config in
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
 - **Strict TypeScript.** New and ported code is `.ts` with `.ts` imports. A port PR changes no runtime code
   (`bun run port-check`). Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
@@ -98,7 +98,7 @@ Each one has happened here. Check for it by name before calling work done.
 [Code]|server/: worker.ts routes, auth glue|channel.ts ChannelRoom DO (state, bot commands, alarms, broadcast)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|upgrades.ts pets.ts cosmetics.ts
 |src/: admin.ts mod page|dashboard.ts channel page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts|fighter3d.ts voxthumb.ts
 |src/served/: overlay.ts|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
-|tests/: *.test.{mjs,ts} unit|port/ port tools|smoke.mjs|ui.mjs arena-browser.mjs|e2e-local.mjs|chrome.mjs
+|tests/: *.test.ts unit|fakes.ts doubles|port/ port tools|smoke.mjs|ui.mjs arena-browser.mjs|e2e-local.mjs|chrome.mjs
 |scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.mjs|release.mjs|live-chat-e2e.mjs|test-all.mjs|configure-twitch.ps1
 ```
 

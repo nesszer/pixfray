@@ -1,5 +1,5 @@
 // Security headers: the Worker adds them to every response it returns (server/worker.ts), and public/_headers repeats
-// the same policies for the files assets serve without the Worker (/overlay.html); tests/security.test.mjs keeps both in step.
+// the same policies for the files assets serve without the Worker (/overlay.html); tests/security.test.ts keeps both in step.
 // No inline script runs anywhere (every page loads <script type="module" src>), so script-src is 'self' (pages add Cloudflare's analytics beacon): no hashes,
 // no 'unsafe-inline', no 'wasm-unsafe-eval' (three.js uses WebGL only). Inline JSON-LD would not be executed, so it needs nothing.
 export const HSTS = "max-age=31536000; includeSubDomains";

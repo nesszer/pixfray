@@ -3,7 +3,7 @@
 // Usage: MINI_BASE_URL=http://127.0.0.1:5199 node tests/arena-browser.mjs
 import { chromium } from "@playwright/test";
 import assert from "node:assert/strict";
-import { enforceCsp } from "./csp-helper.mjs";
+import { enforceCsp } from "./csp-helper.ts";
 import { chromeOptions } from "./chrome.mjs";
 
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";

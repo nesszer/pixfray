@@ -1,5 +1,6 @@
-// Lane D: upload validation (server/uploads.ts), storage in the ChannelRoom, and the browser atlas packer (src/served/atlas.ts).
-// Run with: node --import ./tests/register.mjs --test tests/upload.test.mjs
+// Lane D: upload validation (server/uploads.ts) and storage in the ChannelRoom. The browser atlas packer is in
+// tests/atlas.test.ts.
+// Run with: node --import ./tests/register.ts --test tests/upload.test.ts
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -13,12 +14,15 @@ import {
   customUsage,
 } from "../server/uploads.ts";
 import { ChannelRoom } from "../server/channel.ts";
-import { LIMITS, pngInfo, checkFrames, planAtlas, fitSingle, drawAtlas, uploadBody } from "../src/served/atlas.ts";
-import { makePng, b64, fakeRoomCtx } from "./upload-helpers.mjs";
+import { makePng, b64 } from "./upload-helpers.ts";
+import { fakeCtx, must } from "./fakes.ts";
+import type { Loose } from "./fakes.ts";
+import type { UploadsContext } from "../server/uploads.ts";
+import type { Env } from "../server/env.ts";
 
 const SECRET = "test-only-internal-secret-0123456789";
-const strip = (w, h, n) => Array.from({ length: n }, (_, i) => ({ x: i * w, y: 0, w, h }));
-function body(extra = {}) {
+const strip = (w: number, h: number, n: number) => Array.from({ length: n }, (_, i) => ({ x: i * w, y: 0, w, h }));
+function body(extra: Record<string, unknown> = {}) {
   return {
     label: "Night Knight",
     mode: "frames",
@@ -29,8 +33,10 @@ function body(extra = {}) {
     ...extra,
   };
 }
-function rejects(fn, status, reason) {
-  assert.throws(fn, (e) => {
+/** What validateUpload throws: an UploadError (not exported) with the HTTP status and a reason code. */
+type Rejection = { status: number; reason: string; message: string };
+function rejects(fn: () => unknown, status: number, reason: string) {
+  assert.throws(fn, (e: Rejection) => {
     assert.equal(e.reason, reason, e.message);
     assert.equal(e.status, status);
     return true;
@@ -87,7 +93,7 @@ test("an atlas over 1.5 MB is rejected", () => {
 
 test("frame limits: 24 frames, 128 x 128, inside the atlas, known animations only", () => {
   const wide = b64(makePng(1024, 384));
-  const grid = (n) =>
+  const grid = (n: number) =>
     Array.from({ length: n }, (_, i) => ({ x: (i % 8) * 128, y: Math.floor(i / 8) * 128, w: 128, h: 128 }));
   assert.equal(
     validateUpload(body({ atlas: wide, frames: grid(24), animations: { walk: grid(24) } })).meta.frames.length,
@@ -122,8 +128,15 @@ test("frame limits: 24 frames, 128 x 128, inside the atlas, known animations onl
 });
 
 // ---------- room storage ----------
-function room() {
-  const r = new ChannelRoom(fakeRoomCtx(), { INTERNAL_SECRET: SECRET });
+// Loose: the body is the room's JSON reply (read by property) or the PNG bytes
+type CallResult = { status: number; type: string; body: Loose };
+/** A ChannelRoom with the call() helper room() attaches. */
+type TestRoom = ChannelRoom & {
+  call(path: string, options?: { method?: string; data?: unknown }): Promise<CallResult>;
+};
+function room(): TestRoom {
+  // TestRoom: room() attaches call below before returning; Env: a partial Env on purpose (the room reads only these)
+  const r = new ChannelRoom(fakeCtx(), { INTERNAL_SECRET: SECRET } as Env) as TestRoom;
   r.call = async (path, { method = "GET", data } = {}) => {
     const headers = {
       "X-Mini-Internal": SECRET,
@@ -137,7 +150,8 @@ function room() {
     return {
       status: res.status,
       type,
-      body: type.includes("json") ? await res.json() : new Uint8Array(await res.arrayBuffer()),
+      // Loose: the JSON reply body, which the tests read by property
+      body: type.includes("json") ? await res.json<Loose>() : new Uint8Array(await res.arrayBuffer()),
     };
   };
   return r;
@@ -145,7 +159,7 @@ function room() {
 
 test("the room stores up to 24 characters and refuses the 25th", async () => {
   const r = room();
-  const ids = [];
+  const ids: string[] = [];
   for (let i = 1; i <= 24; i++) {
     const res = await r.call("/asset", {
       method: "POST",
@@ -164,7 +178,12 @@ test("the room stores up to 24 characters and refuses the 25th", async () => {
 
   const catalog = await r.call("/catalog");
   assert.equal(catalog.body.length, 24);
-  assert.ok(catalog.body.every((e) => e.custom === true && e.license && e.frames.length && !("atlas" in e)));
+  assert.ok(
+    catalog.body.every(
+      (e: { custom: unknown; license: unknown; frames: unknown[] }) =>
+        e.custom === true && e.license && e.frames.length && !("atlas" in e),
+    ),
+  );
 
   const png = await r.call("/asset/" + ids[0]);
   assert.equal(png.status, 200);
@@ -196,27 +215,40 @@ test("the room re-validates uploads even from an internal caller", async () => {
 });
 
 // ---------- worker gate ----------
-function workerCtx({ canManage = true, user = { id: "1", login: "nesszerra" }, id = "" } = {}) {
-  const calls = [];
+// Loose: the room request body as JSON, which the test reads by property
+type RoomCall = { path: string; init: RequestInit; body: Loose };
+type WorkerCtxOptions = { canManage?: boolean; user?: { id: string; login?: string } | null; id?: string };
+function workerCtx({
+  canManage = true,
+  user = { id: "1", login: "nesszerra" },
+  id = "",
+}: WorkerCtxOptions = {}): UploadsContext & { calls: RoomCall[] } {
+  const calls: RoomCall[] = [];
   return {
     calls,
     user,
     owner: canManage,
     channel: "nesszerra",
     id,
-    access: async () => ({ canManage, reason: canManage ? undefined : "Moderator role required" }),
+    // as string: the key stays present as undefined when canManage is true (exactOptionalPropertyTypes); handleUploads
+    // reads it with ||, so undefined and a missing key behave the same
+    access: async () => ({ canManage, reason: (canManage ? undefined : "Moderator role required") as string }),
     bodyJson: async (request, limit) => {
       const text = await request.text();
       if (text.length > limit) throw Object.assign(new Error("Request too large"), { status: 413 });
       return JSON.parse(text);
     },
     roomFetch: async (path, init = {}) => {
-      calls.push({ path, init, body: init.body ? JSON.parse(init.body) : undefined });
+      calls.push({
+        path,
+        init,
+        body: init.body ? JSON.parse(init.body as string) /* uploads.ts sends a JSON string */ : undefined,
+      });
       return Response.json({ ok: true }, { status: 201 });
     },
   };
 }
-const post = (data) =>
+const post = (data: unknown) =>
   new Request("https://chat.miolaf.xyz/api/assets/nesszerra", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -225,129 +257,60 @@ const post = (data) =>
 
 test("the worker checks roles and limits before the room is touched", async () => {
   const anon = workerCtx({ canManage: false, user: null });
-  assert.equal((await handleUploads(post(body()), {}, anon)).status, 401);
+  assert.equal((await handleUploads(post(body()), {} as Env /* the gate reads no binding */, anon)).status, 401);
   const viewer = workerCtx({ canManage: false, user: { id: "2" } });
-  assert.equal((await handleUploads(post(body()), {}, viewer)).status, 403);
+  assert.equal((await handleUploads(post(body()), {} as Env /* the gate reads no binding */, viewer)).status, 403);
   assert.equal(viewer.calls.length, 0);
 
   const mod = workerCtx();
-  const notPng = await handleUploads(post(body({ atlas: b64(Buffer.from("GIF89a" + "x".repeat(80))) })), {}, mod);
+  const notPng = await handleUploads(
+    post(body({ atlas: b64(Buffer.from("GIF89a" + "x".repeat(80))) })),
+    {} as Env /* the gate reads no binding */,
+    mod,
+  );
   assert.equal(notPng.status, 415);
-  assert.equal((await notPng.json()).reason, "not_png");
-  const huge = await handleUploads(post('{"atlas":"' + "A".repeat(UPLOAD_BODY_LIMIT) + '"}'), {}, mod);
+  // Loose: the JSON error reply; the test reads its reason
+  assert.equal((await notPng.json<Loose>()).reason, "not_png");
+  const huge = await handleUploads(
+    post('{"atlas":"' + "A".repeat(UPLOAD_BODY_LIMIT) + '"}'),
+    {} as Env /* the gate reads no binding */,
+    mod,
+  );
   assert.equal(huge.status, 413);
   assert.equal(mod.calls.length, 0);
 
-  const ok = await handleUploads(post({ ...body(), createdBy: "forged" }), {}, mod);
+  const ok = await handleUploads(
+    post({ ...body(), createdBy: "forged" }),
+    {} as Env /* the gate reads no binding */,
+    mod,
+  );
   assert.equal(ok.status, 201);
-  assert.equal(mod.calls[0].path, "/asset");
-  assert.equal(mod.calls[0].body.createdBy, "1", "createdBy is the session user, never the body");
+  assert.equal(must(mod.calls[0]).path, "/asset");
+  assert.equal(must(mod.calls[0]).body.createdBy, "1", "createdBy is the session user, never the body");
 
   const del = workerCtx({ id: "c-knight-abc123" });
-  await handleUploads(new Request("https://x/api/assets/nesszerra/c-knight-abc123", { method: "DELETE" }), {}, del);
-  assert.deepEqual([del.calls[0].path, del.calls[0].init.method], ["/asset/c-knight-abc123", "DELETE"]);
+  await handleUploads(
+    new Request("https://x/api/assets/nesszerra/c-knight-abc123", { method: "DELETE" }),
+    {} as Env /* the gate reads no binding */,
+    del,
+  );
+  assert.deepEqual([must(del.calls[0]).path, must(del.calls[0]).init.method], ["/asset/c-knight-abc123", "DELETE"]);
   const badId = workerCtx({ id: "adventurer" });
   assert.equal(
-    (await handleUploads(new Request("https://x/api/assets/nesszerra/adventurer", { method: "DELETE" }), {}, badId))
-      .status,
+    (
+      await handleUploads(
+        new Request("https://x/api/assets/nesszerra/adventurer", { method: "DELETE" }),
+        {} as Env /* the gate reads no binding */,
+        badId,
+      )
+    ).status,
     404,
   );
   assert.equal(badId.calls.length, 0);
 });
 
-// ---------- browser packer ----------
-test("browser limits match the server limits", () => {
-  for (const k of ["maxFrames", "frameSize", "maxAtlasBytes", "maxCharacters", "maxAtlasSide", "maxLabel", "mime"])
-    assert.equal(LIMITS[k], UPLOAD_LIMITS[k], k);
-});
-
-test("pngInfo reads the size and rejects non-PNG bytes", () => {
-  assert.deepEqual(pngInfo(makePng(33, 17)), { width: 33, height: 17 });
-  assert.equal(pngInfo(Buffer.from("GIF89a" + "x".repeat(40))), null);
-  assert.equal(pngInfo(new Uint8Array(4)), null);
-});
-
-test("checkFrames enforces the frame count and size limits", () => {
-  assert.deepEqual(checkFrames({ walk: [{ w: 64, h: 64 }] }), []);
-  assert.match(checkFrames({})[0], /at least one/);
-  assert.match(
-    checkFrames({ walk: Array(20).fill({ w: 8, h: 8 }), attack: Array(5).fill({ w: 8, h: 8 }) })[0],
-    /at most 24/,
-  );
-  assert.match(checkFrames({ idle: [{ w: 129, h: 10 }] })[0], /129 x 10/);
-});
-
-test("planAtlas packs frames bottom-centre into a uniform grid", () => {
-  const plan = planAtlas({
-    idle: [{ w: 40, h: 50 }],
-    walk: [
-      { w: 64, h: 60 },
-      { w: 60, h: 64 },
-    ],
-    ko: [{ w: 64, h: 30 }],
-  });
-  assert.deepEqual(plan.cell, { w: 64, h: 64 });
-  assert.deepEqual([plan.cols, plan.rows, plan.width, plan.height], [4, 1, 256, 64]);
-  assert.deepEqual(plan.placements[0], { slot: "idle", index: 0, w: 40, h: 50, x: 0, y: 0, dx: 12, dy: 14 });
-  assert.deepEqual(plan.placements[3], { slot: "ko", index: 0, w: 64, h: 30, x: 192, y: 0, dx: 192, dy: 34 });
-  assert.deepEqual(plan.frames, plan.animations.walk, "frames falls back to the walk loop");
-  assert.deepEqual(Object.keys(plan.animations), ["idle", "walk", "ko"]);
-  const full = planAtlas({ walk: Array(24).fill({ w: 128, h: 128 }) });
-  assert.deepEqual([full.cols, full.rows, full.width, full.height], [8, 3, 1024, 384]);
-  assert.deepEqual(planAtlas({ idle: [{ w: 10, h: 10 }] }).frames, [{ x: 0, y: 0, w: 10, h: 10 }]);
-  assert.throws(() => planAtlas({}));
-});
-
-test("fitSingle scales large single images down, never up", () => {
-  assert.deepEqual(fitSingle(64, 32), { w: 64, h: 32, scale: 1 });
-  assert.deepEqual(fitSingle(512, 256), { w: 128, h: 64, scale: 0.25 });
-  assert.equal(fitSingle(100, 400).h, 128);
-});
-
-test("drawAtlas draws every frame at its aligned spot", () => {
-  const plan = planAtlas({
-    walk: [
-      { w: 32, h: 20 },
-      { w: 30, h: 32 },
-    ],
-  });
-  const draws = [];
-  const canvas = drawAtlas(plan, { walk: ["A", "B"] }, (w, h) => ({
-    w,
-    h,
-    getContext: () => ({ clearRect() {}, drawImage: (...a) => draws.push(a) }),
-  }));
-  assert.deepEqual([canvas.w, canvas.h], [64, 32]);
-  assert.deepEqual(draws, [
-    ["A", 0, 12, 32, 20],
-    ["B", 33, 0, 30, 32],
-  ]);
-});
-
-test("a packed plan plus its PNG passes server validation end to end", () => {
-  const groups = {
-    idle: [{ w: 48, h: 64 }],
-    walk: Array(6).fill({ w: 64, h: 64 }),
-    attack: Array(3).fill({ w: 80, h: 70 }),
-    ko: [{ w: 90, h: 40 }],
-  };
-  const plan = planAtlas(groups);
-  const req = uploadBody(plan, { label: "  Brawler  ", fps: 10, atlas: b64(makePng(plan.width, plan.height)) });
-  const r = validateUpload(req);
-  assert.equal(r.meta.label, "Brawler");
-  assert.equal(r.meta.combatFallback, undefined);
-  assert.equal(r.meta.animations.attack.length, 3);
-  const single = planAtlas({ idle: [fitSingle(300, 200)] });
-  assert.equal(
-    validateUpload(
-      uploadBody(single, { label: "Blob", mode: "single", atlas: b64(makePng(single.width, single.height)) }),
-    ).meta.mode,
-    "single",
-  );
-});
-
 test("ensureUploadSchema is idempotent", () => {
-  const ctx = fakeRoomCtx();
+  const ctx = fakeCtx();
   ensureUploadSchema(ctx.storage.sql);
   ensureUploadSchema(ctx.storage.sql);
   assert.deepEqual(customUsage({ ctx }), { count: 0, limit: 24, bytes: 0 });

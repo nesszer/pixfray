@@ -3,11 +3,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import type { TestContext } from "node:test";
 import worker from "../server/worker.ts";
 import { ChannelRoom } from "../server/channel.ts";
 import { digest, seal, unseal, isOwner, access } from "../server/auth.ts";
+import type { TwitchUser } from "../server/auth.ts";
 import { forgetRefused, seKeyHash, WRONG_KEY_TEXT, LOST_TEXT, OFF_TEXT, SE_KEY } from "../server/streamelements.ts";
 import { forgetChannel } from "../server/channels.ts";
+import type { Env } from "../server/env.ts";
+import { asEnv, must, type FakeSql, type Loose } from "./fakes.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz",
   DAY = 86400000,
@@ -15,10 +20,16 @@ const ORIGIN = "https://chat.miolaf.xyz",
   OTHER = "cd".repeat(24);
 const INTERNAL = "test-only-internal-key";
 
-function environment({ rooms } = {}) {
-  const entries = new Map(),
-    expires = new Map(),
-    fetched = [];
+/** What a room gets: the Worker sends Headers and a JSON string body; roomCall below sends plain headers. */
+type RoomInit = { body?: string; headers?: HeadersInit };
+type RoomStub = { fetch(url: string, init?: RoomInit): Promise<Response> };
+function environment({ rooms }: { rooms?: (channel: string) => RoomStub } = {}) {
+  // Loose: stored records (sealed tokens, markers), read by field in the tests
+  const entries = new Map<string, Loose>(),
+    // Loose: expiry times; tests subtract Date.now() from them, and a missing one fails the range check as before
+    expires = new Map<string, Loose>(),
+    // Loose: the parsed request body, read by field
+    fetched: { channel: string; path: string; body?: Loose }[] = [];
   const env = {
     AUTH_SECRET: "test-only-auth-key",
     INTERNAL_SECRET: INTERNAL,
@@ -26,11 +37,12 @@ function environment({ rooms } = {}) {
     TWITCH_CLIENT_SECRET: "test-secret",
     PUBLIC_ORIGIN: ORIGIN,
     AUTH: {
-      idFromName: (x) => x,
+      idFromName: (x: string) => x,
       get: () => ({
-        async fetch(url, options) {
+        async fetch(url: string, options: { method?: string; body?: string }) {
           const u = new URL(url),
-            key = u.searchParams.get("key"),
+            // the Worker's AuthStore calls always carry ?key=; a missing one would read as an absent entry
+            key = u.searchParams.get("key") as string,
             method = options.method;
           if (u.pathname === "/consume") {
             const value = entries.get(key) ?? null;
@@ -43,7 +55,8 @@ function environment({ rooms } = {}) {
             expires.delete(key);
             return Response.json({ ok: true });
           }
-          const body = JSON.parse(options.body);
+          // only a write gets here, and record() always sends it a JSON body
+          const body = JSON.parse(options.body as string);
           entries.set(key, body.value);
           expires.set(key, body.expires);
           return Response.json({ ok: true });
@@ -51,9 +64,9 @@ function environment({ rooms } = {}) {
       }),
     },
     ROOMS: {
-      idFromName: (x) => x,
-      get: (channel) => ({
-        async fetch(url, options = {}) {
+      idFromName: (x: string) => x,
+      get: (channel: string) => ({
+        async fetch(url: string, options: RoomInit = {}) {
           const path = new URL(url).pathname;
           fetched.push({ channel, path, body: options.body ? JSON.parse(options.body) : undefined });
           if (rooms) return rooms(channel).fetch(url, options);
@@ -64,11 +77,13 @@ function environment({ rooms } = {}) {
     },
     ASSETS: { fetch: async () => Response.json([]) },
   };
-  return { env, entries, expires, fetched };
+  // a partial Env on purpose: the fakes cover the bindings worker.fetch reads; their own call shapes stay readable
+  return { env: env as typeof env & Env, entries, expires, fetched };
 }
-const seReq = (path, init) => new Request(ORIGIN + path, init);
-const se = (f, path, init) => worker.fetch(seReq(path, init), f.env);
-const text = async (r) => [r.status, await r.text()];
+type Fixture = ReturnType<typeof environment>;
+const seReq = (path: string, init?: RequestInit) => new Request(ORIGIN + path, init);
+const se = (f: Fixture, path: string, init?: RequestInit) => worker.fetch(seReq(path, init), f.env);
+const text = async (r: Response): Promise<[number, string]> => [r.status, await r.text()];
 test.beforeEach(() => {
   forgetRefused();
   forgetChannel();
@@ -113,12 +128,13 @@ test("SE: malformed keys and bad actions do not even read AuthStore for an unkno
   const f = environment();
   let reads = 0;
   const stub = f.env.AUTH.get;
-  f.env.AUTH.get = () => ({
-    fetch: (u, o) => {
+  // a counting wrapper in place of the fake's get; worker.fetch calls it the same way
+  f.env.AUTH.get = (() => ({
+    fetch: (u: string, o: { method?: string; body?: string }) => {
       reads++;
       return stub().fetch(u, o);
     },
-  });
+  })) as unknown as typeof f.env.AUTH.get; // a test fake in place of the binding, as explained above
   await se(f, "/api/se/randomname/help?k=short");
   await se(f, "/api/se/randomname/nope?k=" + KEY);
   assert.equal(reads, 0);
@@ -130,9 +146,14 @@ test("SE: a valid key still reaches the room unchanged, with the same reply", as
   const r = await se(f, "/api/se/nesszerra/challenge?k=" + KEY + "&id=7&u=Bob&d=Bob&t=%40alice&m=m1");
   assert.deepEqual(await text(r), [200, "room answered"]);
   assert.equal(f.fetched.length, 1);
-  assert.deepEqual([f.fetched[0].channel, f.fetched[0].path], ["nesszerra", "/se"]);
+  assert.deepEqual([must(f.fetched[0]).channel, must(f.fetched[0]).path], ["nesszerra", "/se"]);
   assert.deepEqual(
-    [f.fetched[0].body.key, f.fetched[0].body.action, f.fetched[0].body.username, f.fetched[0].body.target],
+    [
+      must(f.fetched[0]).body.key,
+      must(f.fetched[0]).body.action,
+      must(f.fetched[0]).body.username,
+      must(f.fetched[0]).body.target,
+    ],
     [KEY, "challenge", "bob", "alice"],
   );
 });
@@ -142,17 +163,19 @@ test("SE: once the room has sent its key hash, random keys are refused in the Wo
   t.mock.method(Date, "now", () => now);
   const f = environment();
   let current = KEY;
-  f.env.ROOMS.get = (channel) => ({
-    async fetch(url, options = {}) {
+  // a fake room in place of environment()'s; worker.fetch calls it the same way
+  f.env.ROOMS.get = ((channel: string) => ({
+    async fetch(url: string, options: RoomInit = {}) {
       f.fetched.push({ channel, path: new URL(url).pathname });
-      const ok = JSON.parse(options.body).key === current;
+      // the Worker's /se call always sends a JSON body
+      const ok = JSON.parse(options.body as string).key === current;
       return Response.json(
         { reply: ok ? "ok" : WRONG_KEY_TEXT },
         { status: ok ? 200 : 403, headers: { "X-Se-Key": await seKeyHash(current) } },
       );
     },
-  });
-  const call = (key) => se(f, "/api/se/nesszerra/help?k=" + key).then(text);
+  })) as unknown as typeof f.env.ROOMS.get; // a test fake in place of the binding, as explained above
+  const call = (key: string) => se(f, "/api/se/nesszerra/help?k=" + key).then(text);
   assert.deepEqual(await call(KEY), [200, "ok"]);
   assert.equal(f.fetched.length, 1);
   for (let i = 0; i < 20; i++)
@@ -171,14 +194,17 @@ test("SE: a refused (channel, key) pair is answered locally for 60 s, then asked
   let now = Date.parse("2026-10-03T10:00:00Z");
   t.mock.method(Date, "now", () => now);
   const f = environment();
-  f.env.ROOMS.get = (channel) => ({
-    async fetch(url, options = {}) {
-      f.fetched.push({ channel, path: new URL(url).pathname, body: JSON.parse(options.body) });
-      return options.body.includes(KEY)
+  // a fake room in place of environment()'s; worker.fetch calls it the same way
+  f.env.ROOMS.get = ((channel: string) => ({
+    async fetch(url: string, options: RoomInit = {}) {
+      // the Worker's /se call always sends a JSON body
+      f.fetched.push({ channel, path: new URL(url).pathname, body: JSON.parse(options.body as string) });
+      // the Worker's /se call always sends a JSON body
+      return (options.body as string).includes(KEY)
         ? Response.json({ reply: "ok" })
         : Response.json({ reply: WRONG_KEY_TEXT }, { status: 403 });
     },
-  });
+  })) as unknown as typeof f.env.ROOMS.get; // a test fake in place of the binding, as explained above
   const call = (key = OTHER, channel = "nesszerra") => se(f, `/api/se/${channel}/help?k=${key}`).then(text);
   assert.deepEqual(await call(), [200, WRONG_KEY_TEXT], "HTTP 200 so the bot shows the text");
   assert.equal(f.fetched.length, 1, "the first refusal reaches the room (it records rejected_at)");
@@ -201,14 +227,25 @@ test("SE: a refused (channel, key) pair is answered locally for 60 s, then asked
 });
 
 // A real ChannelRoom on SQLite behind the Worker: the first refusal is recorded for the admin page.
+/** The parts of a room's context ChannelRoom touches here: SQL, transactions, alarms and sockets. */
+type RoomCtx = {
+  storage: {
+    sql: FakeSql;
+    transactionSync<T>(fn: () => T): T;
+    setAlarm(): Promise<void>;
+    deleteAlarm(): Promise<void>;
+  };
+  acceptWebSocket(): void;
+  getWebSockets(): WebSocket[];
+};
 function realRooms() {
-  const rooms = new Map();
-  return (channel) => {
+  const rooms = new Map<string, ChannelRoom>();
+  return (channel: string): RoomStub => {
     if (!rooms.has(channel)) {
       const db = new DatabaseSync(":memory:");
-      const storage = {
+      const storage: RoomCtx["storage"] = {
         sql: {
-          exec(q, ...p) {
+          exec(q: string, ...p: SQLInputValue[]) {
             const rows = db
               .prepare(q)
               .all(...p)
@@ -232,16 +269,21 @@ function realRooms() {
       };
       rooms.set(
         channel,
-        new ChannelRoom({ storage, acceptWebSocket() {}, getWebSockets: () => [] }, { INTERNAL_SECRET: INTERNAL }),
+        new ChannelRoom(
+          // the fake context has only the storage and socket calls ChannelRoom makes in these tests
+          { storage, acceptWebSocket() {}, getWebSockets: () => [] } satisfies RoomCtx as RoomCtx as RoomCtx &
+            DurableObjectState<{}>,
+          asEnv({ INTERNAL_SECRET: INTERNAL }),
+        ),
       );
     }
-    return { fetch: (url, init) => rooms.get(channel).fetch(new Request(url, init)) };
+    return { fetch: (url, init) => must(rooms.get(channel)).fetch(new Request(url, init)) };
   };
 }
-const roomCall = (f, path) =>
+const roomCall = (f: Fixture, path: string) =>
   f.env.ROOMS.get("nesszerra")
     .fetch("https://room" + path, { headers: { "X-Mini-Internal": INTERNAL, "X-Mini-Channel": "nesszerra" } })
-    .then((r) => r.json());
+    .then((r) => r.json<Loose>()); // Loose: the room's admin snapshot, read by field
 
 test("SE with a real room: the first refusal records rejected_at, repeats are served from the cache, the right key works", async () => {
   const f = environment({ rooms: realRooms() });
@@ -268,8 +310,10 @@ test("SE with a real room: the first refusal records rejected_at, repeats are se
 // ---------- owner access ----------
 test("OWNER_TWITCH_ID decides ownership with or without the owner record", async () => {
   const f = environment(),
-    me = { id: "445610108", login: "nesszerra" },
-    other = { id: "9", login: "viewer" };
+    // isOwner and access read only id and login
+    me = { id: "445610108", login: "nesszerra" } as TwitchUser,
+    // isOwner and access read only id and login
+    other = { id: "9", login: "viewer" } as TwitchUser;
   f.env.OWNER_TWITCH_ID = "445610108";
   assert.equal(f.entries.has("owner:nesszerra"), false);
   assert.equal(await isOwner(f.env, me), true, "no record needed");
@@ -303,11 +347,18 @@ test("an owner session keeps working after the owner record has expired", async 
     f.env,
   );
   assert.equal(r.status, 200);
-  assert.equal((await r.json()).access.owner, true);
+  assert.equal((await r.json<{ access: { owner: boolean } }>()).access.owner, true);
 });
 
-function twitch(t, { as, scopes = [], ownerId = "445610108" }) {
-  t.mock.method(globalThis, "fetch", async (url) => {
+function twitch(
+  t: TestContext,
+  {
+    as,
+    scopes = [],
+    ownerId = "445610108",
+  }: { as: { id: string; login: string }; scopes?: string[]; ownerId?: string },
+) {
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     const u = String(url);
     if (u.endsWith("/oauth2/token")) return Response.json({ access_token: "user-token", refresh_token: "refresh-1" });
     if (u.endsWith("/oauth2/validate")) return Response.json({ client_id: "test-app", user_id: as.id, scopes });
@@ -316,9 +367,9 @@ function twitch(t, { as, scopes = [], ownerId = "445610108" }) {
     return Response.json({ data: [{ id: as.id, login: as.login, display_name: as.login }] });
   });
 }
-async function signIn(f, query) {
+async function signIn(f: Fixture, query: string) {
   const login = await worker.fetch(new Request(ORIGIN + "/auth/login?" + query), f.env);
-  const state = new URL(login.headers.get("Location")).searchParams.get("state");
+  const state = new URL(must(login.headers.get("Location"))).searchParams.get("state");
   return worker.fetch(
     new Request(ORIGIN + "/auth/callback?code=c&state=" + state, { headers: { Cookie: "mini_oauth=" + state } }),
     f.env,
@@ -343,7 +394,7 @@ test("sign-in refreshes the owner record for 90 days when it agrees with OWNER_T
 });
 
 // ---------- moderator token ----------
-const broadcasterToken = (f, extra = {}) =>
+const broadcasterToken = (f: Fixture, extra: object = {}) =>
   seal(f.env, { access_token: "a1", refresh_token: "r1", userId: "445610108", validatedAt: Date.now(), ...extra });
 const MOD = { id: "2", login: "viewer", displayName: "V" };
 
@@ -353,7 +404,7 @@ test("connecting mod access writes the non-expiring modsconnected marker next to
   const before = Date.now();
   const r = await signIn(f, "channel=miolafff&connect=mods");
   assert.equal(r.status, 303);
-  assert.match(r.headers.get("Location"), /mods=connected/);
+  assert.match(must(r.headers.get("Location")), /mods=connected/);
   assert.ok(f.entries.has("broadcaster:miolafff"));
   const left = f.expires.get("broadcaster:miolafff") - before;
   assert.ok(left > 89 * DAY && left <= 90 * DAY + 5000);
@@ -366,10 +417,19 @@ test("connecting mod access writes the non-expiring modsconnected marker next to
 test("the AuthStore accepts ~20-year expiry for modsconnected markers but caps other keys at 100 days", async () => {
   const { AuthStore } = await import("../server/auth.ts");
   const db = new DatabaseSync(":memory:");
-  const ctx = {
+  /** AuthStore's context: real SQLite and a recorded alarm. */
+  type StoreCtx = {
+    storage: {
+      sql: FakeSql;
+      alarm: number | null;
+      getAlarm(): Promise<number | null>;
+      setAlarm(t: number): Promise<void>;
+    };
+  };
+  const ctx: StoreCtx = {
     storage: {
       sql: {
-        exec(q, ...p) {
+        exec(q: string, ...p: SQLInputValue[]) {
           const rows = db
             .prepare(q)
             .all(...p)
@@ -381,13 +441,14 @@ test("the AuthStore accepts ~20-year expiry for modsconnected markers but caps o
       async getAlarm() {
         return this.alarm;
       },
-      async setAlarm(t) {
+      async setAlarm(t: number) {
         this.alarm = t;
       },
     },
   };
-  const store = new AuthStore(ctx, { INTERNAL_SECRET: INTERNAL });
-  const put = (key, days) =>
+  // the fake context has only the sql and alarm calls AuthStore makes
+  const store = new AuthStore(ctx as StoreCtx & DurableObjectState, asEnv({ INTERNAL_SECRET: INTERNAL }));
+  const put = (key: string, days: number) =>
     store
       .fetch(
         new Request("https://auth/entry?key=" + key, {
@@ -408,7 +469,7 @@ test("a successful moderator check pushes the token expiry out 90 days", async (
   const f = environment();
   f.entries.set("broadcaster:nesszerra", await broadcasterToken(f, { validatedAt: Date.now() - 2 * 3600000 }));
   f.expires.set("broadcaster:nesszerra", Date.now() + 3 * DAY); // nearly lapsed
-  t.mock.method(globalThis, "fetch", async (url) => {
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     const u = String(url);
     if (u.includes("/oauth2/validate"))
       return Response.json({ client_id: "test-app", user_id: "445610108", scopes: ["moderation:read"] });
@@ -424,31 +485,38 @@ test("a successful moderator check pushes the token expiry out 90 days", async (
 
 test("an expired Twitch access token is renewed with the stored refresh token, and the new token is stored for 90 days", async (t) => {
   const f = environment(),
-    calls = [];
+    calls: string[] = [];
   f.entries.set("broadcaster:nesszerra", await broadcasterToken(f));
-  t.mock.method(globalThis, "fetch", async (url, init = {}) => {
-    const u = String(url),
-      auth = init.headers?.Authorization;
-    calls.push(u.split("?")[0].replace("https://", "") + " " + (auth || ""));
-    if (u.endsWith("/oauth2/token")) {
-      assert.equal(new URLSearchParams(init.body).get("refresh_token"), "r1");
-      return Response.json({ access_token: "a2", refresh_token: "r2" });
-    }
-    if (u.includes("/oauth2/validate"))
-      return Response.json({ client_id: "test-app", user_id: "445610108", scopes: ["moderation:read"] });
-    if (u.includes("/helix/moderation/moderators"))
-      return auth === "Bearer a1"
-        ? new Response("expired", { status: 401 })
-        : Response.json({ data: [{ user_id: "2" }] });
-    throw new Error("unexpected fetch " + u);
-  });
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (url: string | URL | Request, init: { headers?: Record<string, string>; body?: string } = {}) => {
+      const u = String(url),
+        auth = init.headers?.Authorization;
+      calls.push(must(u.split("?")[0]).replace("https://", "") + " " + (auth || ""));
+      if (u.endsWith("/oauth2/token")) {
+        assert.equal(new URLSearchParams(init.body).get("refresh_token"), "r1");
+        return Response.json({ access_token: "a2", refresh_token: "r2" });
+      }
+      if (u.includes("/oauth2/validate"))
+        return Response.json({ client_id: "test-app", user_id: "445610108", scopes: ["moderation:read"] });
+      if (u.includes("/helix/moderation/moderators"))
+        return auth === "Bearer a1"
+          ? new Response("expired", { status: 401 })
+          : Response.json({ data: [{ user_id: "2" }] });
+      throw new Error("unexpected fetch " + u);
+    },
+  );
   const before = Date.now();
   assert.equal((await access(f.env, MOD, "nesszerra")).moderator, true);
   assert.ok(
     calls.some((c) => c === "id.twitch.tv/oauth2/token "),
     "refresh token used",
   );
-  const stored = await unseal(f.env, f.entries.get("broadcaster:nesszerra"));
+  const stored = await unseal<{ access_token: string; refresh_token: string; userId: string }>(
+    f.env,
+    f.entries.get("broadcaster:nesszerra"),
+  );
   assert.deepEqual([stored.access_token, stored.refresh_token, stored.userId], ["a2", "r2", "445610108"]);
   assert.ok(f.expires.get("broadcaster:nesszerra") - before > 89 * DAY);
 });
@@ -456,7 +524,7 @@ test("an expired Twitch access token is renewed with the stored refresh token, a
 test("a refresh that Twitch refuses surfaces as a reconnect error and keeps the old record", async (t) => {
   const f = environment();
   f.entries.set("broadcaster:nesszerra", await broadcasterToken(f, { validatedAt: 0 }));
-  t.mock.method(globalThis, "fetch", async (url) =>
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) =>
     String(url).includes("/oauth2/validate")
       ? new Response("no", { status: 401 })
       : new Response("no", { status: 400 }),
@@ -466,7 +534,7 @@ test("a refresh that Twitch refuses surfaces as a reconnect error and keeps the 
 });
 
 // ---------- modsLapsed in the admin snapshot ----------
-const ownerCookie = async (f) => {
+const ownerCookie = async (f: Fixture) => {
   const c = "f".repeat(64);
   f.env.OWNER_TWITCH_ID = "445610108";
   f.entries.set("session:" + (await digest(c)), {
@@ -474,8 +542,10 @@ const ownerCookie = async (f) => {
   });
   return "mini_session=" + c;
 };
-const snapshot = async (f, cookie, channel = "nesszerra") =>
-  (await worker.fetch(new Request(ORIGIN + "/api/admin/" + channel, { headers: { Cookie: cookie } }), f.env)).json();
+const snapshot = async (f: Fixture, cookie: string, channel = "nesszerra") =>
+  (
+    await worker.fetch(new Request(ORIGIN + "/api/admin/" + channel, { headers: { Cookie: cookie } }), f.env)
+  ).json<Loose>(); // Loose: the admin snapshot, read by field
 
 test("admin snapshot: modsLapsed is true only when mod access was connected and the token is gone", async () => {
   const f = environment(),
@@ -512,13 +582,16 @@ test("admin snapshot: a token seen without a marker gets one, and viewing keeps 
   assert.equal(f.entries.get("broadcaster:nesszerra").touched, stamp);
   assert.equal(f.expires.get("broadcaster:nesszerra"), writes);
   // and the token can still be opened after the extra field was added
-  assert.equal((await unseal(f.env, f.entries.get("broadcaster:nesszerra"))).access_token, "a1");
+  assert.equal(
+    (await unseal<{ access_token: string }>(f.env, f.entries.get("broadcaster:nesszerra"))).access_token,
+    "a1",
+  );
 });
 
 test("robots.txt and sitemap.xml follow the host: production lists its pages, the test site stays out of search", async () => {
   const site = (await import("../site.config.js")).default,
     { env } = environment();
-  const get = async (origin, path) => {
+  const get = async (origin: string, path: string) => {
     const r = await worker.fetch(new Request(origin + path), env);
     return { status: r.status, body: await r.text() };
   };

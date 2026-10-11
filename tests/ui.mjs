@@ -4,8 +4,8 @@
 import { chromeOptions } from "./chrome.mjs";
 import { chromium } from "@playwright/test";
 import assert from "node:assert/strict";
-import { enforceCsp } from "./csp-helper.mjs";
-import { makePng } from "./upload-helpers.mjs";
+import { enforceCsp } from "./csp-helper.ts";
+import { makePng } from "./upload-helpers.ts";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
