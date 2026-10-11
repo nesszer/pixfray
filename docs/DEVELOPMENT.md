@@ -75,10 +75,11 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
     server code can't use `document` or `window`, and Web Crypto and streams keep the Workers types.
   - `tsconfig.strict-web.json`: browser code (`src/`, and `types/dom.ts`). DOM types and
     `vite/client`, no Worker or Node types. A browser file that imports a server module pulls it
-    into this program too, so such a module (today `server/upgrades.ts`, imported by
-    `src/dashboard.ts`) must type-check with DOM types as well.
+    into this program too, so such a module (today `server/upgrades.ts`, and through type imports
+    in `src/dashboard.ts` and `src/parse.ts`, `server/cosmetics.ts` and `server/model.ts`) must
+    type-check with DOM types as well.
   - `tsconfig.strict-tests.json`: unit tests that import a DOM module but no Worker module
-    (`tests/overlay.test.ts`, `tests/served.test.ts`), and Playwright code that imports none
+    (`tests/browser-parse.test.ts`, `tests/overlay.test.ts`, `tests/served.test.ts`), and Playwright code that imports none
     (`tests/dev-ui.ts`, `scripts/og-image.ts`, `scripts/live-chat-e2e.ts`), whose page callbacks
     run in the browser. DOM and Node types. The character build (`scripts/build-characters.ts`,
     `scripts/lib/png-io.ts`, `scripts/lib/zip-read.ts`) is here too: the Worker types declare `Buffer`

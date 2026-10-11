@@ -2130,7 +2130,7 @@ function setupSteps(): { id: string; done: boolean | undefined; optional?: boole
   const viaSe = c.connected && c.source === "streamelements",
     seSteps = !a.chatBot || viaSe;
   return [
-    { id: "check-overlay", done: a.overlays > 0, next: "open the overlay in OBS" },
+    { id: "check-overlay", done: (a.overlays || 0) > 0, next: "open the overlay in OBS" },
     ...(a.chatBot
       ? [{ id: "check-bot", done: twitch, optional: viaSe, next: "add the PixFray bot to your chat" }]
       : []),

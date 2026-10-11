@@ -16,6 +16,7 @@
     "types/site.ts",
     "site.config.js",
     "types/dom.ts",
+    "tests/browser-parse.test.ts",
     "tests/overlay.test.ts",
     "tests/served.test.ts",
     "tests/dev-ui.ts",

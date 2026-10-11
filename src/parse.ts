@@ -129,7 +129,8 @@ export type Profile = Build & {
   losses: number;
   bonus?: number;
   elo: number;
-  dollars: number;
+  // absent on a fighter who never earned any (server/game.ts shownProfile)
+  dollars?: number;
   streak?: number;
   build?: number;
   builds?: (Build | null)[];
@@ -140,7 +141,7 @@ const PROFILE: Spec = {
   wins: num,
   losses: num,
   elo: num,
-  dollars: num,
+  dollars: opt(num),
   bonus: opt(num),
   streak: opt(num),
   build: opt(num),
@@ -429,9 +430,9 @@ export type Admin = {
   chatBot?: { login?: string; debug?: boolean } | null;
   streamelements?: Se | null;
   seOnly?: boolean;
-  botStatus?: BotStatus;
+  botStatus?: BotStatus | null;
   customUsage?: { count: number; limit?: number; bytes: number };
-  overlays: number;
+  overlays?: number;
   modsReady?: boolean;
   modsLapsed?: boolean;
   checkinTestAllowed?: boolean;
@@ -445,7 +446,7 @@ const ADMIN: Spec = {
   configVersion: num,
   duels: Array.isArray,
   players: Array.isArray,
-  overlays: num,
+  overlays: opt(num),
   chatStatus: opt(fits(CHAT_STATUS)),
   chat: opt(fits(CHAT_STATUS)),
   chatBot: opt(orNull(fits({ login: opt(str), debug: opt(bool) }))),
@@ -457,7 +458,7 @@ const ADMIN: Spec = {
   // one level deep (see the top of this file)
   history: opt(listOf(isObject)),
   streamelements: opt(orNull(isObject)),
-  botStatus: opt(isObject),
+  botStatus: opt(orNull(isObject)),
   customUsage: opt(isObject),
   checkinTest: opt(orNull(isObject)),
   botCommands: opt(isObject),
