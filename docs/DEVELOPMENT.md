@@ -89,7 +89,14 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
     That is why `types/lib-guards.ts` is a `.ts` file.
 - `bun run lint` fails `// @ts-nocheck` and a `@ts-ignore` or `@ts-expect-error` with no reason
   after it (`typescript/ban-ts-comment`), so a TypeScript file is checked whole. oxlint reads that
-  rule in TypeScript files only.
+  rule in TypeScript files only, and a lint directive comment can turn it off (oxlint has no option
+  to ignore them), so the strict list also reads the comments of every code file in the strict
+  program, JavaScript ones included; text in strings is not read. A `@ts-nocheck` in any letter
+  case (`/// @ts-nocheck`, `// @TS-NOCHECK`) fails as
+  `<file>:<line> has <pragma>, which turns type checking off; files on tsconfig.strict.json are checked whole`,
+  and any `eslint-disable` or `oxlint-disable` comment (line, next-line or block; naming rules or
+  blanket) as
+  `<file>:<line> has <directive>, which can turn off any lint rule, ban-ts-comment included; files on tsconfig.strict.json take no lint directives`.
 - Each `any`, `as` cast or `!` assertion says why in a comment on that line or the line above.
 - `types/lib-guards.ts` lets `Number.isInteger` narrow `unknown` to `number`, so a port needs no
   added `typeof` check, which would change the runtime code. The guard names a branded number, so
@@ -144,7 +151,16 @@ A port pull request changes types only, from a `port/<name>` branch:
      `<path> is new and ships`.
    - A `tsconfig*.json` outside `public/` prints
      `allowed: <path> (the build diff compares what the build makes with it)` and is not counted:
-     the build diff below sees what it changes. Without `cloudflare.config.ts` nothing builds, and
+     the build diff below sees what it changes, and the strict options are compared on their own.
+     When the merge base has `tsconfig.strict.json`, the head's `compilerOptions` for it, as tsc
+     resolves them after `extends` (`tsc -p tsconfig.strict.json --showConfig`, run in the working
+     tree and in the base checkout at `.port-check/<sha>/`, which is made for this even without a
+     build config), must equal the base's, so a port changes only the `files` list. That covers
+     `paths`, `types`, `lib`, `typeRoots` and every other option, not only the ones the strict list
+     reads. Each option that differs fails as
+     `tsconfig.strict.json changes <option> from the base (base <JSON or "not set">, head <JSON or "not set">); a port changes only its files list`.
+     A base without `tsconfig.strict.json` (the change that adds it) skips this; the strict-list
+     rules above still apply. Without `cloudflare.config.ts` nothing builds, and
      the reason reads `no build config reads it`. One case fails, and counts as compared and
      different: a `tsconfig.json` new at the repo root, because the base build runs inside the
      repo and would read it too. It prints `tsconfig.json is new at the repo root, where the base
@@ -237,8 +253,10 @@ A port pull request changes types only, from a `port/<name>` branch:
    own tests are `bun run test:port` (`tests/port/port-check.test.mjs`), kept out of
    `bun run check` because they build small fixture repos in the OS temp folder (40-70 s on a
    32-thread machine with the six-build cap below, about 80 s on CI). Each run keeps its fixtures in
-   one new `pixfray-port-check-*` folder there (about 19 MB), so the temp folder gains one entry
-   per run. Nothing is deleted by script (AGENTS.md), and reusing a fixed folder would mean emptying
+   one new `pixfray-port-check-*` folder there (about 15 MB of files, 20 MiB on disk, measured at
+   95 tests), so the temp folder gains one entry per run. Each run folder holds five junctions (on
+   Linux and macOS, symlinks) from the link tests, each pointing at an empty folder next to its repo
+   in the same run folder, so nothing they point at lies outside it. Nothing is deleted by script (AGENTS.md), and reusing a fixed folder would mean emptying
    it first, so recycle old run folders by hand.
    CI runs them next to `bun run check`, on pull requests to `main` and pushes to `main`,
    `live-fix/`, `hotfix/` and `port/` branches; run them after changing
