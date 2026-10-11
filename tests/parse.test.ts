@@ -382,7 +382,7 @@ test("Twitch answer parsers: tokens, validation, users, a Helix page, moderators
   assert.deepEqual(p.parseModerators({}), TWITCH, "missing data");
 });
 
-test("registry rows: id and login strings, enabledAt a number, the pause and review fields typed when sent", async () => {
+test("registry rows: id and login strings, enabledAt a number, the pause and review fields typed when sent; a bad row is skipped by key", async () => {
   const p = await import("../server/parse.ts");
   const REGISTRY = no("invalid_registry");
   const record = {
@@ -393,23 +393,30 @@ test("registry rows: id and login strings, enabledAt a number, the pause and rev
     pausedBy: "owner",
     review: { reasons: ["young"], at: 3 },
   };
-  const rows = [
-    { key: "channel:paused_one", value: record },
-    { key: "channel:streamer_a", value: { id: "100", login: "streamer_a", enabledAt: 1000 } },
-  ];
-  assert.deepEqual(p.parseChannelRows(rows), yes(rows));
-  assert.deepEqual(p.parseChannelRows([]), yes([]));
-  const one = (value: unknown) => p.parseChannelRows([{ key: "channel:paused_one", value }]);
-  assert.deepEqual(one({ ...record, enabledAt: "1" }), REGISTRY);
-  assert.deepEqual(one({ ...record, id: 9 }), REGISTRY);
-  assert.deepEqual(one({ ...record, pausedAt: null }), REGISTRY);
-  assert.deepEqual(one({ ...record, pausedBy: "mod" }), REGISTRY);
-  assert.deepEqual(one({ ...record, review: { reasons: "young", at: 3 } }), REGISTRY);
-  assert.deepEqual(one({ ...record, review: { reasons: ["young"] } }), REGISTRY, "missing review.at");
-  assert.deepEqual(one({ id: "9", enabledAt: 1 }), REGISTRY, "missing login");
-  assert.deepEqual(one(null), REGISTRY);
-  assert.deepEqual(p.parseChannelRows([{ value: record }]), REGISTRY, "missing key");
+  const good = { key: "channel:streamer_a", value: { id: "100", login: "streamer_a", enabledAt: 1000 } };
+  const rows = [{ key: "channel:paused_one", value: record }, good];
+  assert.deepEqual(p.parseChannelRows(rows), yes({ rows, skipped: [] }));
+  assert.deepEqual(p.parseChannelRows([]), yes({ rows: [], skipped: [] }));
+  const one = (value: unknown) => p.parseChannelRows([{ key: "channel:paused_one", value }, good]);
+  const skipped = yes({ rows: [good], skipped: ["channel:paused_one"] });
+  assert.deepEqual(one({ ...record, enabledAt: "1" }), skipped);
+  assert.deepEqual(one({ ...record, id: 9 }), skipped);
+  assert.deepEqual(one({ ...record, pausedAt: null }), skipped);
+  assert.deepEqual(one({ ...record, pausedBy: "mod" }), skipped);
+  assert.deepEqual(one({ ...record, review: { reasons: "young", at: 3 } }), skipped);
+  assert.deepEqual(one({ ...record, review: { reasons: ["young"] } }), skipped, "missing review.at");
+  assert.deepEqual(one({ id: "9", enabledAt: 1 }), skipped, "missing login");
+  assert.deepEqual(one(null), skipped);
+  const kept = (value: object) => yes({ rows: [{ key: "channel:paused_one", value }, good], skipped: [] });
+  const byBroadcaster = { ...record, pausedBy: "broadcaster" };
+  assert.deepEqual(one(byBroadcaster), kept(byBroadcaster));
+  const { pausedBy: _, ...pausedNoBy } = record;
+  assert.deepEqual(one(pausedNoBy), kept(pausedNoBy), "pausedAt without pausedBy");
+  const extra = { ...record, note: "kept" };
+  assert.deepEqual(one(extra), kept(extra), "an extra field passes through");
+  assert.deepEqual(p.parseChannelRows([{ value: record }, good]), yes({ rows: [good], skipped: ["0"] }), "missing key");
   assert.deepEqual(p.parseChannelRows({ rows }), REGISTRY);
+  assert.deepEqual(p.parseChannelRows(undefined), REGISTRY);
 });
 
 test("CHANNEL_ORIGINS and upload meta: JSON objects of the right values, else refused", async () => {
@@ -1054,16 +1061,23 @@ test("moderator check: a Twitch answer of the wrong shape refuses with access()'
   await assert.rejects(access(f.env, MOD, "nesszerra"), { message: "Twitch authorization unavailable" });
 });
 
-test("registry: a channel record of the wrong shape is Auth storage unavailable, and the owner page's upstream error", async (t) => {
+test("registry: a channel record of the wrong shape is left out and logged, and the other channels still list", async (t) => {
   offline(t);
+  const warn = t.mock.method(console, "warn", () => {});
   const f = environment(),
     owner = await signedIn(f, true);
   f.entries.set("channel:streamer_a", { id: "100", login: "streamer_a", enabledAt: "1000" });
-  await assert.rejects(listRecords(f.env, "channel:"), { message: "Auth storage unavailable" });
-  assert.deepEqual(await getAs(f, "/api/dev/channels", owner), {
-    status: 503,
-    body: { error: "Service unavailable; check owner diagnostics", reason: "upstream_error" },
-  });
+  f.entries.set("channel:streamer_b", { id: "200", login: "streamer_b", enabledAt: 2000 });
+  assert.deepEqual(await listRecords(f.env, "channel:"), [
+    { key: "channel:streamer_b", value: { id: "200", login: "streamer_b", enabledAt: 2000 } },
+  ]);
+  assert.deepEqual(warn.mock.calls.at(-1)?.arguments, ["registry records skipped", "channel:streamer_a"]);
+  const list = await getAs(f, "/api/dev/channels", owner);
+  assert.equal(list.status, 200);
+  assert.deepEqual(
+    (list.body as { channels: { login: string }[] }).channels.map((c) => c.login),
+    ["streamer_b"],
+  );
 });
 
 test("CHANNEL_ORIGINS: anything but an object of URLs is no channel domains", () => {
@@ -1161,7 +1175,10 @@ test("GitHub: an ok answer of the wrong shape gets the route's GitHub error", as
     ["PUT", /\/pulls\/7\/merge$/, 200, text({ merged: true, message: "Pull Request successfully merged" })],
     ["POST", /\/dispatches$/, 204, null],
   ]);
-  assert.deepEqual(await call(f, "/api/dev/promote", { number: 7 }, owner), unreadable("Merge pull request"));
+  assert.deepEqual(
+    await call(f, "/api/dev/promote", { number: 7 }, owner),
+    unreadable("Merge pull request (it may have merged; check GitHub)"),
+  );
   assert.equal(calls.filter((x) => x.endsWith("/dispatches")).length, 0, "nothing dispatched");
 });
 

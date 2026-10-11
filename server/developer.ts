@@ -926,7 +926,12 @@ async function promote({ g, gh, body }: GithubArgs): Promise<Response> {
         method: "PUT",
         body: JSON.stringify({ merge_method: "squash", sha: pr.data.head.sha }),
       });
-      if (!m.ok) return ghError(m, "Merge pull request");
+      // an ok status with an unreadable answer may still have merged on GitHub
+      if (!m.ok)
+        return ghError(
+          m,
+          m.status < 300 ? "Merge pull request (it may have merged; check GitHub)" : "Merge pull request",
+        );
       merged = { number: body.number, sha: m.data.sha, alreadyMerged: false };
     }
     sha = merged.sha;

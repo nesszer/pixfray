@@ -70,10 +70,11 @@ export async function listRecords(env: Env, prefix: string): Promise<ChannelRow[
     headers: { "X-Mini-Internal": env.INTERNAL_SECRET },
   });
   if (!r.ok) throw new Error("Auth storage unavailable");
-  // AuthStore lists only the channel: prefix; one record of the wrong shape fails the whole list
-  const rows = parseChannelRows(await r.json<unknown>().catch(() => undefined));
-  if (!rows.ok) throw new Error("Auth storage unavailable");
-  return rows.value;
+  // AuthStore lists only the channel: prefix; a record of the wrong shape is left out and logged, the rest still list
+  const parsed = parseChannelRows(await r.json<unknown>().catch(() => undefined));
+  if (!parsed.ok) throw new Error("Auth storage unavailable");
+  if (parsed.value.skipped.length) console.warn("registry records skipped", parsed.value.skipped.join(","));
+  return parsed.value.rows;
 }
 
 // Public: the logins a viewer can pick on the /play/ picker (built-in channels first, then by sign-up). Cached a minute.

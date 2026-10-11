@@ -463,9 +463,17 @@ const isChannelRow = (v: unknown): v is ChannelRow =>
   isObject(v) && typeof v.key === "string" && isChannelRecord(v.value);
 // AuthStore's /list (listRecords): an array of { key, value } rows, each value a channel record: id and login
 // strings, enabledAt a number, pausedAt a number, pausedBy 'owner' or 'broadcaster' and review { reasons, at } when
-// set. Every writer since the registry began (signUp, setPaused) writes these types.
-export function parseChannelRows(v: unknown): Parsed<ChannelRow[]> {
-  return Array.isArray(v) && v.every(isChannelRow) ? ok(v) : bad(REGISTRY);
+// set. Every writer since the registry began (signUp, setPaused) writes these types. A row of another shape is
+// skipped and named in skipped (its key, or its index), so one bad record can't take every other channel down.
+export function parseChannelRows(v: unknown): Parsed<{ rows: ChannelRow[]; skipped: string[] }> {
+  if (!Array.isArray(v)) return bad(REGISTRY);
+  const rows: ChannelRow[] = [],
+    skipped: string[] = [];
+  v.forEach((row: unknown, i) => {
+    if (isChannelRow(row)) rows.push(row);
+    else skipped.push(isObject(row) && typeof row.key === "string" ? row.key : String(i));
+  });
+  return ok({ rows, skipped });
 }
 
 const originOf = (url: unknown): string | null => {
