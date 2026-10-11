@@ -18,11 +18,11 @@ fighter (saving and buying stay closed).
   401 `{error:"Invalid dev token"}`.
 - Request bodies must be a JSON object. Malformed JSON, `null` or an array returns 400; a body
   over the route's limit returns 413.
-- Routes whose body goes through server/parse.ts check the type of each field they read before using it. A field of the wrong
-  type (a number for `action`, an array for `color`, a string for a boolean) returns 400 `invalid_body`, or the
+- Routes whose body goes through server/parse.ts check the type of each field they read before using it. A field of the
+  wrong type (a number for `action`, an array for `color`, a string for a boolean) returns 400 `invalid_body`, or the
   route's own code where the rows below name one, instead of being coerced or crashing the room. An optional field may
-  still be left out. The room's internal routes check the bodies the Worker sends the same way: 400
-  `{error:"invalid_body"}`, `invalid_profile` on `/profile`, and the sprite codes on `/sprites*`.
+  still be left out. The room's internal routes check the bodies the Worker sends the same way and answer 400
+  `invalid_body` in that route's own error shape (`invalid_profile` on `/profile`, the sprite codes on `/sprites*`).
 - Auth uses the `mini_session` cookie (HttpOnly), set by `/auth/callback`. It and its AuthStore `session:<hash>` record
   last 30 days (`SESSION_S` in server/auth.ts), so viewers stay signed in between streams; signing out ends it.
 - Every response carries `Strict-Transport-Security: max-age=31536000; includeSubDomains` on https. Pages get a
