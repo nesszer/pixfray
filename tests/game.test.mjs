@@ -9,7 +9,7 @@ import {
   shownProfile,
   replayMs,
   normalizeGameState,
-} from "../server/game.js";
+} from "../server/game.ts";
 
 const T0 = 1_800_000_000_000;
 let seq = 0;
@@ -704,7 +704,7 @@ test("challenging your challenger accepts the duel", () => {
 });
 
 test("StreamElements: a bare command sends t=- and reaches the room with no target", async () => {
-  const { handleStreamElements, seCommandLines } = await import("../server/streamelements.js");
+  const { handleStreamElements, seCommandLines } = await import("../server/streamelements.ts");
   assert.match(seCommandLines("https://x", "nesszerra", "k1")[1].response, /t=\$\(queryescape \$\(1\|-\)\)/);
   let sent;
   const url = new URL("https://x/api/se/nesszerra/accept?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
@@ -725,7 +725,7 @@ test("StreamElements: a bare command sends t=- and reaches the room with no targ
 });
 
 test("StreamElements !give sends its amount as a=; seAmount takes 20 or $20 only", async () => {
-  const { handleStreamElements, seCommandLines, seAmount } = await import("../server/streamelements.js");
+  const { handleStreamElements, seCommandLines, seAmount } = await import("../server/streamelements.ts");
   const lines = seCommandLines("https://x", "nesszerra", "k1");
   assert.match(lines.find((l) => l.action === "give").response, /&a=\$\(queryescape \$\(2\|-\)\)\)$/);
   assert.ok(!lines.find((l) => l.action === "wallet").response.includes("&a="));
@@ -761,7 +761,7 @@ test("StreamElements !give sends its amount as a=; seAmount takes 20 or $20 only
 });
 
 test("StreamElements: an empty room reply (repeated message id) posts nothing; a missing one says something went wrong", async () => {
-  const { handleStreamElements } = await import("../server/streamelements.js");
+  const { handleStreamElements } = await import("../server/streamelements.ts");
   const url = new URL("https://x/api/se/nesszerra/accept?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
   const call = (body) =>
     handleStreamElements(
@@ -774,7 +774,7 @@ test("StreamElements: an empty room reply (repeated message id) posts nothing; a
 });
 
 test("StreamElements: when the room switches over from a Twitch subscription, the Worker is asked to delete it", async () => {
-  const { handleStreamElements } = await import("../server/streamelements.js");
+  const { handleStreamElements } = await import("../server/streamelements.ts");
   const url = new URL("https://x/api/se/nesszerra/decline?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
   const dropped = [];
   const call = (body) =>
@@ -1018,7 +1018,7 @@ test("!rematch challenges the last finished duel's opponent, with the rematch lo
     targetProfile: { userId: "id-dan", username: "dan", displayName: "dan", registered: true },
   });
   assert.equal(r.ok, true, r.reason);
-  const { seReplyText, seHelpText, seLookText } = await import("../server/streamelements.js");
+  const { seReplyText, seHelpText, seLookText } = await import("../server/streamelements.ts");
   assert.equal(
     seReplyText({ result: r, state: v.state, actorId: "id-alice", action: "rematch", target: "" }),
     "alice wants a rematch with @dan! @dan, type !rematch or !fight to fight, or !decline to back out within 30 s.",
@@ -1086,7 +1086,7 @@ test("a command marked quick (StreamElements, no attack commands) settles at onc
 test("invisible characters that chat clients append to repeated messages are ignored", async () => {
   assert.deepEqual(parseGameCommand("!fight \u{E0000}"), { action: "accept", target: "" });
   assert.deepEqual(parseGameCommand("!challenge @bob \u034F"), { action: "duel", target: "bob" });
-  const { seTarget } = await import("../server/streamelements.js");
+  const { seTarget } = await import("../server/streamelements.ts");
   assert.equal(seTarget("\u{E0000}"), "");
   assert.equal(seTarget("-"), "");
   assert.equal(seTarget("@Bob\u{E0000}"), "bob");
@@ -1096,7 +1096,7 @@ test("invisible characters that chat clients append to repeated messages are ign
 });
 
 test("StreamElements sign-up link always names the channel", async () => {
-  const { seReplyText } = await import("../server/streamelements.js");
+  const { seReplyText } = await import("../server/streamelements.ts");
   const reply = (channel) =>
     seReplyText({
       result: { ok: false, reason: "target_not_found" },
@@ -1117,7 +1117,7 @@ test("StreamElements sign-up link always names the channel", async () => {
 });
 
 test('StreamElements "seeing stars" names the knocked-out fighter, not the one who asked', async () => {
-  const { seReplyText } = await import("../server/streamelements.js");
+  const { seReplyText } = await import("../server/streamelements.ts");
   const state = createInitialState("nesszerra");
   state.players.push(
     { userId: "u1", username: "alice", displayName: "Alice" },
@@ -1147,7 +1147,7 @@ test('StreamElements "seeing stars" names the knocked-out fighter, not the one w
 });
 
 test("the bot result line says how the duel was won", async () => {
-  const { seResultText } = await import("../server/streamelements.js");
+  const { seResultText } = await import("../server/streamelements.ts");
   const w = { after: 1014, delta: 14 },
     l = { after: 989, delta: -11 };
   assert.equal(
@@ -1176,9 +1176,9 @@ test("the bot result line says how the duel was won", async () => {
   );
 });
 
-// ---------- upgrades (server/upgrades.js) ----------
+// ---------- upgrades (server/upgrades.ts) ----------
 test("upgrade points: one per win plus check-in points, up to 20, at most 8 per stat; a rank reset trims luck, then guard, then power", async () => {
-  const u = await import("../server/upgrades.js");
+  const u = await import("../server/upgrades.ts");
   assert.deepEqual(
     [0, 3, 20, 40].map((w) => u.pointsFor(w)),
     [0, 3, 20, 20],

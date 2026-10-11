@@ -1,8 +1,15 @@
 // StreamElements chat source. Each game action is a StreamElements custom command whose reply is
 // $(customapi <url>): the bot GETs /api/se/<channel>/<action>?k=..&id=..&u=..&d=..&t=..&m=.. and posts our reply.
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
-import { hiddenResults, PAIR_RATED_PER_DAY } from "./game.js";
-import { boostText } from "./pets.js";
+import { hiddenResults, PAIR_RATED_PER_DAY } from "./game.ts";
+import { boostText } from "./pets.ts";
+import type { Env } from "./env.ts";
+import type { GameResult, GameState, Player } from "./model.ts";
+import type { Stats } from "./upgrades.ts";
+
+/** A channel's command names (se_settings.names), action -> trigger word; a missing one uses DEFAULT_SE_NAMES. */
+export type SeNames = { [action: string]: string | undefined };
+type SeAction = keyof typeof DEFAULT_SE_NAMES;
 
 export const SE_PATH = /^\/api\/se\/([a-z0-9_]{1,25})\/([a-z]{1,16})$/;
 export const SE_SUBSCRIPTION_ID = "se-streamelements"; // marks StreamElements as the chat source in state.chat
@@ -41,7 +48,7 @@ export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
 export const OFF_TEXT = "PixFray is off on this channel right now.";
 const MAX_REPLY = 380; // StreamElements cuts responses at 400 bytes
 
-const reply = (body, status = 200) =>
+const reply = (body: string, status = 200) =>
   new Response(String(body).slice(0, MAX_REPLY), {
     status,
     headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
@@ -54,12 +61,12 @@ export const WRONG_KEY_TEXT = "PixFray: wrong key. Copy the commands again from 
 // admin page), repeats within REFUSED_MS are answered here with no Durable Object request (Free plan quota).
 const REFUSED_MS = 60000,
   REFUSED_MAX = 2000;
-const refused = new Map();
+const refused = new Map<string, number>();
 export function forgetRefused() {
   refused.clear();
   known.clear();
 }
-export const seKeyHash = async (key) =>
+export const seKeyHash = async (key: string): Promise<string> =>
   Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key))).slice(0, 16), (x) =>
     x.toString(16).padStart(2, "0"),
   ).join("");
@@ -67,22 +74,39 @@ export const seKeyHash = async (key) =>
 // refused here; one mismatch per MISMATCH_MS still reaches the room, so a freshly rotated key works within seconds.
 const KNOWN_MS = 60000,
   MISMATCH_MS = 10000;
-const known = new Map();
+const known = new Map<string, { hash: string; at: number; passedAt: number }>();
+
+/** The room's answer to POST /se: the chat line, and the subscription StreamElements took over from, if any. */
+type SeRoomReply = { reply?: unknown; switchedFrom?: string };
+
+/** What the Worker hands handleStreamElements. */
+export type SeHandlerOptions = {
+  url: URL;
+  origin: string;
+  /** Built-in channels, for tests that pass no channelState. */
+  channels?: string[] | undefined;
+  channelState?: ((channel: string) => Promise<string | null> | string | null) | undefined;
+  /** A request to the channel's ChannelRoom. */
+  roomFetch: (channel: string, path: string, init: RequestInit) => Promise<Response>;
+  /** Deletes the Twitch EventSub subscription StreamElements took over from. */
+  dropSubscription?: ((subscriptionId: string) => unknown) | undefined;
+};
 
 // GET /api/se/<channel>/<action>. The per-channel key is the authentication; the room checks it.
-// channelState(channel) -> 'builtin' | 'on' | 'paused' | null (server/channels.js); tests may pass a channels list.
+// channelState(channel) -> 'builtin' | 'on' | 'paused' | null (server/channels.ts); tests may pass a channels list.
 export async function handleStreamElements(
-  request,
-  env,
-  { url, origin, channels = [], channelState, roomFetch, dropSubscription },
-) {
+  request: Request,
+  env: Env,
+  { url, origin, channels = [], channelState, roomFetch, dropSubscription }: SeHandlerOptions,
+): Promise<Response> {
   if (request.method !== "GET") return reply("Use GET", 405);
   const m = SE_PATH.exec(url.pathname);
   if (!m) return reply("Unknown command", 404);
-  const [, channel, action] = m;
+  // both groups are required in SE_PATH, so a match has them
+  const [, channel, action] = m as RegExpExecArray & [string, string, string];
   // Cheap checks first: none of these touches AuthStore or a room.
   if (!SE_ACTIONS.includes(action)) return reply(LOST_TEXT); // e.g. an old !attack/!strike/!heavy/!heal
-  const q = (name) => (url.searchParams.get(name) || "").trim();
+  const q = (name: string) => (url.searchParams.get(name) || "").trim();
   const key = q("k");
   if (!key || key.length > 128) return reply("PixFray: missing key. Copy the commands again from the admin page.");
   if (!SE_KEY.test(key)) return reply(WRONG_KEY_TEXT);
@@ -115,7 +139,8 @@ export async function handleStreamElements(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = await r.json().catch(() => ({}));
+  // The type argument names what the room's /se route answers (server/channel.js); nothing checks it at run time.
+  const data: SeRoomReply = await r.json<SeRoomReply>().catch(() => ({}));
   const sent = r.headers.get("X-Se-Key");
   if (sent && /^[a-f0-9]{32}$/.test(sent)) {
     if (known.size >= REFUSED_MAX) known.clear();
@@ -134,31 +159,39 @@ export async function handleStreamElements(
 // $(1) as sent by StreamElements -> a Twitch login, or '' for none. '-' means no argument; chat clients
 // append invisible characters (U+E0000, U+034F) to repeated messages; those are stripped first. Extra leading @ and
 // trailing punctuation ("@@bob", "@bob," or "bob!") still mean bob.
-export function seTarget(raw) {
+export function seTarget(raw: unknown): string {
   const m = /^@*([a-z0-9_]{1,25})[,.!?;:]*$/i.exec(
     String(raw || "").replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ""),
   );
-  return m ? m[1].toLowerCase() : "";
+  // m[1]! : group 1 is not optional in the regex
+  return m ? m[1]!.toLowerCase() : "";
 }
 
 // Text with invisible and non-ASCII characters written as \u{...}, for logs.
-export const shown = (raw) =>
+export const shown = (raw: unknown): string =>
   String(raw || "")
     .slice(0, 40)
-    .replace(/[^\x20-\x7e]/gu, (c) => `\\u{${c.codePointAt(0).toString(16)}}`);
+    // codePointAt(0)! : c is one character the regex matched, so it has a code point at 0
+    .replace(/[^\x20-\x7e]/gu, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
 
 // Paste-ready StreamElements command replies, one per action. $(1|-) not $(1): with no argument, a bare
 // $(queryescape $(1)) makes StreamElements drop the whole command silently (seen with a bare !fight and !strike).
 // !give also sends its second word, the amount, as a=.
-export function seCommandLines(origin, channel, key, names = {}) {
+export function seCommandLines(
+  origin: string,
+  channel: string,
+  key: string,
+  names: SeNames = {},
+): { action: string; name: string | undefined; response: string }[] {
   return SE_ACTIONS.map((action) => {
     const url = `${origin}/api/se/${channel}/${action}?k=${key}&id=$(sender.twitchid)&u=$(sender.name)&d=$(queryescape $(sender))&t=$(queryescape $(1|-))&m=$(msgid)${action === "give" ? "&a=$(queryescape $(2|-))" : ""}`;
-    return { action, name: names[action] || DEFAULT_SE_NAMES[action], response: `$(customapi ${url})` };
+    // SE_ACTIONS and DEFAULT_SE_NAMES list the same actions
+    return { action, name: names[action] || DEFAULT_SE_NAMES[action as SeAction], response: `$(customapi ${url})` };
   });
 }
 
 // !give's amount: a whole number of dollars ("20" or "$20"), or null.
-export function seAmount(raw) {
+export function seAmount(raw: unknown): number | null {
   const m = /^\$?(\d{1,7})$/.exec(
     String(raw ?? "").replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ""),
   );
@@ -166,56 +199,71 @@ export function seAmount(raw) {
 }
 
 // SE command → the chat text the game parser understands.
-export function seCommandText(action, target) {
+export function seCommandText(action: string, target: string): string {
   const verb = action === "challenge" ? "duel" : action;
   return target ? `!${verb} @${target}` : `!${verb}`;
 }
 
-const secs = (ms) => Math.max(1, Math.ceil(ms / 1000));
-const short = (s) => String(s || "").slice(0, 25);
+const secs = (ms: number) => Math.max(1, Math.ceil(ms / 1000));
+const short = (s: string | undefined) => String(s || "").slice(0, 25);
 // Channel links name the channel so viewers land in the right room.
 // Always names the channel: /play/ asks which stream the viewer watches.
-const siteLink = (origin, channel, hash = "") =>
+const siteLink = (origin: string, channel: string, hash = "") =>
   origin ? `${origin}/${channel ? "?channel=" + channel : ""}${hash}` : "";
-const gearUp = (origin, channel, lead = "Gear up at") => {
+const gearUp = (origin: string, channel: string, lead = "Gear up at") => {
   const link = siteLink(origin, channel);
   return link ? ` ${lead} ${link}` : "";
 };
-const noFighter = (who, self, origin, channel) =>
+const noFighter = (who: string, self: boolean, origin: string, channel: string) =>
   self
     ? `@${who}, you have no fighter in the arena yet!${gearUp(origin, channel)}`
     : `@${who} has no fighter in the arena yet!${gearUp(origin, channel, "Send them to")}`;
 
 // !fray: how to join, with this channel's own command names.
-export function seHelpText({ names = {}, origin = "", channel = "" } = {}) {
-  const n = (a) => names[a] || DEFAULT_SE_NAMES[a];
+/** The options most chat lines take: the channel's command names, and the site origin and channel for links. */
+type SeLinkOptions = { names?: SeNames | undefined; origin?: string | undefined; channel?: string | undefined };
+
+export function seHelpText({ names = {}, origin = "", channel = "" }: SeLinkOptions = {}): string {
+  const n = (a: SeAction) => names[a] || DEFAULT_SE_NAMES[a];
   const link = siteLink(origin, channel);
   // The link goes last: Twitch takes punctuation right after a link into it, and the page then can't tell the channel.
   return `PixFray duels: name your rival with ${n("challenge")} @name. They answer ${n("accept")}. Again? ${n("rematch")}. More: ${n("checkin")} ${n("wallet")} ${n("top")} ${n("look")}. Gear up ${link ? "at " + link : "on the PixFray site"}`;
 }
 
 // The bot's timed reminder (config.reminderMin): the !fray line, which already lists the other commands.
-export function seReminderText({ names = {}, origin = "", channel = "" } = {}) {
+export function seReminderText({ names = {}, origin = "", channel = "" }: SeLinkOptions = {}): string {
   return seHelpText({ names, origin, channel });
 }
 
 // The bot's line when a challenge runs out unanswered (StreamElements can't post on its own, so only the bot says it).
-export function seExpiredText({ a = "someone", b = "someone", timeoutMs = 30000, names = {} } = {}) {
-  const n = (x) => names[x] || DEFAULT_SE_NAMES[x];
+export function seExpiredText({
+  a = "someone",
+  b = "someone",
+  timeoutMs = 30000,
+  names = {},
+}: {
+  a?: string | undefined;
+  b?: string | undefined;
+  timeoutMs?: number | undefined;
+  names?: SeNames | undefined;
+} = {}): string {
+  const n = (x: SeAction) => names[x] || DEFAULT_SE_NAMES[x];
   return `Challenge expired: @${b} didn't answer ${a} within ${secs(timeoutMs)} s. ${a}, try again with ${n("challenge")} @${b}`;
 }
 
 // The bot's line once the stream has played a duel (duel.revealAt): who won, how, and both Elo changes. Never earlier, so
 // chat doesn't spoil the stream. On a bot channel this line is the winner announcement (the overlay shows no banner).
-// Why a duel counted for nothing (server/game.js beginDuel).
-const UNRATED_TEXT = {
+// Why a duel counted for nothing (server/game.ts beginDuel).
+const UNRATED_TEXT: { [reason: string]: string } = {
   new_account: "a Twitch account under 7 days old",
   pair_cap: `${PAIR_RATED_PER_DAY} ranked duels between them in 24 h already`,
 };
-export const unratedText = (reason) =>
+export const unratedText = (reason: string): string =>
   UNRATED_TEXT[reason] ? `Just for fun (${UNRATED_TEXT[reason]}): no Elo or dollars.` : "";
 
-/** @param {{ winner?: string, loser?: string, w?: { after?: number, delta?: number }, l?: { after?: number, delta?: number }, decision?: string, flawless?: boolean, unrated?: string }} [r] */
+/** One fighter's Elo change, as in duel.ratings; missing fields print as "undefined" and +0. */
+type ResultRating = { after?: number | undefined; delta?: number | undefined };
+
 export function seResultText({
   winner = "someone",
   loser = "someone",
@@ -224,8 +272,17 @@ export function seResultText({
   decision = "ko",
   flawless = false,
   unrated = "",
-} = {}) {
-  const d = (x) => (x < 0 ? "-" : "+") + Math.abs(Number(x) || 0);
+}: {
+  winner?: string | undefined;
+  loser?: string | undefined;
+  w?: ResultRating | undefined;
+  l?: ResultRating | undefined;
+  decision?: string | undefined;
+  flawless?: boolean | undefined;
+  unrated?: string | undefined;
+} = {}): string {
+  // x as number: undefined < 0 is false, so a missing delta prints as +0
+  const d = (x: number | undefined) => ((x as number) < 0 ? "-" : "+") + Math.abs(Number(x) || 0);
   const how =
     (decision === "hp" ? " on HP" : decision === "sudden_death" ? " in sudden death" : "") +
     (flawless ? ", flawless" : "");
@@ -234,16 +291,30 @@ export function seResultText({
 }
 
 // A channel on the PixFray bot has no StreamElements in the way, so its give command is !give (unless mods renamed it).
-export const botNames = (names) => ({ ...names, give: !names.give || names.give === "!pay" ? "!give" : names.give });
+export const botNames = (names: SeNames): SeNames => ({
+  ...names,
+  give: !names.give || names.give === "!pay" ? "!give" : names.give,
+});
 
 // !look: a link straight to the Fighter tab, where the sender picks or changes their fighter.
-export function seLookText({ who = "", hasFighter = false, origin = "", channel = "" } = {}) {
+export function seLookText({
+  who = "",
+  hasFighter = false,
+  origin = "",
+  channel = "",
+}: { who?: string | undefined; hasFighter?: boolean | undefined } & SeLinkOptions = {}): string {
   const link = siteLink(origin, channel, "#fighter");
   return `@${short(who)}, ${hasFighter ? "change your look" : "pick your fighter"}${link ? " here: " + link : " on the PixFray site"}`;
 }
 
 // !top: the first five of the leaderboard (rows in leaderboard order) on one line.
-export function seTopText(rows, { origin = "", channel = "" } = {}) {
+/** The fields a chat line shows of a saved fighter. */
+type ShownFighter = Pick<Player, "displayName" | "username" | "elo" | "wins" | "losses">;
+
+export function seTopText(
+  rows: Pick<ShownFighter, "displayName" | "username" | "elo">[],
+  { origin = "", channel = "" }: SeLinkOptions = {},
+): string {
   const link = siteLink(origin, channel, "#ranks");
   if (!rows.length) return `The arena has no champions yet!${gearUp(origin, channel)} and win a duel.`;
   const line =
@@ -257,7 +328,20 @@ export function seTopText(rows, { origin = "", channel = "" } = {}) {
 }
 
 // !elo [@name]: one fighter's rating and place. `found` = { profile, rank, total } or null.
-export function seEloText(found, { self = false, askerName = "", target = "", origin = "", channel = "" } = {}) {
+export function seEloText(
+  found: { profile: ShownFighter; rank: number; total: number } | null | undefined,
+  {
+    self = false,
+    askerName = "",
+    target = "",
+    origin = "",
+    channel = "",
+  }: {
+    self?: boolean | undefined;
+    askerName?: string | undefined;
+    target?: string | undefined;
+  } & SeLinkOptions = {},
+): string {
   if (!found) {
     return self
       ? noFighter(short(askerName) || "you", true, origin, channel)
@@ -267,7 +351,22 @@ export function seEloText(found, { self = false, askerName = "", target = "", or
   return `${short(p.displayName || p.username)}: ${p.elo} Elo, rank ${rank} of ${total}, ${p.wins} win${p.wins === 1 ? "" : "s"} and ${p.losses} loss${p.losses === 1 ? "" : "es"}.`;
 }
 // !checkin: one line per outcome of ChannelRoom.checkin (server/channel.js).
-export function seCheckinText(r, { who = "", origin = "", channel = "", maxPoints = 20 } = {}) {
+/** ChannelRoom.checkin's answer; the fields beside `reason` depend on it (server/channel.js). */
+export type CheckinReply = {
+  reason: string;
+  streak?: number;
+  points?: number;
+  milestone?: boolean;
+  freeMiss?: boolean;
+  total?: number;
+  test?: boolean;
+};
+type SePointsOptions = { who?: string | undefined; maxPoints?: number | undefined } & SeLinkOptions;
+
+export function seCheckinText(
+  r: CheckinReply | null | undefined,
+  { who = "", origin = "", channel = "", maxPoints = 20 }: SePointsOptions = {},
+): string {
   const me = short(who) || "you";
   switch (r?.reason) {
     case "checked_in": {
@@ -280,8 +379,9 @@ export function seCheckinText(r, { who = "", origin = "", channel = "", maxPoint
         .join(", ");
       const gain = r.points ? `+${r.points} upgrade point${r.points === 1 ? "" : "s"} (${extras})` : `${extras}`;
       const link = siteLink(origin, channel, "#upgrades");
+      // total! : checkin always sends it with checked_in
       const total =
-        r.total >= maxPoints
+        r.total! >= maxPoints
           ? `${maxPoints} of ${maxPoints} points, the most a fighter can hold.`
           : `${r.total} of ${maxPoints} points.`;
       if (r.test) return `[Test, not saved] @${me} would check in: ${gain}. ${total}`;
@@ -298,14 +398,25 @@ export function seCheckinText(r, { who = "", origin = "", channel = "", maxPoint
   }
 }
 // !wallet: dollars, upgrade points and streak. w = ChannelRoom.wallet() or null (no fighter).
-export function seWalletText(w, { who = "", origin = "", channel = "", maxPoints = 20 } = {}) {
+export function seWalletText(
+  w: { dollars: number; points: number; streak: number } | null | undefined,
+  { who = "", origin = "", channel = "", maxPoints = 20 }: SePointsOptions = {},
+): string {
   const me = short(who) || "you";
   if (!w) return noFighter(me, true, origin, channel);
   return `@${me}: $${w.dollars} PixFray dollars, ${w.points} of ${maxPoints} upgrade points, ${w.streak}-stream streak.`;
 }
 
 // !pet [@name]: p = ChannelRoom.petInfo() -> { name, pet: {label, tier, boost} | null }, or null (no fighter).
-export function sePetText(p, { who = "", target = "", origin = "", channel = "" } = {}) {
+export function sePetText(
+  p: { name: string; pet: { label: string; tier: string; boost: Stats } | null } | null | undefined,
+  {
+    who = "",
+    target = "",
+    origin = "",
+    channel = "",
+  }: { who?: string | undefined; target?: string | undefined } & SeLinkOptions = {},
+): string {
   const me = short(who) || "you";
   if (!p) return target ? noFighter(target, false, origin, channel) : noFighter(me, true, origin, channel);
   if (!p.pet) {
@@ -317,9 +428,31 @@ export function sePetText(p, { who = "", target = "", origin = "", channel = "" 
 }
 
 // !give @name amount: one line per outcome of ChannelRoom.give (server/channel.js).
-export function seGiveText(r, { who = "", target = "", origin = "", channel = "", names = {} } = {}) {
+/** ChannelRoom.give's answer; the fields beside `reason` depend on it (server/channel.js). */
+export type GiveReply = {
+  reason: string;
+  amount?: number;
+  to?: string;
+  dollars?: number;
+  duels?: number;
+  need?: number;
+  max?: number;
+  left?: number;
+  room?: number;
+};
+
+export function seGiveText(
+  r: GiveReply | null | undefined,
+  {
+    who = "",
+    target = "",
+    origin = "",
+    channel = "",
+    names = {},
+  }: { who?: string | undefined; target?: string | undefined } & SeLinkOptions = {},
+): string {
   const me = short(who) || "you",
-    n = (a) => names[a] || DEFAULT_SE_NAMES[a];
+    n = (a: SeAction) => names[a] || DEFAULT_SE_NAMES[a];
   switch (r?.reason) {
     case "given":
       return `@${me} gave $${r.amount} to @${short(r.to)}. You have $${r.dollars} left.`;
@@ -344,14 +477,15 @@ export function seGiveText(r, { who = "", target = "", origin = "", channel = ""
     case "not_enough":
       return `@${me}, you only have $${r.dollars}.`;
     case "target_full":
-      return r.room > 0
+      // room! : give always sends it with target_full
+      return r.room! > 0
         ? `@${short(r.to)} can hold only $${r.room} more.`
         : `@${short(r.to)} already holds the most dollars a fighter can.`;
     default:
       return "Couldn't reach Twitch to check the stream. Try again in a minute!";
   }
 }
-const nameOf = (state, id) => {
+const nameOf = (state: GameState, id: string) => {
   const p = state.players.find((x) => x.userId === id);
   return p?.displayName || p?.username || "someone";
 };
@@ -368,8 +502,20 @@ export function seReplyText({
   origin,
   now = Date.now(),
   actorRegistered = true,
-}) {
-  const n = (a) => names[a] || DEFAULT_SE_NAMES[a];
+}: {
+  result: GameResult;
+  /** The state after the command. */
+  state: GameState;
+  actorId: string;
+  /** The SE action (challenge, accept...). */
+  action: string;
+  target: string;
+  names?: SeNames | undefined;
+  origin: string;
+  now?: number | undefined;
+  actorRegistered?: boolean | undefined;
+}): string {
+  const n = (a: SeAction) => names[a] || DEFAULT_SE_NAMES[a];
   const me = nameOf(state, actorId);
   const reason = result?.reason || "";
   if (result?.ok) {

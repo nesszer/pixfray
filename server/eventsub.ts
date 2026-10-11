@@ -1,7 +1,66 @@
 // Twitch EventSub over webhooks: the only chat source. Twitch POSTs channel.chat.message to /api/eventsub,
 // so no local process is needed and everything runs on Cloudflare (1 Worker request + 1 DO request per message).
-import { record, seal, unseal, randomToken } from "./auth.js";
+import { record, seal, unseal, randomToken } from "./auth.ts";
 import site from "../site.config.js";
+import type { Sealed } from "./auth.ts";
+import type { Env } from "./env.ts";
+import type { ChatEvent } from "./model.ts";
+
+/** channel.chat.message's event as Twitch sends it: untrusted JSON, read only through slimEvent. */
+type RawChatEvent = { [key: string]: unknown; message?: { text?: unknown } | null };
+/** A parsed EventSub POST body: untrusted JSON, every field checked where it is read. */
+type EventsubBody = {
+  subscription?: {
+    id?: unknown;
+    status?: unknown;
+    condition?: { user_id?: unknown; broadcaster_user_id?: unknown } | null;
+  } | null;
+  event?: RawChatEvent | null;
+  challenge?: unknown;
+};
+/** The bot's reply lines for one command, handed to deps.sendChat after the 204. */
+export type BotChat = { channel: string; broadcasterId: string; senderId: string; messages: string[]; replyTo: string };
+/** What handleEventsub needs from the Worker (see the comment above handleEventsub). */
+export type EventsubDeps = {
+  channels: string[];
+  roomFetch: (channel: string, path: string, init?: RequestInit) => Promise<Response>;
+  origin?: (channel: string) => string;
+  sendChat?: (opts: BotChat) => void; // posts after the 204; the Worker hands the promise to waitUntil
+  findChannel?: (broadcasterId: string) => Promise<string>;
+  isEnabled?: (login: string) => Promise<boolean>;
+  botUserId?: () => Promise<string>;
+  now?: number;
+};
+/** A Helix EventSub subscription (the fields read here). */
+export type ChatSubscription = {
+  id: string;
+  status: string;
+  version?: string;
+  created_at: string;
+  condition?: { broadcaster_user_id?: string; user_id?: string };
+  transport?: { method?: string; callback?: string };
+};
+/** What connectChat returns and the room stores as its chat subscription. */
+export type ChatSubscriptionSummary = { subscriptionId: string; status: string; createdAt: number };
+/** connectChat's options. userId is the account that reads chat (the broadcaster or the PixFray bot). */
+export type ConnectChatOptions = {
+  broadcasterId: string;
+  userId?: string;
+  channel?: string;
+  origin: string;
+  url: URL;
+  takeover?: boolean;
+};
+/** One bot line for sendChatMessage. */
+export type ChatLine = {
+  broadcasterId: string;
+  senderId: string;
+  message: string;
+  replyTo?: string;
+  sleep?: (ms: number) => Promise<unknown>;
+};
+/** Whether Twitch posted a line, and its drop_reason code (or the error) when it didn't. */
+export type SendResult = { sent: boolean; reason: string };
 export const EVENTSUB_PATH = "/api/eventsub";
 export const MAX_EVENTSUB_BYTES = 64 * 1024;
 export const RECONNECT_URL = "/auth/login?connect=1";
@@ -9,13 +68,15 @@ export const BOT_LOGIN_URL = "/auth/login?bot=1";
 export const MAX_BOT_MESSAGE = 480; // Twitch allows 500 characters
 const HELIX = "https://api.twitch.tv/helix";
 const enc = new TextEncoder();
-const hex = (buf) => Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, "0")).join("");
-const fail = (message, status, extra = {}) => Object.assign(new Error(message), { status, ...extra });
-const text = (body, status) =>
+const hex = (buf: ArrayBuffer): string =>
+  Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, "0")).join("");
+const fail = (message: string, status: number, extra: Record<string, unknown> = {}) =>
+  Object.assign(new Error(message), { status, ...extra });
+const text = (body: string, status: number): Response =>
   new Response(body, { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
-const hmacKey = (secret, usage) =>
+const hmacKey = (secret: string, usage: string): Promise<CryptoKey> =>
   crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [usage]);
-function concat(...parts) {
+function concat(...parts: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let i = 0;
   for (const p of parts) {
@@ -26,8 +87,8 @@ function concat(...parts) {
 }
 
 // Derived, not a new binding: hex(HMAC-SHA256(AUTH_SECRET, 'mini-chat:eventsub:v1')). Cached per isolate.
-let cached = null;
-export async function eventsubSecret(env) {
+let cached: { from: string; value: Promise<string> } | null = null;
+export async function eventsubSecret(env: Env): Promise<string> {
   if (cached?.from !== env.AUTH_SECRET)
     cached = {
       from: env.AUTH_SECRET,
@@ -38,7 +99,12 @@ export async function eventsubSecret(env) {
   return cached.value;
 }
 // 'sha256=' + hex(HMAC-SHA256(secret, messageId + timestamp + rawBody)). Exported for tests.
-export async function signEventsub(secret, messageId, timestamp, raw) {
+export async function signEventsub(
+  secret: string,
+  messageId: string,
+  timestamp: string,
+  raw: string | Uint8Array,
+): Promise<string> {
   const body = typeof raw === "string" ? enc.encode(raw) : raw;
   return (
     "sha256=" +
@@ -51,10 +117,17 @@ export async function signEventsub(secret, messageId, timestamp, raw) {
     )
   );
 }
-async function verify(env, messageId, timestamp, raw, signature) {
+async function verify(
+  env: Env,
+  messageId: string,
+  timestamp: string,
+  raw: Uint8Array,
+  signature: string,
+): Promise<boolean> {
   const m = /^sha256=([0-9a-f]{64})$/i.exec(signature);
   if (!m) return false;
-  const mac = Uint8Array.from(m[1].match(/../g), (x) => parseInt(x, 16));
+  // !: the pattern matched, so group 1 holds 64 hex digits, which split into 32 pairs
+  const mac = Uint8Array.from(m[1]!.match(/../g)!, (x) => parseInt(x, 16));
   // crypto.subtle.verify compares in constant time.
   return crypto.subtle.verify(
     "HMAC",
@@ -64,15 +137,15 @@ async function verify(env, messageId, timestamp, raw, signature) {
   );
 }
 // Twitch sends RFC3339 with up to nanosecond fractions; Date.parse wants at most milliseconds.
-export function parseTwitchTime(value) {
+export function parseTwitchTime(value: string): number {
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(value)) return NaN;
   return Date.parse(value.replace(/\.(\d{1,3})\d*/, ".$1"));
 }
-async function readRaw(request, limit) {
+async function readRaw(request: Request, limit: number): Promise<Uint8Array> {
   if (Number(request.headers.get("Content-Length")) > limit) throw fail("Request too large", 413);
   const reader = request.body?.getReader();
   if (!reader) return new Uint8Array(0);
-  const chunks = [];
+  const chunks: Uint8Array[] = [];
   let bytes = 0;
   for (;;) {
     const { done, value } = await reader.read();
@@ -89,8 +162,8 @@ async function readRaw(request, limit) {
 
 // A lead moderator wears only lead_moderator (no moderator badge), so it has to count on its own.
 const MOD_BADGES = new Set(["broadcaster", "moderator", "lead_moderator"]);
-const str = (v, n) => (typeof v === "string" ? v.slice(0, n) : "");
-function slimEvent(ev) {
+const str = (v: unknown, n: number): string => (typeof v === "string" ? v.slice(0, n) : "");
+function slimEvent(ev: RawChatEvent | null | undefined): ChatEvent | null {
   if (!ev || typeof ev !== "object") return null;
   // caps sit above every valid length, so the room's own validation still decides
   return {
@@ -111,23 +184,9 @@ function slimEvent(ev) {
 // the room, which answers commands like the StreamElements route does, and sendChat posts the reply as the bot.
 // channels: the built-in rooms. findChannel(broadcasterId) names a signed-up channel's room, isEnabled(login) says whether
 // a signed-up channel is on, and botUserId() is the signed-in PixFray bot (which can also be the broadcaster of its own channel).
-/**
- * @param {Request} request
- * @param {any} env
- * @param {{
- *   channels: any,
- *   roomFetch: (channel: string, path: string, init?: RequestInit) => Promise<Response>,
- *   origin?: (channel: string) => string,
- *   sendChat?: (opts: any) => void, // posts after the 204; the Worker hands the promise to waitUntil
- *   findChannel?: (broadcasterId: string) => Promise<string>,
- *   isEnabled?: (login: string) => Promise<boolean>,
- *   botUserId?: () => Promise<string>,
- *   now?: number,
- * }} deps
- */
 export async function handleEventsub(
-  request,
-  env,
+  request: Request,
+  env: Env,
   {
     channels,
     roomFetch,
@@ -137,10 +196,10 @@ export async function handleEventsub(
     isEnabled = async () => false,
     botUserId = async () => "",
     now = Date.now(),
-  },
-) {
+  }: EventsubDeps,
+): Promise<Response> {
   if (request.method !== "POST") return text("Use POST", 405);
-  const h = (name) => request.headers.get("Twitch-Eventsub-" + name) || "";
+  const h = (name: string): string => request.headers.get("Twitch-Eventsub-" + name) || "";
   const id = h("Message-Id"),
     timestamp = h("Message-Timestamp"),
     signature = h("Message-Signature"),
@@ -152,14 +211,15 @@ export async function handleEventsub(
   if (!(await verify(env, id, timestamp, raw, signature))) return text("Invalid signature", 403);
   const at = parseTwitchTime(timestamp);
   if (!Number.isFinite(at) || now - at > 600000 || at - now > 60000) return text("Stale message", 403);
-  let body;
+  let body: EventsubBody | null;
   try {
     body = JSON.parse(new TextDecoder().decode(raw));
   } catch {
     return text("Invalid JSON", 400);
   }
   if (!body || typeof body !== "object") return text("Invalid JSON", 400);
-  const subscription = body.subscription && typeof body.subscription === "object" ? body.subscription : {};
+  const subscription: { id?: unknown; status?: unknown } =
+    body.subscription && typeof body.subscription === "object" ? body.subscription : {};
   const message = {
     messageId: id,
     messageType: type,
@@ -173,7 +233,7 @@ export async function handleEventsub(
   // Only the fields the room reads are forwarded (fragments, badges, reply and cheer are dropped), so an emote-heavy
   // message stays a few hundred bytes. A room 4xx for a validly signed message is acknowledged (204) so Twitch does not
   // retry it into notification_failures_exceeded; only real room failures (5xx) answer 503 for a retry.
-  const condition =
+  const condition: { user_id?: unknown; broadcaster_user_id?: unknown } =
     body.subscription?.condition && typeof body.subscription.condition === "object" ? body.subscription.condition : {};
   const reader = condition.user_id ? String(condition.user_id).slice(0, 100) : "";
   let botId = reader && reader !== condition.broadcaster_user_id ? reader : "";
@@ -182,7 +242,7 @@ export async function handleEventsub(
     const own = await findChannel(String(condition.broadcaster_user_id || "")).catch(() => "");
     return own && !channels.includes(own) ? [...channels, own] : channels;
   };
-  const send = async (channel, extra = {}) => {
+  const send = async (channel: string, extra: { bot?: boolean; botId?: string } = {}): Promise<Response> => {
     const r = await roomFetch(
       channel,
       "/eventsub" + (extra.bot ? "?origin=" + encodeURIComponent(origin(channel)) : ""),
@@ -221,7 +281,7 @@ export async function handleEventsub(
     )
       return new Response(null, { status: 204 }); // chat, not a command: no room request
     const r = await send(channel, { bot: true, botId });
-    const d = r.ok ? await r.json().catch(() => ({})) : {};
+    const d: { replies?: unknown; reply?: unknown } = r.ok ? await r.json<object>().catch(() => ({})) : {};
     const messages = (Array.isArray(d.replies) ? d.replies : [d.reply])
       .map((x) => String(x || ""))
       .filter(Boolean)
@@ -229,20 +289,21 @@ export async function handleEventsub(
     if (messages.length && sendChat)
       sendChat({
         channel,
-        broadcasterId: String(body.event.broadcaster_user_id || condition.broadcaster_user_id || ""),
+        // !: body.event?.message?.text started with '!' above, so the event is there
+        broadcasterId: String(body.event!.broadcaster_user_id || condition.broadcaster_user_id || ""),
         senderId: botId,
         messages,
-        replyTo: String(body.event.message_id || ""),
+        replyTo: String(body.event!.message_id || ""), // !: as above
       });
   }
   return new Response(null, { status: 204 }); // other channels, subscription types and message types are ignored
 }
 
 // ---------- Helix subscription lifecycle (app access token) ----------
-const loopback = (host) => host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+const loopback = (host: string): boolean => host === "127.0.0.1" || host === "localhost" || host === "[::1]";
 // Test-only: chat can be marked connected without Twitch ONLY in a local `cf dev` started with MINI_LOCAL_TEST=1
 // (cloudflare.config.ts refuses to build or deploy with it), with a loopback PUBLIC_ORIGIN and a loopback request.
-export function localTestMode(env, url) {
+export function localTestMode(env: Env, url: URL): boolean {
   if (env.MINI_LOCAL_TEST !== "1" || !env.PUBLIC_ORIGIN) return false;
   try {
     return loopback(new URL(env.PUBLIC_ORIGIN).hostname) && loopback(url.hostname);
@@ -250,12 +311,12 @@ export function localTestMode(env, url) {
     return false;
   }
 }
-export async function appToken(env, fresh = false) {
+export async function appToken(env: Env, fresh = false): Promise<string> {
   if (!fresh) {
-    const sealed = await record(env, "app-token:twitch");
+    const sealed = await record<Sealed | null>(env, "app-token:twitch");
     if (sealed) {
       try {
-        const t = await unseal(env, sealed);
+        const t = await unseal<{ access_token: string; expiresAt: number }>(env, sealed);
         if (t.expiresAt > Date.now() + 60000) return t.access_token;
       } catch {}
     }
@@ -269,14 +330,14 @@ export async function appToken(env, fresh = false) {
     }),
   });
   if (!r.ok) throw fail("Twitch app token request failed (" + r.status + ")", 502);
-  const t = await r.json();
+  const t = await r.json<{ access_token?: string; expires_in?: unknown }>();
   if (!t.access_token) throw fail("Twitch app token request failed", 502);
   const expiresAt = Date.now() + Math.min(Number(t.expires_in) || 3600, 99 * 86400) * 1000;
   await record(env, "app-token:twitch", await seal(env, { access_token: t.access_token, expiresAt }), expiresAt);
   return t.access_token;
 }
-async function helix(env, method, path, body) {
-  const call = async (token) =>
+async function helix(env: Env, method: string, path: string, body?: unknown): Promise<Response> {
+  const call = async (token: string) =>
     fetch(HELIX + path, {
       method,
       headers: {
@@ -290,8 +351,8 @@ async function helix(env, method, path, body) {
   if (r.status === 401) r = await call(await appToken(env, true));
   return r;
 }
-export async function listChatSubscriptions(env) {
-  const all = [];
+export async function listChatSubscriptions(env: Env): Promise<ChatSubscription[]> {
+  const all: ChatSubscription[] = [];
   let after = "";
   for (let page = 0; page < 10; page++) {
     const r = await helix(
@@ -300,18 +361,18 @@ export async function listChatSubscriptions(env) {
       "/eventsub/subscriptions?type=channel.chat.message" + (after ? "&after=" + encodeURIComponent(after) : ""),
     );
     if (!r.ok) throw fail("Twitch subscription list failed (" + r.status + ")", 502);
-    const d = await r.json();
+    const d = await r.json<{ data?: ChatSubscription[]; pagination?: { cursor?: string } }>();
     all.push(...(d.data || []));
     after = d.pagination?.cursor || "";
     if (!after) break;
   }
   return all;
 }
-async function deleteSubscription(env, id) {
+async function deleteSubscription(env: Env, id: string): Promise<void> {
   const r = await helix(env, "DELETE", "/eventsub/subscriptions?id=" + encodeURIComponent(id));
   if (!r.ok && r.status !== 404) throw fail("Twitch subscription delete failed (" + r.status + ")", 502);
 }
-const summary = (s) => ({
+const summary = (s: ChatSubscription): ChatSubscriptionSummary => ({
   subscriptionId: String(s.id),
   status: String(s.status || "pending"),
   createdAt: Date.parse(s.created_at) || Date.now(),
@@ -319,14 +380,15 @@ const summary = (s) => ({
 // Twitch allows one subscription per type + condition, whatever the callback. Both sites share one Twitch app, so only
 // one site at a time can receive chat: a live subscription for the same condition on another callback is a conflict
 // (409, connectedElsewhere) unless the caller asks to take it over, which deletes it there.
-const callbackOrigin = (s) => {
+const callbackOrigin = (s: ChatSubscription): string => {
   try {
-    return new URL(s.transport.callback).origin;
+    // !: a missing transport or callback throws here on purpose, and the catch answers instead
+    return new URL(s.transport!.callback!).origin;
   } catch {
     return s.transport?.method || "another callback";
   }
 };
-const conflict = (where) =>
+const conflict = (where: string) =>
   fail(
     "Chat is connected to " +
       where +
@@ -337,9 +399,9 @@ const conflict = (where) =>
 // Ensures exactly one enabled channel.chat.message v1 webhook for this callback; stale or duplicate ones are deleted.
 // userId is the account that reads chat: the broadcaster or the PixFray bot.
 export async function connectChat(
-  env,
-  { broadcasterId, userId = broadcasterId, channel = "", origin, url, takeover = false },
-) {
+  env: Env,
+  { broadcasterId, userId = broadcasterId, channel = "", origin, url, takeover = false }: ConnectChatOptions,
+): Promise<ChatSubscriptionSummary> {
   if (localTestMode(env, url))
     return { subscriptionId: "local-" + randomToken().slice(0, 16), status: "enabled", createdAt: Date.now() };
   if (!broadcasterId)
@@ -351,8 +413,9 @@ export async function connectChat(
   if (!String(origin).startsWith("https://")) throw fail("PUBLIC_ORIGIN must be https for Twitch webhooks", 400);
   const callback = origin + EVENTSUB_PATH;
   const all = await listChatSubscriptions(env);
-  const ours = (s) => s.transport?.method === "webhook" && s.transport.callback === callback;
-  const sameCondition = (s) => s.condition?.broadcaster_user_id === broadcasterId && s.condition?.user_id === userId;
+  const ours = (s: ChatSubscription): boolean => s.transport?.method === "webhook" && s.transport.callback === callback;
+  const sameCondition = (s: ChatSubscription): boolean =>
+    s.condition?.broadcaster_user_id === broadcasterId && s.condition?.user_id === userId;
   const elsewhere = all.filter((s) => !ours(s) && sameCondition(s));
   const live = elsewhere.find((s) => s.status === "enabled" || s.status === "webhook_callback_verification_pending");
   if (live && !takeover) throw conflict(callbackOrigin(live));
@@ -390,11 +453,14 @@ export async function connectChat(
     );
   if (r.status === 409) throw conflict("another site"); // created elsewhere between our list and our create
   if (!r.ok) throw fail("Twitch rejected the chat subscription (" + r.status + ")", 502);
-  const created = (await r.json()).data?.[0];
+  const created = (await r.json<{ data?: ChatSubscription[] }>()).data?.[0];
   if (!created?.id) throw fail("Twitch returned no subscription", 502);
   return summary(created);
 }
-export async function disconnectChat(env, { subscriptionId, url }) {
+export async function disconnectChat(
+  env: Env,
+  { subscriptionId, url }: { subscriptionId?: string | null; url: URL },
+): Promise<void> {
   if (
     !subscriptionId ||
     subscriptionId.startsWith("local-") ||
@@ -406,7 +472,7 @@ export async function disconnectChat(env, { subscriptionId, url }) {
 }
 // The bot's chat line, sent with the app token (the bot granted user:write:chat + user:bot, the channel channel:bot).
 // A reply never starts with a command character, so the bot can't trigger itself or another bot.
-export function botMessage(message) {
+export function botMessage(message: unknown): string {
   const text = String(message || "")
     .replace(/\s+/g, " ")
     .trim();
@@ -414,7 +480,7 @@ export function botMessage(message) {
 }
 // Twitch's reason for a line the bot couldn't post, in words for the owner log, the admin page and "!fray debug".
 // reason is a drop_reason code from Helix, or the error sendChatMessage threw ("... failed (403)").
-const DROP_TEXT = {
+const DROP_TEXT: Record<string, string> = {
   msg_duplicate: "the same line twice within 30 s",
   msg_rejected: "held by AutoMod",
   msg_rejected_mandatory: "blocked by AutoMod or blocked terms",
@@ -428,7 +494,7 @@ const DROP_TEXT = {
   msg_verified_email: "the bot account needs a verified email",
   empty: "nothing to send",
 };
-export function botDropText(reason) {
+export function botDropText(reason: string | null | undefined): string {
   reason = String(reason || "");
   if (DROP_TEXT[reason]) return DROP_TEXT[reason] + " (" + reason + ")";
   const status = /\((\d{3})\)/.exec(reason)?.[1];
@@ -439,17 +505,13 @@ export function botDropText(reason) {
   return reason || "unknown";
 }
 // A bot that isn't a channel mod may send about one line per second there, so a 429 is retried twice after a short wait.
-/**
- * @param {any} env
- * @param {{ broadcasterId: string, senderId: string, message: string, replyTo?: string, sleep?: (ms: number) => Promise<unknown> }} msg
- */
 export async function sendChatMessage(
-  env,
-  { broadcasterId, senderId, message, replyTo = "", sleep = (ms) => new Promise((r) => setTimeout(r, ms)) },
-) {
+  env: Env,
+  { broadcasterId, senderId, message, replyTo = "", sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }: ChatLine,
+): Promise<SendResult> {
   const text = botMessage(message);
   if (!text || !broadcasterId || !senderId) return { sent: false, reason: "empty" };
-  const post = async (message) => {
+  const post = async (message: string): Promise<SendResult> => {
     const body = {
       broadcaster_id: broadcasterId,
       sender_id: senderId,
@@ -463,7 +525,7 @@ export async function sendChatMessage(
       r = await helix(env, "POST", "/chat/messages", body);
     }
     if (!r.ok) throw fail("Twitch send chat message failed (" + r.status + ")", 502);
-    const d = (await r.json()).data?.[0];
+    const d = (await r.json<{ data?: { is_sent?: boolean; drop_reason?: { code?: string } | null }[] }>()).data?.[0];
     return { sent: d?.is_sent === true, reason: String(d?.drop_reason?.code || "") };
   };
   // Twitch drops a line identical to the sender's previous one within 30 s (two viewers asking !fray). An invisible tag
@@ -476,15 +538,15 @@ export async function sendChatMessage(
   return out;
 }
 // The room's reply lines, in order and about a second apart (a bot that isn't a mod gets ~1 line per second).
-/**
- * @param {any} env
- * @param {{ broadcasterId: string, senderId: string, messages?: string[], replyTo?: string, sleep?: (ms: number) => Promise<unknown> }} msgs
- */
 export async function sendChatMessages(
-  env,
-  { messages = [], sleep = (ms) => new Promise((r) => setTimeout(r, ms)), ...rest },
-) {
-  const out = [];
+  env: Env,
+  {
+    messages = [],
+    sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+    ...rest
+  }: Omit<ChatLine, "message"> & { messages?: string[] },
+): Promise<SendResult[]> {
+  const out: SendResult[] = [];
   for (const [i, message] of messages.entries()) {
     if (i) await sleep(1100);
     out.push(
@@ -497,20 +559,20 @@ export async function sendChatMessages(
   return out;
 }
 // A channel's immutable Twitch id from its login, or '' when Twitch doesn't know it.
-export async function twitchUserId(env, login) {
+export async function twitchUserId(env: Env, login: string): Promise<string> {
   const r = await helix(env, "GET", "/users?login=" + encodeURIComponent(login));
   if (!r.ok) throw fail("Twitch user lookup failed (" + r.status + ")", 502);
-  return String((await r.json()).data?.[0]?.id || "");
+  return String((await r.json<{ data?: { id?: string }[] }>()).data?.[0]?.id || "");
 }
 // !checkin: the channel's current stream as {id,startedAt}, or null when it is offline. Throws when Twitch can't be reached.
-export async function liveStream(env, login) {
+export async function liveStream(env: Env, login: string): Promise<{ id: string; startedAt: number } | null> {
   const r = await helix(env, "GET", "/streams?user_login=" + encodeURIComponent(login));
   if (!r.ok) throw fail("Twitch stream lookup failed (" + r.status + ")", 502);
-  const s = (await r.json()).data?.[0];
+  const s = (await r.json<{ data?: { id?: string; type?: string; started_at: string }[] }>()).data?.[0];
   return s?.id && s.type === "live" ? { id: String(s.id), startedAt: Date.parse(s.started_at) || 0 } : null;
 }
 // Hourly alarm check. Returns the subscription status, 'missing', or null when Twitch can't be reached (no change then).
-export async function checkChatSubscription(env, subscriptionId) {
+export async function checkChatSubscription(env: Env, subscriptionId: string): Promise<string | null> {
   try {
     const s = (await listChatSubscriptions(env)).find((x) => x.id === subscriptionId);
     return s ? String(s.status) : "missing";

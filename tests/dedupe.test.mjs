@@ -1,10 +1,10 @@
-// Durable EventSub dedupe (server/dedupe.js, ChannelRoom.eventsub): a message id that Twitch delivers twice plays once,
+// Durable EventSub dedupe (server/dedupe.ts, ChannelRoom.eventsub): a message id that Twitch delivers twice plays once,
 // even when the second delivery lands on a fresh room instance (a new isolate sharing the same Durable Object storage).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { ChannelRoom } from "../server/channel.js";
-import { claimMessage, releaseMessage, EVENTSUB_DEDUPE_MS } from "../server/dedupe.js";
+import { claimMessage, releaseMessage, EVENTSUB_DEDUPE_MS } from "../server/dedupe.ts";
 
 const SECRET = "test-only-internal-secret-0123456789";
 function sqlHandle() {

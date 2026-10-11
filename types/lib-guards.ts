@@ -5,10 +5,14 @@
 export {};
 
 declare const integerBrand: unique symbol;
+declare const finiteBrand: unique symbol;
 
 declare global {
   interface NumberConstructor {
     isInteger(value: number): boolean;
     isInteger(value: unknown): value is number & { readonly [integerBrand]: true };
+    // Number.isFinite works the same way: true only for numbers, and false also for NaN and Infinity.
+    isFinite(value: number): boolean;
+    isFinite(value: unknown): value is number & { readonly [finiteBrand]: true };
   }
 }

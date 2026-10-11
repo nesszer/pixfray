@@ -1,12 +1,12 @@
-// Channel registry, open sign-up through /start, mod access later, and turning a channel off (server/channels.js).
+// Channel registry, open sign-up through /start, mod access later, and turning a channel off (server/channels.ts).
 // AuthStore runs for real on node:sqlite; rooms are a fake that echoes.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../server/worker.js";
-import { AuthStore, digest, record } from "../server/auth.js";
-import { forgetChannel, isFull, MAX_CHANNELS } from "../server/channels.js";
-import { OFF_TEXT } from "../server/streamelements.js";
+import { AuthStore, digest, record } from "../server/auth.ts";
+import { forgetChannel, isFull, MAX_CHANNELS } from "../server/channels.ts";
+import { OFF_TEXT } from "../server/streamelements.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz";
 function store() {
@@ -292,7 +292,7 @@ test("sign-up: a Twitch account under 30 days old or that never streamed waits, 
 });
 
 test("the streamer check: Affiliates and Partners skip the past-broadcast lookup; a failed lookup goes to review", async () => {
-  const { reviewReasons } = await import("../server/channels.js");
+  const { reviewReasons } = await import("../server/channels.ts");
   const now = Date.parse("2026-10-07T00:00:00Z"),
     old = "2025-01-01T00:00:00Z";
   const never = () => {

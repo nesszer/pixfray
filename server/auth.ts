@@ -1,10 +1,56 @@
 import { DurableObject } from "cloudflare:workers";
 import site from "../site.config.js";
-import { channelState, signUp, isBroadcaster, reviewReasons } from "./channels.js";
-import { authOrigin } from "./hosts.js";
-import { hit } from "./ratelimit.js";
-export class AuthStore extends DurableObject {
-  constructor(ctx, env) {
+import { channelState, signUp, isBroadcaster, reviewReasons } from "./channels.ts";
+import { authOrigin } from "./hosts.ts";
+import { hit } from "./ratelimit.ts";
+import type { HelixPage } from "./channels.ts";
+import type { Env } from "./env.ts";
+
+/** A signed-in Twitch account: the immutable id, the login and the display name Twitch gave at sign-in. */
+export type TwitchUser = { id: string; login: string; displayName: string };
+/** The session:<sha256 of the mini_session cookie> record in AuthStore, written at sign-in. */
+export type Session = { user: TwitchUser; createdAt: number };
+/**
+ * What access() decides for a user on a channel. `owner` and `broadcaster` tell the roles apart; a refusal and a
+ * moderator check carry `reason` ('' for a moderator). Every member names every key, so callers can read any of them.
+ */
+export type Access =
+  | { owner: true; broadcaster?: never; moderator: false; canManage: true; reason?: never }
+  | { owner: false; broadcaster: true; moderator: false; canManage: true; reason?: never }
+  | { owner: false; broadcaster?: never; moderator: boolean; canManage: boolean; reason: string };
+/** An AES-GCM sealed value (seal/unseal), as base64 parts. */
+export type Sealed = { iv: string; data: string };
+/** broadcaster:<login>: the sealed broadcaster token plus when it was last used. */
+export type StoredSeal = Sealed & { touched?: number };
+/** The sign-in's pending details, sealed into the OAuth state (sealState/openState). */
+export type OAuthPending = {
+  bot?: boolean;
+  signup?: boolean;
+  mods?: boolean;
+  channel?: string;
+  connect?: boolean;
+  connectMods?: boolean;
+  connectBot?: boolean;
+  next?: string;
+};
+/** Twitch's OAuth token response. */
+type TwitchTokens = { access_token: string; refresh_token: string; expires_in?: number; scope?: string[] };
+/** The broadcaster token as it is sealed in broadcaster:<login>. */
+type BroadcasterToken = TwitchTokens & { userId: string; validatedAt: number };
+/** Twitch's /oauth2/validate response. */
+type Validation = { client_id?: string; user_id?: string; scopes?: string[] };
+/** A Helix /users row (the fields read here and in reviewReasons). */
+export type HelixUser = {
+  id: string;
+  login: string;
+  display_name: string;
+  created_at: string;
+  broadcaster_type: string;
+};
+type EntryRow = { value: string; expires: number };
+
+export class AuthStore extends DurableObject<Env, unknown> {
+  constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
@@ -12,7 +58,7 @@ export class AuthStore extends DurableObject {
       "CREATE TABLE IF NOT EXISTS entries (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL)",
     );
   }
-  async fetch(request) {
+  async fetch(request: Request): Promise<Response> {
     if (!this.env.INTERNAL_SECRET || request.headers.get("X-Mini-Internal") !== this.env.INTERNAL_SECRET)
       return Response.json({ error: "Forbidden" }, { status: 403 });
     const url = new URL(request.url),
@@ -20,21 +66,24 @@ export class AuthStore extends DurableObject {
     if (!key || key.length > 200) return Response.json({ error: "Invalid key" }, { status: 400 });
     const sql = this.ctx.storage.sql;
     if (url.pathname === "/hit" && request.method === "POST") {
-      const { limit, windowMs } = await request.json().catch(() => ({}));
+      // sent by writeLimit (ratelimit.ts) as numbers; hit() clamps whatever arrives
+      const { limit, windowMs } = await request
+        .json<{ limit?: number; windowMs?: number }>()
+        .catch((): { limit?: number; windowMs?: number } => ({}));
       return Response.json(await hit(this.ctx, key, limit, windowMs));
-    } // per-user write limit (server/ratelimit.js)
+    } // per-user write limit (server/ratelimit.ts)
     if (url.pathname === "/consume" && request.method === "POST") {
       // One statement: the row is removed and returned atomically, so a code can only ever be read once.
-      const row = sql.exec("DELETE FROM entries WHERE key=? RETURNING value,expires", key).toArray()[0];
+      const row = sql.exec<EntryRow>("DELETE FROM entries WHERE key=? RETURNING value,expires", key).toArray()[0];
       const value = row && row.expires > Date.now() ? JSON.parse(row.value) : null;
       return Response.json(value);
     }
     if (url.pathname === "/list" && request.method === "GET") {
-      // Owner listings only: the channel registry (server/channels.js). Never sessions or tokens.
+      // Owner listings only: the channel registry (server/channels.ts). Never sessions or tokens.
       if (key !== "channel:") return Response.json({ error: "Invalid prefix" }, { status: 400 });
       const end = key.slice(0, -1) + ";"; // ';' sorts right after ':'
       const rows = [
-        ...sql.exec(
+        ...sql.exec<{ key: string; value: string }>(
           "SELECT key,value FROM entries WHERE key>=? AND key<? AND expires>? ORDER BY key LIMIT 500",
           key,
           end,
@@ -44,11 +93,12 @@ export class AuthStore extends DurableObject {
       return Response.json(rows.map((r) => ({ key: r.key, value: JSON.parse(r.value) })));
     }
     if (request.method === "GET") {
-      const rows = [...sql.exec("SELECT value,expires FROM entries WHERE key=?", key)];
+      const rows = [...sql.exec<EntryRow>("SELECT value,expires FROM entries WHERE key=?", key)];
       return Response.json(rows[0] && rows[0].expires > Date.now() ? JSON.parse(rows[0].value) : null);
     }
     if (request.method === "POST") {
-      const { value, expires } = await request.json();
+      // expires is checked with Number.isFinite below before it is used
+      const { value, expires } = await request.json<{ value: unknown; expires: number }>();
       // Channel registry rows and the modsconnected markers live ~20 years; everything else at most 100 days.
       if (
         !Number.isFinite(expires) ||
@@ -74,20 +124,25 @@ export class AuthStore extends DurableObject {
   }
   async alarm() {
     this.ctx.storage.sql.exec("DELETE FROM entries WHERE expires<=?", Date.now());
-    const [{ n }] = [...this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM entries")];
+    // as: COUNT(*) always returns exactly one row
+    const [{ n }] = [...this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM entries")] as [
+      { n: number },
+    ];
     if (n) await this.ctx.storage.setAlarm(Date.now() + 3600000);
   }
 }
 export const randomToken = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(32)), (x) => x.toString(16).padStart(2, "0")).join("");
-export async function digest(value) {
+export async function digest(value: string): Promise<string> {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), (x) =>
     x.toString(16).padStart(2, "0"),
   ).join("");
 }
 // Sign-in lasts 30 days, so a viewer coming back for the next stream still sees their own fighter. Signing out ends it.
 export const SESSION_S = 30 * 86400;
-export async function record(env, key, value, expires) {
+// T is what the caller knows the key holds (null when it is missing or expired). The default is any for the .js
+// callers (worker.js, developer.js), which read fields straight off the result; .ts callers pass T.
+export async function record<T = any>(env: Env, key: string, value?: unknown, expires?: number): Promise<T> {
   const stub = env.AUTH.get(env.AUTH.idFromName("auth"));
   const res = await stub.fetch("https://auth/entry?key=" + encodeURIComponent(key), {
     method: value === undefined ? "GET" : value === null ? "DELETE" : "POST",
@@ -95,22 +150,22 @@ export async function record(env, key, value, expires) {
     ...(value !== undefined && value !== null ? { body: JSON.stringify({ value, expires }) } : {}),
   });
   if (!res.ok) throw new Error("Auth storage unavailable");
-  return res.json();
+  return res.json<T>();
 }
 // Broadcaster token (Helix moderator checks): kept 90 days from its last use. `touched` sits beside the sealed fields, so
 // a successful check or an admin page view can push the expiry out without opening the token.
 const TOKEN_MS = 90 * 86400000,
   TOUCH_MS = 7 * 86400000,
   MARKER_MS = 20 * 365 * 86400000;
-export const keepBroadcaster = (env, channel, sealed) =>
+export const keepBroadcaster = (env: Env, channel: string, sealed: StoredSeal): Promise<unknown> =>
   record(env, "broadcaster:" + channel, { ...sealed, touched: Date.now() }, Date.now() + TOKEN_MS);
-export const touchBroadcaster = (env, channel, sealed) =>
+export const touchBroadcaster = (env: Env, channel: string, sealed: StoredSeal): Promise<unknown> | null =>
   Date.now() - (sealed?.touched || 0) > TOUCH_MS ? keepBroadcaster(env, channel, sealed) : null;
 // modsconnected:<login> = {at}: written whenever mod access is connected and never expires, so the admin page can tell
 // "never connected" from "connected, but the token lapsed" (modsLapsed).
-export const markModsConnected = (env, channel) =>
+export const markModsConnected = (env: Env, channel: string): Promise<unknown> =>
   record(env, "modsconnected:" + channel, { at: Date.now() }, Date.now() + MARKER_MS);
-export async function consume(env, key) {
+export async function consume(env: Env, key: string): Promise<unknown> {
   const stub = env.AUTH.get(env.AUTH.idFromName("auth"));
   const r = await stub.fetch("https://auth/consume?key=" + encodeURIComponent(key), {
     method: "POST",
@@ -119,7 +174,7 @@ export async function consume(env, key) {
   if (!r.ok) throw new Error("Auth storage unavailable");
   return r.json();
 }
-export async function seal(env, value) {
+export async function seal(env: Env, value: unknown): Promise<Sealed> {
   const key = await crypto.subtle.importKey(
     "raw",
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.AUTH_SECRET)),
@@ -135,24 +190,25 @@ export async function seal(env, value) {
 }
 // OAuth state: the sign-in's pending details, sealed with AUTH_SECRET and carried in the state parameter and the
 // mini_oauth cookie, so /auth/login writes nothing to AuthStore (a sign-in flood can't use up its quota).
-const b64url = (bytes) =>
+const b64url = (bytes: number[]): string =>
   btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
-const unb64url = (text) => Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (x) => x.charCodeAt(0));
+const unb64url = (text: string): Uint8Array =>
+  Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (x) => x.charCodeAt(0));
 export const OAUTH_STATE = /^[A-Za-z0-9_-]{40,1500}$/;
-export async function sealState(env, pending) {
+export async function sealState(env: Env, pending: OAuthPending): Promise<string> {
   const { iv, data } = await seal(env, { oauth: pending, exp: Date.now() + 600000, n: randomToken().slice(0, 16) });
-  const bytes = (text) => Array.from(atob(text), (x) => x.charCodeAt(0));
+  const bytes = (text: string): number[] => Array.from(atob(text), (x) => x.charCodeAt(0));
   return b64url([...bytes(iv), ...bytes(data)]);
 }
-export async function openState(env, state) {
+export async function openState(env: Env, state: string): Promise<OAuthPending | null> {
   if (!OAUTH_STATE.test(state || "")) return null;
   try {
     const raw = unb64url(state);
     if (raw.length < 29) return null;
-    const v = await unseal(env, {
+    const v = await unseal<{ oauth?: OAuthPending; exp?: unknown } | null>(env, {
       iv: btoa(String.fromCharCode(...raw.slice(0, 12))),
       data: btoa(String.fromCharCode(...raw.slice(12))),
     });
@@ -161,7 +217,8 @@ export async function openState(env, state) {
     return null;
   }
 }
-export async function unseal(env, value) {
+// T is what the caller sealed; unseal only decrypts and parses it.
+export async function unseal<T = unknown>(env: Env, value: Sealed): Promise<T> {
   const key = await crypto.subtle.importKey(
     "raw",
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.AUTH_SECRET)),
@@ -186,32 +243,32 @@ export const CONNECT_SCOPES = ["moderation:read", "user:read:chat", "user:bot", 
 // bot=1 (test site, CHAT_BOT): the BOT_LOGIN account lets the app read and send chat as it. Only its id is stored
 // (bot:twitch); the app token does the rest. connect=bot: a broadcaster allows the bot in their chat (channel:bot).
 export const BOT_SCOPES = ["user:read:chat", "user:write:chat", "user:bot"];
-export function configured(env) {
+export function configured(env: Env): boolean {
   return !!(env.TWITCH_CLIENT_ID && env.TWITCH_CLIENT_SECRET && env.AUTH_SECRET && env.INTERNAL_SECRET);
 }
-export async function session(request, env) {
+export async function session(request: Request, env: Env): Promise<Session | null> {
   const raw = request.headers.get("Cookie")?.match(/(?:^|;\s*)mini_session=([a-f0-9]{64})(?:;|$)/)?.[1];
-  return raw ? record(env, "session:" + (await digest(raw))) : null;
+  return raw ? record<Session | null>(env, "session:" + (await digest(raw))) : null;
 }
-export async function isOwner(env, user) {
+export async function isOwner(env: Env, user: TwitchUser | null | undefined): Promise<boolean> {
   if (!user) return false;
   if (env.OWNER_TWITCH_ID) return user.id === env.OWNER_TWITCH_ID;
-  const owner = await record(env, "owner:" + site.owner.login);
+  const owner = await record<{ id: string } | null>(env, "owner:" + site.owner.login);
   return owner?.id === user.id;
 }
 // Where sign-in returns: a page on this site (the one the sign-in started on, with its ?channel= and #tab), never
 // another site, /auth/ or /api/.
-export function safeNext(v) {
+export function safeNext(v: unknown): string {
   if (typeof v !== "string" || v.length > 500 || !/^\/(?![/\\])/.test(v) || /[\u0000-\u001f\\]/.test(v)) return "/";
   const u = new URL(v, "https://next.invalid");
   return u.origin === "https://next.invalid" && !/^\/(auth|api)(\/|$)/.test(u.pathname)
     ? u.pathname + u.search + u.hash
     : "/";
 }
-export function cookie(name, value, age) {
+export function cookie(name: string, value: string, age: number): string {
   return name + "=" + value + "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=" + age;
 }
-export async function handleAuth(request, env) {
+export async function handleAuth(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url),
     path = url.pathname;
   if (path === "/auth/logout") {
@@ -228,7 +285,7 @@ export async function handleAuth(request, env) {
     );
   const callback = authOrigin(env, url) + "/auth/callback";
   if (path === "/auth/login") {
-    let pending,
+    let pending: OAuthPending,
       scope = "";
     if (url.searchParams.get("bot") === "1") {
       if (env.CHAT_BOT !== "1" || !env.BOT_LOGIN)
@@ -299,7 +356,8 @@ export async function handleAuth(request, env) {
   const pending = await openState(env, state);
   if (pending?.signup && !url.searchParams.get("code"))
     return startPage(url.searchParams.get("error") === "access_denied" ? "denied" : "failed");
-  if (pending?.connectMods && !url.searchParams.get("code")) return adminPage(pending.channel, "mods=denied");
+  // !: a connectMods sign-in always carries its channel (the login branch above)
+  if (pending?.connectMods && !url.searchParams.get("code")) return adminPage(pending.channel!, "mods=denied");
   if (!pending || !url.searchParams.get("code"))
     return Response.json({ error: "Authorization expired or denied" }, { status: 400 });
   const tokenRes = await fetch("https://id.twitch.tv/oauth2/token", {
@@ -307,13 +365,14 @@ export async function handleAuth(request, env) {
     body: new URLSearchParams({
       client_id: env.TWITCH_CLIENT_ID,
       client_secret: env.TWITCH_CLIENT_SECRET,
-      code: url.searchParams.get("code"),
+      // !: checked by the `!url.searchParams.get("code")` return above
+      code: url.searchParams.get("code")!,
       grant_type: "authorization_code",
       redirect_uri: callback,
     }),
   });
   if (!tokenRes.ok) return Response.json({ error: "Twitch token exchange failed" }, { status: 502 });
-  const tokens = await tokenRes.json(),
+  const tokens = await tokenRes.json<TwitchTokens>(),
     headers = { "Client-Id": env.TWITCH_CLIENT_ID, Authorization: "Bearer " + tokens.access_token };
   const [identityRes, validationRes] = await Promise.all([
     fetch("https://api.twitch.tv/helix/users", { headers }),
@@ -321,24 +380,25 @@ export async function handleAuth(request, env) {
   ]);
   if (!identityRes.ok || !validationRes.ok)
     return Response.json({ error: "Twitch identity validation failed" }, { status: 502 });
-  const identity = (await identityRes.json()).data?.[0],
-    validation = await validationRes.json();
+  const identity = (await identityRes.json<{ data?: HelixUser[] }>()).data?.[0],
+    validation = await validationRes.json<Validation>();
   if (!identity || validation.client_id !== env.TWITCH_CLIENT_ID || validation.user_id !== identity.id)
     return Response.json({ error: "Twitch identity mismatch" }, { status: 403 });
   const user = { id: identity.id, login: identity.login, displayName: identity.display_name };
   // Resolve the channel's current immutable ID from Twitch, never from a claimed form field.
   // A failed lookup only blocks connecting chat; viewers still sign in and the last stored owner record stays.
   const ownerRes = await fetch("https://api.twitch.tv/helix/users?login=" + site.owner.login, { headers }).catch(
-    () => null,
+    (): null => null, // typed: the loose worker program would widen a bare null to any
   );
-  const owner = ownerRes?.ok ? (await ownerRes.json()).data?.[0] : null;
+  const owner = ownerRes?.ok ? (await ownerRes.json<{ data?: { id: string }[] }>()).data?.[0] : null;
   if (owner) {
     if (env.OWNER_TWITCH_ID && env.OWNER_TWITCH_ID !== owner.id)
       return Response.json({ error: "Owner configuration mismatch" }, { status: 403 });
     await record(env, "owner:" + site.owner.login, { id: owner.id }, Date.now() + 90 * 86400000);
   } else if (pending.connect) return Response.json({ error: "Cannot resolve channel owner" }, { status: 502 });
   if (pending.connect) {
-    if (user.id !== owner.id)
+    // !: without an owner, pending.connect returned 502 above
+    if (user.id !== owner!.id)
       return Response.json(
         { error: "Only " + site.owner.login + " can connect broadcaster authorization" },
         { status: 403 },
@@ -378,14 +438,14 @@ export async function handleAuth(request, env) {
   const modScope = validation.scopes?.includes("moderation:read"),
     botScope = env.CHAT_BOT === "1" && validation.scopes?.includes("channel:bot");
   if (pending.signup) {
-    const helix = async (p) => {
+    const helix = async (p: string): Promise<HelixPage> => {
       const r = await fetch("https://api.twitch.tv/helix" + p, { headers });
       if (!r.ok) throw new Error("helix " + r.status);
-      return r.json();
+      return r.json<HelixPage>();
     };
     try {
       pending.channel = await signUp(env, user, () => reviewReasons(identity, helix));
-    } catch (e) {
+    } catch (e: any /* any: signUp's fail() Error carries .reason; anything else is rethrown */) {
       if (!e.reason) throw e;
       return startPage(e.reason);
     }
@@ -399,15 +459,16 @@ export async function handleAuth(request, env) {
     }
   }
   if (pending.connectMods) {
-    if (!(await isBroadcaster(env, user, pending.channel))) return adminPage(pending.channel, "mods=wrong_account");
+    // !: a connectMods sign-in always carries its channel (the login branch above), here and below
+    if (!(await isBroadcaster(env, user, pending.channel!))) return adminPage(pending.channel!, "mods=wrong_account");
     if (!modScope || (pending.connectBot && !validation.scopes?.includes("channel:bot")))
-      return adminPage(pending.channel, "mods=denied");
+      return adminPage(pending.channel!, "mods=denied"); // !: as above
     await keepBroadcaster(
       env,
-      pending.channel,
+      pending.channel!, // !: as above
       await seal(env, { ...tokens, userId: user.id, validatedAt: Date.now() }),
     );
-    await markModsConnected(env, pending.channel);
+    await markModsConnected(env, pending.channel!); // !: as above
   }
   const key = randomToken();
   await record(env, "session:" + (await digest(key)), { user, createdAt: Date.now() }, Date.now() + SESSION_S * 1000);
@@ -428,13 +489,13 @@ export async function handleAuth(request, env) {
   return response;
 }
 // Back to /start with the reason sign-up didn't finish (full, denied, failed).
-function startPage(error) {
+function startPage(error: string): Response {
   return new Response(null, {
     status: 303,
     headers: { Location: "/start/?error=" + encodeURIComponent(error), "Set-Cookie": cookie("mini_oauth", "", 0) },
   });
 }
-function adminPage(channel, query) {
+function adminPage(channel: string, query: string): Response {
   return new Response(null, {
     status: 303,
     headers: {
@@ -443,13 +504,13 @@ function adminPage(channel, query) {
     },
   });
 }
-const verdict = (moderator) => ({
+const verdict = (moderator: boolean): Access => ({
   owner: false,
   moderator,
   canManage: moderator,
   reason: moderator ? "" : "Current Twitch moderator role required",
 });
-export async function access(env, user, channel) {
+export async function access(env: Env, user: TwitchUser | null | undefined, channel: string): Promise<Access> {
   const owner = await isOwner(env, user);
   if (owner) return { owner: true, moderator: false, canManage: true };
   if (!user) return { owner: false, moderator: false, canManage: false, reason: "Sign in with Twitch" };
@@ -458,9 +519,9 @@ export async function access(env, user, channel) {
     return { owner: false, broadcaster: true, moderator: false, canManage: true };
   // The Helix verdict is cached for a minute so a raid of signed-in viewers can't exhaust the broadcaster's rate limit.
   const cacheKey = "mod:" + channel + ":" + user.id,
-    cached = await record(env, cacheKey);
+    cached = await record<boolean | null>(env, cacheKey);
   if (cached !== null) return verdict(cached === true);
-  const encrypted = await record(env, "broadcaster:" + channel);
+  const encrypted = await record<StoredSeal | null>(env, "broadcaster:" + channel);
   if (!encrypted)
     return {
       owner: false,
@@ -468,7 +529,7 @@ export async function access(env, user, channel) {
       canManage: false,
       reason: "Broadcaster must connect moderator authorization",
     };
-  let token = await unseal(env, encrypted);
+  let token = await unseal<BroadcasterToken>(env, encrypted);
   const authHeaders = () => ({ "Client-Id": env.TWITCH_CLIENT_ID, Authorization: "Bearer " + token.access_token });
   const renew = async () => {
     const r = await fetch("https://id.twitch.tv/oauth2/token", {
@@ -481,7 +542,7 @@ export async function access(env, user, channel) {
       }),
     });
     if (!r.ok) throw new Error("Broadcaster must reconnect Twitch");
-    token = { ...token, ...(await r.json()), validatedAt: 0 };
+    token = { ...token, ...(await r.json<TwitchTokens>()), validatedAt: 0 };
   };
   if (Date.now() - token.validatedAt > 3600000) {
     let r = await fetch("https://id.twitch.tv/oauth2/validate", {
@@ -494,7 +555,7 @@ export async function access(env, user, channel) {
       });
     }
     if (!r.ok) throw new Error("Twitch authorization unavailable");
-    const v = await r.json();
+    const v = await r.json<Validation>();
     if (v.user_id !== token.userId || v.client_id !== env.TWITCH_CLIENT_ID || !v.scopes?.includes("moderation:read"))
       throw new Error("Broadcaster authorization is invalid");
     token.validatedAt = Date.now();
@@ -515,7 +576,8 @@ export async function access(env, user, channel) {
     r = await checkMod();
   }
   if (!r.ok) throw new Error("Current moderator role cannot be verified");
-  const moderator = (await r.json()).data?.some((x) => x.user_id === user.id) || false;
+  const moderator =
+    (await r.json<{ data?: { user_id: string }[] }>()).data?.some((x) => x.user_id === user.id) || false;
   await record(env, cacheKey, moderator, Date.now() + 60000);
   return verdict(moderator);
 }

@@ -1,5 +1,5 @@
 // /play/ "Your own sprite": a picture becomes a pixel sprite in the browser (src/spritify.js), optionally redrawn by
-// Workers AI first, and is sent to the mods (server/sprites.js). Once approved it is in the viewer's character list.
+// Workers AI first, and is sent to the mods (server/sprites.ts). Once approved it is in the viewer's character list.
 import { api, errorText, h, $, setStatus, CHANNEL } from "./ui.js";
 import { decodeFile, decodeBase64, encode, fitSize, paint, spritify, REDRAW_MAX } from "./spritify.js";
 

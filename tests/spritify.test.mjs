@@ -14,7 +14,7 @@ import {
   SPRITE_MAX,
   OUTLINE,
 } from "../src/spritify.js";
-import { validateSprite, validateRedrawImage, jpegSize, spriteDay, SPRITE_LIMITS } from "../server/sprites.js";
+import { validateSprite, validateRedrawImage, jpegSize, spriteDay, SPRITE_LIMITS } from "../server/sprites.ts";
 import { makePng, b64 } from "./upload-helpers.mjs";
 
 // A w x h picture: `pixel(x, y)` gives [r, g, b, a].

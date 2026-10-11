@@ -3,8 +3,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../server/worker.js";
 import { createHmac } from "node:crypto";
-import { digest } from "../server/auth.js";
-import { forgetChannel } from "../server/channels.js";
+import { digest } from "../server/auth.ts";
+import { forgetChannel } from "../server/channels.ts";
 import { makePng } from "./upload-helpers.mjs";
 import {
   eventsubSecret,
@@ -13,7 +13,7 @@ import {
   sendChatMessage,
   sendChatMessages,
   botDropText,
-} from "../server/eventsub.js";
+} from "../server/eventsub.ts";
 
 function environment() {
   const entries = new Map(),
@@ -45,7 +45,7 @@ function environment() {
             return Response.json({ ok: true });
           }
           const { value, expires } = JSON.parse(options.body);
-          // The same expiry cap as the real AuthStore (server/auth.js).
+          // The same expiry cap as the real AuthStore (server/auth.ts).
           if (
             !Number.isFinite(expires) ||
             expires > Date.now() + (/^(channel|modsconnected|bot):/.test(key) ? 21 * 365 : 100) * 86400000

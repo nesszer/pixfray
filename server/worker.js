@@ -11,12 +11,12 @@ import {
   CHANNELS,
   touchBroadcaster,
   markModsConnected,
-} from "./auth.js";
+} from "./auth.ts";
 import { handleDeveloper, logWorkerError } from "./developer.js";
-import { backupChannels } from "./backups.js";
-import { handleUploads } from "./uploads.js";
-import { handlePets } from "./pets.js";
-import { handleSprites } from "./sprites.js";
+import { backupChannels } from "./backups.ts";
+import { handleUploads } from "./uploads.ts";
+import { handlePets } from "./pets.ts";
+import { handleSprites } from "./sprites.ts";
 import {
   EVENTSUB_PATH,
   BOT_LOGIN_URL,
@@ -25,13 +25,13 @@ import {
   disconnectChat,
   sendChatMessages,
   twitchUserId,
-} from "./eventsub.js";
-import { handleStreamElements, seCommandLines, seHelpText, SE_SUBSCRIPTION_ID } from "./streamelements.js";
-import { channelState, isOn, offError, setPaused, publicChannels, listRecords, isFull } from "./channels.js";
-import { COSMETIC_KINDS, COSMETIC_FIELDS, MAX_BUILDS } from "./cosmetics.js";
-import { siteOrigin, channelPageRedirect, isPage } from "./hosts.js";
-import { secure, PAGE_CSP, API_CSP } from "./security.js";
-import { writeLimit } from "./ratelimit.js";
+} from "./eventsub.ts";
+import { handleStreamElements, seCommandLines, seHelpText, SE_SUBSCRIPTION_ID } from "./streamelements.ts";
+import { channelState, isOn, offError, setPaused, publicChannels, listRecords, isFull } from "./channels.ts";
+import { COSMETIC_KINDS, COSMETIC_FIELDS, MAX_BUILDS } from "./cosmetics.ts";
+import { siteOrigin, channelPageRedirect, isPage } from "./hosts.ts";
+import { secure, PAGE_CSP, API_CSP } from "./security.ts";
+import { writeLimit } from "./ratelimit.ts";
 export { ChannelRoom, AuthStore };
 // A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
 // page's state and profile saves are refused.
@@ -40,7 +40,7 @@ const WRITE_ROUTES = ["profile", "shop", "assets", "pets", "admin", "sprite", "s
 function json(data, status = 200) {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 }
-// Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.js (the room checks the ids and prices).
+// Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.ts (the room checks the ids and prices).
 const SHOP_KINDS = ["pet", "hat", "slot", ...COSMETIC_KINDS];
 // The price a buyer saw is optional; when sent it must match the current one (409 price_changed).
 const shopPrice = (p) => p === undefined || (Number.isInteger(p) && p >= 0 && p <= 1000000);
@@ -413,7 +413,7 @@ async function picker(request, env, url) {
   pickerCache = { data: { channels, catalog, full }, at: Date.now() };
   return pickerCache.data;
 }
-// Every response leaves through secure() (server/security.js): HSTS on https, and a locked-down CSP on /api and /auth.
+// Every response leaves through secure() (server/security.ts): HSTS on https, and a locked-down CSP on /api and /auth.
 const API_PATH = /^\/(api|auth)\//;
 export default {
   async fetch(request, env, ctx) {
@@ -421,7 +421,7 @@ export default {
       url = new URL(request.url);
     return secure(r, url, API_PATH.test(url.pathname) ? API_CSP : "");
   },
-  // The daily cron (cloudflare.config.ts): back up every channel into D1 (server/backups.js).
+  // The daily cron (cloudflare.config.ts): back up every channel into D1 (server/backups.ts).
   async scheduled(controller, env, ctx) {
     if (!env.BACKUPS || !env.INTERNAL_SECRET) return;
     const run = backupChannels(env, controller.scheduledTime, (channel, p, init) =>
@@ -571,7 +571,7 @@ async function handle(request, env, ctx) {
         access: () => access(env, user, channel),
         roomFetch: (p, init) => roomFetch(null, env, channel, p, init),
       });
-    // Pets (server/pets.js): the public catalog and images; mods upload and delete their own.
+    // Pets (server/pets.ts): the public catalog and images; mods upload and delete their own.
     if (route === "pets")
       return await handlePets(request, env, {
         user,
@@ -580,7 +580,7 @@ async function handle(request, env, ctx) {
         access: () => access(env, user, channel),
         roomFetch: (p, init) => roomFetch(null, env, channel, p, init),
       });
-    // Viewer sprites (server/sprites.js): a viewer sends one made from their own image (optionally redrawn by Workers AI),
+    // Viewer sprites (server/sprites.ts): a viewer sends one made from their own image (optionally redrawn by Workers AI),
     // mods approve or reject it.
     if (route === "sprite" || route === "sprites")
       return await handleSprites(
@@ -617,7 +617,7 @@ async function handle(request, env, ctx) {
         loadout = loadoutFields(body);
       if (!validProfile({ avatar, color, defaultAbility }) || !loadout.ok)
         return refuseSave(request, env, channel, user, "invalid_fields", "Invalid profile fields", 400);
-      // stats/hat are optional; the room checks them against the saved wins (server/upgrades.js).
+      // stats/hat are optional; the room checks them against the saved wins (server/upgrades.ts).
       if (
         (stats !== undefined && (!stats || typeof stats !== "object" || Array.isArray(stats))) ||
         (hat !== undefined && typeof hat !== "string") ||

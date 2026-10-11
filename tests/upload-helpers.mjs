@@ -1,7 +1,7 @@
 // Test helpers for Lane D: a tiny PNG encoder, PNG size reader and a fake ChannelRoom context on node:sqlite.
 import { deflateSync } from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
-import { crc32 } from "../server/uploads.js";
+import { crc32 } from "../server/uploads.ts";
 
 function chunk(type, data) {
   const out = Buffer.alloc(12 + data.length);

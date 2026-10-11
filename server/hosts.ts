@@ -1,35 +1,41 @@
+import type { Env } from "./env.ts";
+
+/** The bindings these helpers read. */
+type HostEnv = Pick<Env, "CHANNEL_ORIGINS" | "PUBLIC_ORIGIN">;
+
 // Channel domains serve only the channel configured for each domain.
 // CHANNEL_ORIGINS is JSON {channel: origin}. On such a domain the viewer and mod pages open that channel, and pages
 // for any other channel move to PUBLIC_ORIGIN (the main site). The API, the overlay and the assets answer on every
 // domain, so older OBS and StreamElements links keep working.
-export function channelOrigins(env) {
+export function channelOrigins(env: Pick<Env, "CHANNEL_ORIGINS">): Record<string, string> {
   try {
-    const all = JSON.parse(env.CHANNEL_ORIGINS || "{}"),
-      out = {};
+    const all: unknown = JSON.parse(env.CHANNEL_ORIGINS || "{}"),
+      out: Record<string, string> = {};
     for (const [channel, origin] of Object.entries(all && typeof all === "object" ? all : {}))
-      out[channel] = new URL(origin).origin;
+      // Any JSON value: new URL() reads it as a string, and one that is not a URL throws into the catch below
+      out[channel] = new URL(origin as string).origin;
     return out;
   } catch {
     return {};
   }
 }
 // The channel whose own domain this request came in on, or ''.
-export function hostChannel(env, url) {
+export function hostChannel(env: HostEnv, url: URL): string {
   return Object.entries(channelOrigins(env)).find(([, origin]) => origin === url.origin)?.[0] || "";
 }
 // Where links for a channel point: its own domain if it has one, else the main site.
-export function siteOrigin(env, url, channel) {
+export function siteOrigin(env: HostEnv, url: URL, channel: string): string {
   return channelOrigins(env)[channel] || env.PUBLIC_ORIGIN || url.origin;
 }
 // Sign-in returns to the domain it started on (cookies are per domain), when that domain is one of ours.
-export function authOrigin(env, url) {
+export function authOrigin(env: HostEnv, url: URL): string {
   return hostChannel(env, url) ? url.origin : env.PUBLIC_ORIGIN || url.origin;
 }
 // The home, picker, mod and signup pages (the paths cloudflare.config.ts sends through the Worker; /intro/ only redirects).
-export const isPage = (path) => /^\/(index\.html)?$|^\/(admin|start|play)(\/|$)/.test(path);
+export const isPage = (path: string): boolean => /^\/(index\.html)?$|^\/(admin|start|play)(\/|$)/.test(path);
 // Page requests on a channel domain: other channels and the site-wide pages (/start, /play, /admin/dev) move to the main
 // site; a page without ?channel= gets the domain's channel. 302, so a later change is not stuck in browser caches.
-export function channelPageRedirect(env, url) {
+export function channelPageRedirect(env: HostEnv, url: URL): Response | null {
   const channel = hostChannel(env, url),
     path = url.pathname;
   if (!channel || !isPage(path)) return null;

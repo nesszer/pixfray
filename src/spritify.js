@@ -1,6 +1,6 @@
 // Turns any picture into a PixFray sprite in the browser: cut out the subject, shrink it to fighter size, cut the
 // colors to a small palette, add a dark outline and double the pixels. The result is a PNG of at most 128x128 that
-// server/sprites.js accepts. The steps work on plain {width, height, data} images, so tests run them without a DOM.
+// server/sprites.ts accepts. The steps work on plain {width, height, data} images, so tests run them without a DOM.
 export const SPRITE_MAX = 128;
 export const SOURCE_MAX = 512; // pictures are decoded at most this size before any step
 export const REDRAW_MAX = 504; // the AI model takes images under 512 px a side
