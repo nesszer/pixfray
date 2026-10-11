@@ -1331,6 +1331,43 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
+  test("a test string that named the .ts path before the port passes unchanged", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList(),
+      "src/ui.js": "export const ui = 1;\n",
+      "tests/paths.test.mjs":
+        'import { ui } from "../src/ui.js";\nconst SOURCES = ["src/ui.ts", "src/ui.js"];\nif (SOURCES.length !== ui + 1) throw new Error("paths");\n',
+    });
+    await git(dir, "mv", "src/ui.js", "src/ui.ts");
+    write(dir, {
+      "src/ui.ts": "export const ui: number = 1;\n",
+      "tests/paths.test.mjs":
+        'import { ui } from "../src/ui.ts";\nconst SOURCES = ["src/ui.ts", "src/ui.ts"];\nif (SOURCES.length !== ui + 1) throw new Error("paths");\n',
+      "tsconfig.strict.json": strictList("src/ui.ts"),
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 0,
+      stdout: "allowed: tsconfig.strict.json (no build config reads it)\n2 files compared, 0 different\n",
+      stderr: "",
+    });
+    write(dir, {
+      "tests/paths.test.mjs":
+        'import { ui } from "../src/ui.ts";\nconst SOURCES = ["src/ui.ts", "src/ui.mjs"];\nif (SOURCES.length !== ui + 1) throw new Error("paths");\n',
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "tests/paths.test.mjs differs (base line 2, head line 2)",
+        '  base: const SOURCES = ["src/ui.js", "src/ui.js"];',
+        '  head: const SOURCES = ["src/ui.js", "src/ui.mjs"];',
+        "allowed: tsconfig.strict.json (no build config reads it)",
+        "2 files compared, 1 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
   test("a code file under public/ fails when renamed, moved in or out, or turned into TypeScript", async () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList(),
