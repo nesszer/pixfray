@@ -125,8 +125,9 @@ rules apply to them. `check` has no environment, so its checks run before anyone
   ref and ancestry checks, `bun install --frozen-lockfile` and `bun run check` on the branch's code. Its only output is
   the commit SHA it verified.
 - `release` waits for its environment, then starts on a new runner, checks out that SHA, confirms the checkout matches,
-  runs `bun install --frozen-lockfile`, and only then runs the upload step with the token. Nothing else from `check`
-  reaches it. That install runs the committed `package.json`'s lifecycle scripts before the token step, so a script added
+  runs `bun install --frozen-lockfile`, and only then runs the upload step with the token. It restores no Actions
+  cache (setup-bun runs with `no-cache: true`), because `check` and CI run branch code that could write one. Only the
+  SHA passes from `check` to it. That install runs the committed `package.json`'s lifecycle scripts before the token step, so a script added
   by a push from outside the editor could change the Cloudflare CLI before the upload step runs.
 - `rollback` checks out `github.sha`. The owner page always dispatches rollbacks on the base branch, so that is the
   base branch's head. A rollback dispatched by hand from another ref would run that ref's `scripts/release.mjs` with

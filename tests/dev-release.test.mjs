@@ -247,6 +247,16 @@ test("deploy workflow keeps the Cloudflare token out of check and deploys the co
   assert.ok(verify >= 0 && verify < install && install < runCheck, "verify runs before install and check");
   const checkout = release.steps.find((s) => String(s.uses).startsWith("actions/checkout@"));
   assert.equal(checkout.with.ref, "${{ needs.check.outputs.sha }}");
+  assert.equal(release.if, "inputs.operation == 'deploy'", "release never runs after check fails");
+  assert.deepEqual(release.permissions, { contents: "read" });
+  assert.doesNotMatch(JSON.stringify(check), /secrets\./, "check reads no secrets");
+  assert.equal(release.env.VERIFIED_SHA, "${{ needs.check.outputs.sha }}");
+  assert.match(releaseRuns, /test "\$SHA" = "\$VERIFIED_SHA"/, "release re-checks the checkout");
+  const restoresCache = (s) =>
+    String(s.uses).startsWith("actions/cache") ||
+    (String(s.uses).startsWith("oven-sh/setup-bun@") && s.with?.["no-cache"] !== true) ||
+    (String(s.uses).startsWith("actions/setup-node@") && s.with?.cache !== undefined);
+  assert.deepEqual(release.steps.filter(restoresCache), [], "release restores no cache check or CI could write");
 });
 
 test("CI workflow checks every push to main, scans for secrets and never sees secrets", () => {
