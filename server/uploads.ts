@@ -9,6 +9,7 @@
 //   atlas_dimensions, 413 atlas_too_large, 415 not_png, 409 custom_limit_reached.
 // DELETE /api/assets/:channel/:id (canManage) -> {ok:true, id, usage} or 404 {reason:"not_found"}.
 // The same validation runs in the Worker (cheap rejection) and again in the ChannelRoom before the insert.
+import { parseUploadMeta } from "./parse.ts";
 import type { Env } from "./env.ts";
 import type { PetsContext } from "./pets.ts";
 
@@ -392,10 +393,8 @@ function customId(label: string): string {
   return "c-" + slug + "-" + rand;
 }
 
+// Stored meta that is not a JSON object adds no fields.
 function catalogEntry(channel: string, row: { id: string; meta: string }): CatalogEntry {
-  let meta: { [field: string]: unknown } = {};
-  try {
-    meta = JSON.parse(row.meta);
-  } catch {}
-  return { ...meta, id: row.id, url: "/api/assets/" + channel + "/" + row.id, custom: true };
+  const meta = parseUploadMeta(row.meta);
+  return { ...(meta.ok ? meta.value : {}), id: row.id, url: "/api/assets/" + channel + "/" + row.id, custom: true };
 }

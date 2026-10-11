@@ -1,3 +1,4 @@
+import { parseChannelOrigins } from "./parse.ts";
 import type { Env } from "./env.ts";
 
 /** The bindings these helpers read. */
@@ -7,17 +8,10 @@ type HostEnv = Pick<Env, "CHANNEL_ORIGINS" | "PUBLIC_ORIGIN">;
 // CHANNEL_ORIGINS is JSON {channel: origin}. On such a domain the viewer and mod pages open that channel, and pages
 // for any other channel move to PUBLIC_ORIGIN (the main site). The API, the overlay and the assets answer on every
 // domain, so older OBS and StreamElements links keep working.
+// Anything but a JSON object of URLs is no channel domains.
 export function channelOrigins(env: Pick<Env, "CHANNEL_ORIGINS">): Record<string, string> {
-  try {
-    const all: unknown = JSON.parse(env.CHANNEL_ORIGINS || "{}"),
-      out: Record<string, string> = {};
-    for (const [channel, origin] of Object.entries(all && typeof all === "object" ? all : {}))
-      // Any JSON value: new URL() reads it as a string, and one that is not a URL throws into the catch below
-      out[channel] = new URL(origin as string).origin;
-    return out;
-  } catch {
-    return {};
-  }
+  const origins = parseChannelOrigins(env.CHANNEL_ORIGINS || "{}");
+  return origins.ok ? origins.value : {};
 }
 // The channel whose own domain this request came in on, or ''.
 export function hostChannel(env: HostEnv, url: URL): string {

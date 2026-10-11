@@ -5,10 +5,24 @@ import { channelState, overview, listRecords, setPaused, LOGIN } from "./channel
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.ts";
 import { rankHistory } from "./ranklog.ts";
 import {
+  ignoreAnswer,
   isObject,
+  parseAnalytics,
   parseBackupsRun,
+  parseCfDeployments,
+  parseCfEnvelope,
+  parseCfVersions,
   parseChannelsAction,
   parseCodePr,
+  parseGhContent,
+  parseGhMerge,
+  parseGhPr,
+  parseGhPull,
+  parseGhPulls,
+  parseGhRef,
+  parseGhRuns,
+  parseGhSaved,
+  parseGhTree,
   parseRestore,
   parseRoomRestore,
   parseRoomRestored,
@@ -18,7 +32,7 @@ import { BACKUP_DAYS, backupChannels, backupDay, listBackups, readBackup, writeB
 import type { TwitchUser } from "./auth.ts";
 import type { Env } from "./env.ts";
 import type { GameState } from "./model.ts";
-import type { JsonObject } from "./parse.ts";
+import type { JsonObject, Parsed } from "./parse.ts";
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.ts and channel.ts only call the exports below;
 // keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -56,10 +70,17 @@ type RouteArgs = {
   room: (path: string, init?: RequestInit) => Promise<Response>;
 };
 type Handler = (args: RouteArgs) => Response | Promise<Response>;
-/** A GitHub or Cloudflare REST answer: data is the parsed JSON (null when there is none). */
-type ApiResult<T> = { ok: true; status: number; data: T } | { ok: false; status: number; data: T | null };
+/**
+ * A GitHub or Cloudflare REST answer: data is what the call's parser (server/parse.ts) answered. A refusal carries the
+ * error status, or the ok status of an answer the parser refused, and GitHub's message when there is one.
+ */
+type ApiResult<T> =
+  | { ok: true; status: number; data: T; message?: undefined }
+  | { ok: false; status: number; data?: undefined; message: unknown };
+/** Reads an answer's JSON (undefined when it is not JSON, null for 204 No Content). */
+type Reader<T> = (answer: unknown) => Parsed<T>;
 type GithubConfig = ReturnType<typeof githubConfig>;
-type Gh = <T = unknown>(path: string, init?: RequestInit) => Promise<ApiResult<T>>;
+type Gh = <T>(path: string, read: Reader<T>, init?: RequestInit) => Promise<ApiResult<T>>;
 type GithubArgs = RouteArgs & { g: GithubConfig; gh: Gh };
 /**
  * A step that either worked or already holds the error response. Each side names the other's fields as optional, so
@@ -68,8 +89,6 @@ type GithubArgs = RouteArgs & { g: GithubConfig; gh: Gh };
 type Step<T> =
   | ({ ok: true; response?: undefined } & T)
   | ({ ok: false; response: Response } & { [K in keyof T]?: undefined });
-/** The fields of a Cloudflare API envelope that cf() checks. */
-type CfEnvelope = { success?: boolean; errors?: unknown[] };
 /** The room side of ChannelRoom that the /dev/* routes use (server/channel.ts). */
 export type DevRoom = {
   ctx: DurableObjectState;
@@ -294,8 +313,11 @@ async function backupsRead({ env, query }: RouteArgs): Promise<Response> {
   if (!LOGIN.test(login)) return fail(400, "Use ?channel=<login>", "channel_required");
   if (!day) return json({ channel: login, keepDays: BACKUP_DAYS, backups: await listBackups(env.BACKUPS, login) });
   if (!DAY.test(day)) return fail(400, "Use &day=YYYY-MM-DD", "invalid_day");
-  const data = await readBackup(env.BACKUPS, login, day);
-  if (!data) return fail(404, "No backup of " + login + " on " + day, "no_backup");
+  const stored = await readBackup(env.BACKUPS, login, day);
+  if (!stored) return fail(404, "No backup of " + login + " on " + day, "no_backup");
+  // the handler's catch logs it and answers upstream_error, as it did when the stored JSON did not parse
+  if (!stored.ok) throw new Error("Backup of " + login + " on " + day + " is unreadable: " + stored.error);
+  const data = stored.value;
   if (!user) return download(data, `mini-chat-${login}-${day}-backup.json`);
   const lower = user.toLowerCase(),
     profile = data.profiles.find((p) => p.userId === user || String(p.username).toLowerCase() === lower);
@@ -493,54 +515,22 @@ function cloudflarePublic(env: Env) {
   ].filter(Boolean);
   return { configured: !missing.length, missing, versionMetadata: !!env.CF_VERSION_METADATA };
 }
-async function cf<T = unknown>(env: Env, path: string, init: RequestInit = {}): Promise<ApiResult<T & CfEnvelope>> {
+// ok when the status is ok, the envelope reports no failure and read() takes the answer; any other answer is a
+// refusal with its status, which the callers report as their Cloudflare error.
+async function cf<T>(env: Env, path: string, read: Reader<T>, init: RequestInit = {}): Promise<ApiResult<T>> {
   const r = await fetch("https://api.cloudflare.com/client/v4" + path, {
     ...init,
     headers: { Authorization: "Bearer " + env.CF_API_TOKEN, "Content-Type": "application/json" },
   });
-  const data = await r.json<T & CfEnvelope>().catch(() => null); // REST shapes are parsed in TS19
-  // ok answers carry a JSON envelope; an ok answer with a bad body still has data null, and the caller's read of it
-  // throws, which answers an error
-  return { ok: r.ok && data?.success !== false && !data?.errors?.length, status: r.status, data } as ApiResult<
-    T & CfEnvelope
-  >;
+  const answer = await r.json<unknown>().catch(() => undefined),
+    envelope = parseCfEnvelope(answer);
+  if (!r.ok || !envelope.ok || envelope.value.success === false || envelope.value.errors?.length)
+    return { ok: false, status: r.status, message: undefined };
+  const data = read(answer);
+  return data.ok
+    ? { ok: true, status: r.status, data: data.value }
+    : { ok: false, status: r.status, message: undefined };
 }
-
-/** The GraphQL Analytics answer, as far as usage() reads it. */
-type Analytics = {
-  data?: {
-    viewer?: {
-      accounts?: {
-        workersInvocationsAdaptive?: {
-          sum?: { requests?: number; errors?: number; subrequests?: number };
-          dimensions?: { scriptName?: string };
-        }[];
-      }[];
-    };
-  };
-};
-/** The Workers deployments and versions lists, as far as versions() reads them. */
-type CfDeployments = {
-  result?: {
-    deployments?: {
-      id?: string;
-      created_on?: string;
-      source?: string;
-      annotations?: { [key: string]: string };
-      versions?: { version_id?: string; percentage?: number }[];
-    }[];
-  };
-};
-type CfVersions = {
-  result?: {
-    items?: {
-      id?: string;
-      number?: number;
-      metadata?: { created_on?: string };
-      annotations?: { [key: string]: string };
-    }[];
-  };
-};
 
 // Today's Worker requests (UTC day, account-wide, which is how the Free limit counts) from the GraphQL Analytics API.
 export async function usage(env: Env, now = Date.now()) {
@@ -561,18 +551,16 @@ export async function usage(env: Env, now = Date.now()) {
   const query =
     "query($a:String!,$s:Time!,$u:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:100,filter:{datetime_geq:$s,datetime_leq:$u}){sum{requests errors subrequests} dimensions{scriptName}}}}}";
   try {
-    const r = await cf<Analytics>(env, "/graphql", {
+    const r = await cf(env, "/graphql", parseAnalytics, {
       method: "POST",
       body: JSON.stringify({
         query,
         variables: { a: env.CF_ACCOUNT_ID, s: since.toISOString(), u: new Date(now).toISOString() },
       }),
     });
-    const rows = r.data?.data?.viewer?.accounts?.[0]?.workersInvocationsAdaptive;
-    if (!r.ok || !Array.isArray(rows))
-      return { ...base, configured: true, error: "Analytics query failed", status: r.status };
+    if (!r.ok) return { ...base, configured: true, error: "Analytics query failed", status: r.status };
     const scripts: { [script: string]: { requests: number; errors: number; subrequests: number } } = {};
-    for (const row of rows) {
+    for (const row of r.data) {
       const s = (scripts[row.dimensions?.scriptName || "unknown"] ||= { requests: 0, errors: 0, subrequests: 0 });
       s.requests += row.sum?.requests || 0;
       s.errors += row.sum?.errors || 0;
@@ -604,13 +592,13 @@ async function versions({ env }: RouteArgs): Promise<Response> {
   for (const [target, script] of Object.entries(SCRIPTS)) {
     const base = `/accounts/${env.CF_ACCOUNT_ID}/workers/scripts/${script}`;
     const [d, v] = await Promise.all([
-      cf<CfDeployments>(env, base + "/deployments"),
-      cf<CfVersions>(env, base + "/versions"),
+      cf(env, base + "/deployments", parseCfDeployments),
+      cf(env, base + "/versions", parseCfVersions),
     ]);
     out[target] = {
       script,
       deployments: d.ok
-        ? (d.data.result?.deployments || []).slice(0, 5).map((x) => ({
+        ? d.data.slice(0, 5).map((x) => ({
             id: x.id,
             createdOn: x.created_on,
             source: x.source,
@@ -619,7 +607,7 @@ async function versions({ env }: RouteArgs): Promise<Response> {
           }))
         : [],
       versions: v.ok
-        ? (v.data.result?.items || []).slice(0, 10).map((x) => ({
+        ? v.data.slice(0, 10).map((x) => ({
             id: x.id,
             number: x.number,
             createdOn: x.metadata?.created_on,
@@ -655,10 +643,18 @@ function withGithub(fn: (args: GithubArgs) => Promise<Response>): Handler {
         "github_not_configured",
         { missing: g.missing },
       );
-    return fn({ ...ctx, g, gh: (path, init) => gh(ctx.env, g, path, init) });
+    return fn({ ...ctx, g, gh: (path, read, init) => gh(ctx.env, g, path, read, init) });
   };
 }
-async function gh<T = unknown>(env: Env, g: GithubConfig, path: string, init: RequestInit = {}): Promise<ApiResult<T>> {
+// An error status is a refusal with GitHub's message; an ok answer that read() refuses is one with the message
+// "unreadable answer", so the route answers its GitHub error (ghError) for both.
+async function gh<T>(
+  env: Env,
+  g: GithubConfig,
+  path: string,
+  read: Reader<T>,
+  init: RequestInit = {},
+): Promise<ApiResult<T>> {
   const r = await fetch("https://api.github.com/repos/" + g.repo + path, {
     ...init,
     headers: {
@@ -669,17 +665,19 @@ async function gh<T = unknown>(env: Env, g: GithubConfig, path: string, init: Re
       ...(init.body ? { "Content-Type": "application/json" } : {}),
     },
   });
-  const data = r.status === 204 ? null : await r.json<T>().catch(() => null); // REST shapes are parsed in TS19
-  // ok answers carry JSON except 204 (dispatch reads no data); an ok answer with a bad body still has data null, and
-  // the caller's read of it throws, which answers 503
-  return { ok: r.ok, status: r.status, data } as ApiResult<T>;
+  const answer = r.status === 204 ? null : await r.json<unknown>().catch(() => undefined);
+  if (!r.ok) return { ok: false, status: r.status, message: isObject(answer) ? answer.message : undefined };
+  const data = read(answer);
+  return data.ok
+    ? { ok: true, status: r.status, data: data.value }
+    : { ok: false, status: r.status, message: "unreadable answer" };
 }
-function ghError(r: { status: number; data: unknown }, what: string): Response {
+function ghError(r: { status: number; message?: unknown }, what: string): Response {
   const status = [404, 409, 422].includes(r.status) ? (r.status === 422 ? 409 : r.status) : 502;
   return fail(
     status,
-    // GitHub error bodies are { message } or unreadable (null); clean() reads anything through String()
-    `${what}: GitHub ${r.status} ${clean((r.data as { message?: string } | null)?.message || "", 200)}`.trim(),
+    // GitHub error bodies are { message }; clean() reads anything through String()
+    `${what}: GitHub ${r.status} ${clean(r.message || "", 200)}`.trim(),
     "github_error",
     {
       githubStatus: r.status,
@@ -699,9 +697,7 @@ const validRef = (ref: string, base: string) => ref === base || BRANCH.test(ref)
 async function codeTree({ g, gh, query }: GithubArgs): Promise<Response> {
   const ref = query.get("ref") || g.base;
   if (!validRef(ref, g.base)) return fail(400, "ref must be the base branch, live-fix/* or hotfix/*", "invalid_ref");
-  const r = await gh<{ tree?: { type?: string; path?: string; size?: number }[]; truncated?: boolean }>(
-    "/git/trees/" + enc(ref) + "?recursive=1",
-  );
+  const r = await gh("/git/trees/" + enc(ref) + "?recursive=1", parseGhTree);
   if (!r.ok) return ghError(r, "Read tree");
   const files = (r.data.tree || [])
     .filter((x) => x.type === "blob" && validPath(x.path))
@@ -710,9 +706,6 @@ async function codeTree({ g, gh, query }: GithubArgs): Promise<Response> {
   return json({ ref, files, truncated: !!r.data.truncated });
 }
 
-/** GitHub's contents answer: a file, or a directory listing (an array). */
-type GhContent = { type?: string; size: number; encoding?: string; content?: string; sha?: string } | unknown[];
-
 // Reads from `branch` when it exists, otherwise from the base branch, so a new edit starts from main.
 async function codeFile({ g, gh, query }: GithubArgs): Promise<Response> {
   const path = query.get("path"),
@@ -720,13 +713,18 @@ async function codeFile({ g, gh, query }: GithubArgs): Promise<Response> {
   if (!validPath(path)) return fail(400, "Invalid or protected path", "invalid_path");
   if (branch && !validRef(branch, g.base)) return fail(400, "branch must be live-fix/* or hotfix/*", "invalid_branch");
   let ref = branch || g.base,
-    r = await gh<GhContent>("/contents/" + enc(path) + "?ref=" + encodeURIComponent(ref));
-  if (r.status === 404 && branch && branch !== g.base && !(await gh("/git/ref/heads/" + enc(branch))).ok) {
+    r = await gh("/contents/" + enc(path) + "?ref=" + encodeURIComponent(ref), parseGhContent);
+  if (
+    r.status === 404 &&
+    branch &&
+    branch !== g.base &&
+    !(await gh("/git/ref/heads/" + enc(branch), ignoreAnswer)).ok
+  ) {
     ref = g.base;
-    r = await gh<GhContent>("/contents/" + enc(path) + "?ref=" + encodeURIComponent(ref));
+    r = await gh("/contents/" + enc(path) + "?ref=" + encodeURIComponent(ref), parseGhContent);
   }
   if (!r.ok) return ghError(r, "Read file");
-  if (Array.isArray(r.data) || r.data?.type !== "file") return fail(400, "Path is not a file", "not_a_file");
+  if (!r.data) return fail(400, "Path is not a file", "not_a_file"); // a directory, symlink or submodule
   if (r.data.size > MAX_FILE_BYTES || r.data.encoding !== "base64")
     return fail(413, "File is too large for the web editor (512 KB max)", "file_too_large");
   let content;
@@ -739,14 +737,14 @@ async function codeFile({ g, gh, query }: GithubArgs): Promise<Response> {
 }
 
 async function ensureBranch(g: GithubConfig, gh: Gh, branch: string): Promise<Step<{ created: boolean }>> {
-  const existing = await gh("/git/ref/heads/" + enc(branch));
+  const existing = await gh("/git/ref/heads/" + enc(branch), ignoreAnswer);
   if (existing.ok) return { ok: true, created: false };
   if (existing.status !== 404) return { ok: false, response: ghError(existing, "Read branch") };
-  const base = await gh<{ object: { sha: string } }>("/git/ref/heads/" + enc(g.base));
+  const base = await gh("/git/ref/heads/" + enc(g.base), parseGhRef);
   if (!base.ok) return { ok: false, response: ghError(base, "Read base branch") };
-  const made = await gh("/git/refs", {
+  const made = await gh("/git/refs", ignoreAnswer, {
     method: "POST",
-    body: JSON.stringify({ ref: "refs/heads/" + branch, sha: base.data.object.sha }),
+    body: JSON.stringify({ ref: "refs/heads/" + branch, sha: base.data.sha }),
   });
   return made.ok ? { ok: true, created: true } : { ok: false, response: ghError(made, "Create branch") };
 }
@@ -778,7 +776,7 @@ async function codeSave({ g, gh, body }: GithubArgs): Promise<Response> {
   );
   const b = await ensureBranch(g, gh, branch);
   if (!b.ok) return b.response;
-  const r = await gh<{ content?: { sha?: string }; commit?: { sha?: string } }>("/contents/" + enc(path), {
+  const r = await gh("/contents/" + enc(path), parseGhSaved, {
     method: "PUT",
     body: JSON.stringify({ message, content: toBase64(bytes), branch, ...(sha ? { sha } : {}) }),
   });
@@ -797,8 +795,6 @@ async function codeSave({ g, gh, body }: GithubArgs): Promise<Response> {
   });
 }
 
-/** A pull request as openPr reads it. */
-type GhPr = { number: number; html_url: string };
 async function openPr(
   g: GithubConfig,
   gh: Gh,
@@ -807,10 +803,10 @@ async function openPr(
   text: string,
 ): Promise<Step<{ pr: { number: number; url: string; existing: boolean } }>> {
   const owner = g.repo.split("/")[0];
-  const found = await gh<GhPr[]>("/pulls?state=open&head=" + encodeURIComponent(owner + ":" + branch));
-  if (found.ok && found.data?.[0])
-    return { ok: true, pr: { number: found.data[0].number, url: found.data[0].html_url, existing: true } };
-  const r = await gh<GhPr>("/pulls", {
+  const found = await gh("/pulls?state=open&head=" + encodeURIComponent(owner + ":" + branch), parseGhPulls);
+  const open = found.ok ? found.data[0] : undefined; // an unreadable list goes on to open one, as an empty one does
+  if (open) return { ok: true, pr: { number: open.number, url: open.html_url, existing: true } };
+  const r = await gh("/pulls", parseGhPr, {
     method: "POST",
     body: JSON.stringify({ title, head: branch, base: g.base, body: text }),
   });
@@ -836,10 +832,10 @@ async function codePr({ g, gh, body }: GithubArgs): Promise<Response> {
 }
 
 async function runs({ g, gh }: GithubArgs): Promise<Response> {
-  const r = await gh<{ workflow_runs?: GhRun[] }>("/actions/workflows/" + enc(g.workflow) + "/runs?per_page=10");
+  const r = await gh("/actions/workflows/" + enc(g.workflow) + "/runs?per_page=10", parseGhRuns);
   if (!r.ok) return ghError(r, "List workflow runs");
   return json(
-    (r.data.workflow_runs || []).map((x) => ({
+    r.data.map((x) => ({
       id: x.id,
       title: x.display_title,
       status: x.status,
@@ -851,18 +847,6 @@ async function runs({ g, gh }: GithubArgs): Promise<Response> {
     })),
   );
 }
-
-/** A workflow run as runs() reads it. */
-type GhRun = {
-  id: number;
-  display_title?: string;
-  status?: string;
-  conclusion?: string | null;
-  head_branch?: string;
-  head_sha?: string;
-  created_at?: string;
-  html_url?: string;
-};
 
 // Every deploy, promote, hotfix and rollback is one workflow_dispatch of .github/workflows/deploy.yml.
 async function dispatch(
@@ -884,7 +868,7 @@ async function dispatch(
     ...inputs,
     request_id: requestId,
   };
-  const r = await gh("/actions/workflows/" + enc(g.workflow) + "/dispatches", {
+  const r = await gh("/actions/workflows/" + enc(g.workflow) + "/dispatches", ignoreAnswer, {
     method: "POST",
     body: JSON.stringify({ ref, inputs: all }),
   });
@@ -916,15 +900,6 @@ async function deployTest({ g, gh, body }: GithubArgs): Promise<Response> {
 
 const percentOf = (v: unknown) => (v === undefined ? 100 : Number.isInteger(v) && v >= 1 && v <= 100 ? v : null);
 
-/** A pull request as promote reads it. */
-type GhPull = {
-  base?: { ref?: string };
-  head: { ref?: string; sha: string };
-  merged?: boolean;
-  merge_commit_sha?: string;
-  state?: string;
-};
-
 // Promote: optionally squash-merge the live-fix PR, then deploy the base branch to production.
 async function promote({ g, gh, body }: GithubArgs): Promise<Response> {
   const percentage = percentOf(body.percentage);
@@ -936,7 +911,7 @@ async function promote({ g, gh, body }: GithubArgs): Promise<Response> {
   let merged: { number: unknown; sha: unknown; alreadyMerged: boolean } | null = null,
     sha = x.sha;
   if (body.number) {
-    const pr = await gh<GhPull>("/pulls/" + body.number);
+    const pr = await gh("/pulls/" + body.number, parseGhPull);
     if (!pr.ok) return ghError(pr, "Read pull request");
     if (pr.data.base?.ref !== g.base || !BRANCH.test(pr.data.head?.ref || ""))
       return fail(
@@ -947,7 +922,7 @@ async function promote({ g, gh, body }: GithubArgs): Promise<Response> {
     if (pr.data.merged) merged = { number: body.number, sha: pr.data.merge_commit_sha, alreadyMerged: true };
     else {
       if (pr.data.state !== "open") return fail(409, "Pull request is closed", "pull_request_closed");
-      const m = await gh<{ sha?: string }>("/pulls/" + body.number + "/merge", {
+      const m = await gh("/pulls/" + body.number + "/merge", parseGhMerge, {
         method: "PUT",
         body: JSON.stringify({ merge_method: "squash", sha: pr.data.head.sha }),
       });

@@ -1,14 +1,22 @@
-// Inbound request parsing (server/parse.ts): each parser on its own, then the routes whose answer changed when a body
-// of the wrong shape began to get a 400 at the edge instead of a crash or a silent default (docs/CONTRACTS.md §2, §4).
+// Parsing at the boundary (server/parse.ts): each parser on its own, then the routes whose answer changed when a body
+// of the wrong shape began to get a 400 at the edge instead of a crash or a silent default (docs/CONTRACTS.md §2, §4),
+// and the routes whose answer changed when an outside answer (Twitch, AuthStore's registry, GitHub, Cloudflare, a
+// stored backup, upload meta or CHANNEL_ORIGINS) of the wrong shape began to get that route's upstream error.
 // The parser tests load parse.ts with import() so the route tests also run against code that predates it.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
+import { gzipSync } from "node:zlib";
 import worker from "../server/worker.ts";
-import { digest } from "../server/auth.ts";
+import { access, digest, seal } from "../server/auth.ts";
+import { readBackup } from "../server/backups.ts";
 import { ChannelRoom } from "../server/channel.ts";
+import { listRecords } from "../server/channels.ts";
+import { usage } from "../server/developer.ts";
 import { eventsubSecret, signEventsub } from "../server/eventsub.ts";
+import { channelOrigins } from "../server/hosts.ts";
+import { ensureUploadSchema, handleRoomAssets } from "../server/uploads.ts";
 import type { Env } from "../server/env.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz";
@@ -304,6 +312,255 @@ test("sprite parsers: uploads, redraws, reviews and the room's sprite routes", a
   assert.deepEqual(p.parseRoomSpriteReview({ ...review, action: 5 }), no("invalid_action"));
   assert.deepEqual(p.parseRoomSpriteReview({ id: "v-x" }), no("invalid_action"), "missing action");
   assert.deepEqual(p.parseRoomSpriteReview({ ...review, x: 1 }), yes(review));
+});
+
+// ---------- Outside answers ----------
+
+test("Twitch answer parsers: tokens, validation, users, a Helix page, moderators", async () => {
+  const p = await import("../server/parse.ts");
+  const TWITCH = no("invalid_twitch_answer");
+  const tokens = { access_token: "a1", refresh_token: "r1", expires_in: 3600, scope: ["moderation:read"] };
+  assert.deepEqual(p.parseTwitchTokens(tokens), yes(tokens));
+  assert.deepEqual(
+    Object.keys(p.parseTwitchTokens({ refresh_token: "r1", token_type: "bearer", access_token: "a1" }).value || {}),
+    ["refresh_token", "token_type", "access_token"],
+    "the answer is kept as sent, key order too (it is sealed as is)",
+  );
+  assert.deepEqual(p.parseTwitchTokens({ access_token: 5, refresh_token: "r1" }), TWITCH);
+  assert.deepEqual(p.parseTwitchTokens({ access_token: "a1" }), TWITCH, "missing refresh_token");
+  assert.deepEqual(p.parseTwitchTokens(undefined), TWITCH, "not JSON");
+
+  assert.deepEqual(
+    p.parseTwitchValidation({ client_id: "test-app", login: "viewer", user_id: "2", scopes: ["user:read:chat"] }),
+    yes({ client_id: "test-app", user_id: "2", scopes: ["user:read:chat"] }),
+  );
+  assert.deepEqual(
+    p.parseTwitchValidation({ client_id: "test-app", scopes: null }),
+    yes({ client_id: "test-app", user_id: undefined, scopes: null }),
+    "an app token has no user_id; the mismatch check refuses it as before",
+  );
+  assert.deepEqual(p.parseTwitchValidation({ client_id: "test-app", user_id: 2, scopes: [] }), TWITCH);
+  assert.deepEqual(p.parseTwitchValidation({ client_id: "test-app", user_id: "2", scopes: "chat:read" }), TWITCH);
+  assert.deepEqual(p.parseTwitchValidation({ client_id: "test-app", user_id: "2", scopes: [5] }), TWITCH);
+  assert.deepEqual(p.parseTwitchValidation({ user_id: "2", scopes: [] }), TWITCH, "missing client_id");
+
+  const user = {
+    id: "55",
+    login: "newstreamer",
+    display_name: "NewStreamer",
+    created_at: "2020-01-01T00:00:00Z",
+    broadcaster_type: "",
+  };
+  assert.deepEqual(p.parseHelixUsers({ data: [{ ...user, type: "" }], pagination: {} }), yes([user]));
+  assert.deepEqual(
+    p.parseHelixUsers({ data: [{ id: "1", login: "nesszerra", display_name: "nesszerra" }] }),
+    yes([
+      { id: "1", login: "nesszerra", display_name: "nesszerra", created_at: undefined, broadcaster_type: undefined },
+    ]),
+  );
+  assert.deepEqual(p.parseHelixUsers({ data: [] }), yes([]));
+  assert.deepEqual(p.parseHelixUsers({ data: [{ ...user, id: 55 }] }), TWITCH);
+  assert.deepEqual(p.parseHelixUsers({ data: [{ ...user, created_at: 0 }] }), TWITCH);
+  assert.deepEqual(p.parseHelixUsers({ data: [5] }), TWITCH);
+  assert.deepEqual(p.parseHelixUsers({ data: {} }), TWITCH);
+  assert.deepEqual(p.parseHelixUsers({}), TWITCH, "missing data");
+  assert.deepEqual(p.parseHelixUsers({ data: [{ id: "55", login: "newstreamer" }] }), TWITCH, "missing display_name");
+
+  assert.deepEqual(p.parseHelixPage({ data: [{ id: "v1" }], pagination: {} }), yes({ data: [{ id: "v1" }] }));
+  assert.deepEqual(p.parseHelixPage({ data: "v1" }), TWITCH);
+  assert.deepEqual(p.parseHelixPage({ pagination: {} }), TWITCH, "missing data");
+
+  assert.deepEqual(p.parseModerators({ data: [{ user_id: "2", user_login: "viewer" }], pagination: {} }), yes(["2"]));
+  assert.deepEqual(p.parseModerators({ data: [] }), yes([]));
+  assert.deepEqual(p.parseModerators({ data: [{ user_id: 2 }] }), TWITCH);
+  assert.deepEqual(
+    p.parseModerators({ data: [{ user_login: "viewer" }] }),
+    yes([]),
+    "a row without user_id names nobody",
+  );
+  assert.deepEqual(p.parseModerators({ data: ["viewer"] }), TWITCH, "a row that is not an object");
+  assert.deepEqual(p.parseModerators({}), TWITCH, "missing data");
+});
+
+test("registry rows: id and login strings, enabledAt a number, the pause and review fields typed when sent", async () => {
+  const p = await import("../server/parse.ts");
+  const REGISTRY = no("invalid_registry");
+  const record = {
+    id: "9",
+    login: "paused_one",
+    enabledAt: 1,
+    pausedAt: 2,
+    pausedBy: "owner",
+    review: { reasons: ["young"], at: 3 },
+  };
+  const rows = [
+    { key: "channel:paused_one", value: record },
+    { key: "channel:streamer_a", value: { id: "100", login: "streamer_a", enabledAt: 1000 } },
+  ];
+  assert.deepEqual(p.parseChannelRows(rows), yes(rows));
+  assert.deepEqual(p.parseChannelRows([]), yes([]));
+  const one = (value: unknown) => p.parseChannelRows([{ key: "channel:paused_one", value }]);
+  assert.deepEqual(one({ ...record, enabledAt: "1" }), REGISTRY);
+  assert.deepEqual(one({ ...record, id: 9 }), REGISTRY);
+  assert.deepEqual(one({ ...record, pausedAt: null }), REGISTRY);
+  assert.deepEqual(one({ ...record, pausedBy: "mod" }), REGISTRY);
+  assert.deepEqual(one({ ...record, review: { reasons: "young", at: 3 } }), REGISTRY);
+  assert.deepEqual(one({ ...record, review: { reasons: ["young"] } }), REGISTRY, "missing review.at");
+  assert.deepEqual(one({ id: "9", enabledAt: 1 }), REGISTRY, "missing login");
+  assert.deepEqual(one(null), REGISTRY);
+  assert.deepEqual(p.parseChannelRows([{ value: record }]), REGISTRY, "missing key");
+  assert.deepEqual(p.parseChannelRows({ rows }), REGISTRY);
+});
+
+test("CHANNEL_ORIGINS and upload meta: JSON objects of the right values, else refused", async () => {
+  const p = await import("../server/parse.ts");
+  const ORIGINS = no("invalid_channel_origins");
+  assert.deepEqual(
+    p.parseChannelOrigins('{"miolafff":"https://chat.miolaf.xyz/play/"}'),
+    yes({ miolafff: "https://chat.miolaf.xyz" }),
+  );
+  assert.deepEqual(p.parseChannelOrigins("{}"), yes({}));
+  assert.deepEqual(p.parseChannelOrigins('["https://chat.miolaf.xyz"]'), ORIGINS);
+  assert.deepEqual(p.parseChannelOrigins('{"miolafff":5}'), ORIGINS);
+  assert.deepEqual(p.parseChannelOrigins('{"miolafff":["https://chat.miolaf.xyz"]}'), ORIGINS);
+  assert.deepEqual(p.parseChannelOrigins('{"miolafff":"chat.miolaf.xyz"}'), ORIGINS, "not a URL");
+  assert.deepEqual(p.parseChannelOrigins("null"), ORIGINS);
+  assert.deepEqual(p.parseChannelOrigins(""), ORIGINS, "missing");
+
+  const META = no("invalid_upload_meta");
+  assert.deepEqual(p.parseUploadMeta('{"label":"Cat","width":32}'), yes({ label: "Cat", width: 32 }));
+  assert.deepEqual(p.parseUploadMeta('["a"]'), META);
+  assert.deepEqual(p.parseUploadMeta("5"), META);
+  assert.deepEqual(p.parseUploadMeta("null"), META);
+  assert.deepEqual(p.parseUploadMeta("{"), META);
+  assert.deepEqual(p.parseUploadMeta(""), META, "missing");
+});
+
+test("backup exports: profiles, purchases and builds as the routes read them", async () => {
+  const p = await import("../server/parse.ts");
+  const BACKUP = no("invalid_backup");
+  const data = {
+    format: "mini-chat-export",
+    exportedAt: "2026-10-09T09:00:00.000Z",
+    profiles: [{ userId: "11", username: "fighter1", elo: 1234 }],
+    purchases: [{ userId: "11", itemId: "legend" }],
+    builds: [{ userId: "11", slot: 0, data: { title: "legend" } }],
+  };
+  assert.deepEqual(p.parseBackupExport(JSON.stringify(data)), yes(data));
+  const text = (patch: object) => JSON.stringify({ ...data, ...patch });
+  assert.deepEqual(p.parseBackupExport(text({ profiles: [{ userId: 11, username: "fighter1" }] })), BACKUP);
+  assert.deepEqual(p.parseBackupExport(text({ profiles: [{ userId: "11", username: null }] })), BACKUP);
+  assert.deepEqual(p.parseBackupExport(text({ purchases: [{ userId: "11" }, 5] })), BACKUP);
+  assert.deepEqual(p.parseBackupExport(text({ builds: {} })), BACKUP);
+  assert.deepEqual(p.parseBackupExport(text({ exportedAt: 5 })), BACKUP);
+  assert.deepEqual(p.parseBackupExport(text({ builds: undefined })), BACKUP, "missing builds");
+  assert.deepEqual(p.parseBackupExport("[]"), BACKUP);
+  assert.deepEqual(p.parseBackupExport(""), BACKUP, "not JSON");
+});
+
+test("Cloudflare answer parsers: the envelope, Analytics rows, deployments, versions", async () => {
+  const p = await import("../server/parse.ts");
+  const CF = no("invalid_cloudflare_answer");
+  assert.deepEqual(p.parseCfEnvelope({ success: true, errors: [], result: {} }), yes({ success: true, errors: [] }));
+  assert.deepEqual(p.parseCfEnvelope({ data: {}, errors: null }), yes({ success: undefined, errors: null }));
+  assert.deepEqual(p.parseCfEnvelope({ success: "yes" }), CF);
+  assert.deepEqual(p.parseCfEnvelope({ errors: "no access" }), CF);
+  assert.deepEqual(p.parseCfEnvelope(undefined), CF, "not JSON");
+
+  const row = {
+    sum: { requests: 1200, errors: 3, subrequests: 10 },
+    dimensions: { scriptName: "nesszerra-mini-chat" },
+  };
+  const empty = { sum: null, dimensions: null };
+  const analytics = (rows: unknown) => ({ data: { viewer: { accounts: [{ workersInvocationsAdaptive: rows }] } } });
+  assert.deepEqual(p.parseAnalytics(analytics([row, empty])), yes([row, empty]));
+  assert.deepEqual(p.parseAnalytics(analytics([{ sum: { requests: "1200" } }])), CF);
+  assert.deepEqual(p.parseAnalytics(analytics([{ dimensions: { scriptName: 5 } }])), CF);
+  assert.deepEqual(p.parseAnalytics(analytics([null])), CF);
+  assert.deepEqual(p.parseAnalytics(analytics(undefined)), CF, "missing rows");
+  assert.deepEqual(p.parseAnalytics({ data: { viewer: { accounts: [] } } }), CF, "missing account");
+  assert.deepEqual(p.parseAnalytics({ data: null, errors: [{ message: "no access" }] }), CF);
+
+  const deployment = {
+    id: "d1",
+    created_on: "2026-10-01",
+    source: "api",
+    versions: [{ version_id: "v2", percentage: 100 }],
+    annotations: { "workers/message": "promote #7" },
+  };
+  assert.deepEqual(p.parseCfDeployments({ success: true, result: { deployments: [deployment] } }), yes([deployment]));
+  assert.deepEqual(p.parseCfDeployments({ success: true, result: null }), yes([]), "missing result");
+  assert.deepEqual(p.parseCfDeployments({ result: { deployments: [{ ...deployment, versions: "v2" }] } }), CF);
+  assert.deepEqual(p.parseCfDeployments({ result: { deployments: [{ ...deployment, annotations: 5 }] } }), CF);
+  assert.deepEqual(p.parseCfDeployments({ result: { deployments: {} } }), CF);
+  assert.deepEqual(p.parseCfDeployments([]), CF);
+
+  const item = { id: "v2", number: 2, metadata: { created_on: "2026-10-01" }, annotations: { "workers/tag": "t" } };
+  assert.deepEqual(p.parseCfVersions({ success: true, result: { items: [item] } }), yes([item]));
+  assert.deepEqual(p.parseCfVersions({ success: true }), yes([]), "missing result");
+  assert.deepEqual(p.parseCfVersions({ result: { items: [{ ...item, metadata: "2026" }] } }), CF);
+  assert.deepEqual(p.parseCfVersions({ result: { items: [5] } }), CF);
+  assert.deepEqual(p.parseCfVersions({ result: 5 }), CF);
+});
+
+test("GitHub answer parsers: tree, contents, refs, saves, pull requests, runs, merges", async () => {
+  const p = await import("../server/parse.ts");
+  const GH = no("invalid_github_answer");
+  const tree = [{ type: "blob", path: "src/admin.js", size: 1 }];
+  assert.deepEqual(p.parseGhTree({ sha: "t", tree, truncated: false }), yes({ tree, truncated: false }));
+  assert.deepEqual(p.parseGhTree({ sha: "t" }), yes({ tree: [], truncated: undefined }), "missing tree");
+  assert.deepEqual(p.parseGhTree({ tree: {} }), GH);
+  assert.deepEqual(p.parseGhTree({ tree: [5] }), GH);
+  assert.deepEqual(p.parseGhTree(undefined), GH, "not JSON");
+
+  const sha = "b".repeat(40);
+  const file = { type: "file", size: 5, encoding: "base64", content: "aGVsbG8=", sha, name: "a.ts" };
+  assert.deepEqual(p.parseGhContent(file), yes({ size: 5, encoding: "base64", content: "aGVsbG8=", sha }));
+  assert.deepEqual(p.parseGhContent([{ type: "file", name: "a.ts" }]), yes(null), "a directory");
+  assert.deepEqual(p.parseGhContent({ type: "symlink", target: "a.ts" }), yes(null));
+  assert.deepEqual(p.parseGhContent({ ...file, size: "5" }), GH);
+  assert.deepEqual(p.parseGhContent({ ...file, content: 5 }), GH);
+  assert.deepEqual(p.parseGhContent({ type: "file", encoding: "base64" }), GH, "missing size");
+  assert.deepEqual(p.parseGhContent(undefined), GH, "not JSON");
+
+  assert.deepEqual(p.parseGhRef({ ref: "refs/heads/main", object: { sha, type: "commit" } }), yes({ sha }));
+  assert.deepEqual(p.parseGhRef({ object: { sha: 5 } }), GH);
+  assert.deepEqual(p.parseGhRef({ ref: "refs/heads/main" }), GH, "missing object");
+
+  const saved = { content: { sha: "s1", path: "a.ts" }, commit: { sha: "c1" } };
+  assert.deepEqual(p.parseGhSaved(saved), yes(saved));
+  assert.deepEqual(p.parseGhSaved({}), yes({ content: undefined, commit: undefined }), "missing content and commit");
+  assert.deepEqual(p.parseGhSaved({ content: "s1" }), GH);
+  assert.deepEqual(p.parseGhSaved(undefined), GH, "not JSON");
+
+  const pr = { number: 7, html_url: "https://github.com/Finesssee/pixfray/pull/7" };
+  assert.deepEqual(p.parseGhPulls([{ ...pr, state: "open" }]), yes([pr]));
+  assert.deepEqual(p.parseGhPulls([]), yes([]));
+  assert.deepEqual(p.parseGhPulls([{ ...pr, number: "7" }]), GH);
+  assert.deepEqual(p.parseGhPulls([{ number: 7 }]), GH, "missing html_url");
+  assert.deepEqual(p.parseGhPulls({}), GH);
+  assert.deepEqual(p.parseGhPr({ ...pr, state: "open" }), yes(pr));
+  assert.deepEqual(p.parseGhPr({ ...pr, html_url: 5 }), GH);
+  assert.deepEqual(p.parseGhPr({ html_url: pr.html_url }), GH, "missing number");
+
+  const run = { id: 5, status: "completed", conclusion: null, head_branch: "live-fix/a" };
+  assert.deepEqual(p.parseGhRuns({ total_count: 1, workflow_runs: [run] }), yes([run]));
+  assert.deepEqual(p.parseGhRuns({ total_count: 0 }), yes([]), "missing workflow_runs");
+  assert.deepEqual(p.parseGhRuns({ workflow_runs: "x" }), GH);
+  assert.deepEqual(p.parseGhRuns({ workflow_runs: [5] }), GH);
+
+  const pull = { number: 7, state: "open", merged: false, base: { ref: "main" }, head: { ref: "live-fix/a", sha } };
+  assert.deepEqual(p.parseGhPull(pull), yes(pull));
+  assert.deepEqual(p.parseGhPull({ ...pull, head: { ref: 5, sha } }), GH);
+  assert.deepEqual(p.parseGhPull({ ...pull, base: "main" }), GH);
+  assert.deepEqual(p.parseGhPull({ number: 7, state: "open" }), GH, "missing head");
+  assert.deepEqual(p.parseGhPull([]), GH);
+
+  assert.deepEqual(p.parseGhMerge({ sha, merged: true, message: "Pull Request successfully merged" }), yes({ sha }));
+  assert.deepEqual(p.parseGhMerge({ sha: 5, merged: true }), GH);
+  assert.deepEqual(p.parseGhMerge({ merged: true }), GH, "missing sha");
+
+  assert.deepEqual(p.ignoreAnswer(), yes(null), "dispatch and the branch checks read only the status");
 });
 
 // ---------- Harnesses: a real ChannelRoom on node:sqlite, the Worker in front of it ----------
@@ -655,4 +912,289 @@ test("sprite uploads: a label, image or ai flag of the wrong type is refused wit
     await call(f, "/api/sprite/nesszerra/redraw", { image: 5 }, viewer),
     refused("invalid_image", "Choose an image"),
   );
+});
+
+// ---------- Outside answers at the routes ----------
+
+const REAL_FETCH = globalThis.fetch;
+/** [method, URL pattern, status, body text] for one outside endpoint. */
+type Stub = [method: string, url: RegExp, status: number, text: string | null];
+/** fetch answers the first stub that matches and 599 to anything else; the list it returns names every request. */
+function upstream(t: { after: (fn: () => void) => void }, stubs: Stub[]): string[] {
+  const calls: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input),
+      method = init?.method || "GET";
+    calls.push(method + " " + url);
+    const hit = stubs.find(([m, pattern]) => m === method && pattern.test(url));
+    return hit
+      ? new Response(hit[3], { status: hit[2] })
+      : Response.json({ error: "offline: " + url }, { status: 599 });
+  };
+  t.after(() => {
+    globalThis.fetch = REAL_FETCH; // not the fetch it replaced: a test may stub fetch more than once
+  });
+  return calls;
+}
+const text = (v: unknown) => JSON.stringify(v);
+async function getAs(f: Harness, path: string, cookie: string): Promise<Answer> {
+  return answer(await worker.fetch(new Request(ORIGIN + path, { headers: { Cookie: cookie } }), f.env));
+}
+
+/** Twitch for a sign-in: the viewer's tokens, validation and user, the owner lookup and the past-broadcast list. */
+const twitch = (
+  patch: { token?: string; validate?: string; users?: string; owner?: string; videos?: string } = {},
+): Stub[] => [
+  ["POST", /oauth2\/token$/, 200, patch.token ?? text({ access_token: "user-token", refresh_token: "r" })],
+  ["GET", /oauth2\/validate$/, 200, patch.validate ?? text({ client_id: "test-app", user_id: "2", scopes: [] })],
+  [
+    "GET",
+    /helix\/users\?login=/,
+    200,
+    patch.owner ?? text({ data: [{ id: "1", login: "nesszerra", display_name: "nesszerra" }] }),
+  ],
+  ["GET", /helix\/users$/, 200, patch.users ?? text({ data: [{ id: "2", login: "viewer", display_name: "Viewer" }] })],
+  ["GET", /helix\/videos/, 200, patch.videos ?? text({ data: [] })],
+];
+/** /auth/login, then Twitch's redirect back to /auth/callback with a code. */
+async function signIn(f: Harness, query = ""): Promise<Answer & { location: string }> {
+  const login = await worker.fetch(new Request(ORIGIN + "/auth/login" + query), f.env);
+  const state = new URL(login.headers.get("Location") || "").searchParams.get("state") || "";
+  const back = new Request(ORIGIN + "/auth/callback?code=c&state=" + encodeURIComponent(state), {
+    headers: { Cookie: "mini_oauth=" + state },
+  });
+  const r = await worker.fetch(back, f.env);
+  return { ...(await answer(r)), location: r.headers.get("Location") || "" };
+}
+
+test("sign-in: a Twitch answer of the wrong shape gets the existing upstream error", async (t) => {
+  const f = environment();
+  const failed = (error: string) => ({ status: 502, body: { error }, location: "" });
+  const run = async (patch: Parameters<typeof twitch>[0]) => {
+    const calls = upstream(t, twitch(patch));
+    const r = await signIn(f);
+    return { r, calls };
+  };
+  assert.equal((await run({})).r.status, 303, "the stubs sign a viewer in");
+  // Helix /users without data
+  assert.deepEqual((await run({ users: text({}) })).r, failed("Twitch identity validation failed"));
+  assert.deepEqual((await run({ token: "<html>" })).r, failed("Twitch token exchange failed"));
+  assert.deepEqual(
+    (await run({ token: text({ refresh_token: "r" }) })).r,
+    failed("Twitch token exchange failed"),
+    "missing access_token",
+  );
+  assert.deepEqual((await run({ validate: "<html>" })).r, failed("Twitch identity validation failed"));
+  assert.deepEqual(
+    (await run({ validate: text({ client_id: "test-app", user_id: 2, scopes: [] }) })).r,
+    failed("Twitch identity validation failed"),
+  );
+  // The owner lookup only feeds the stored owner id; an unreadable one signs the viewer in like a failed one.
+  const owner = await run({ owner: "<html>" });
+  assert.equal(owner.r.status, 303);
+  assert.equal(owner.r.location, "/?channel=nesszerra&signed_in=1");
+});
+
+test("sign-up: an unreadable past-broadcast list makes the streamer check say unchecked", async (t) => {
+  const f = environment();
+  upstream(
+    t,
+    twitch({
+      validate: text({ client_id: "test-app", user_id: "55", scopes: ["moderation:read"] }),
+      users: text({
+        data: [
+          {
+            id: "55",
+            login: "newstreamer",
+            display_name: "NewStreamer",
+            created_at: "2020-01-01T00:00:00Z",
+            broadcaster_type: "",
+          },
+        ],
+      }),
+      videos: text({}),
+    }),
+  );
+  const r = await signIn(f, "?signup=1");
+  assert.equal(r.location, "/start/?error=review");
+  const saved = f.entries.get("channel:newstreamer");
+  assert.ok(typeof saved === "object" && saved !== null && "review" in saved);
+  assert.ok(typeof saved.review === "object" && saved.review !== null && "reasons" in saved.review);
+  assert.deepEqual(saved.review.reasons, ["unchecked"]);
+});
+
+test("moderator check: a Twitch answer of the wrong shape refuses with access()'s existing errors", async (t) => {
+  const MOD = { id: "2", login: "viewer", displayName: "V" };
+  const setup = async (validatedAt: number) => {
+    const f = environment();
+    f.entries.set("owner:nesszerra", { id: "1" });
+    f.entries.set(
+      "broadcaster:nesszerra",
+      await seal(f.env, { access_token: "a1", refresh_token: "r1", userId: "1", validatedAt }),
+    );
+    return f;
+  };
+  let f = await setup(Date.now());
+  upstream(t, [["GET", /moderation\/moderators/, 200, text({ pagination: {} })]]);
+  await assert.rejects(access(f.env, MOD, "nesszerra"), { message: "Current moderator role cannot be verified" });
+  assert.equal(f.entries.has("mod:nesszerra:2"), false, "nothing is cached");
+
+  f = await setup(0);
+  upstream(t, [
+    ["GET", /oauth2\/validate$/, 401, text({ status: 401 })],
+    ["POST", /oauth2\/token$/, 200, text({ access_token: "a2" })],
+  ]);
+  await assert.rejects(access(f.env, MOD, "nesszerra"), { message: "Broadcaster must reconnect Twitch" });
+
+  f = await setup(0);
+  upstream(t, [
+    ["GET", /oauth2\/validate$/, 200, text({ client_id: "test-app", user_id: "1", scopes: "moderation:read" })],
+    ["GET", /moderation\/moderators/, 200, text({ data: [{ user_id: "2" }] })],
+  ]);
+  await assert.rejects(access(f.env, MOD, "nesszerra"), { message: "Twitch authorization unavailable" });
+});
+
+test("registry: a channel record of the wrong shape is Auth storage unavailable, and the owner page's upstream error", async (t) => {
+  offline(t);
+  const f = environment(),
+    owner = await signedIn(f, true);
+  f.entries.set("channel:streamer_a", { id: "100", login: "streamer_a", enabledAt: "1000" });
+  await assert.rejects(listRecords(f.env, "channel:"), { message: "Auth storage unavailable" });
+  assert.deepEqual(await getAs(f, "/api/dev/channels", owner), {
+    status: 503,
+    body: { error: "Service unavailable; check owner diagnostics", reason: "upstream_error" },
+  });
+});
+
+test("CHANNEL_ORIGINS: anything but an object of URLs is no channel domains", () => {
+  assert.deepEqual(channelOrigins({ CHANNEL_ORIGINS: '["https://chat.miolaf.xyz"]' }), {});
+  assert.deepEqual(channelOrigins({ CHANNEL_ORIGINS: '{"miolafff":"https://chat.miolaf.xyz/play/"}' }), {
+    miolafff: "https://chat.miolaf.xyz",
+  });
+});
+
+test("custom character catalog: stored meta that is not an object adds no fields", async () => {
+  const ctx = fakeCtx(),
+    sql = ctx.storage.sql;
+  ensureUploadSchema(sql);
+  const insert =
+    "INSERT INTO custom_characters (id, meta, atlas, bytes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)";
+  sql.exec(insert, "c-a", '["a"]', new Uint8Array([1]), 1, "1", 1);
+  sql.exec(insert, "c-b", '{"label":"Cat"}', new Uint8Array([1]), 1, "1", 2);
+  const r = await handleRoomAssets({ ctx }, new Request("https://room/catalog"), {
+    path: "/catalog",
+    channel: "nesszerra",
+  });
+  assert.deepEqual(await r.json(), [
+    { id: "c-a", url: "/api/assets/nesszerra/c-a", custom: true },
+    { label: "Cat", id: "c-b", url: "/api/assets/nesszerra/c-b", custom: true },
+  ]);
+});
+
+test("daily backups: a stored export of the wrong shape is unreadable, and the backups route's upstream error", async (t) => {
+  offline(t);
+  const fakeD1 = (row: unknown) =>
+    // the two calls readBackup makes on D1, answering one stored row
+    ({ prepare: () => ({ run: async () => ({}), bind: () => ({ first: async () => row }) }) }) as unknown as D1Database;
+  const packed = (v: unknown) => ({ data: [...gzipSync(JSON.stringify(v))] });
+  const good = {
+    format: "mini-chat-export",
+    exportedAt: "2026-10-09T09:00:00.000Z",
+    profiles: [{ userId: "11", username: "fighter1" }],
+    purchases: [],
+    builds: [],
+  };
+  const bad = { ...good, profiles: [{ userId: 11, username: "fighter1" }] };
+  assert.deepEqual(await readBackup(fakeD1(packed(good)), "nesszerra", "2026-10-09"), yes(good));
+  assert.deepEqual(await readBackup(fakeD1(packed(bad)), "nesszerra", "2026-10-09"), no("invalid_backup"));
+  assert.deepEqual(await readBackup(fakeD1({ data: [1, 2, 3] }), "nesszerra", "2026-10-09"), no("invalid_backup"));
+  assert.equal(await readBackup(fakeD1(null), "nesszerra", "2026-10-09"), null);
+
+  const f = environment({ BACKUPS: fakeD1(packed(bad)) }),
+    owner = await signedIn(f, true);
+  assert.deepEqual(await getAs(f, "/api/dev/backups?channel=nesszerra&day=2026-10-09", owner), {
+    status: 503,
+    body: { error: "Service unavailable; check owner diagnostics", reason: "upstream_error" },
+  });
+});
+
+test("GitHub: an ok answer of the wrong shape gets the route's GitHub error", async (t) => {
+  const f = environment({ GITHUB_TOKEN: "test-only-gh-token", GITHUB_REPO: "Finesssee/pixfray" }),
+    owner = await signedIn(f, true);
+  const unreadable = (what: string) => ({
+    status: 502,
+    body: { error: what + ": GitHub 200 unreadable answer", reason: "github_error", githubStatus: 200 },
+  });
+  upstream(t, [["GET", /\/runs\?per_page=10$/, 200, "<html>"]]);
+  assert.deepEqual(await getAs(f, "/api/dev/runs", owner), unreadable("List workflow runs"));
+  upstream(t, [["GET", /\/git\/trees\/main\?recursive=1$/, 200, "<html>"]]);
+  assert.deepEqual(await getAs(f, "/api/dev/code/tree", owner), unreadable("Read tree"));
+  upstream(t, [["GET", /\/contents\/src\/admin\.js\?ref=main$/, 200, "<html>"]]);
+  assert.deepEqual(await getAs(f, "/api/dev/code/file?path=src/admin.js", owner), unreadable("Read file"));
+
+  // A hotfix whose pull request answer is unreadable is still deployed, and says to open the pull request by hand.
+  upstream(t, [
+    ["POST", /\/dispatches$/, 204, null],
+    ["GET", /\/pulls\?state=open/, 200, "[]"],
+    ["POST", /\/pulls$/, 201, "<html>"],
+  ]);
+  const hot = await call(f, "/api/dev/hotfix", { branch: "hotfix/a" }, owner);
+  assert.equal(hot.status, 202);
+  assert.ok(typeof hot.body === "object" && hot.body !== null && "pr" in hot.body && "prError" in hot.body);
+  assert.equal(hot.body.pr, null);
+  assert.equal(hot.body.prError, "Pull request not opened; open it manually");
+
+  // A merge answer without the merged sha stops before production is deployed.
+  const calls = upstream(t, [
+    [
+      "GET",
+      /\/pulls\/7$/,
+      200,
+      text({
+        number: 7,
+        state: "open",
+        merged: false,
+        base: { ref: "main" },
+        head: { ref: "live-fix/a", sha: "b".repeat(40) },
+      }),
+    ],
+    ["PUT", /\/pulls\/7\/merge$/, 200, text({ merged: true, message: "Pull Request successfully merged" })],
+    ["POST", /\/dispatches$/, 204, null],
+  ]);
+  assert.deepEqual(await call(f, "/api/dev/promote", { number: 7 }, owner), unreadable("Merge pull request"));
+  assert.equal(calls.filter((x) => x.endsWith("/dispatches")).length, 0, "nothing dispatched");
+});
+
+test("Cloudflare: an unreadable deployments answer is that script's API error", async (t) => {
+  const f = environment({ CF_API_TOKEN: "test-only-cf", CF_ACCOUNT_ID: "a".repeat(32) }),
+    owner = await signedIn(f, true);
+  upstream(t, [
+    ["GET", /\/deployments$/, 200, "<html>"],
+    ["GET", /\/versions$/, 200, text({ success: true, errors: [], result: { items: [] } })],
+  ]);
+  const failed = (script: string) => ({ script, deployments: [], versions: [], error: "Cloudflare API error 200" });
+  assert.deepEqual(await getAs(f, "/api/dev/versions", owner), {
+    status: 200,
+    body: { production: failed("nesszerra-mini-chat"), test: failed("nesszerra-mini-chat-test") },
+  });
+});
+
+test("request usage: an Analytics row of the wrong shape is a failed query", async (t) => {
+  upstream(t, [
+    [
+      "POST",
+      /\/graphql$/,
+      200,
+      text({ data: { viewer: { accounts: [{ workersInvocationsAdaptive: [null] }] } }, errors: null }),
+    ],
+  ]);
+  const env = { CF_API_TOKEN: "x", CF_ACCOUNT_ID: "a".repeat(32) } as unknown as Env; // the two keys usage() reads
+  assert.deepEqual(await usage(env, Date.parse("2026-10-01T15:30:00Z")), {
+    limit: 100000,
+    since: "2026-10-01T00:00:00.000Z",
+    resetsAt: "2026-10-02T00:00:00.000Z",
+    configured: true,
+    error: "Analytics query failed",
+    status: 200,
+  });
 });
