@@ -1,7 +1,7 @@
 // Worker routing, gates and validation, with in-memory AuthStore/ChannelRoom stubs.
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "../server/worker.js";
+import worker from "../server/worker.ts";
 import { createHmac } from "node:crypto";
 import { digest } from "../server/auth.ts";
 import { forgetChannel } from "../server/channels.ts";

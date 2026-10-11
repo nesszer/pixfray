@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import worker from "../server/worker.js";
+import worker from "../server/worker.ts";
 import { AuthStore, digest, record } from "../server/auth.ts";
 import { forgetChannel, isFull, MAX_CHANNELS } from "../server/channels.ts";
 import { OFF_TEXT } from "../server/streamelements.ts";

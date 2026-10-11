@@ -77,7 +77,7 @@ type CustomPetRow = {
   width: number;
   height: number;
 };
-/** The Worker's request context for /api/pets (server/worker.js). */
+/** The Worker's request context for /api/pets (server/worker.ts). */
 export type PetsContext = {
   user: { id: string } | null | undefined;
   id: string;
@@ -322,7 +322,7 @@ function petId(label: string): string {
   return "p-" + slug + "-" + rand;
 }
 
-// Durable Object side: /pets and /pets/<id>. onDelete(id) clears the pet from fighters (channel.js).
+// Durable Object side: /pets and /pets/<id>. onDelete(id) clears the pet from fighters (channel.ts).
 export async function handleRoomPets(
   room: { ctx: DurableObjectState },
   request: Request,

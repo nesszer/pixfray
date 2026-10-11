@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { ChannelRoom } from "../server/channel.js";
+import { ChannelRoom } from "../server/channel.ts";
 import { claimMessage, releaseMessage, EVENTSUB_DEDUPE_MS } from "../server/dedupe.ts";
 
 const SECRET = "test-only-internal-secret-0123456789";

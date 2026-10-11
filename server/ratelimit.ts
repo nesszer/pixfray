@@ -52,7 +52,7 @@ export async function hit(
   return { limited: false, retryAfter: 0 };
 }
 
-// In the Worker: null when the user may write, else the 429 to return. Dev-token requests never get here (worker.js).
+// In the Worker: null when the user may write, else the 429 to return. Dev-token requests never get here (worker.ts).
 // If AuthStore can't be reached the write goes through: the same outage already stops sign-in and every other call.
 export async function writeLimit(
   env: Pick<Env, "AUTH" | "INTERNAL_SECRET">,

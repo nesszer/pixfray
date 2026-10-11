@@ -1,5 +1,5 @@
 // Custom characters (/api/assets/:channel[/:id] and the room's /catalog). Owned by Lane D.
-// worker.js and channel.js only call the exports below; keep the signatures (see docs/CONTRACTS.md, "Lane modules").
+// worker.ts and channel.ts only call the exports below; keep the signatures (see docs/CONTRACTS.md, "Lane modules").
 //
 // POST /api/assets/:channel (canManage, same origin), JSON body, at most UPLOAD_BODY_LIMIT bytes:
 //   { label:"1-32 chars", mode:"single"|"frames", fps:1-30, atlas:"<base64 PNG, data: prefix allowed>",
@@ -34,7 +34,7 @@ export type PngSize = { width: number; height: number };
 export type CatalogEntry = { [field: string]: unknown; id: string; url: string; custom: boolean };
 /** Custom character usage shown on /admin. */
 export type CustomUsage = { count: number; limit: number; bytes: number };
-/** The Worker's request context for /api/assets (server/worker.js): the pets one plus a few unused fields. */
+/** The Worker's request context for /api/assets (server/worker.ts): the pets one plus a few unused fields. */
 export type UploadsContext = PetsContext & { owner?: unknown; channel?: string; url?: URL };
 /** What bodyJson throws: an Error with the HTTP status to answer. */
 type HttpError = Error & { status?: number };

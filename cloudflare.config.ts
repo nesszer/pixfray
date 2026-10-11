@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
     worker: defineWorker({
       name,
       compatibilityDate: "2026-09-25",
-      entrypoint: "./server/worker.js",
+      entrypoint: "./server/worker.ts",
       domains: [new URL(origin).hostname, ...Object.values(channelDomains)],
       // Daily backup of every channel into the BACKUPS D1 database at 09:00 UTC (server/backups.ts).
       ...(localTest ? {} : { triggers: [triggers.scheduled({ schedule: "0 9 * * *" })] }),
@@ -78,7 +78,7 @@ export default defineConfig(({ mode }) => {
         // Test site only: owner access for scripts/devtools.mjs (docs/DEVTOOLS.md). Production never declares it.
         ...(testing ? { DEV_TOOLS_TOKEN: bindings.secret() } : {}),
         // When configured, the PixFray bot reads and answers chat as BOT_LOGIN (signed in once at /auth/login?bot=1).
-        // BOT_DEBUG: on test, the bot also plays (sparring partner, !fray spar, !fray e2e; server/channel.js botDebug).
+        // BOT_DEBUG: on test, the bot also plays (sparring partner, !fray spar, !fray e2e; server/channel.ts botDebug).
         ...(bot
           ? {
               CHAT_BOT: bindings.text("1"),

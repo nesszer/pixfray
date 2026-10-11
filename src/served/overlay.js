@@ -244,7 +244,7 @@ async function start() {
     "kofistreambot",
     "botrixoficial",
     "pixfray",
-  ]); // same list as server/channel.js
+  ]); // same list as server/channel.ts
   const FLOOR = 32; // room under the feet for the nameplate
   const banners = []; // the "Sudden death!" banner above a duel that goes to sudden death
   const results = []; // every winner the overlay showed (debug and e2e)

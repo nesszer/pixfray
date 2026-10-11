@@ -1,5 +1,5 @@
 // Lane D end-to-end check on the real Workers runtime (workerd via Miniflare), using the built bundle.
-// It exercises worker.js -> uploads.js -> ChannelRoom SQLite storage with test-only secrets (never .dev.vars).
+// It exercises worker.ts -> uploads.ts -> ChannelRoom SQLite storage with test-only secrets (never .dev.vars).
 // Run after `bunx cf build`:  node tests/upload-workerd.mjs
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";

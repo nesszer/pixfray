@@ -156,5 +156,5 @@ the first real run.
 
 ## Open items
 
-None. `server/worker.js` awaits `handleDeveloper(...)`, and the optional settings above stay undeclared
+None. `server/worker.ts` awaits `handleDeveloper(...)`, and the optional settings above stay undeclared
 by design.

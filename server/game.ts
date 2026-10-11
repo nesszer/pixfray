@@ -46,7 +46,7 @@ const DEFAULT_CONFIG: Config = {
   // !checkin: upgrade points per stream check-in, and +1 more at a streak of 3, 7, 14 and 30 streams.
   checkinPoints: 1,
   streakBonus: true,
-  // PixFray dollars (server/channel.js payDuels, give). Saved fighters earn them per finished duel.
+  // PixFray dollars (server/channel.ts payDuels, give). Saved fighters earn them per finished duel.
   winDollars: 5,
   lossDollars: 3,
   // !give @name amount: on/off, the most one viewer can give per stream, and the finished duels needed first.
@@ -162,7 +162,7 @@ function defaultProfile(userId: string, config: Config, now: number): Player {
     respawnAt: 0,
     stats: emptyStats(),
     hat: "",
-    bonus: 0, // check-in points (server/channel.js checkin), added to the wins for upgrades
+    bonus: 0, // check-in points (server/channel.ts checkin), added to the wins for upgrades
     pet: "", // the active pet's id (server/pets.ts), its tier for the overlay, and its stat boost
     petTier: "",
     petBoost: emptyStats(),
@@ -699,7 +699,7 @@ function finishDuel(
     duel.ratings[winnerId]!.bonus = bonus;
     duel.flawless = true;
   }
-  // Dollars for saved fighters; the room adds them to the profiles once (server/channel.js payDuels).
+  // Dollars for saved fighters; the room adds them to the profiles once (server/channel.ts payDuels).
   const payout: Record<string, number> = {};
   if (rated && winner.registered && state.config.winDollars > 0) payout[winner.userId] = state.config.winDollars;
   if (rated && loser.registered && state.config.lossDollars > 0) payout[loser.userId] = state.config.lossDollars;
@@ -1160,7 +1160,7 @@ export function parseGameCommand(text: unknown): { action: string; target: strin
   return { action, target };
 }
 
-// The pet fields a saved profile carries (channel.js normalizeProfileRow works them out from the pet id).
+// The pet fields a saved profile carries (channel.ts normalizeProfileRow works them out from the pet id).
 function petFields(profile: ProfileInput | null | undefined): { pet: string; petTier: string; petBoost: Stats } {
   const pet = safeString(profile?.pet, 48);
   return {

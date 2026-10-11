@@ -35,7 +35,7 @@ export type SpriteUpload = {
 };
 /** A checked redraw input (validateRedrawImage). */
 export type RedrawImage = { bytes: Uint8Array<ArrayBuffer>; type: "image/jpeg" | "image/png" };
-/** The Worker's request context for /api/sprite and /api/sprites (server/worker.js). */
+/** The Worker's request context for /api/sprite and /api/sprites (server/worker.ts). */
 export type SpritesContext = Omit<PetsContext, "user"> & {
   user: { id: string; login: string; displayName?: string } | null | undefined;
 };
@@ -57,7 +57,7 @@ type SpriteDbRow = {
 };
 /** A sprite as the room answers it (and passes to hooks.approved): ai as a boolean. */
 export type SpriteRow = Omit<SpriteDbRow, "ai"> & { ai: boolean };
-/** channel.js callbacks: approved puts the sprite on the fighter, removed takes it off. */
+/** channel.ts callbacks: approved puts the sprite on the fighter, removed takes it off. */
 export type SpriteHooks = {
   approved?: (row: SpriteRow, previousLiveId: string) => void;
   removed?: (id: string, userId: string) => void;
@@ -382,7 +382,7 @@ function aiLeft(sql: SqlStorage, userId: string, day: string): number {
 }
 
 // Durable Object side: everything under /sprites. hooks.approved(row, previousLiveId) puts the sprite on the fighter;
-// hooks.removed(id, userId) takes a removed sprite off it (channel.js).
+// hooks.removed(id, userId) takes a removed sprite off it (channel.ts).
 export async function handleRoomSprites(
   room: { ctx: DurableObjectState },
   request: Request,

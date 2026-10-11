@@ -5,7 +5,7 @@ import { join } from "node:path";
 import site from "./site.config.js";
 import { linkServed, servedSources, servedVersion, stripServed } from "./scripts/lib/served.ts";
 // Multi-page build: index.html (viewer dashboard: /?channel= and the /play/ picker), "/admin/", "/admin/dev/", "/start/" (streamer sign-up),
-// intro/index.html (3D showcase, served at "/" by server/worker.js page()).
+// intro/index.html (3D showcase, served at "/" by server/worker.ts page()).
 // Add new pages here as extra inputs; files in public/ are copied as-is.
 // The pages' HTML names the site through tokens filled in from site.config.js, so a copy of PixFray needs no HTML edits:
 // %SITE_CHANNEL% (default channel), %SITE_OWNER% (owner login), %SITE_ORIGIN%, %SITE_HOST% and %SITE_TEST_ORIGIN% (production and test sites).

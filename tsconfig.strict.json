@@ -37,6 +37,9 @@
     "server/channels.ts",
     "server/eventsub.ts",
     "server/backups.ts",
-    "server/accounts.ts"
+    "server/accounts.ts",
+    "server/developer.ts",
+    "server/channel.ts",
+    "server/worker.ts"
   ]
 }

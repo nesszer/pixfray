@@ -3,10 +3,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import worker from "../server/worker.js";
+import worker from "../server/worker.ts";
 import { digest } from "../server/auth.ts";
-import { ChannelRoom } from "../server/channel.js";
-import { validPath, usage, logRoomEvent } from "../server/developer.js";
+import { ChannelRoom } from "../server/channel.ts";
+import { validPath, usage, logRoomEvent } from "../server/developer.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz";
 const SECRET = "test-only-internal-secret-0123456789";

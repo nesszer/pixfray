@@ -65,7 +65,7 @@ const GROUPS = [
       { key: "eloK", label: "Elo K-factor", unit: "K", min: 1, max: 100 },
     ],
   },
-  // !checkin (server/channel.js checkin). Wins and check-in points together are capped at 20.
+  // !checkin (server/channel.ts checkin). Wins and check-in points together are capped at 20.
   {
     title: "Check-ins",
     fields: [
@@ -78,7 +78,7 @@ const GROUPS = [
       },
     ],
   },
-  // PixFray dollars (server/channel.js payDuels and give). Mods gift dollars from the Players tab.
+  // PixFray dollars (server/channel.ts payDuels and give). Mods gift dollars from the Players tab.
   {
     title: "Dollars",
     fields: [
@@ -94,7 +94,7 @@ const GROUPS = [
       { key: "giveMinDuels", label: "Finished duels before giving", unit: "duels", min: 0, max: 1000 },
     ],
   },
-  // The PixFray bot as a whole (server/channel.js botCommand) and its timed !fray line (postReminder). Only channels the bot reads chat for.
+  // The PixFray bot as a whole (server/channel.ts botCommand) and its timed !fray line (postReminder). Only channels the bot reads chat for.
   {
     title: "Chat bot",
     visible: (c, a) =>
@@ -277,7 +277,7 @@ async function init() {
       [h("a", { class: "btn btn-primary", href: loginHref(), "data-login": "" }, "Sign in with Twitch")],
     );
   }
-  // A signed-in streamer never sees the bare page: the Worker sends them to their own channel's controls (worker.js ownAdmin).
+  // A signed-in streamer never sees the bare page: the Worker sends them to their own channel's controls (worker.ts ownAdmin).
   const login = S.session.user.login;
   const access = await api("/api/access/" + CHANNEL);
   S.access = access.ok ? access.data : null;
@@ -494,7 +494,7 @@ $("#reset-round").addEventListener("click", (e) =>
     done: "Open duels cancelled; rounds restart at 1.",
   }),
 );
-// Mod gift: dollars to one saved fighter (server/channel.js giftDollars). Negative takes them back.
+// Mod gift: dollars to one saved fighter (server/channel.ts giftDollars). Negative takes them back.
 $("#gift-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const status = $("#gift-status"),
@@ -554,7 +554,7 @@ function renderAll() {
     open = a.duels.filter((d) => OPEN.has(d.status));
   const chat = a.chatStatus || a.chat || {},
     health = chatHealth();
-  // resetting all ranks, a new StreamElements key and moving chat from another site are the broadcaster's (server/worker.js)
+  // resetting all ranks, a new StreamElements key and moving chat from another site are the broadcaster's (server/worker.ts)
   for (const id of ["#reset-all-ranks", "#rotate-se"]) $(id).hidden = !mayBroadcast();
   $("#meta").textContent =
     "Signed in as " +
@@ -1526,7 +1526,7 @@ function renderChat() {
   $("#connect-chat").textContent = c.connected ? "Reconnect chat" : "Connect chat";
   $("#disconnect-chat").disabled = !c.subscriptionId && !c.connected;
 }
-// The PixFray bot's health (server/channel.js botStatus): what it last heard and sent, and the last reply Twitch dropped
+// The PixFray bot's health (server/channel.ts botStatus): what it last heard and sent, and the last reply Twitch dropped
 // or the room held back. A drop newer than the last sent reply is a warning: the bot may be failing right now.
 const HELD_TEXT = {
   reply_limit: "the cap of 18 replies per 30 seconds",

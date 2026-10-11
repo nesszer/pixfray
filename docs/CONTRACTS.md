@@ -38,7 +38,7 @@ fighter (saving and buying stay closed).
 
 ## 2. HTTP routes
 
-Pages (server/worker.js `page()`): `/` is the intro (intro/index.html); `/?channel=x` is that channel's fighter page;
+Pages (server/worker.ts `page()`): `/` is the intro (intro/index.html); `/?channel=x` is that channel's fighter page;
 `/play/` is the channel picker (`/play/?channel=x` moves to `/?channel=x`, `/play` to `/play/`); `/intro/` moves to `/` (301).
 `/admin/` without `?channel=` sends a signed-in streamer whose own channel is set up (on or turned off) and who can manage
 it to `/admin/?channel=<their login>` (302); anyone else
@@ -100,7 +100,7 @@ everything else is revalidated.
 | GET, POST | `/api/dev/settings` | owner | POST `{action:"config"\|"rollbackConfig", payload}` or `{action:"connectChat"\|"disconnectChat", takeover?:true}` | The same versioned config as `/api/admin` (history rows carry the owner's actorName); chat actions answer like the admin ones | 400, 403 `reconnect`, 409, 502 |
 | GET, POST | `/api/dev/channels` | owner | POST `{action:"pause"\|"resume", login}` | `{builtin:[login], max, channels:[{login,enabledAt,pausedAt,pausedBy,review?}], progressBatch:40}`. GET no longer returns setup progress; the owner page reads it from `/api/dev/progress` in batches of `progressBatch` after the list renders | 400 `builtin`/`unknown_action`, 404 `not_found`, 403 `full` (resuming past 200 channels on) |
 | GET | `/api/dev/progress?logins=a,b,c` | owner | `logins`: comma-separated, lowercased and de-duplicated, at most 40 (one room read each, within the Free plan's 50 subrequests per request). Each must be a built-in or a turned-on channel (a paused one is `unknown_channel`). POST gets 405. | `{progress:{login:{overlays,source,commandsWorking,commands,duelCommands,duelModuleOff,lastCommandAt,rejectedAt,lastChatAt,players}}}`. `source` is `""` while chat isn't connected. A login whose room read fails is left out. Read only: it never creates a StreamElements key. | 400 `logins_required`, 400 `too_many_logins` `{max:40}`, 400 `unknown_channel` `{invalid:[...]}`, 401, 403 |
-| GET | `/api/dev/export?channel=<login>` or `?registry=1` | owner | none | A JSON download (`Content-Disposition: attachment`). `channel`: `mini-chat-<login>-<YYYY-MM-DD>.json` = `{format:"mini-chat-export", version:1, exportedAt, kind:"channel", channel, status:"builtin"\|"on"\|"paused", counts:{profiles,configVersions,customCharacters,purchases,builds,customPets}, profiles[], purchases[], builds[], customPets[], config, configVersion, configHistory[], customCharacters[], streamelements:{commandNames}}`. Profiles carry elo, wins, losses, looks, upgrade stats, hat, `lastOpponentId`, check-in points (`bonus`, `checkins`, `streak`), `dollars`, the pet, the 7 worn cosmetics and the active `build`. `purchases` = `[{userId, kind, itemId, price, boughtAt}]` (bought pets, hats, cosmetics and build slots), `builds` = `[{userId, slot, data}]` (each slot's saved loadout). `customCharacters` and `customPets` hold metadata only, no images. `registry`: `mini-chat-channels-<date>.json` = `{format, version, exportedAt, kind:"registry", builtin, channels:[{id,login,enabledAt,pausedAt,pausedBy}]}`. Neither includes StreamElements keys or Twitch tokens. A paused channel still exports. The Worker reads one room through its internal, read-only `GET /dev/export` (`server/developer.js`). | 400 `export_target_required`, 404 `unknown_channel`, 502 `room_unavailable`, 401, 403 |
+| GET | `/api/dev/export?channel=<login>` or `?registry=1` | owner | none | A JSON download (`Content-Disposition: attachment`). `channel`: `mini-chat-<login>-<YYYY-MM-DD>.json` = `{format:"mini-chat-export", version:1, exportedAt, kind:"channel", channel, status:"builtin"\|"on"\|"paused", counts:{profiles,configVersions,customCharacters,purchases,builds,customPets}, profiles[], purchases[], builds[], customPets[], config, configVersion, configHistory[], customCharacters[], streamelements:{commandNames}}`. Profiles carry elo, wins, losses, looks, upgrade stats, hat, `lastOpponentId`, check-in points (`bonus`, `checkins`, `streak`), `dollars`, the pet, the 7 worn cosmetics and the active `build`. `purchases` = `[{userId, kind, itemId, price, boughtAt}]` (bought pets, hats, cosmetics and build slots), `builds` = `[{userId, slot, data}]` (each slot's saved loadout). `customCharacters` and `customPets` hold metadata only, no images. `registry`: `mini-chat-channels-<date>.json` = `{format, version, exportedAt, kind:"registry", builtin, channels:[{id,login,enabledAt,pausedAt,pausedBy}]}`. Neither includes StreamElements keys or Twitch tokens. A paused channel still exports. The Worker reads one room through its internal, read-only `GET /dev/export` (`server/developer.ts`). | 400 `export_target_required`, 404 `unknown_channel`, 502 `room_unavailable`, 401, 403 |
 | GET | `/api/dev/usage`, `/api/dev/versions` | owner | none | Request usage and Worker versions from the Cloudflare API, or `{configured:false, error}` / `missing[]` when `CF_API_TOKEN`/`CF_ACCOUNT_ID` are unset | 401, 403 |
 | GET/POST | `/api/dev/code/tree`, `code/file`, `code/save`, `code/pr`, `runs`, `deploy`, `promote`, `hotfix`, `rollback` | owner | See docs/LIVE_FIX.md | GitHub-backed flow | 501 `{reason:"github_not_configured", missing:[...]}` until `GITHUB_TOKEN`/`GITHUB_REPO` are set; 404 `unknown_route`, 405 `method_not_allowed`. The dev token gets 403 `owner_session_required` on `promote`, `hotfix` and `rollback` with `target:"production"`. `code/save` refuses build files for everyone with 403 `build_file` (`package.json`, `package-lock.json`, `bun.lock`, `bunfig.toml`, `.npmrc`, `site.config.js`, `site.config.ts`, `cloudflare.config.ts`, `vite.config.{js,mjs,cjs,ts,mts,cts}`, `postcss.config.{js,mjs,cjs,ts,mts,cts}`, `.postcssrc`, `.postcssrc.{json,yaml,yml,js,cjs,mjs,ts,cts,mts}`, `wrangler.{json,jsonc,toml}`, `tsconfig.json` and `tsconfig.<name>.json`, `types/`, `scripts/`; readable, not saved) |
 
@@ -208,7 +208,7 @@ Deduplicate events by `id`. All `ms` times are server clock. `src/served/arena-c
 sees them, so a streaming PC whose clock is off still plays fresh events (the overlay drops events
 older than 10 s).
 
-Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.js`):
+Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.ts`):
 
 ```
 Looks = {type:"looks", looks:{[login]: Look|null}, reset?:true}
@@ -492,12 +492,12 @@ subset of fields. Versioning works like this:
 
 | Lane | Owns | Contract |
 |---|---|---|
-| A (backend core) | `server/worker.js`, `server/channel.js`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
+| A (backend core) | `server/worker.ts`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
 | B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.js` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.ts`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
-| E (developer) | `server/developer.js`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.js` | The signatures below |
+| E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.js` | The signatures below |
 
-Keep these signatures; worker.js and channel.js call them.
+Keep these signatures; worker.ts and channel.ts call them.
 
 ```js
 // server/uploads.ts (Lane D)
@@ -511,7 +511,7 @@ export function customUsage(room)                                      // -> {co
 // src/served/upload.js (Lane D, browser): the admin page mounts it
 export async function mountUpload(root, {channel, usage, limits, items, refresh})  // -> {destroy()}
 
-// server/developer.js (Lane E)
+// server/developer.ts (Lane E)
 export async function handleDeveloper(request, env, c)
 //   c = {user, owner, url, path, bodyJson, roomFetch(channel, path, init?), chatAction(channel, action), waitUntil(promise)}
 export async function handleRoomDeveloper(room, request, {path, channel}) // DO: /dev/diagnostics, /dev/logs, POST /dev/log

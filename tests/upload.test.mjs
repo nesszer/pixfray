@@ -12,7 +12,7 @@ import {
   ensureUploadSchema,
   customUsage,
 } from "../server/uploads.ts";
-import { ChannelRoom } from "../server/channel.js";
+import { ChannelRoom } from "../server/channel.ts";
 import { LIMITS, pngInfo, checkFrames, planAtlas, fitSingle, drawAtlas, uploadBody } from "../src/served/atlas.js";
 import { makePng, b64, fakeRoomCtx } from "./upload-helpers.mjs";
 
