@@ -31,6 +31,14 @@
     "src/intro/world.ts",
     "src/fighter3d.ts",
     "src/voxthumb.ts",
-    "src/intro/main.ts"
+    "src/intro/main.ts",
+    "src/served/hats.ts",
+    "src/served/atlas.ts",
+    "src/served/chat.ts",
+    "src/served/arena-client.ts",
+    "src/served/pets.ts",
+    "src/served/cosmetics.ts",
+    "src/served/upload.ts",
+    "src/served/overlay.ts"
   ]
 }

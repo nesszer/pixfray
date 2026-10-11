@@ -1,33 +1,48 @@
+/** A value parsed from the server's JSON: unchecked until TS20 adds parsing, so every field is narrowed where it is read. */
+export type Json = { [key: string]: Json } | Json[] | string | number | boolean | null | undefined;
+export type JsonRecord = { [key: string]: Json };
+export type SnapshotMeta = { revision: number | null; source: string };
+export type ArenaStatus = {
+  state: string;
+  message?: string | undefined;
+  revision?: number | null;
+  retryInMs?: number;
+  transport?: string;
+  chat?: Json;
+  lastSeen?: Json;
+};
+type ArenaClientOptions = {
+  channel: string;
+  role?: string;
+  onSnapshot?: (snapshot: JsonRecord, meta: SnapshotMeta) => void;
+  onEvent?: (event: Json) => void;
+  onLooks?: (message: JsonRecord) => void;
+  onStatus?: (status: ArenaStatus) => void;
+  pingMs?: number;
+  watchdogMs?: number;
+  fetchImpl?: typeof fetch;
+  WebSocketImpl?: new (url: string) => WebSocket;
+};
+
 const MAX_SEEN_EVENTS = 2000;
 const MAX_RETRY_MS = 30_000;
 
-function snapshotFrom(value) {
+function snapshotFrom(value: Json) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const state = value.snapshot ?? value.state ?? value;
   if (!state || typeof state !== "object" || Array.isArray(state)) return null;
   return state;
 }
 
-function revisionOf(value) {
-  const revision = Number(value?.revision);
+function revisionOf(value: Json) {
+  // a JSON value: ?. covers null and undefined, other kinds give undefined
+  const revision = Number((value as JsonRecord | null | undefined)?.revision);
   return Number.isFinite(revision) && revision >= 0 ? revision : null;
 }
 
 /**
  * Read-only client for the channel arena stream. The backend owns every player
  * profile, duel health value, event and rating. This client only renders them.
- * @param {{
- *   channel: string,
- *   role?: string,
- *   onSnapshot?: (snapshot: any, meta: { revision: number | null, source: string }) => void,
- *   onEvent?: (event: any) => void,
- *   onLooks?: (message: any) => void,
- *   onStatus?: (status: any) => void,
- *   pingMs?: number,
- *   watchdogMs?: number,
- *   fetchImpl?: typeof fetch,
- *   WebSocketImpl?: any,
- * }} options
  */
 export function createArenaClient({
   channel,
@@ -41,12 +56,13 @@ export function createArenaClient({
   // socket with no message at all for watchdogMs is dead and gets replaced. 0 turns either off.
   pingMs = 20_000,
   watchdogMs = 45_000,
-  fetchImpl = (...args) => fetch(...args),
+  fetchImpl = (...args: Parameters<typeof fetch>) => fetch(...args),
   // Called with `new`, so this must be a plain function (an arrow function throws "is not a constructor").
-  WebSocketImpl = function (url) {
+  // as: a plain function that returns an object works with `new`, which TypeScript only allows for a construct signature
+  WebSocketImpl = function (url: string) {
     return new WebSocket(url);
-  },
-}) {
+  } as unknown as new (url: string) => WebSocket,
+}: ArenaClientOptions) {
   const normalizedChannel = String(channel ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, "")
@@ -54,62 +70,71 @@ export function createArenaClient({
   if (!normalizedChannel) throw new Error("Invalid arena channel");
 
   let stopped = false;
-  let socket = null;
-  let retryTimer = null;
+  let socket: WebSocket | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryAttempt = 0;
-  let revision = null;
+  let revision: number | null = null;
   let generation = 0;
-  const seenEventIds = new Set();
+  const seenEventIds = new Set<string>();
   // Server clock minus local clock, from the latest snapshot. Server times are shifted into local time on arrival,
   // because the overlay compares them with Date.now() and a PC clock can be off by many seconds.
   let clockOffset = 0;
-  const local = (value) => (Number(value) > 0 ? Number(value) - clockOffset : value);
-  function localEvent(event) {
+  const local = (value: Json) => (Number(value) > 0 ? Number(value) - clockOffset : value);
+  function localEvent(event: Json) {
     if (!clockOffset || !event || typeof event !== "object") return event;
-    const out = { ...event };
+    const out = { ...(event as JsonRecord) }; // as: an array spreads to index keys, none of them at or respawnAt
     if (Number.isFinite(out.at)) out.at = local(out.at);
     if (out.respawnAt) out.respawnAt = local(out.respawnAt);
     return out;
   }
-  function localSnapshot(snapshot) {
+  function localSnapshot(snapshot: JsonRecord): JsonRecord {
     if (Number.isFinite(snapshot.serverNow)) clockOffset = snapshot.serverNow - Date.now();
     if (!clockOffset) return snapshot;
     return {
       ...snapshot,
-      chat: snapshot.chat && { ...snapshot.chat, lastSeen: local(snapshot.chat.lastSeen) },
+      // as: the server sends chat as an object or null; on any other value the spread and the read give nothing
+      chat: snapshot.chat && {
+        ...(snapshot.chat as JsonRecord),
+        lastSeen: local((snapshot.chat as JsonRecord).lastSeen),
+      },
       players: Array.isArray(snapshot.players)
-        ? snapshot.players.map((p) => (p && p.respawnAt ? { ...p, respawnAt: local(p.respawnAt) } : p))
+        ? // as: players are objects; on any other value the read gives undefined and p passes through
+          snapshot.players.map((p) =>
+            p && (p as JsonRecord).respawnAt
+              ? { ...(p as JsonRecord), respawnAt: local((p as JsonRecord).respawnAt) }
+              : p,
+          )
         : snapshot.players,
       events: Array.isArray(snapshot.events) ? snapshot.events.map(localEvent) : snapshot.events,
     };
   }
 
-  function status(state, detail = {}) {
+  function status(state: string, detail: Omit<ArenaStatus, "state"> = {}) {
     if (!stopped) onStatus({ state, ...detail });
   }
 
-  function rememberEvent(event) {
+  function rememberEvent(event: Json) {
     if (!event || typeof event !== "object") return false;
-    const id = event.id ?? event.eventId;
+    const id = (event as JsonRecord).id ?? (event as JsonRecord).eventId; // as: an array has neither key, as at runtime
     if (id === undefined || id === null || id === "") return true;
     const key = String(id);
     if (seenEventIds.has(key)) return false;
     seenEventIds.add(key);
     if (seenEventIds.size > MAX_SEEN_EVENTS) {
       const oldest = seenEventIds.values().next().value;
-      seenEventIds.delete(oldest);
+      seenEventIds.delete(oldest!); // over MAX_SEEN_EVENTS entries, so a first one exists
     }
     return true;
   }
 
-  function dispatchEvents(events) {
+  function dispatchEvents(events: Json) {
     if (!Array.isArray(events)) return;
     for (const event of events) {
       if (rememberEvent(event)) onEvent(event);
     }
   }
 
-  function receiveSnapshot(input, source) {
+  function receiveSnapshot(input: Json, source: string) {
     const raw = snapshotFrom(input);
     if (!raw) return false;
     const snapshot = localSnapshot(raw);
@@ -121,7 +146,7 @@ export function createArenaClient({
     return true;
   }
 
-  async function fetchSnapshot(reason) {
+  async function fetchSnapshot(reason: string) {
     const controller = new AbortController();
     const activeGeneration = generation;
     try {
@@ -132,15 +157,16 @@ export function createArenaClient({
         signal: controller.signal,
       });
       if (!response.ok) throw new Error("Arena state HTTP " + response.status);
-      const payload = await response.json();
+      const payload: Json = await response.json();
       if (!stopped && activeGeneration === generation) receiveSnapshot(payload, "http:" + reason);
-    } catch (error) {
+    } catch (error: any) {
+      // any: whatever was thrown; ?. reads its name and message when it has them
       if (stopped || activeGeneration !== generation || error?.name === "AbortError") return;
       status("offline", { message: error?.message || "Arena state unavailable", revision });
     }
   }
 
-  function scheduleReconnect(activeSocket, detail = {}) {
+  function scheduleReconnect(activeSocket: WebSocket | null, detail: Omit<ArenaStatus, "state"> = {}) {
     if (stopped || socket !== activeSocket || retryTimer) return;
     const base = Math.min(MAX_RETRY_MS, 500 * 2 ** Math.min(retryAttempt++, 6));
     const retryInMs = Math.min(MAX_RETRY_MS, base + Math.floor(Math.random() * Math.min(500, base / 3)));
@@ -151,16 +177,16 @@ export function createArenaClient({
     }, retryInMs);
   }
 
-  let watchdog = null;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
   function armWatchdog() {
-    clearTimeout(watchdog);
+    clearTimeout(watchdog!); // clearTimeout(null) does nothing
     watchdog = stopped || !(watchdogMs > 0) ? null : setTimeout(watchdogTick, watchdogMs);
   }
   // Drop the current socket without waiting for its close event and open a fresh one now.
   function reconnectNow() {
     const old = socket;
     socket = null; // its late close event is then ignored
-    clearTimeout(retryTimer);
+    clearTimeout(retryTimer!); // clearTimeout(null) does nothing
     retryTimer = null;
     retryAttempt = 0;
     try {
@@ -177,9 +203,9 @@ export function createArenaClient({
     status("reconnecting", { message: "Arena stream went silent; reconnecting", revision });
     reconnectNow();
   }
-  let pinger = null;
-  function startPing(activeSocket) {
-    clearInterval(pinger);
+  let pinger: ReturnType<typeof setInterval> | null = null;
+  function startPing(activeSocket: WebSocket) {
+    clearInterval(pinger!); // clearInterval(null) does nothing
     pinger =
       stopped || !(pingMs > 0)
         ? null
@@ -193,11 +219,11 @@ export function createArenaClient({
           }, pingMs);
   }
 
-  function handleMessage(data, activeSocket) {
+  function handleMessage(data: unknown, activeSocket: WebSocket) {
     if (stopped || socket !== activeSocket) return;
     armWatchdog(); // any message shows the stream is alive
     if (typeof data !== "string" || data === "pong") return;
-    let payload;
+    let payload: Json;
     try {
       payload = JSON.parse(data);
     } catch {
@@ -225,7 +251,11 @@ export function createArenaClient({
       if (rememberEvent(event)) onEvent(localEvent(event));
       status("connected", {
         revision,
-        chat: payload.chat && { ...payload.chat, lastSeen: local(payload.chat.lastSeen) },
+        // as: the server sends chat as an object or null; on any other value the spread and the read give nothing
+        chat: payload.chat && {
+          ...(payload.chat as JsonRecord),
+          lastSeen: local((payload.chat as JsonRecord).lastSeen),
+        },
       });
       return;
     }
@@ -233,11 +263,12 @@ export function createArenaClient({
     receiveSnapshot(payload, "websocket");
     const raw = snapshotFrom(payload);
     const snapshot = raw && localSnapshot(raw);
+    // as: the server sends chat as an object or null; on any other value ?. reads give undefined
     if (snapshot)
-      status(snapshot.chat?.connected === false ? "degraded" : "connected", {
+      status((snapshot.chat as JsonRecord | null | undefined)?.connected === false ? "degraded" : "connected", {
         revision,
         chat: snapshot.chat,
-        lastSeen: snapshot.chat?.lastSeen,
+        lastSeen: (snapshot.chat as JsonRecord | null | undefined)?.lastSeen,
       });
   }
 
@@ -254,10 +285,11 @@ export function createArenaClient({
       "/api/live/" +
       encodeURIComponent(normalizedChannel) +
       (role === "overlay" ? "?role=overlay" : "");
-    let activeSocket;
+    let activeSocket: WebSocket;
     try {
       activeSocket = new WebSocketImpl(url);
-    } catch (error) {
+    } catch (error: any) {
+      // any: whatever was thrown; ?. reads its message when it has one
       status("offline", { message: error?.message || "Arena websocket unavailable", revision });
       scheduleReconnect(null, { message: error?.message });
       return;
@@ -296,11 +328,12 @@ export function createArenaClient({
       if (stopped) return;
       stopped = true;
       generation++;
-      clearTimeout(retryTimer);
+      // clearTimeout(null) and clearInterval(null) do nothing
+      clearTimeout(retryTimer!);
       retryTimer = null;
-      clearTimeout(watchdog);
+      clearTimeout(watchdog!);
       watchdog = null;
-      clearInterval(pinger);
+      clearInterval(pinger!);
       pinger = null;
       const activeSocket = socket;
       socket = null;

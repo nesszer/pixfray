@@ -1,6 +1,7 @@
-// Cosmetics drawn on stream (overlay.js) and in the website preview (src/ui.js). Looks only, no stat changes.
-// The lists, prices and ownership live in server/cosmetics.js; the ids here must match (tests/channel.test.mjs).
-import { headFor } from "./hats.js";
+// Cosmetics drawn on stream (overlay.ts) and in the website preview (src/ui.ts). Looks only, no stat changes.
+// The lists, prices and ownership live in server/cosmetics.ts; the ids here must match (tests/channel.test.mjs).
+import { headFor } from "./hats.ts";
+import type { Frame, Head } from "./hats.ts";
 
 export const COSMETIC_IDS = {
   recolor: ["crimson", "ocean", "forest", "violet", "gold", "ghost", "shadow", "negative"],
@@ -12,7 +13,7 @@ export const COSMETIC_IDS = {
   title: ["rookie", "brawler", "lucky", "wall", "cannon", "owl", "menace", "champion", "legend"],
 };
 // Preset lines only: nothing a viewer types reaches the stream.
-export const TAUNTS = {
+export const TAUNTS: Record<string, string> = {
   gg: "GG!",
   next: "Who's next?",
   easy: "Too easy.",
@@ -22,7 +23,7 @@ export const TAUNTS = {
   luck: "Better luck next time!",
   chat: "Chat, did you see that?",
 };
-export const TITLES = {
+export const TITLES: Record<string, string> = {
   rookie: "Rookie",
   brawler: "Brawler",
   lucky: "Lucky Star",
@@ -36,7 +37,7 @@ export const TITLES = {
 
 // Recolors are canvas filters on the body only (hats and accessories keep their colors). Sepia first evens out
 // the source colors, so every character ends up in the same tint. Pet colors use the same list.
-const RECOLORS = {
+const RECOLORS: Record<string, string> = {
   crimson: "sepia(1) saturate(4) hue-rotate(-45deg) brightness(.92)",
   ocean: "sepia(1) saturate(3.2) hue-rotate(165deg) brightness(.95)",
   forest: "sepia(1) saturate(3) hue-rotate(55deg) brightness(.88)",
@@ -46,12 +47,12 @@ const RECOLORS = {
   shadow: "grayscale(.6) brightness(.38)",
   negative: "invert(1) hue-rotate(180deg)",
 };
-export const recolorFilter = (id) => RECOLORS[id] || "";
+export const recolorFilter = (id: string) => RECOLORS[id] || "";
 // One sprite frame with a recolor (and an optional extra filter, the overlay's hit flash) baked in, cached per image,
 // frame and filter. Drawing with ctx.filter set costs a filter pass over the whole stage canvas per fighter: a crowd of
 // 50 recolored fighters ran at about 1 fps.
-const tintedFrames = new WeakMap();
-export function recoloredFrame(image, frame, id, extra = "") {
+const tintedFrames = new WeakMap<CanvasImageSource, Map<string, HTMLCanvasElement | OffscreenCanvas | null>>();
+export function recoloredFrame(image: CanvasImageSource, frame: Frame, id: string, extra = "") {
   const filter = [recolorFilter(id), extra].filter(Boolean).join(" ");
   if (!filter) return null;
   let byKey = tintedFrames.get(image);
@@ -87,18 +88,23 @@ export const RECOLOR_SWATCH = {
 
 // ---------- accessories ----------
 // Drawn in the sprite's own box (dx, dy, dw, dh), facing right; callers mirror for left. The cape is behind the body
-// (layer "back"), the rest in front. Placement follows the head found by hats.js.
+// (layer "back"), the rest in front. Placement follows the head found by hats.ts.
 export const BACK_ACCESSORIES = new Set(["cape"]);
 export function drawAccessory(
-  ctx,
-  id,
-  image,
-  frame,
-  dx,
-  dy,
-  dw,
-  dh,
-  { headHint = null, layer = "front", t = 0, moving = false } = {},
+  ctx: CanvasRenderingContext2D,
+  id: string,
+  image: CanvasImageSource | null | undefined,
+  frame: Frame | null | undefined,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  {
+    headHint = null,
+    layer = "front",
+    t = 0,
+    moving = false,
+  }: { headHint?: Head | null | undefined; layer?: string; t?: number; moving?: boolean } = {},
 ) {
   if (!id || !image || !frame || BACK_ACCESSORIES.has(id) !== (layer === "back")) return;
   const head = headFor(image, frame, headHint);
@@ -226,12 +232,13 @@ export function drawAccessory(
 // while its fighter moves; vx lets the website preview scroll them backwards as if walking.
 const TRAIL_EVERY_MS = 90,
   TRAIL_LIFE_MS = 950;
+type TrailPart = { id: string; x: number; y: number; born: number; size: number; seed: number; vx: number; vy: number };
 export function createTrail(limit = 400) {
-  const parts = [];
-  const last = new Map();
+  const parts: TrailPart[] = [];
+  const last = new Map<string, number>();
   return {
     // key: one per fighter, so the spawn rate holds per fighter. x, y: the feet. size: the fighter's height.
-    spawn(key, id, x, y, size, dir, now, vx = 0) {
+    spawn(key: string, id: string, x: number, y: number, size: number, dir: number, now: number, vx = 0) {
       if (!COSMETIC_IDS.trail.includes(id) || now - (last.get(key) || 0) < TRAIL_EVERY_MS) return;
       last.set(key, now);
       if (last.size > 200) for (const [k, t] of last) if (now - t > TRAIL_LIFE_MS) last.delete(k); // fighters who left
@@ -248,9 +255,9 @@ export function createTrail(limit = 400) {
       });
       if (parts.length > limit) parts.splice(0, parts.length - limit);
     },
-    draw(ctx, now) {
+    draw(ctx: CanvasRenderingContext2D, now: number) {
       for (let i = parts.length - 1; i >= 0; i--) {
-        const p = parts[i],
+        const p = parts[i]!, // 0 <= i < parts.length
           age = now - p.born;
         if (age > TRAIL_LIFE_MS || age < 0) {
           parts.splice(i, 1);
@@ -280,15 +287,26 @@ export function createTrail(limit = 400) {
   };
 }
 // One still particle for list thumbnails: k is its age (0..1).
-export function drawTrailSample(ctx, id, x, y, size) {
-  [
-    [0, 0.2, 0.15],
-    [-0.32, 0.45, 0.4],
-    [-0.62, 0.15, 0.65],
-    [-0.9, 0.38, 0.85],
-  ].forEach(([ox, oy, k], i) => drawTrailPart(ctx, id, x + ox * size, y - oy * size, size, k, i * 7 + 3, k * 900));
+export function drawTrailSample(ctx: CanvasRenderingContext2D, id: string, x: number, y: number, size: number) {
+  (
+    [
+      [0, 0.2, 0.15],
+      [-0.32, 0.45, 0.4],
+      [-0.62, 0.15, 0.65],
+      [-0.9, 0.38, 0.85],
+    ] satisfies [number, number, number][]
+  ).forEach(([ox, oy, k], i) => drawTrailPart(ctx, id, x + ox * size, y - oy * size, size, k, i * 7 + 3, k * 900));
 }
-function drawTrailPart(ctx, id, x, y, size, k, seed, age) {
+function drawTrailPart(
+  ctx: CanvasRenderingContext2D,
+  id: string,
+  x: number,
+  y: number,
+  size: number,
+  k: number,
+  seed: number,
+  age: number,
+) {
   const fade = 1 - k * k,
     r = size * 0.065;
   ctx.save();
@@ -329,7 +347,7 @@ function drawTrailPart(ctx, id, x, y, size, k, seed, age) {
   }
   ctx.restore();
 }
-function star4(ctx, r, color) {
+function star4(ctx: CanvasRenderingContext2D, r: number, color: string) {
   ctx.fillStyle = color;
   ctx.beginPath();
   for (let i = 0; i < 8; i++) {
@@ -340,7 +358,7 @@ function star4(ctx, r, color) {
   ctx.closePath();
   ctx.fill();
 }
-function star5(ctx, r, color) {
+function star5(ctx: CanvasRenderingContext2D, r: number, color: string) {
   ctx.fillStyle = color;
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
@@ -351,7 +369,7 @@ function star5(ctx, r, color) {
   ctx.closePath();
   ctx.fill();
 }
-function heart(ctx, r, color) {
+function heart(ctx: CanvasRenderingContext2D, r: number, color: string) {
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(0, r * 0.9);
@@ -364,12 +382,20 @@ function heart(ctx, r, color) {
 // Played over the winner for WIN_EFFECT_MS after a duel. Pure function of the time (k = 0..1) and a seed, so the
 // overlay and the preview draw the same thing and a test frame is repeatable.
 export const WIN_EFFECT_MS = 3000;
-const rnd = (seed, i) => {
+const rnd = (seed: number, i: number) => {
   const v = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
   return v - Math.floor(v);
 };
 const CONFETTI = ["#f87171", "#fbbf24", "#34d399", "#60a5fa", "#c084fc", "#f472b6"];
-export function drawWinEffect(ctx, id, x, groundY, size, k, seed = 1) {
+export function drawWinEffect(
+  ctx: CanvasRenderingContext2D,
+  id: string,
+  x: number,
+  groundY: number,
+  size: number,
+  k: number,
+  seed = 1,
+) {
   if (!COSMETIC_IDS.effect.includes(id) || !(k >= 0 && k <= 1)) return;
   const sec = (k * WIN_EFFECT_MS) / 1000,
     fade = k > 0.8 ? (1 - k) / 0.2 : 1;
@@ -391,7 +417,7 @@ export function drawWinEffect(ctx, id, x, groundY, size, k, seed = 1) {
       ctx.translate(px, py);
       ctx.rotate(sec * (3 + rnd(seed, i + 9) * 6) + i);
       ctx.scale(1, Math.cos(sec * 8 + i));
-      ctx.fillStyle = CONFETTI[i % CONFETTI.length];
+      ctx.fillStyle = CONFETTI[i % CONFETTI.length]!; // the index wraps inside the list
       ctx.fillRect(-size * 0.035, -size * 0.02, size * 0.07, size * 0.04);
       ctx.restore();
     }
@@ -414,7 +440,7 @@ export function drawWinEffect(ctx, id, x, groundY, size, k, seed = 1) {
       const q = (local - 0.2) / 0.8,
         radius = size * 0.7 * (1 - Math.pow(1 - q, 3));
       ctx.globalAlpha = Math.max(0, 1 - q) * fade;
-      ctx.fillStyle = colors[b];
+      ctx.fillStyle = colors[b]!; // b < 3, the length of colors
       for (let i = 0; i < 22; i++) {
         const a = (i / 22) * Math.PI * 2 + rnd(seed, b * 30 + i) * 0.2,
           d = radius * (0.85 + rnd(seed, b * 60 + i) * 0.15);

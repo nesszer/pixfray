@@ -31,7 +31,7 @@ The overlay link is `/overlay.html?channel=<login>` plus any of these:
 | `debug=1` | Debug readout. |
 
 The overlay joins chat over anonymous read-only Twitch IRC to show who is chatting
-([src/served/chat.js](../src/served/chat.js)). Twitch may change anonymous access. Duels and ranks go
+([src/served/chat.ts](../src/served/chat.ts)). Twitch may change anonymous access. Duels and ranks go
 through the Worker.
 
 The link and its options stay the same across deploys. The overlay's code lives in `src/served/`

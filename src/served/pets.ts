@@ -1,9 +1,14 @@
 // Pets: original pixel art drawn in code (no image files), shared by the overlay and the dashboard preview.
-// The list of pets, their tiers and boosts lives in server/pets.js; ids here must match it. Uploaded (custom) pets
+// The list of pets, their tiers and boosts lives in server/pets.ts; ids here must match it. Uploaded (custom) pets
 // are PNG images; drawPet takes their loaded image instead of an id.
 // Each pet is a grid ('.' = empty, letters = colors) that faces right like the character sprites. fly = it hovers
 // (legendary pets); wings = rows of a second frame swapped in every other beat while it moves or hovers.
-const PETS = {
+type PetArt = { fly?: boolean; colors: Record<string, string>; rows: string[]; wings?: string[] };
+/** A built-in pet id, or an uploaded pet's loaded image. */
+export type PetArg = string | { image?: HTMLImageElement | null } | null | undefined;
+type PetCanvas = HTMLCanvasElement | OffscreenCanvas;
+
+const PETS: Record<string, PetArt> = {
   mouse: {
     colors: { G: "#a3a9b5", D: "#6b7280", R: "#f9a8d4", K: "#111827", N: "#f472b6", T: "#f9a8d4" },
     rows: [
@@ -206,15 +211,15 @@ const PETS = {
 };
 
 export const PET_IDS = Object.keys(PETS);
-const RARE_SPARKLE = { epic: "#c4b5fd", legendary: "#fde047" };
+const RARE_SPARKLE: Record<string, string> = { epic: "#c4b5fd", legendary: "#fde047" };
 
 // Each built-in pet frame is painted once into a small canvas (CELL px per pixel-art cell) and then drawn as one
 // image; a pet color is baked into its own copy the same way. A canvas filter on the stage costs a pass over the
 // whole 1920x1080 canvas, so a crowd of tinted pets drawn with one dropped the overlay to 1 fps or crashed it.
 const CELL = 8,
-  frames = new Map(),
-  tintedImages = new WeakMap();
-function blank(w, h) {
+  frames = new Map<string, PetCanvas | null | undefined>(),
+  tintedImages = new WeakMap<HTMLImageElement, Map<string, CanvasImageSource>>();
+function blank(w: number, h: number) {
   const canvas =
     typeof OffscreenCanvas === "function"
       ? new OffscreenCanvas(w, h)
@@ -223,17 +228,23 @@ function blank(w, h) {
         : null;
   return canvas?.getContext("2d") || null;
 }
-function tintCopy(source, w, h, tint) {
+function tintCopy(source: CanvasImageSource, w: number, h: number, tint: string) {
   const g = blank(w, h);
   if (!g) return null;
   g.filter = tint;
   g.drawImage(source, 0, 0);
   return g.canvas;
 }
-function petFrame(id, rows, cols, tint) {
-  const key = id + (rows === PETS[id].rows ? "" : ":wings") + "|" + tint;
+// Each row is an ASCII grid line, so spreading it below gives one cell per character.
+function petFrame(
+  id: string,
+  rows: readonly Iterable<string>[],
+  cols: number,
+  tint: string,
+): PetCanvas | null | undefined {
+  const key = id + (rows === PETS[id]!.rows ? "" : ":wings") + "|" + tint; // drawPet passes only an id it found in PETS
   if (frames.has(key)) return frames.get(key);
-  let frame = null;
+  let frame: PetCanvas | null | undefined = null;
   if (tint !== "none") {
     const plain = petFrame(id, rows, cols, "none");
     frame = plain && tintCopy(plain, plain.width, plain.height, tint);
@@ -243,7 +254,7 @@ function petFrame(id, rows, cols, tint) {
       rows.forEach((row, r) =>
         [...row].forEach((ch, c) => {
           if (ch !== ".") {
-            g.fillStyle = PETS[id].colors[ch];
+            g.fillStyle = PETS[id]!.colors[ch]!; // a known id, and every letter in its grid has a color
             g.fillRect(c * CELL, r * CELL, CELL, CELL);
           }
         }),
@@ -253,12 +264,12 @@ function petFrame(id, rows, cols, tint) {
   frames.set(key, frame);
   return frame;
 }
-function tintedImage(image, tint) {
+function tintedImage(image: HTMLImageElement, tint: string) {
   if (tint === "none") return image;
   let byTint = tintedImages.get(image);
   if (!byTint) tintedImages.set(image, (byTint = new Map()));
   if (!byTint.has(tint)) byTint.set(tint, tintCopy(image, image.naturalWidth, image.naturalHeight, tint) || image);
-  return byTint.get(tint);
+  return byTint.get(tint)!; // set on the line above
 }
 
 // Draws pet `pet` (a built-in id, or {image} for an uploaded pet) standing on (x, baseY), about `size` px tall, facing
@@ -266,12 +277,26 @@ function tintedImage(image, tint) {
 // Unknown ids draw nothing. Returns true when something was drawn.
 // tint: a canvas filter (a pet color) baked into a cached copy of the pet, never run on ctx.
 export function drawPet(
-  ctx,
-  pet,
-  x,
-  baseY,
-  size,
-  { facing = 1, t = 0, moving = false, tier = "", still = false, tint = "none" } = {},
+  ctx: CanvasRenderingContext2D,
+  pet: PetArg,
+  x: number,
+  baseY: number,
+  size: number,
+  {
+    facing = 1,
+    t = 0,
+    moving = false,
+    tier = "",
+    still = false,
+    tint = "none",
+  }: {
+    facing?: number;
+    t?: number;
+    moving?: boolean;
+    tier?: string | undefined;
+    still?: boolean;
+    tint?: string | undefined;
+  } = {},
 ) {
   const art = typeof pet === "string" ? PETS[pet] : null;
   const image = pet && typeof pet === "object" ? pet.image : null;
@@ -291,12 +316,12 @@ export function drawPet(
   if (facing < 0) ctx.scale(-1, 1);
   if (art) {
     const flap = art.wings && !still && Math.floor(t / 180) % 2 === 1;
-    const rows = flap ? art.wings : art.rows,
+    const rows = flap ? art.wings! : art.rows, // flap is true only when wings exist
       cols = Math.max(...art.rows.map((r) => r.length));
     const px = size / Math.max(art.rows.length, cols * 0.8);
     const x0 = (-cols * px) / 2,
       y0 = -rows.length * px;
-    const frame = petFrame(pet, rows, cols, tint || "none");
+    const frame = petFrame(pet as string, rows, cols, tint || "none"); // as: art is set only for a string id
     if (frame) {
       const smooth = ctx.imageSmoothingEnabled;
       ctx.imageSmoothingEnabled = false;
@@ -310,19 +335,21 @@ export function drawPet(
           let end = c + 1;
           while (end < row.length && row[end] === ch) end++;
           if (ch !== ".") {
-            ctx.fillStyle = art.colors[ch];
+            ctx.fillStyle = art.colors[ch!]!; // c < row.length, and every letter in a grid has a color
             ctx.fillRect(x0 + c * px, y0 + r * px, (end - c) * px + 0.4, px + 0.4);
           }
           c = end;
         }
       });
   } else {
-    const scale = Math.min(size / image.naturalHeight, (size * 1.4) / image.naturalWidth);
-    const w = image.naturalWidth * scale,
-      h = image.naturalHeight * scale;
+    // image! : art is null here, so the check at the top proved image is loaded
+    const scale = Math.min(size / image!.naturalHeight, (size * 1.4) / image!.naturalWidth);
+    // image! : as above
+    const w = image!.naturalWidth * scale,
+      h = image!.naturalHeight * scale;
     const smooth = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(tintedImage(image, tint || "none"), -w / 2, -h, w, h);
+    ctx.drawImage(tintedImage(image!, tint || "none"), -w / 2, -h, w, h); // image! : as above
     ctx.imageSmoothingEnabled = smooth;
   }
   // Epic and legendary pets sparkle: a few small diamonds that circle the pet.

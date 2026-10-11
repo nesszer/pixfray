@@ -3,12 +3,12 @@
  * Chat identity comes exclusively from Twitch tags, never command arguments.
  */
 const IRC_URL = "wss://irc-ws.chat.twitch.tv:443";
-const tagEscapes = { s: " ", ":": ";", r: "\r", n: "\n", "\\": "\\" };
+const tagEscapes: Record<string, string> = { s: " ", ":": ";", r: "\r", n: "\n", "\\": "\\" };
 
-export function parseIRCLine(line) {
+export function parseIRCLine(line: unknown) {
   if (typeof line !== "string" || !line.trim()) return null;
   let rest = line.replace(/[\r\n]+$/, "");
-  const tags = {};
+  const tags: Record<string, string> = {};
   let prefix = "";
   if (rest.startsWith("@")) {
     const end = rest.indexOf(" ");
@@ -35,10 +35,10 @@ export function parseIRCLine(line) {
   return { tags, prefix, command: command.toUpperCase(), params: pieces, trailing };
 }
 
-function commandFromText(text) {
+function commandFromText(text: string) {
   const match = /^!(jump|avatar|color)(?:\s+([^\s]+))?\s*$/i.exec(text);
   if (!match) return null;
-  const type = match[1].toLowerCase();
+  const type = match[1]!.toLowerCase(); // group 1 is not optional
   const value = match[2] ?? "";
   if (type === "jump" && !value) return { type };
   if (type === "avatar" && /^\d{1,2}$/.test(value)) return { type, value: Number(value) };
@@ -46,25 +46,54 @@ function commandFromText(text) {
   return null;
 }
 
+export type ChatCommand = ReturnType<typeof commandFromText>;
+export type ChatMessage = {
+  id: string | undefined;
+  userId: string;
+  username: string;
+  displayName: string;
+  color: string | null | undefined;
+  badges: string[];
+  text: string;
+  timestamp: number;
+  command: ChatCommand;
+};
+export type ModerationEvent = {
+  type: "clear" | "timeout" | "ban" | "delete";
+  userId?: string | undefined;
+  username?: string | undefined;
+  duration?: number | undefined;
+  messageId?: string | undefined;
+};
+export type ChatStatus = { state: string; channel: string; message: string; retryInMs?: number };
+type ChatHandlers = {
+  onMessage?: (message: ChatMessage) => void;
+  onModeration?: (event: ModerationEvent) => void;
+  onStatus?: (status: ChatStatus) => void;
+};
+
 /**
  * @param {string} channel
  * @param {{ onMessage?: (message: any) => void, onModeration?: (event: any) => void, onStatus?: (status: any) => void }} [handlers]
  */
-export function connectChat(channel, { onMessage = () => {}, onModeration = () => {}, onStatus = () => {} } = {}) {
+export function connectChat(
+  channel: string,
+  { onMessage = () => {}, onModeration = () => {}, onStatus = () => {} }: ChatHandlers = {},
+) {
   channel = String(channel ?? "")
     .replace(/^#/, "")
     .toLowerCase();
   if (!/^[a-z0-9_]{1,25}$/.test(channel)) throw new Error("Invalid Twitch channel name");
-  let socket;
-  let retryTimer;
-  let watchdogTimer;
+  let socket: WebSocket | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let watchdogTimer: ReturnType<typeof setInterval> | undefined;
   let stopped = false;
   let attempts = 0;
   let lastReceivedAt = Date.now();
   let joined = false;
-  const seen = new Set();
+  const seen = new Set<string>();
 
-  function status(state, message, retryInMs) {
+  function status(state: string, message: string, retryInMs?: number) {
     onStatus({ state, channel, message, ...(retryInMs ? { retryInMs } : {}) });
   }
   function scheduleReconnect() {
@@ -76,7 +105,7 @@ export function connectChat(channel, { onMessage = () => {}, onModeration = () =
       open();
     }, retryInMs);
   }
-  function handle(line, activeSocket) {
+  function handle(line: string, activeSocket: WebSocket) {
     const item = parseIRCLine(line);
     if (!item) return;
     if (item.command === "PING") {
@@ -112,7 +141,7 @@ export function connectChat(channel, { onMessage = () => {}, onModeration = () =
       if (tags.id && seen.has(tags.id)) return;
       if (tags.id) {
         seen.add(tags.id);
-        if (seen.size > 1000) seen.delete(seen.values().next().value);
+        if (seen.size > 1000) seen.delete(seen.values().next().value!); // over 1000 entries, so a first one exists
       }
       onMessage({
         id: tags.id || undefined,

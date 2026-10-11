@@ -1,7 +1,7 @@
-import { connectChat } from "./chat.js";
-import { createArenaClient } from "./arena-client.js";
-import { drawHat } from "./hats.js";
-import { drawPet } from "./pets.js";
+import { connectChat } from "./chat.ts";
+import { createArenaClient } from "./arena-client.ts";
+import { drawHat } from "./hats.ts";
+import { drawPet } from "./pets.ts";
 import {
   recolorFilter,
   recoloredFrame,
@@ -11,32 +11,220 @@ import {
   WIN_EFFECT_MS,
   TAUNTS,
   TITLES,
-} from "./cosmetics.js";
+} from "./cosmetics.ts";
+import type { ChatMessage, ModerationEvent } from "./chat.ts";
+import type { Json, JsonRecord, SnapshotMeta } from "./arena-client.ts";
+import type { Frame, Head } from "./hats.ts";
 
-export function sanitizeColor(value) {
+// The arena's payloads as this overlay reads them. They mirror server/model.ts (Snapshot, Player, Duel, GameLogEvent)
+// with only the fields read here, plus the few the demo writes. Nothing checks them yet: startArena casts the client's
+// unchecked JSON to them, and TS20 replaces those casts with parsers.
+type Rating = { before?: number; after?: number; delta?: number };
+type ArenaProfile = {
+  userId?: string | undefined;
+  username?: string | undefined;
+  displayName?: string | undefined;
+  registered?: boolean | undefined;
+  avatar?: string | undefined;
+  color?: string | undefined;
+  hat?: string | undefined;
+  pet?: string | undefined;
+  petTier?: string | undefined;
+  defaultAbility?: string | undefined;
+  recolor?: string | undefined;
+  petColor?: string | undefined;
+  accessory?: string | undefined;
+  trail?: string | undefined;
+  winEffect?: string | undefined;
+  taunt?: string | undefined;
+  title?: string | undefined;
+  elo?: number | undefined;
+  lastSeen?: number | undefined;
+  respawnAt?: number | undefined;
+  // lookOf copies LOOK_FIELDS by name
+  [field: string]: unknown;
+};
+type ArenaDuel = {
+  id: string;
+  a: string;
+  b: string;
+  status: string;
+  hp: Record<string, number>;
+  rules?: { maxHp?: number };
+  ratings?: Record<string, Rating> | null;
+  /** Rolls replayed so far (replays only). */
+  rolls?: number;
+  // The demo writes these like the server; not read here.
+  round?: number;
+  winnerId?: string;
+  flawless?: boolean;
+  decision?: string;
+};
+type ArenaEvent = {
+  id?: string;
+  type: string;
+  at?: number | undefined;
+  duelId?: string;
+  a?: string;
+  b?: string;
+  declinedBy?: string;
+  round?: number;
+  hp?: Record<string, number>;
+  userId?: string;
+  targetId?: string;
+  die?: number;
+  counter?: boolean;
+  miss?: boolean;
+  ability?: string;
+  amount?: number;
+  crit?: boolean;
+  finisher?: boolean;
+  winnerId?: string;
+  loserId?: string;
+  respawnAt?: number;
+  unrated?: string;
+  ratings?: Record<string, Rating>;
+  decision?: string;
+  flawless?: boolean;
+  reason?: string;
+  /** How often a player_respawned event has waited for a replay (set by the overlay). */
+  tries?: number;
+};
+type ArenaChat = { connected?: boolean; lastSeen?: number; status?: string };
+type ArenaConfig = { maxHp?: number; announce?: string; maxOnStream?: number };
+type ArenaSnapshot = {
+  chat?: ArenaChat | null;
+  config?: ArenaConfig;
+  build?: string;
+  paused?: boolean;
+  revision?: number;
+  players?: ArenaProfile[];
+  duels?: ArenaDuel[];
+  // The demo writes these like the server; not read here.
+  channel?: string;
+  events?: ArenaEvent[];
+};
+type LooksMessage = { reset?: boolean; looks: Record<string, ArenaProfile | null> };
+/** A character catalog entry (assets/characters.json, /api/catalog) as addSprite reads it. */
+type CatalogItem = {
+  url?: unknown;
+  frames?: unknown;
+  animations?: Record<string, unknown>;
+  fps?: unknown;
+  custom?: unknown;
+  mode?: unknown;
+  combatFallback?: unknown;
+  head?: Head | null;
+};
+type Sprite = Omit<CatalogItem, "frames" | "animations" | "fps"> & {
+  frames: Frame[];
+  animations: Record<string, Frame[]>;
+  image: HTMLImageElement;
+  loaded: boolean;
+  fps: number;
+  fit?: number;
+};
+type Span = { start: number; until: number };
+type Anim = Span & { kind: string; heavy?: boolean };
+type WinFx = { id: string; start: number; seed: number };
+type CosmeticField = "recolor" | "petColor" | "accessory" | "trail" | "winEffect" | "taunt" | "title";
+/** A character on stage. spawn builds it; applyArenaProfile fills the profile fields right after; the rest start unset. */
+type Player = Record<CosmeticField, string> & {
+  key: string;
+  userId: string;
+  label: string;
+  chatLabel: string;
+  x: number;
+  speed: number;
+  direction: number;
+  lane: number;
+  y: number;
+  vy: number;
+  avatar: string;
+  color: string;
+  chatColor: string | null;
+  lastJump: number;
+  phase: number;
+  lastSeen: number;
+  anim: Anim | null;
+  fromArena?: boolean;
+  arenaProfile?: ArenaProfile | null;
+  renderAvatar: string;
+  defaultAbility: string;
+  hat: string;
+  pet: string;
+  petTier: string;
+  // Timers: unset (undefined) until first set, which every comparison below reads as not running.
+  koUntil: number;
+  koHoldUntil: number;
+  bigUntil: number;
+  holdUntil: number;
+  stopStart: number;
+  stopUntil?: number;
+  bubbleUntil: number;
+  koStart?: number;
+  turnedAt?: number;
+  lastReaction?: number;
+  die?: Span & { value: number };
+  fx?: Span & { look: string };
+  parry?: Span;
+  whoosh?: Span;
+  shake?: Span & { mag: number };
+  floatText?: { text: string; color: string; life: number; until: number };
+  winFx?: WinFx | null;
+  grow?: number;
+  labelWidth?: number;
+  text?: string | undefined;
+  messageId?: string;
+  shortFor?: string;
+  /** The bubble text cut to fit, set from `text` before it is read. */
+  short: string;
+};
+type Meet = { x: number; gap: number; aLeft: boolean; speed?: number; walkMs?: number };
+type DuelQueue = { items: { event: ArenaEvent; received: number }[]; busy: boolean };
+/** A particle, or a spark thrown off by a blow; x and y are relative to the owner's lane. */
+type Particle = {
+  owner: Player;
+  color: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  born: number;
+  life: number;
+};
+type Glow = { owner: Player; color: string; y: number; r: number; born: number; life: number };
+type Banner = Span & { x: number; text: string; title: string; color: string; sub?: string };
+type Box = { lo: number; hi: number; top: number; bottom: number };
+type Label = { text: string; color: string; x: number; y: number; w: number; rank: number; title: string };
+type Bubble = { text: string; x: number; top: number; w: number; until: number };
+
+export function sanitizeColor(value: unknown) {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : null;
 }
 
-export function parseCommand(text) {
+export function parseCommand(text: unknown) {
   if (typeof text !== "string") return null;
   const match = text.trim().match(/^!(jump|avatar|color)(?:\s+([^\s]+))?\s*$/i);
   if (!match) return null;
-  const type = match[1].toLowerCase();
+  // group 1 is not optional, and lower-cased it is one of the three words the pattern allows
+  const type = match[1]!.toLowerCase() as "jump" | "avatar" | "color";
   if (type === "jump") return match[2] ? null : { type };
   if (type === "color") {
     const value = sanitizeColor(match[2]);
     return value ? { type, value } : null;
   }
-  return /^[a-z0-9_-]{1,64}$/i.test(match[2] || "") ? { type, value: match[2].toLowerCase() } : null;
+  // the test needs at least one character, so group 2 matched
+  return /^[a-z0-9_-]{1,64}$/i.test(match[2] || "") ? { type, value: match[2]!.toLowerCase() } : null;
 }
 
 // ?cap= in the link: whole numbers 1..100; anything else (missing, 0, negative, text) means no limit of its own (100).
-export function parseCap(value, fallback = 100) {
+export function parseCap(value: unknown, fallback = 100) {
   const n = Math.floor(Number(value));
   return Number.isFinite(n) && n >= 1 ? Math.min(100, n) : fallback;
 }
 // The limit in force: the lower of the link's ?cap= and the channel setting (maxOnStream, set by mods). Either can only tighten.
-export function effectiveCap(urlCap, serverMax) {
+export function effectiveCap(urlCap: unknown, serverMax: unknown) {
   const server = Number.isInteger(serverMax) ? Math.max(1, Math.min(100, serverMax)) : 100;
   return Math.min(parseCap(urlCap), server);
 }
@@ -47,44 +235,46 @@ const segmenter =
   typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
     ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
     : null;
-const graphemesOf = (text) =>
+const graphemesOf = (text: string) =>
   segmenter ? Array.from(segmenter.segment(text), (part) => part.segment) : Array.from(text);
-export function stripExtraMarks(text) {
+export function stripExtraMarks(text: unknown) {
   return String(text ?? "").replace(/(\p{M}{2})\p{M}+/gu, "$1");
 }
 // At most `max` characters including the ellipsis, which is added only when something was cut.
-export function truncateText(text, max, ellipsis = "") {
+export function truncateText(text: unknown, max: number, ellipsis = "") {
   const clean = stripExtraMarks(text),
     parts = graphemesOf(clean);
   if (parts.length <= max) return clean;
   return parts.slice(0, Math.max(0, max - Array.from(ellipsis).length)).join("") + ellipsis;
 }
-export const clipName = (text) => truncateText(text, 24, "…"); // nameplates
+export const clipName = (text: unknown) => truncateText(text, 24, "…"); // nameplates
 
 // Nameplate colors: Twitch chat colors can be near black (#0000ff, #8a2be2 ...). Below 4.5:1 against the dark stream
 // backdrop the lightness goes up (hue and saturation stay) until the name reads, like Twitch's own dark mode.
 const NAME_BACKDROP_LUM = 0.0053,
   NAME_MIN_CONTRAST = 4.5;
-const channelLum = (c) => {
+const channelLum = (c: number) => {
   const v = c / 255;
   return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
 };
-const lumOf = ([r, g, b]) => 0.2126 * channelLum(r) + 0.7152 * channelLum(g) + 0.0722 * channelLum(b);
-const contrastOnDark = (rgb) => (lumOf(rgb) + 0.05) / (NAME_BACKDROP_LUM + 0.05);
-function hslToRgb(h, s, l) {
+// every caller passes the three channels
+const lumOf = ([r, g, b]: number[]) => 0.2126 * channelLum(r!) + 0.7152 * channelLum(g!) + 0.0722 * channelLum(b!);
+const contrastOnDark = (rgb: number[]) => (lumOf(rgb) + 0.05) / (NAME_BACKDROP_LUM + 0.05);
+function hslToRgb(h: number, s: number, l: number) {
   const a = s * Math.min(l, 1 - l),
-    f = (n) => {
+    f = (n: number) => {
       const k = (n + h / 30) % 12;
       return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
     };
   return [f(0), f(8), f(4)].map((v) => Math.round(v * 255));
 }
-export function readableColor(hex, minContrast = NAME_MIN_CONTRAST) {
+export function readableColor(hex: string, minContrast = NAME_MIN_CONTRAST) {
   const color = sanitizeColor(hex);
   if (!color) return hex;
   const rgb = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
   if (contrastOnDark(rgb) >= minContrast) return color;
-  const [r, g, b] = rgb.map((v) => v / 255),
+  // as: map keeps the three channels
+  const [r, g, b] = rgb.map((v) => v / 255) as [number, number, number],
     max = Math.max(r, g, b),
     min = Math.min(r, g, b),
     l0 = (max + min) / 2,
@@ -105,19 +295,20 @@ export function readableColor(hex, minContrast = NAME_MIN_CONTRAST) {
 
 // The overlay's own code version: vite.config.js (versionPublicModules) writes ?v=<hash of public/*.js> on the overlay's
 // script URL in the built overlay.html, so the hash changes only when overlay code changes, not on every deploy.
-export const overlayVersionFromUrl = (url) => {
+export const overlayVersionFromUrl = (url: string) => {
   try {
     return (new URL(url).searchParams.get("v") || "").match(/^[0-9a-f]{6,64}$/i)?.[0] || "";
   } catch {
     return "";
   }
 };
-export const overlayVersionFromHtml = (html) => String(html || "").match(/overlay\.js\?v=([0-9a-f]{6,64})/i)?.[1] || "";
+export const overlayVersionFromHtml = (html: unknown) =>
+  String(html || "").match(/overlay\.js\?v=([0-9a-f]{6,64})/i)?.[1] || "";
 
 // Arena events (docs/CONTRACTS.md section 3) older than this are history from the first snapshot, not news.
 const EVENT_FRESH_MS = 10_000;
 const OPEN = new Set(["pending", "active"]);
-const CANCEL_TEXT = {
+const CANCEL_TEXT: Record<string, string> = {
   inactivity: "no action for a while",
   chat_disconnected: "chat offline",
   duels_disabled: "duels turned off",
@@ -127,7 +318,7 @@ const CANCEL_TEXT = {
 };
 
 // The server's reason when the channel is off ('paused' | 'not_enabled'); '' (any other answer) lets the overlay run.
-async function channelOff(channel) {
+async function channelOff(channel: string) {
   try {
     const r = await fetch("/api/state/" + channel, { headers: { Accept: "application/json" } });
     return r.status === 403 ? String((await r.json())?.off || "") : "";
@@ -137,9 +328,11 @@ async function channelOff(channel) {
 }
 
 async function start() {
-  const canvas = document.querySelector("#stage");
+  // !: the next line returns when it is null; the hoisted functions below can't see that check
+  const canvas = document.querySelector<HTMLCanvasElement>("#stage")!;
   if (!canvas) return;
-  const ctx = canvas.getContext("2d");
+  // !: the next line returns when it is null; the hoisted functions below can't see that check
+  const ctx = canvas.getContext("2d")!;
   if (!ctx) return;
   const params = new URLSearchParams(location.search);
   const demo = params.get("demo") === "1";
@@ -193,8 +386,9 @@ async function start() {
   const size = Math.max(24, Math.min(96, Number(params.get("size")) || 60));
   // Duel announcement banner: off, top or bottom. The channel setting (mod controls) arrives with every snapshot and wins;
   // the ?announce= link parameter only covers the demo and the moment before the first snapshot.
-  const ANNOUNCE = ["off", "top", "bottom"];
-  let announce = ANNOUNCE.includes(params.get("announce")) ? params.get("announce") : "off";
+  // includes() is handed the raw values (null or undefined when unset) and lets only these three strings through
+  const ANNOUNCE: (string | null | undefined)[] = ["off", "top", "bottom"];
+  let announce: string | null | undefined = ANNOUNCE.includes(params.get("announce")) ? params.get("announce") : "off";
   // A new deploy changes the snapshot's build id. Most deploys leave the overlay's code alone, so the id only triggers a
   // cheap check: the overlay page is fetched again and its ?v= code hash compared with the one this script was loaded with.
   // Only changed overlay code reloads the page (between duels), so OBS never needs a manual refresh.
@@ -208,7 +402,7 @@ async function start() {
   const sound = params.get("sound") === "1"; // quiet duel sounds, off unless asked for
   const bubbles = params.get("bubbles") !== "0"; // bubbles=0 hides every speech bubble: chat messages and win taunts
   const fxOn = params.get("fx") !== "off"; // fx=off: no hit glow, sparks or knockout push-in
-  const status = document.querySelector("#status");
+  const status = document.querySelector<HTMLElement>("#status");
   const storageKey = "mini-chat:cosmetics:" + channel;
   let settings = Object.create(null);
   try {
@@ -218,18 +412,18 @@ async function start() {
   } catch {
     /* OBS may disable local storage. */
   }
-  const players = new Map();
-  const sprites = new Map();
-  const profilesById = new Map();
+  const players = new Map<string, Player>();
+  const sprites = new Map<string, Sprite>();
+  const profilesById = new Map<string, ArenaProfile>();
   // Saved looks for chatters the arena doesn't list yet (a StreamElements channel only hears of a viewer when they
   // use a command): login -> { at, look }, misses included, refetched after 5 min. Batched, 20 logins per call.
-  const savedLooks = new Map(),
-    lookQueue = new Set();
+  const savedLooks = new Map<string, { at: number; look: ArenaProfile | null }>(),
+    lookQueue = new Set<string>();
   let lookTimer = 0;
-  const meetPoints = new Map();
+  const meetPoints = new Map<string, Meet>();
   // A quick duel is over on the server before the overlay sees it, so the overlay replays it from its events:
   // duel id -> an active duel whose hp follows the duel_action events until duel_completed.
-  const replays = new Map();
+  const replays = new Map<string, ArenaDuel>();
   const KO_HOLD_MS = 2500; // how long the loser stays down after a replayed knockout
   const DUEL_GROW = 1.5; // fighters stand this much bigger while they duel
   const CHAT_BOTS = new Set([
@@ -246,40 +440,41 @@ async function start() {
     "pixfray",
   ]); // same list as server/channel.ts
   const FLOOR = 32; // room under the feet for the nameplate
-  const banners = []; // the "Sudden death!" banner above a duel that goes to sudden death
-  const results = []; // every winner the overlay showed (debug and e2e)
-  let push = null; // knockout push-in: the view zooms toward the knockout for a moment
+  const banners: Banner[] = []; // the "Sudden death!" banner above a duel that goes to sudden death
+  const results: { duelId: string | undefined; text: string; at: number }[] = []; // every winner the overlay showed (debug and e2e)
+  let push: { x: number; y: number; start: number } | null = null; // knockout push-in: the view zooms toward the knockout for a moment
   const PUSH = 0.18,
     PUSH_IN = 250,
     PUSH_HOLD = 1600,
     PUSH_OUT = 700;
-  const glows = []; // light flashes where blows land
-  const sparks = []; // bright streaks thrown off by blows; they hold still during hit stop
+  const glows: Glow[] = []; // light flashes where blows land
+  const sparks: Particle[] = []; // bright streaks thrown off by blows; they hold still during hit stop
   let width = 1,
     height = 1,
     connectionState = demo ? "demo" : "connecting";
-  let arenaChat = null,
+  let arenaChat: ArenaChat | null = null,
     arenaTransport = arenaDemo ? "demo" : "connecting",
-    arenaConfig = { maxHp: 100 };
-  let arenaRevision = null,
-    arenaDuels = [],
-    arenaClient = null,
-    arenaTimer = null,
+    arenaConfig: ArenaConfig = { maxHp: 100 };
+  let arenaRevision: number | null = null,
+    arenaDuels: ArenaDuel[] = [],
+    arenaClient: ReturnType<typeof createArenaClient> | null = null,
+    arenaTimer: ReturnType<typeof setInterval> | null = null,
     arenaPaused = false;
-  const announcements = []; // top banner lines: one per duel (keyed by duel id) and one for the arena
+  const announcements: { key: string; text: string; color: string; until: number }[] = []; // top banner lines: one per duel (keyed by duel id) and one for the arena
   let lastCatalogFetch = 0;
   const missingAvatars = new Set();
   let lastFrame = performance.now(),
     lastCleanup = 0;
-  const particles = [];
-  const trail = createTrail(); // walking trails (cosmetics.js), in screen space
+  const particles: Particle[] = [];
+  const trail = createTrail(); // walking trails (cosmetics.ts), in screen space
   function updateStatus(detail = "") {
     if (!status) return;
     const chatStatus = channel + " · " + connectionState + " · " + players.size + "/" + cap + " characters";
     const chatOnline = arenaDemo || (arenaChat?.connected === true && ["connected", "live"].includes(arenaTransport));
     const chatAge =
       Number(arenaChat?.lastSeen) > 0
-        ? Math.max(0, Math.floor((Date.now() - Number(arenaChat.lastSeen)) / 1000))
+        ? // a lastSeen above 0 means arenaChat is set
+          Math.max(0, Math.floor((Date.now() - Number(arenaChat!.lastSeen)) / 1000))
         : null;
     const arenaStatus = arenaEnabled
       ? " · arena " +
@@ -317,7 +512,7 @@ async function start() {
   }
   addEventListener("resize", resize);
   resize();
-  async function catalogItems(url) {
+  async function catalogItems(url: string) {
     const response = await fetch(url, { cache: "no-store", headers: { accept: "application/json" } });
     if (!response.ok) throw new Error("Character catalog HTTP " + response.status);
     const data = await response.json();
@@ -327,7 +522,7 @@ async function start() {
     }
     return [];
   }
-  const validFrames = (list) =>
+  const validFrames = (list: unknown): Frame[] =>
     Array.isArray(list)
       ? list.filter(
           (f) => f && [f.x, f.y, f.w, f.h].every(Number.isFinite) && f.x >= 0 && f.y >= 0 && f.w > 0 && f.h > 0,
@@ -336,12 +531,12 @@ async function start() {
   // Packs crop their frames differently: a frog or a pixel hero fills its frame, a Kenney adventurer leaves margin.
   // Measure the visible figure in the standing frame and shrink bulky ones so every fighter has about the same
   // on-stage size (sqrt of visible width x height, in frame heights). 0.78 keeps the original characters as they were.
-  function bulkFit(image, frame) {
+  function bulkFit(image: HTMLImageElement, frame: Frame) {
     try {
       const c = document.createElement("canvas");
       c.width = frame.w;
       c.height = frame.h;
-      const g = c.getContext("2d", { willReadFrequently: true });
+      const g = c.getContext("2d", { willReadFrequently: true })!; // a new canvas element always has a 2D context
       g.drawImage(image, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
       const data = g.getImageData(0, 0, frame.w, frame.h).data;
       let left = frame.w,
@@ -350,7 +545,8 @@ async function start() {
         bottom = -1;
       for (let y = 0; y < frame.h; y++)
         for (let x = 0; x < frame.w; x++) {
-          if (data[(y * frame.w + x) * 4 + 3] <= 40) continue;
+          // x and y stay inside the frame, so the index is inside the pixel data
+          if (data[(y * frame.w + x) * 4 + 3]! <= 40) continue;
           if (x < left) left = x;
           if (x > right) right = x;
           if (y < top) top = y;
@@ -363,17 +559,17 @@ async function start() {
       return 1;
     }
   }
-  function addSprite(id, item) {
+  function addSprite(id: string, item: CatalogItem) {
     if (!item || typeof item.url !== "string" || sprites.has(id)) return;
     const url = new URL(item.url, location.href);
     if (url.origin !== location.origin) return;
-    const animations = {};
+    const animations: Record<string, Frame[]> = {};
     for (const [name, list] of Object.entries(item.animations || {})) {
       const frames = validFrames(list);
       if (frames.length) animations[name] = frames;
     }
     const image = new Image();
-    const sprite = {
+    const sprite: Sprite = {
       ...item,
       frames: validFrames(item.frames),
       animations,
@@ -386,7 +582,7 @@ async function start() {
         sprite.frames = [{ x: 0, y: 0, w: image.naturalWidth, h: image.naturalHeight }];
       }
       sprite.loaded = sprite.frames.length > 0;
-      if (sprite.loaded) sprite.fit = bulkFit(image, sprite.frames[0]);
+      if (sprite.loaded) sprite.fit = bulkFit(image, sprite.frames[0]!); // loaded means frames is not empty
     };
     image.onerror = () => {
       sprite.loaded = false;
@@ -413,7 +609,7 @@ async function start() {
     updateStatus("Using fallback characters");
   }
   if (arenaEnabled && !arenaDemo) await loadArenaCatalog();
-  const ids = [...sprites.keys()].filter((id) => !sprites.get(id).custom);
+  const ids = [...sprites.keys()].filter((id) => !sprites.get(id)!.custom); // the id comes from sprites.keys()
   function persist() {
     // Bound storage so chat activity cannot grow an unlimited local profile file.
     const keys = Object.keys(settings);
@@ -424,25 +620,26 @@ async function start() {
       /* Storage is optional. */
     }
   }
-  function hop(p, amount) {
+  function hop(p: Player, amount: number) {
     p.vy = -amount;
   }
-  const nameOf = (id) => {
+  const nameOf = (id: unknown) => {
     const profile = profilesById.get(String(id));
     return clipName(profile?.displayName || profile?.username || "Player");
   };
   function openDuels() {
     return [...replays.values(), ...arenaDuels.filter((duel) => OPEN.has(duel?.status) && !replays.has(duel.id))];
   }
-  const inReplay = (p) => [...replays.values()].some((d) => String(d.a) === p.userId || String(d.b) === p.userId);
+  const inReplay = (p: Player) =>
+    [...replays.values()].some((d) => String(d.a) === p.userId || String(d.b) === p.userId);
   // The state already holds the new Elo; during a replay the nameplate shows the Elo from before the duel.
-  const replayRatings = (id) => {
+  const replayRatings = (id: string) => {
     for (const d of replays.values())
       if (!d.ratings) d.ratings = arenaDuels.find((x) => x.id === d.id)?.ratings || null;
     for (const d of replays.values()) if (d.ratings?.[id]) return d.ratings[id];
     return null;
   };
-  function findPlayer(userId) {
+  function findPlayer(userId: unknown) {
     if (userId === null || userId === undefined || userId === "") return null;
     for (const p of players.values()) if (p.userId === String(userId)) return p;
     return null;
@@ -450,26 +647,27 @@ async function start() {
   // Over the cap the stage keeps the most recent chatters and never touches a fighter: anyone in a duel (open or replayed)
   // stays until it is over. A profile sent off stage is remembered with its server lastSeen, so the next snapshot doesn't
   // bring it straight back (only fresher activity makes it eligible again, and only for a free place).
-  const isFighter = (p) => inReplay(p) || duelFor(p) !== null;
-  const droppedAt = new Map(); // userId -> the profile's server lastSeen when it left the stage
-  const lastSeenOf = (userId) => Number(profilesById.get(String(userId))?.lastSeen) || 0;
-  function dropPlayer(p) {
+  const isFighter = (p: Player) => inReplay(p) || duelFor(p) !== null;
+  const droppedAt = new Map<string, number>(); // userId -> the profile's server lastSeen when it left the stage
+  const lastSeenOf = (userId: string) => Number(profilesById.get(String(userId))?.lastSeen) || 0;
+  function dropPlayer(p: Player) {
     players.delete(p.key);
     if (p.userId) droppedAt.set(p.userId, lastSeenOf(p.userId));
-    if (droppedAt.size > 2000) droppedAt.delete(droppedAt.keys().next().value);
+    if (droppedAt.size > 2000) droppedAt.delete(droppedAt.keys().next().value!); // over 2000 entries, so a first one exists
   }
   // A real chat join makes room by sending off the least recently active non-fighter; false if everyone on stage is fighting.
   function makeRoom() {
     if (players.size < cap) return true;
-    let oldest = null;
+    let oldest: Player | null = null;
     for (const q of players.values()) if (!isFighter(q) && (!oldest || q.lastSeen < oldest.lastSeen)) oldest = q;
     if (!oldest) return false;
     dropPlayer(oldest);
     return true;
   }
-  function spawn(key, init) {
+  function spawn(key: string, init: Partial<Player>) {
     if (!makeRoom()) return null;
     const saved = settings[key] && typeof settings[key] === "object" ? settings[key] : {};
+    // as: applyArenaProfile fills the profile fields right after every spawn; the timers stay undefined until set
     const p = {
       key,
       userId: "",
@@ -489,7 +687,7 @@ async function start() {
       lastSeen: Date.now(),
       anim: null,
       ...init,
-    };
+    } as Player;
     players.set(key, p);
     return p;
   }
@@ -513,12 +711,12 @@ async function start() {
     "displayName",
     "elo",
   ];
-  function lookOf(profile, username) {
-    const look = { username, registered: true };
+  function lookOf(profile: ArenaProfile, username: string) {
+    const look: ArenaProfile = { username, registered: true };
     for (const field of LOOK_FIELDS) if (profile[field] !== undefined) look[field] = profile[field];
     return look;
   }
-  function queueLook(login) {
+  function queueLook(login: string) {
     const hit = savedLooks.get(login);
     if (!arenaEnabled || arenaDemo || (hit && Date.now() - hit.at < (hit.look ? 300_000 : 60_000))) return;
     lookQueue.add(login);
@@ -547,7 +745,7 @@ async function start() {
       // A failed lookup (a 429 from the rate limit blocks for 10 s) says nothing about the viewer: keep their current
       // look and ask again, rather than caching them as having no saved fighter.
       for (const login of batch) {
-        savedLooks.get(login).at = 0;
+        savedLooks.get(login)!.at = 0; // every login in the batch was set above
         lookQueue.add(login);
       }
       retryMs = 10_000;
@@ -555,7 +753,7 @@ async function start() {
     lookTimer = lookQueue.size ? setTimeout(fetchLooks, retryMs) : 0;
   }
   // A viewer whose saved fighter was deleted goes back to their chat name and color.
-  function wearLook(p) {
+  function wearLook(p: Player) {
     const had = p.arenaProfile?.registered;
     applyArenaProfile(p);
     if (had && !p.arenaProfile?.registered) {
@@ -565,7 +763,7 @@ async function start() {
   }
   // The server pushes {type:"looks"} when a saved fighter changes for a viewer it doesn't list (rank reset, removed
   // sprite, deleted profile; null means deleted). reset: every cached look is stale. Viewers it lists come from snapshots.
-  function acceptLooks(message) {
+  function acceptLooks(message: LooksMessage) {
     const at = Date.now();
     if (message.reset) for (const hit of savedLooks.values()) hit.at = 0;
     const listed = new Set(
@@ -592,9 +790,9 @@ async function start() {
       queueLook(p.key);
     }
   }
-  // Uploaded pets are PNGs served by /api/pets/<channel>/<id>; built-in pets are drawn in code (public/pets.js).
-  const petImages = new Map();
-  function petArt(id) {
+  // Uploaded pets are PNGs served by /api/pets/<channel>/<id>; built-in pets are drawn in code (src/served/pets.ts).
+  const petImages = new Map<string, { image: HTMLImageElement }>();
+  function petArt(id: string) {
     if (!/^p-[a-z0-9-]{1,40}$/.test(id)) return id;
     if (!petImages.has(id)) {
       const img = new Image();
@@ -603,7 +801,7 @@ async function start() {
     }
     return petImages.get(id);
   }
-  function applyArenaProfile(p) {
+  function applyArenaProfile(p: Player) {
     const arena = arenaEnabled && p.userId ? profilesById.get(p.userId) : null;
     const profile = arena?.registered ? arena : (arenaEnabled && savedLooks.get(p.key)?.look) || arena || null;
     p.arenaProfile = profile || null;
@@ -633,11 +831,19 @@ async function start() {
     p.hat = typeof profile.hat === "string" ? profile.hat : "";
     p.pet = typeof profile.pet === "string" ? profile.pet : "";
     p.petTier = typeof profile.petTier === "string" ? profile.petTier : "";
-    // Cosmetics (cosmetics.js): ids only; unknown ones draw nothing.
-    for (const field of ["recolor", "petColor", "accessory", "trail", "winEffect", "taunt", "title"])
+    // Cosmetics (cosmetics.ts): ids only; unknown ones draw nothing.
+    for (const field of [
+      "recolor",
+      "petColor",
+      "accessory",
+      "trail",
+      "winEffect",
+      "taunt",
+      "title",
+    ] satisfies CosmeticField[])
       p[field] = typeof profile[field] === "string" ? profile[field].slice(0, 32) : "";
   }
-  function acceptArenaSnapshot(snapshot, metadata = {}) {
+  function acceptArenaSnapshot(snapshot: ArenaSnapshot, metadata: { revision?: number | null } = {}) {
     if (!snapshot || typeof snapshot !== "object") return;
     arenaChat = snapshot.chat && typeof snapshot.chat === "object" ? snapshot.chat : null;
     if (snapshot.config && typeof snapshot.config === "object") arenaConfig = snapshot.config;
@@ -647,7 +853,7 @@ async function start() {
       cap = wanted;
       // A lower limit sends the longest-quiet chatters off first; fighters (open duel or replay) stay.
       const quiet = [...players.values()].filter((p) => !isFighter(p)).sort((a, b) => a.lastSeen - b.lastSeen);
-      while (players.size > cap && quiet.length) dropPlayer(quiet.shift());
+      while (players.size > cap && quiet.length) dropPlayer(quiet.shift()!); // the loop checks quiet.length
     }
     if (typeof snapshot.build === "string" && snapshot.build) {
       if (!firstBuild) firstBuild = lastBuild = snapshot.build;
@@ -686,8 +892,8 @@ async function start() {
     // The server's lastSeen is turned into "ms ago" relative to its newest profile, so it orders against local chat times.
     let newest = 0;
     for (const profile of profilesById.values()) newest = Math.max(newest, Number(profile.lastSeen) || 0);
-    const activity = (profile) => Date.now() - Math.max(0, newest - (Number(profile.lastSeen) || 0));
-    const candidates = [];
+    const activity = (profile: ArenaProfile) => Date.now() - Math.max(0, newest - (Number(profile.lastSeen) || 0));
+    const candidates: { userId: string; profile: ArenaProfile; key: string; seen: number }[] = [];
     for (const [userId, profile] of profilesById) {
       const here = findPlayer(userId);
       if (here) {
@@ -703,7 +909,8 @@ async function start() {
         continue;
       }
       const seen = Number(profile.lastSeen) || 0;
-      if (droppedAt.has(userId) && seen <= droppedAt.get(userId)) continue; // sent off earlier and no more active since
+      // !: has() was checked first
+      if (droppedAt.has(userId) && seen <= droppedAt.get(userId)!) continue; // sent off earlier and no more active since
       candidates.push({ userId, profile, key, seen });
     }
     candidates.sort((a, b) => b.seen - a.seen);
@@ -759,7 +966,7 @@ async function start() {
     location.reload();
   }, 5000);
   // Two duels at once each keep their own line; a newer message for the same duel replaces its line.
-  function announceArena(text, color = "#fde68a", key = "arena") {
+  function announceArena(text: string, color = "#fde68a", key = "arena") {
     if (!text) return;
     const i = announcements.findIndex((a) => a.key === key);
     if (i >= 0) announcements.splice(i, 1);
@@ -767,7 +974,7 @@ async function start() {
     if (announcements.length > 3) announcements.shift();
   }
   const liveAnnouncements = () => announcements.filter((a) => Date.now() < a.until);
-  function burst(p, color, count, rise) {
+  function burst(p: Player | null, color: string, count: number, rise: boolean) {
     if (!p) return;
     for (let i = 0; i < count; i++) {
       particles.push({
@@ -785,7 +992,7 @@ async function start() {
   }
   // A landed blow: a flash of light on the target and a spray of sparks away from the attacker.
   // power: 1 a normal blow, 2 heavy or crit, 3 the finishing blow.
-  function landBlow(target, dealer, color, power) {
+  function landBlow(target: Player | null, dealer: Player | null, color: string, power: number) {
     if (!fxOn || !target) return;
     const now = Date.now(),
       s = size * (target.grow || 1);
@@ -811,23 +1018,23 @@ async function start() {
       target.shake = { start: now, until: now + 220, mag: 4 };
   }
   // The knockout: the fallen fighter shakes hard, and the view pushes in on it, holds, and eases back.
-  function knockout(p, at) {
+  function knockout(p: Player | null, at: number) {
     if (!fxOn || !p) return;
     p.shake = { start: at, until: at + 450, mag: 9 };
     push = { x: p.x, y: height - FLOOR - p.lane, start: at };
   }
   // Only the struck fighter shakes, side to side on a smooth curve that dies out. Shaking the whole stage by a random
   // offset each frame moved every nameplate and bubble over a still game, and on stream that read as the overlay lagging.
-  function shakeOffset(p, clock) {
+  function shakeOffset(p: Player, clock: number) {
     const k = p.shake;
     if (!k || clock >= k.until) return 0;
     const t = clock - k.start;
     return t < 0 ? 0 : k.mag * (1 - t / (k.until - k.start)) * Math.sin((t / 70) * Math.PI * 2);
   }
-  function pushZoom(clock) {
+  function pushZoom(clock: number) {
     if (!push) return 1;
     const t = clock - push.start,
-      ease = (u) => u * u * (3 - 2 * u);
+      ease = (u: number) => u * u * (3 - 2 * u);
     if (t < 0) return 1;
     if (t < PUSH_IN) return 1 + PUSH * (1 - (1 - t / PUSH_IN) ** 3);
     if (t < PUSH_IN + PUSH_HOLD) return 1 + PUSH;
@@ -835,13 +1042,13 @@ async function start() {
     push = null;
     return 1;
   }
-  function floatText(p, text, color, life = 1200) {
+  function floatText(p: Player | null, text: string, color: string, life = 1200) {
     if (p) p.floatText = { text, color, life, until: Date.now() + life };
   }
-  const signed = (n) => (n > 0 ? "+" : n < 0 ? "\u2212" : "") + Math.abs(n);
+  const signed = (n: number) => (n > 0 ? "+" : n < 0 ? "\u2212" : "") + Math.abs(n);
   // &sound=1: short synthesized blips, no audio files. Browsers and OBS allow this without a click.
-  let audio = null;
-  function playSound(kind) {
+  let audio: AudioContext | null = null;
+  function playSound(kind: "hit" | "parry" | "ko" | "miss") {
     if (!sound) return;
     try {
       audio ||= new AudioContext();
@@ -865,11 +1072,13 @@ async function start() {
         src.start(t);
         return;
       }
-      const [type, from, to, dur, vol] = {
-        hit: ["square", 190, 55, 0.13, 0.07],
-        parry: ["triangle", 1100, 1500, 0.09, 0.08],
-        ko: ["sawtooth", 240, 50, 0.6, 0.06],
-      }[kind] || ["square", 190, 55, 0.13, 0.07];
+      const [type, from, to, dur, vol] = (
+        {
+          hit: ["square", 190, 55, 0.13, 0.07],
+          parry: ["triangle", 1100, 1500, 0.09, 0.08],
+          ko: ["sawtooth", 240, 50, 0.6, 0.06],
+        } satisfies Record<string, [OscillatorType, number, number, number, number]>
+      )[kind] || ["square", 190, 55, 0.13, 0.07];
       const osc = audio.createOscillator();
       osc.type = type;
       osc.frequency.setValueAtTime(from, t);
@@ -887,13 +1096,14 @@ async function start() {
   // then the outcome plays. A counter is the defender answering a bad roll, so the die belongs to its target.
   const ROLL_REVEAL_MS = 450,
     IMPACT_MS = 200;
-  function playRoll(event, replay) {
+  function playRoll(event: ArenaEvent, replay: ArenaDuel | undefined) {
     const now = Date.now();
     const dealer = findPlayer(event.userId),
       target = findPlayer(event.targetId);
     const roller = event.counter ? target : dealer,
       other = event.counter ? dealer : target;
-    if (roller) roller.die = { value: Math.max(1, Math.min(6, Math.round(event.die))), start: now, until: now + 1000 };
+    // playRoll runs only for events whose die passed Number.isFinite
+    if (roller) roller.die = { value: Math.max(1, Math.min(6, Math.round(event.die!))), start: now, until: now + 1000 };
     if (replay) {
       replay.rolls = (replay.rolls || 0) + 1;
       if (replay.rolls === 13)
@@ -965,12 +1175,15 @@ async function start() {
   // Events of one duel that arrive together (a quick duel sends start, hit and KO at once) play one after another.
   // The fighters first walk to meet (duel_started waits for that), then each swing gets its own beat.
   // A roll takes about 1.8 s; after the finishing blow the result follows once the knockout has landed.
-  const DUEL_EVENT_GAP_MS = { duel_started: 700, duel_action: 1800 };
+  const DUEL_EVENT_GAP_MS: { [type: string]: number; duel_started: number; duel_action: number } = {
+    duel_started: 700,
+    duel_action: 1800,
+  };
   const FINISHER_GAP_MS = 1300;
   const DUEL_WALK_MS = 2000; // longest walk to the meet point; far-apart fighters walk faster
-  const duelQueues = new Map();
+  const duelQueues = new Map<string, DuelQueue>();
   // The fighter's knockout is queued but not played yet (a finishing blow or the result of a duel still in the queue).
-  const pendingKnockout = (p) =>
+  const pendingKnockout = (p: Player) =>
     [...duelQueues.values()].some((q) =>
       q.items.some(
         ({ event: e }) =>
@@ -978,7 +1191,7 @@ async function start() {
           (e.type === "duel_completed" && String(e.loserId) === p.userId),
       ),
     );
-  function queueArenaEvent(event) {
+  function queueArenaEvent(event: ArenaEvent) {
     const id = event?.duelId;
     if (!id) return handleArenaEvent(event);
     let q = duelQueues.get(id);
@@ -986,7 +1199,7 @@ async function start() {
     q.items.push({ event, received: Date.now() });
     if (!q.busy) pumpDuel(id, q);
   }
-  function pumpDuel(id, q) {
+  function pumpDuel(id: string, q: DuelQueue) {
     const item = q.items.shift();
     if (!item) {
       q.busy = false;
@@ -1006,7 +1219,7 @@ async function start() {
     if (gap) setTimeout(() => pumpDuel(id, q), gap);
     else pumpDuel(id, q);
   }
-  function handleArenaEvent(event) {
+  function handleArenaEvent(event: ArenaEvent) {
     if (!event || typeof event !== "object") return;
     if (Number.isFinite(event.at) && Date.now() - event.at > EVENT_FRESH_MS) return;
     const now = Date.now();
@@ -1033,8 +1246,7 @@ async function start() {
           const fa = findPlayer(String(event.a)),
             fb = findPlayer(String(event.b));
           if (fa && fb && !meetPoints.has(event.duelId)) {
-            /** @type {{ x: number, gap: number, aLeft: boolean, speed?: number, walkMs?: number }} */
-            const meet = { ...placeMeet((fa.x + fb.x) / 2), aLeft: fa.x <= fb.x };
+            const meet: Meet = { ...placeMeet((fa.x + fb.x) / 2), aLeft: fa.x <= fb.x };
             const far = Math.max(Math.abs(fa.x - meet.x), Math.abs(fb.x - meet.x));
             meet.speed = Math.max(110, far / (DUEL_WALK_MS / 1000));
             meet.walkMs = Math.min(DUEL_WALK_MS, (far / meet.speed) * 1000);
@@ -1044,7 +1256,8 @@ async function start() {
             const f = findPlayer(String(id));
             if (f && !(f.koHoldUntil > now)) f.koUntil = 0;
           } // state may already show the KO
-          setTimeout(() => replays.delete(event.duelId), 60000); // safety net if duel_completed never arrives
+          // safety net if duel_completed never arrives (!: duel events carry a duelId; without one this deletes nothing)
+          setTimeout(() => replays.delete(event.duelId!), 60000);
         }
         announceArena(
           "Round " + event.round + ": " + nameOf(event.a) + " vs " + nameOf(event.b),
@@ -1053,7 +1266,7 @@ async function start() {
         );
         break;
       case "duel_action": {
-        const replay = replays.get(event.duelId);
+        const replay = replays.get(event.duelId!); // !: an event without a duelId finds no replay
         if (Number.isFinite(event.die)) {
           playRoll(event, replay);
           break;
@@ -1086,8 +1299,9 @@ async function start() {
       case "duel_completed": {
         const winner = findPlayer(event.winnerId),
           loser = findPlayer(event.loserId);
-        replays.delete(event.duelId);
-        meetPoints.delete(event.duelId);
+        // !: an event without a duelId deletes nothing
+        replays.delete(event.duelId!);
+        meetPoints.delete(event.duelId!);
         if (loser) {
           const down = loser.koUntil > now; // the finishing blow already knocked them down
           if (!down) {
@@ -1117,8 +1331,9 @@ async function start() {
         // An unrated duel (event.unrated: "new_account" or "pair_cap") moves no Elo, so it shows "Just for fun" over the
         // winner instead of "+0 Elo", and the result line leaves the Elo out.
         const unrated = Boolean(event.unrated);
-        const rw = unrated ? null : event.ratings?.[event.winnerId],
-          rl = unrated ? null : event.ratings?.[event.loserId];
+        // !: a missing id reads the key "undefined", which holds no rating
+        const rw = unrated ? null : event.ratings?.[event.winnerId!],
+          rl = unrated ? null : event.ratings?.[event.loserId!];
         if (unrated) floatText(winner, "Just for fun", "#e2e8f0", 2200);
         if (Number.isFinite(rw?.delta)) floatText(winner, signed(rw.delta) + " Elo", "#4ade80", 2200);
         if (Number.isFinite(rl?.delta)) floatText(loser, signed(rl.delta) + " Elo", "#fb7185", 2200);
@@ -1136,7 +1351,8 @@ async function start() {
         break;
       }
       case "duel_cancelled":
-        announceArena("Duel cancelled · " + (CANCEL_TEXT[event.reason] || "not scored"), "#e2e8f0", event.duelId);
+        // !: a missing reason reads the key "undefined", which falls through to "not scored"
+        announceArena("Duel cancelled · " + (CANCEL_TEXT[event.reason!] || "not scored"), "#e2e8f0", event.duelId);
         break;
       case "player_respawned": {
         const p = findPlayer(event.userId);
@@ -1163,18 +1379,18 @@ async function start() {
     }
     updateStatus();
   }
-  function duelFor(p) {
+  function duelFor(p: Player) {
     if (!arenaEnabled || !p.userId) return null;
     return openDuels().find((duel) => String(duel.a) === p.userId || String(duel.b) === p.userId) || null;
   }
-  function healthOf(p, duel) {
+  function healthOf(p: Player, duel: ArenaDuel | null) {
     if (!duel || duel.status !== "active") return null;
     const current = Number(duel.hp?.[p.userId]);
     if (!Number.isFinite(current)) return null;
     const max = Number(duel.rules?.maxHp ?? arenaConfig?.maxHp ?? 100);
     return { current: Math.max(0, current), max: Math.max(1, Number.isFinite(max) ? max : 100) };
   }
-  function onMessage(message) {
+  function onMessage(message: { [K in keyof ChatMessage]?: ChatMessage[K] | undefined }) {
     const username = String(message.username || message.userId || "")
       .toLowerCase()
       .slice(0, 64);
@@ -1232,7 +1448,7 @@ async function start() {
     }
     updateStatus();
   }
-  function onModeration(event) {
+  function onModeration(event: ModerationEvent) {
     if (event.type === "clear") {
       for (const [key, p] of players) if (!p.fromArena) players.delete(key);
     } else if (event.type === "delete") {
@@ -1251,7 +1467,7 @@ async function start() {
     }
     updateStatus();
   }
-  function drawFallback(p, x, y, time) {
+  function drawFallback(p: Player, x: number, y: number, time: number) {
     const step = Math.sin(time * 0.012 + p.phase) * 3;
     ctx.fillStyle = p.color;
     ctx.fillRect(x - 11, y - 31, 22, 22);
@@ -1264,7 +1480,7 @@ async function start() {
     ctx.fillRect(x + p.direction * 3 - 5, y - 42, 3, 4);
     ctx.fillRect(x + p.direction * 3 + 2, y - 42, 3, 4);
   }
-  function drawHealthBar(p, x, y, health, s) {
+  function drawHealthBar(p: Player, x: number, y: number, health: { current: number; max: number }, s: number) {
     const barWidth = barWidthOf(s);
     const left = x - barWidth / 2;
     const top = y - s - 20;
@@ -1286,7 +1502,7 @@ async function start() {
     ctx.fillText(text, x, top - 5);
   }
   // Die face above the fighter who rolled: it tumbles for a moment, then settles on the rolled value.
-  const PIPS = {
+  const PIPS: Record<number, [number, number][]> = {
     1: [[0, 0]],
     2: [
       [-1, -1],
@@ -1319,7 +1535,7 @@ async function start() {
       [1, 1],
     ],
   };
-  function drawDie(p, x, y, s, now) {
+  function drawDie(p: Player, x: number, y: number, s: number, now: number) {
     const d = p.die;
     if (!d || now >= d.until) return;
     const age = now - d.start,
@@ -1339,7 +1555,8 @@ async function start() {
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#111827";
-    for (const [px, py] of PIPS[value]) {
+    // value is a whole number from 1 to 6, and PIPS has all six
+    for (const [px, py] of PIPS[value]!) {
       ctx.beginPath();
       ctx.arc(px * side * 0.27, py * side * 0.27, side * 0.09, 0, Math.PI * 2);
       ctx.fill();
@@ -1347,8 +1564,8 @@ async function start() {
     ctx.restore();
   }
   // Cosmetic look of a blow (the fighter's default ability), a parry flash and a miss whoosh.
-  function drawStrikeFx(p, x, y, s, now) {
-    const fade = (fx) => Math.max(0, Math.min(1, (now - fx.start) / (fx.until - fx.start)));
+  function drawStrikeFx(p: Player, x: number, y: number, s: number, now: number) {
+    const fade = (fx: Span) => Math.max(0, Math.min(1, (now - fx.start) / (fx.until - fx.start)));
     ctx.save();
     ctx.lineCap = "round";
     if (p.fx && now >= p.fx.start && now < p.fx.until) {
@@ -1413,8 +1630,9 @@ async function start() {
     }
     ctx.restore();
   }
-  function drawBanners(now) {
-    for (let i = banners.length - 1; i >= 0; i--) if (now >= banners[i].until) banners.splice(i, 1);
+  function drawBanners(now: number) {
+    // i counts down over the list
+    for (let i = banners.length - 1; i >= 0; i--) if (now >= banners[i]!.until) banners.splice(i, 1);
     for (const b of banners) {
       // Outlined game text like the hit numbers, no box: it pops in a little large, settles, and fades out rising.
       const age = now - b.start,
@@ -1447,7 +1665,7 @@ async function start() {
       ctx.restore();
     }
   }
-  function drawEffects(p, x, y, now, s, animNow) {
+  function drawEffects(p: Player, x: number, y: number, now: number, s: number, animNow: number) {
     const anim = p.anim && animNow < p.anim.until ? p.anim : null;
     if (anim && (anim.kind === "heal" || anim.kind === "hit" || anim.kind === "respawn")) {
       const t = Math.max(0, Math.min(1, (animNow - anim.start) / (anim.until - anim.start)));
@@ -1477,9 +1695,9 @@ async function start() {
     }
     drawDie(p, x, y, s, now);
   }
-  function drawParticles(now, dt) {
+  function drawParticles(now: number, dt: number) {
     for (let i = particles.length - 1; i >= 0; i--) {
-      const s = particles[i];
+      const s = particles[i]!; // i counts down over the list
       const age = now - s.born;
       if (age > s.life || !players.has(s.owner.key)) {
         particles.splice(i, 1);
@@ -1495,11 +1713,12 @@ async function start() {
     ctx.globalAlpha = 1;
   }
   // Glows and sparks add light (on a transparent overlay that brightens whatever is behind it).
-  function drawImpacts(now, dt) {
+  function drawImpacts(now: number, dt: number) {
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
     for (let i = glows.length - 1; i >= 0; i--) {
-      const g = glows[i],
+      // i counts down over the list
+      const g = glows[i]!,
         t = (now - g.born) / g.life;
       if (t >= 1 || !players.has(g.owner.key)) {
         glows.splice(i, 1);
@@ -1518,7 +1737,8 @@ async function start() {
     }
     ctx.lineCap = "square";
     for (let i = sparks.length - 1; i >= 0; i--) {
-      const k = sparks[i],
+      // i counts down over the list
+      const k = sparks[i]!,
         o = k.owner,
         age = now - k.born;
       if (age > k.life || !players.has(o.key)) {
@@ -1576,15 +1796,16 @@ async function start() {
   }
   // Picks the animation for the current action. Characters without drawn attack/ko frames
   // (combatFallback "effects", or a single-PNG custom character) get engine-driven motion instead.
-  function frameFor(sprite, p, now, moving) {
+  function frameFor(sprite: Sprite, p: Player, now: number, moving: boolean) {
     const a = sprite.animations || {};
     const anim = p.anim && now < p.anim.until ? p.anim : null;
-    const pick = (list, hold) => {
+    // addSprite keeps only frame lists that are not empty, and each index below stays inside its list
+    const pick = (list: Frame[], hold?: boolean) => {
       if (hold)
         return list[
           Math.max(0, Math.min(list.length - 1, Math.floor(((now - (p.koStart || now)) / 1000) * sprite.fps)))
-        ];
-      return list[Math.floor(((now + p.phase) / 1000) * sprite.fps) % list.length];
+        ]!;
+      return list[Math.floor(((now + p.phase) / 1000) * sprite.fps) % list.length]!;
     };
     // "effects" characters only have an upright hurt frame for ko, so the engine still tips them over.
     if (p.koUntil > now && a.ko) return { frame: pick(a.ko, true), drawn: sprite.combatFallback !== "effects" };
@@ -1599,11 +1820,11 @@ async function start() {
                 Math.floor(((now - anim.start) / (anim.until - anim.start)) * a.attack.length),
               ),
             )
-          ],
+          ]!,
         drawn: true,
       };
     if (anim?.kind === "cheer" && a.cheer) return { frame: pick(a.cheer), drawn: true };
-    if (p.vy < 0 && a.jump) return { frame: a.jump[0], drawn: true };
+    if (p.vy < 0 && a.jump) return { frame: a.jump[0]!, drawn: true };
     if (moving) return { frame: pick(a.walk || sprite.frames) };
     return { frame: pick(a.idle || sprite.frames) };
   }
@@ -1611,21 +1832,22 @@ async function start() {
   // With several duels at once placeMeet shrinks it (down to duelGapMin) so the health bars never collide.
   const duelGap = () => Math.max(size * 2, 190);
   const duelGapMin = () => Math.min(duelGap(), Math.max(96, size * DUEL_GROW));
-  const barBase = (s) => Math.max(72, Math.min(116, s * 0.9)); // the hp bar; its "100/100" text (16px bold) is narrower than the minimum
+  const barBase = (s: number) => Math.max(72, Math.min(116, s * 0.9)); // the hp bar; its "100/100" text (16px bold) is narrower than the minimum
   // Bars shrink (to 64 px at the least) only when neighbouring duels are packed so close that full bars would touch:
   // the clear space between two neighbouring meeting points' inner fighters, or inside one duel, bounds the width.
-  function barWidthOf(s) {
+  function barWidthOf(s: number) {
     const base = barBase(s),
       xs = [...meetPoints.values()].sort((p, q) => p.x - q.x);
     let room = Infinity;
     for (let i = 0; i < xs.length; i++) {
-      room = Math.min(room, xs[i].gap - 8);
-      if (i) room = Math.min(room, xs[i].x - xs[i - 1].x - (xs[i].gap + xs[i - 1].gap) / 2 - 8);
+      // i (and i - 1 when i > 0) are indexes of xs
+      room = Math.min(room, xs[i]!.gap - 8);
+      if (i) room = Math.min(room, xs[i]!.x - xs[i - 1]!.x - (xs[i]!.gap + xs[i - 1]!.gap) / 2 - 8);
     }
     return Math.max(64, Math.min(base, room));
   }
   // Hit stop: a fighter's animation clock pauses while a blow lands, then the animation carries on where it stopped.
-  function animClock(p, clock) {
+  function animClock(p: Player, clock: number) {
     if (!p.stopUntil || clock < p.stopStart) return clock;
     if (clock < p.stopUntil) return p.stopStart;
     if (p.anim && p.anim.until > p.stopStart) {
@@ -1639,7 +1861,7 @@ async function start() {
   // their inner fighters' hp bars (and dice) clear of each other. At full gap that is a comfortable slot (two gaps and a
   // fighter, as always); when the spot runs out the gap shrinks a little at a time, down to duelGapMin, which also
   // tightens the slot to just bar width plus a margin. Searches outward from the midpoint, nearest free spot wins.
-  function placeMeet(mid) {
+  function placeMeet(mid: number) {
     const full = duelGap(),
       least = duelGapMin(),
       clearBars = barBase(size * DUEL_GROW) + 16;
@@ -1649,8 +1871,8 @@ async function start() {
       const comfort = full > least ? ((gap - least) / (full - least)) * (full + size - clearBars) : 0;
       const lo = gap,
         hi = Math.max(gap, width - gap),
-        clamp = (x) => Math.max(lo, Math.min(hi, x));
-      const slack = (x) =>
+        clamp = (x: number) => Math.max(lo, Math.min(hi, x));
+      const slack = (x: number) =>
         taken.length
           ? Math.min(...taken.map((t) => Math.abs(t.x - x) - ((t.gap + gap) / 2 + clearBars + comfort)))
           : Infinity;
@@ -1670,7 +1892,7 @@ async function start() {
     // No free spot even at the smallest gap, because duels placed earlier left only fragments. Pack every meeting
     // point at the smallest gap, in order along the stage, spread as far apart as the stage allows (existing duels
     // walk a little to their new spot). Past that the health bars shrink (barWidthOf), never overlap.
-    const items = [...meetPoints.values()].map((m) => ({ m, x: m.x })),
+    const items: { m: Meet | null; x: number }[] = [...meetPoints.values()].map((m) => ({ m, x: m.x })),
       fresh = { m: null, x: best.x };
     items.push(fresh);
     items.sort((p, q) => p.x - q.x);
@@ -1684,8 +1906,9 @@ async function start() {
       prev = it.x;
     }
     for (let i = items.length - 1; i >= 0; i--) {
-      items[i].x = Math.min(hi, items[i].x, next - step);
-      next = items[i].x;
+      // i counts down over the list
+      items[i]!.x = Math.min(hi, items[i]!.x, next - step);
+      next = items[i]!.x;
     }
     for (const it of items)
       if (it.m) {
@@ -1702,8 +1925,8 @@ async function start() {
   const LABEL_ROW = 20,
     TITLE_ROW = 16,
     BUBBLE_H = 25;
-  const nameColors = new Map(); // chat color -> readable nameplate color (readableColor lifts dark ones), computed once per color
-  const nameColor = (color) => {
+  const nameColors = new Map<string, string>(); // chat color -> readable nameplate color (readableColor lifts dark ones), computed once per color
+  const nameColor = (color: string) => {
     let out = nameColors.get(color);
     if (out === undefined) {
       if (nameColors.size > 500) nameColors.clear();
@@ -1712,14 +1935,14 @@ async function start() {
     }
     return out;
   };
-  const overlaps = (a, b) => a.lo < b.hi && a.hi > b.lo && a.top < b.bottom && a.bottom > b.top;
-  function drawLabels(labels, bubbles, bars) {
+  const overlaps = (a: Box, b: Box) => a.lo < b.hi && a.hi > b.lo && a.top < b.bottom && a.bottom > b.top;
+  function drawLabels(labels: Label[], bubbles: Bubble[], bars: Box[]) {
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 20px system-ui, sans-serif";
     ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(0,0,0,.85)";
-    const placed = [];
+    const placed: Box[] = [];
     for (const l of labels.sort((a, b) => b.rank - a.rank)) {
       const x = Math.max(l.w / 2 + 4, Math.min(width - l.w / 2 - 4, l.x));
       if (l.title) l.y = Math.min(l.y, height - TITLE_ROW - 5); // a fighter on a low lane lifts its nameplate so the title stays on screen
@@ -1777,7 +2000,7 @@ async function start() {
         requestAnimationFrame(draw);
       }
     });
-  function draw(now) {
+  function draw(now: number) {
     if (demoPaused) {
       drawing = false;
       return;
@@ -1793,27 +2016,29 @@ async function start() {
     ctx.save();
     const zoom = pushZoom(clock);
     if (zoom !== 1) {
-      ctx.translate(push.x, push.y);
+      // a zoom other than 1 means pushZoom found a push
+      ctx.translate(push!.x, push!.y);
       ctx.scale(zoom, zoom);
-      ctx.translate(-push.x, -push.y);
+      ctx.translate(-push!.x, -push!.y);
     }
     if (clock - lastCleanup > 1000) {
       for (const [key, p] of players) if (!p.fromArena && clock - p.lastSeen > 600000) players.delete(key);
       lastCleanup = clock;
       updateStatus();
     }
-    const labels = [],
-      bubbles = [],
-      bars = [],
-      wins = [];
+    const labels: Label[] = [],
+      bubbles: Bubble[] = [],
+      bars: Box[] = [],
+      wins: { fx: WinFx; x: number; y: number; s: number }[] = [];
     trail.draw(ctx, clock); // behind every fighter
     // Ground taken by running duels: where the two fighters stand, plus room for their nameplates (fixed 20px
     // text, often wider than the sprite). labelWidth is measured when the nameplate is drawn (last frame).
     const duelZones = openDuels()
       .filter((d) => meetPoints.has(d.id))
+      // filtered to duels with a meeting point
       .map((d) => ({
-        x: meetPoints.get(d.id).x,
-        gap: meetPoints.get(d.id).gap,
+        x: meetPoints.get(d.id)!.x,
+        gap: meetPoints.get(d.id)!.gap,
         label: Math.max(findPlayer(String(d.a))?.labelWidth || 0, findPlayer(String(d.b))?.labelWidth || 0),
       }));
     for (const p of players.values()) {
@@ -2039,16 +2264,18 @@ async function start() {
   requestAnimationFrame(draw);
   // Local-only preview of a duel, shaped like real server snapshots and events. Nothing is saved.
   function setupDemoArena() {
-    const demoProfiles = [
-      ["Ness", "toon-ranger", "#fb923c", "heavy", 1220],
-      ["Sunny", "female", "#60a5fa", "strike", 1184],
-      ["Mochi", "toon-robot", "#f472b6", "heal", 1108],
-      ["Cloud", "soldier", "#a78bfa", "strike", 1060],
-      ["Pixel", "alien-green", "#4ade80", "heavy", 1012],
-      ["Bean", "adventurer", "#facc15", "strike", 980],
-      ["Luna", "toon-scout", "#e879f9", "heal", 940],
-      ["Sprout", "player", "#34d399", "strike", 900],
-    ].map(([displayName, avatar, color, defaultAbility, elo], index) => ({
+    const demoProfiles = (
+      [
+        ["Ness", "toon-ranger", "#fb923c", "heavy", 1220],
+        ["Sunny", "female", "#60a5fa", "strike", 1184],
+        ["Mochi", "toon-robot", "#f472b6", "heal", 1108],
+        ["Cloud", "soldier", "#a78bfa", "strike", 1060],
+        ["Pixel", "alien-green", "#4ade80", "heavy", 1012],
+        ["Bean", "adventurer", "#facc15", "strike", 980],
+        ["Luna", "toon-scout", "#e879f9", "heal", 940],
+        ["Sprout", "player", "#34d399", "strike", 900],
+      ] satisfies [string, string, string, string, number][]
+    ).map(([displayName, avatar, color, defaultAbility, elo], index) => ({
       userId: "demo-" + index,
       username: String(displayName).toLowerCase(),
       displayName,
@@ -2078,7 +2305,7 @@ async function start() {
     let revision = 1,
       round = 0,
       seq = 0,
-      duel = null,
+      duel: ArenaDuel | null = null,
       lastPair = "",
       nextAt = Date.now() + 1500;
     const snapshot = () =>
@@ -2095,7 +2322,7 @@ async function start() {
         },
         { revision },
       );
-    const event = (fields) => ({ id: "demo-" + revision + "-" + ++seq, at: Date.now(), ...fields });
+    const event = (fields: ArenaEvent) => ({ id: "demo-" + revision + "-" + ++seq, at: Date.now(), ...fields });
     snapshot();
     if (debug) {
       // the demo label is for testing only; on stream the demo looks like the real overlay
@@ -2116,7 +2343,7 @@ async function start() {
       });
       document.body.appendChild(badge);
     }
-    // The same rules as the server's quick duel (settleQuickDuel in server/game.js): one d6 per swing, 6 crits for 50,
+    // The same rules as the server's quick duel (settleQuickDuel in server/game.ts): one d6 per swing, 6 crits for 50,
     // 5 hits for 34, 3-4 misses, 1-2 is countered for 34. After 12 rolls more HP wins, a tie goes to sudden death.
     // Like a real !fight, the whole duel arrives at once (settled snapshot plus events) and the overlay replays it.
     function quickDuel() {
@@ -2124,8 +2351,9 @@ async function start() {
       let a, b;
       do {
         const pool = [...demoProfiles];
-        a = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
-        b = pool[Math.floor(Math.random() * pool.length)];
+        // the pool holds 8 profiles, so both picks exist
+        a = pool.splice(Math.floor(Math.random() * pool.length), 1)[0]!;
+        b = pool[Math.floor(Math.random() * pool.length)]!;
       } while ([a.userId, b.userId].sort().join() === lastPair);
       lastPair = [a.userId, b.userId].sort().join();
       const id = "demo-duel-" + round,
@@ -2141,7 +2369,8 @@ async function start() {
         if (i === 12) {
           if (hp[a.userId] !== hp[b.userId]) {
             decision = "hp";
-            [winner, loser] = hp[a.userId] > hp[b.userId] ? [a, b] : [b, a];
+            // hp holds both fighters' ids
+            [winner, loser] = hp[a.userId]! > hp[b.userId]! ? [a, b] : [b, a];
             break;
           }
           decision = "sudden_death";
@@ -2165,9 +2394,10 @@ async function start() {
           const counter = die <= 2,
             dealer = counter ? defender : attacker,
             target = counter ? attacker : defender;
-          const amount = suddenDeath ? hp[target.userId] : Math.min(hp[target.userId], die === 6 ? 50 : 34);
-          hp[target.userId] -= amount;
-          const finisher = hp[target.userId] <= 0;
+          // hp holds both fighters' ids
+          const amount = suddenDeath ? hp[target.userId]! : Math.min(hp[target.userId]!, die === 6 ? 50 : 34);
+          hp[target.userId]! -= amount;
+          const finisher = hp[target.userId]! <= 0;
           events.push(
             event({
               type: "duel_action",
@@ -2190,23 +2420,26 @@ async function start() {
         }
         [attacker, defender] = [defender, attacker];
       }
-      const flawless = hp[winner.userId] === 100,
+      // sudden death ends the duel on the first blow that lands, long before 200 rolls, so winner and loser are set
+      const flawless = hp[winner!.userId] === 100,
         expectedA = 1 / (1 + Math.pow(10, (b.elo - a.elo) / 400)),
         scoreA = winner === a ? 1 : 0;
       const next = {
         [a.userId]: Math.round(a.elo + 24 * (scoreA - expectedA)),
         [b.userId]: Math.round(b.elo + 24 * (expectedA - scoreA)),
       };
-      if (flawless) next[winner.userId] += 3;
-      const ratings = {};
+      if (flawless) next[winner!.userId]! += 3; // winner is set (above); next holds both fighters' ids
+      const ratings: Record<string, Rating> = {};
       for (const f of [a, b]) {
-        ratings[f.userId] = { before: f.elo, after: next[f.userId], delta: next[f.userId] - f.elo };
-        f.elo = next[f.userId];
+        // next holds both fighters' ids
+        ratings[f.userId] = { before: f.elo, after: next[f.userId]!, delta: next[f.userId]! - f.elo };
+        f.elo = next[f.userId]!;
       }
-      winner.wins++;
-      loser.losses++;
+      // winner and loser are set (see flawless above)
+      winner!.wins++;
+      loser!.losses++;
       for (const f of demoProfiles) f.respawnAt = 0;
-      loser.respawnAt = Date.now() + 5000;
+      loser!.respawnAt = Date.now() + 5000;
       const flags = { ...(flawless ? { flawless: true } : {}), ...(decision !== "ko" ? { decision } : {}) };
       duel = {
         id,
@@ -2214,7 +2447,7 @@ async function start() {
         b: b.userId,
         status: "completed",
         round,
-        winnerId: winner.userId,
+        winnerId: winner!.userId, // set (see flawless above)
         hp,
         ratings,
         rules: { maxHp: 100 },
@@ -2224,10 +2457,11 @@ async function start() {
         event({
           type: "duel_completed",
           duelId: id,
-          winnerId: winner.userId,
-          loserId: loser.userId,
+          // winner and loser are set (see flawless above)
+          winnerId: winner!.userId,
+          loserId: loser!.userId,
           round,
-          respawnAt: loser.respawnAt,
+          respawnAt: loser!.respawnAt,
           hp: { ...hp },
           ratings,
           ...flags,
@@ -2253,19 +2487,23 @@ async function start() {
     arenaClient = createArenaClient({
       channel,
       role: "overlay",
-      onSnapshot: acceptArenaSnapshot,
-      onEvent: queueArenaEvent,
-      onLooks: acceptLooks,
+      // as: the client hands over the server's JSON unchecked; TS20 parses it into these types here
+      onSnapshot: acceptArenaSnapshot as (snapshot: JsonRecord, meta: SnapshotMeta) => void,
+      // as: unchecked JSON, as above
+      onEvent: queueArenaEvent as (event: Json) => void,
+      // as: unchecked JSON, as above
+      onLooks: acceptLooks as (message: JsonRecord) => void,
       onStatus(event) {
         arenaTransport = event.state || "offline";
-        if (event.chat) arenaChat = event.chat;
+        // as: unchecked JSON, as above
+        if (event.chat) arenaChat = event.chat as ArenaChat;
         updateStatus(event.message || "");
       },
     });
   }
   if (arenaEnabled) startArena();
   if (arenaEnabled && !arenaDemo) setInterval(refreshLooks, 60_000);
-  let chat;
+  let chat: { disconnect(): void };
   if (demo) {
     const names = ["Ness", "Sunny", "Mochi", "Cloud", "Pixel", "Bean", "Luna", "Sprout"];
     names.forEach((name, i) =>
@@ -2302,7 +2540,7 @@ async function start() {
     () => {
       chat?.disconnect();
       arenaClient?.disconnect();
-      clearInterval(arenaTimer);
+      clearInterval(arenaTimer!); // clearInterval(null) does nothing
     },
     { once: true },
   );
@@ -2358,7 +2596,7 @@ async function start() {
 }
 if (typeof document !== "undefined")
   start().catch((error) => {
-    const status = document.querySelector("#status");
+    const status = document.querySelector<HTMLElement>("#status");
     if (status) {
       status.hidden = false;
       status.textContent = "Overlay error: " + error.message;
