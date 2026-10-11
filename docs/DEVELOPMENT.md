@@ -115,8 +115,9 @@ A port pull request changes types only, from a `port/<name>` branch:
    `note: <file>:<line> names a renamed file; left as is, since public/ is served as written`.
    Any byte changed there changes what browsers load, so update those lines in a change of their own.
    The overlay modules in `src/served/` port like any other file: the build serves each as the
-   oxc-stripped JavaScript of its `.js` or `.ts` source at `/<name>.js` (docs/CONTRACTS.md §9), so a
-   port that adds only types serves the same code under the same `?v=` hash.
+   oxc-stripped JavaScript of its `.js` or `.ts` source at `/<name>.js` (docs/CONTRACTS.md §9). oxc
+   keeps comments, so a port that adds only types serves the same code under the same `?v=` hash,
+   while a changed comment changes the hash and open overlays reload once.
 2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json`.
 3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) checks every file that
    differs between the working tree and where the branch left `main`. Code files are `.js`, `.mjs`,

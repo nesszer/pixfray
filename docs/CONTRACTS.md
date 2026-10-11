@@ -582,9 +582,9 @@ bun run test:all           # everything below, in order (scripts/test-all.mjs)
   real Worker (it needs `MINI_AUTH_SECRET`, which scripts/test-all.mjs reads from `.dev.vars`
   without printing it) and drives the overlay, dashboard, admin and dev pages.
 - The overlay draws the arena only with `arena=1` (the OBS URL from the setup page adds it).
-- Served modules: `src/served/<name>.js` or `.ts` is served at `/<name>.js` as JavaScript, types and comments
-  stripped by oxc (`scripts/lib/served.ts`, the `served-modules` steps in `vite.config.js`); a name with both a
-  `.js` and a `.ts` source fails. `bun run dev` serves them as `text/javascript` with `Cache-Control: no-cache`
+- Served modules: `src/served/<name>.js` or `.ts` is served at `/<name>.js` as JavaScript, types stripped by
+  oxc and comments kept (`scripts/lib/served.ts`, the `served-modules` steps in `vite.config.js`); a name with
+  both a `.js` and a `.ts` source fails. `bun run dev` serves them as `text/javascript` with `Cache-Control: no-cache`
   and no version. The build writes them to the output root and rewrites each `./<name>.ts` or `./<name>.js`
   between them, and in `public/*.html`, to `./<name>.js?v=<hash>`: the first 10 hex digits of a SHA-256 over
   each module's name and served code. The overlay compares the `?v=` it was loaded with against the one in

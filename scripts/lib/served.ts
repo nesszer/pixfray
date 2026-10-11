@@ -24,8 +24,8 @@ export function servedSources(dir: string = SERVED_DIR): { name: string; file: s
   return [...found].map(([name, entry]) => ({ name, file: path.join(dir, entry) }));
 }
 
-/** The JavaScript a source serves as: comments and types stripped by oxc, the same transform for .js and .ts, so a
- * rename to .ts that only adds types serves the same code. */
+/** The JavaScript a source serves as: types stripped and the code reprinted by oxc, comments kept, the same
+ * transform for .js and .ts, so a rename to .ts that only adds types and leaves comments alone serves the same code. */
 export async function stripServed(file: string, source: string): Promise<string> {
   const { code } = await transformWithOxc(source, file, {
     lang: file.endsWith(".ts") ? "ts" : "js",
@@ -46,7 +46,7 @@ export function linkServed(text: string, names: readonly string[], version: stri
 
 /** One version for all served modules: the first 10 lowercase hex digits of a SHA-256 over each module's URL name
  * and served code with its imports linked unversioned, in name order, so `./x.ts` and `./x.js` hash alike. It
- * changes only when served code does; the overlay's check reads 6 to 64 hex digits (src/served/overlay.js
+ * changes when served code or a served comment does; the overlay's check reads 6 to 64 hex digits (src/served/overlay.js
  * overlayVersionFromUrl). */
 export function servedVersion(modules: readonly { name: string; code: string }[]): string {
   const hash = createHash("sha256"),

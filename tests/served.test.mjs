@@ -38,6 +38,18 @@ test("served imports: the dev server links without a version", () => {
   assert.equal(linkServed('import "./hats.js";', NAMES, ""), 'import "./hats.js";');
 });
 
+test("served code: types stripped, comments kept", async () => {
+  assert.equal(
+    await stripServed("pets.ts", '// Pets.\nexport const PETS: string[] = ["cat"];\n'),
+    '// Pets.\nexport const PETS = ["cat"];\n',
+  );
+  assert.notEqual(
+    await stripServed("pets.js", '// Pets!\nexport const PETS = ["cat"];\n'),
+    await stripServed("pets.js", '// Pets.\nexport const PETS = ["cat"];\n'),
+    "a changed comment changes the served code, so the version too",
+  );
+});
+
 test("served version: 10 lowercase hex digits the overlay's own check reads, changing only with served code", async () => {
   const js = await stripServed("hats.js", "// Hats.\nexport const HATS = [1, 2];\n");
   const ts = await stripServed("hats.ts", "// Hats.\nexport const HATS: number[] = [1, 2];\n");

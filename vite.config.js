@@ -60,7 +60,7 @@ const servedBuild = {
   async closeBundle() {
     if (this.environment && this.environment.name !== "client") return;
     const out = this.environment ? this.environment.config.build.outDir : "dist";
-    if (!existsSync(out)) return;
+    if (!existsSync(out)) throw new Error(`served-modules: build output ${out} is missing`);
     const modules = await Promise.all(
       servedSources().map(async ({ name, file }) => ({
         name,

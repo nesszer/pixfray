@@ -522,8 +522,7 @@ export function whenImage(url, fn) {
 
 // ---------- the on-stream preview ----------
 // The viewer page's stage: the fighter walking in place as the overlay draws it (src/served/overlay.js), with its
-// pet,
-// trail, recolor, hat, accessory, the nameplate "name · Elo" and title, and on play() its win effect and taunt.
+// pet, trail, recolor, hat, accessory, the nameplate "name · Elo" and title, and on play() its win effect and taunt.
 // Sizes follow the overlay's 60 px fighter, 20 px nameplate and 14 px title, scaled to the canvas height.
 // set({ entry, hat, pet, color, name, elo, looks }) changes what it shows; looks holds the cosmetics.js ids.
 const fits = new Map();
