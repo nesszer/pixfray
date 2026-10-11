@@ -13,13 +13,16 @@
 // Then the build is the ground truth: when cloudflare.config.ts exists, the base and the working tree are each built
 // with `bunx cf build` and every file under .cloudflare/output must match, JavaScript with comments removed and other
 // files byte for byte. That covers what the file checks cannot see, such as a tsconfig that changes how Vite compiles
-// TypeScript. `--strict-list` checks only the strict list.
+// TypeScript. When the merge base has tsconfig.strict.json, the head's compilerOptions for it must equal the base's,
+// so a port changes only its files list. `--strict-list` checks only the strict list: every TypeScript file is in a
+// strict program, the strict options are on, and no file on the list has a comment that turns checking or lint off.
 // Usage: node scripts/port-check.ts --base origin/main | node scripts/port-check.ts --strict-list
 import { isUtf8 } from "node:buffer";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { transformWithOxc } from "vite";
 import {
   PUBLIC,
@@ -227,21 +230,30 @@ async function programFiles(root: string, config: string): Promise<{ files: Set<
   return { files, errors };
 }
 
-/** One line per compilerOption tsconfig.strict.json ends up with, after `extends` (tsc --showConfig), that checks less
- * than STRICT_ON and the loose values above allow; and one per repo declaration file in the strict `program` while
- * skipLibCheck leaves it unchecked. Every PixFray program needs skipLibCheck: @types/node and
- * @cloudflare/workers-types declare the same globals. */
-async function looseOptions(root: string, program: Promise<{ files: Set<string> }>): Promise<string[]> {
-  const { out } = await tsc(root, ["-p", path.join(root, STRICT_CONFIG), "--showConfig"]);
+/** tsconfig.strict.json's compilerOptions in `dir` after `extends`, as `tsc --showConfig` prints them (paths relative
+ * to the config), or the line to report when tsc printed no config. */
+type Shown = { options: Record<string, unknown> } | { error: string };
+
+async function shownOptions(dir: string): Promise<Shown> {
+  const { out } = await tsc(dir, ["-p", path.join(dir, STRICT_CONFIG), "--showConfig"]);
   let shown: unknown;
   try {
     shown = JSON.parse(out);
   } catch {
-    return [`tsc -p ${STRICT_CONFIG} --showConfig printed no config (${out.trim().split("\n")[0] ?? ""})`];
+    return { error: `tsc -p ${STRICT_CONFIG} --showConfig printed no config (${out.trim().split("\n")[0] ?? ""})` };
   }
   const set = typeof shown === "object" && shown !== null && "compilerOptions" in shown ? shown.compilerOptions : {};
-  const options: Record<string, unknown> =
-    typeof set === "object" && set !== null ? Object.fromEntries(Object.entries(set)) : {};
+  return { options: typeof set === "object" && set !== null ? Object.fromEntries(Object.entries(set)) : {} };
+}
+
+/** One line per compilerOption tsconfig.strict.json ends up with (`shown`) that checks less than STRICT_ON and the
+ * loose values above allow; and one per repo declaration file in the strict `program` while skipLibCheck leaves it
+ * unchecked. Every PixFray program needs skipLibCheck: @types/node and @cloudflare/workers-types declare the same
+ * globals. */
+async function looseOptions(shown: Promise<Shown>, program: Promise<{ files: Set<string> }>): Promise<string[]> {
+  const result = await shown;
+  if ("error" in result) return [result.error];
+  const { options } = result;
   const loose: string[] = [];
   for (const name of STRICT_ON) {
     if (options[name] !== true)
@@ -264,9 +276,74 @@ async function looseOptions(root: string, program: Promise<{ files: Set<string> 
   return loose;
 }
 
+/** One line per compilerOption the head's tsconfig.strict.json resolves to differently from the base's (`base`,
+ * undefined when the base has none): once the base has the strict list, a port changes only its files. Comparing every
+ * option, not only the boolean ones looseOptions reads, also covers paths, types, lib and typeRoots. */
+async function changedOptions(base: Promise<Shown | undefined>, head: Promise<Shown> | undefined): Promise<string[]> {
+  const before = await base;
+  if (before === undefined) return [];
+  if ("error" in before) return [`the base's ${before.error}`];
+  if (head === undefined) return [`${STRICT_CONFIG} is gone at head; the base has it, so a port keeps it`];
+  const after = await head;
+  if ("error" in after) return []; // looseOptions reports it
+  const show = (value: unknown) => (value === undefined ? "not set" : JSON.stringify(value));
+  return [...new Set([...Object.keys(before.options), ...Object.keys(after.options)])]
+    .sort()
+    .filter((name) => !isDeepStrictEqual(before.options[name], after.options[name]))
+    .map(
+      (name) =>
+        `${STRICT_CONFIG} changes ${name} from the base (base ${show(before.options[name])}, head ${show(after.options[name])}); a port changes only its files list`,
+    );
+}
+
+/** A comment pragma that turns type checking off for its whole file; tsc reads it in any letter case. */
+const NO_CHECK = /@ts-nocheck/i;
+
+/** A lint directive comment. oxlint reads both prefixes, and one can turn off any rule, ban-ts-comment included, so
+ * it would let a type-checking pragma through. */
+const LINT_DISABLE = /\b(?:eslint|oxlint)-disable(?:-next-line|-line)?/i;
+
+/** One line per comment, in a code file on the strict list, that turns type checking off (NO_CHECK) or turns lint off
+ * (LINT_DISABLE). Only comments are read: tsc and oxlint read nothing else as either. */
+function offSwitches(root: string, files: Iterable<string>): string[] {
+  const found: string[] = [];
+  for (const file of [...files].filter((file) => codeExtension(file) !== undefined).sort()) {
+    const code = readFileSync(path.join(root, file), "utf8");
+    let comments: Span[];
+    try {
+      ({ comments } = scanModule(file, code));
+    } catch (error) {
+      found.push(`${file} could not be read for comments: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    for (const { start, end } of comments) {
+      const text = code.slice(start, end);
+      const at = `${file}:${code.slice(0, start).split("\n").length}`;
+      const pragma = NO_CHECK.exec(text);
+      if (pragma) {
+        found.push(
+          `${at} has ${pragma[0]}, which turns type checking off; files on ${STRICT_CONFIG} are checked whole`,
+        );
+      }
+      const lint = LINT_DISABLE.exec(text);
+      if (lint) {
+        found.push(
+          `${at} has ${lint[0]}, which can turn off any lint rule, ban-ts-comment included; files on ${STRICT_CONFIG} take no lint directives`,
+        );
+      }
+    }
+  }
+  return found;
+}
+
 /** One line per TypeScript file in the working tree that no strict program checks, per error tsc prints reading the
- * strict list, and per option that loosens it (looseOptions). The tsc runs overlap. */
-async function strictListProblems(root: string, files: readonly string[]): Promise<string[]> {
+ * strict list, per option that loosens it (looseOptions) or, given the `base` options, differs from them
+ * (changedOptions), and per comment on the strict list that turns a check off (offSwitches). The tsc runs overlap. */
+async function strictListProblems(
+  root: string,
+  files: readonly string[],
+  base: Promise<Shown | undefined> = Promise.resolve(undefined),
+): Promise<string[]> {
   const typescript = files.filter((file) => /\.(?:ts|mts|cts|tsx)$/.test(file)).sort();
   const programs = new Map<string, ReturnType<typeof programFiles>>();
   for (const file of typescript) {
@@ -279,9 +356,11 @@ async function strictListProblems(root: string, files: readonly string[]): Promi
   const strict = hasStrict
     ? programFiles(root, STRICT_CONFIG)
     : Promise.resolve({ files: new Set<string>(), errors: [] });
-  const loose = hasStrict ? looseOptions(root, strict) : Promise.resolve([]);
+  const shown = hasStrict ? shownOptions(root) : undefined;
+  const loose = shown === undefined ? Promise.resolve([]) : looseOptions(shown, strict);
+  const changed = changedOptions(base, shown);
   const { files: checked, errors } = await strict;
-  const problems = [...errors, ...(await loose)];
+  const problems = [...errors, ...(await loose), ...(await changed), ...offSwitches(root, checked)];
   for (const file of typescript) {
     if (checked.has(file)) continue;
     const program = STRICT_EXCLUSIONS[file];
@@ -487,17 +566,37 @@ async function checkPort(root: string, baseRef: string, files: readonly string[]
   // The builds run while the files are compared. `files` was listed first, so the build's output is not in it. A
   // committed CACHE would stand in for the base checkout, so the builds don't run at all.
   const cache = cacheProblems(root);
-  // tsc reads the strict list while the files are compared, too.
-  const strictList = strictListProblems(root, files);
   const building = baseFiles.includes(BUILD_CONFIG) || files.includes(BUILD_CONFIG);
+  // The builds and the base's strict options both read a checkout of the base.
+  const baseHasStrict = baseFiles.includes(STRICT_CONFIG);
+  let baseDir: Promise<string> | undefined;
+  if ((building || baseHasStrict) && cache.length === 0) {
+    try {
+      baseDir = Promise.resolve(checkoutBase(root, mergeBase));
+    } catch (error) {
+      baseDir = Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+  const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
   const builds =
-    building && cache.length === 0
-      ? buildBoth(root, mergeBase).catch((error: unknown) => ({
-          base: "",
-          failures: [`the builds could not start: ${error instanceof Error ? error.message : String(error)}`],
-          started: false,
-        }))
+    building && baseDir !== undefined
+      ? baseDir
+          .then((dir) => buildBoth(root, dir, mergeBase))
+          .catch((error: unknown) => ({
+            base: "",
+            failures: [`the builds could not start: ${message(error)}`],
+            started: false,
+          }))
       : undefined;
+  // tsc reads the strict list while the files are compared, too. A checkout that failed is reported once: by the
+  // builds when they run.
+  const baseOptions =
+    baseHasStrict && baseDir !== undefined
+      ? baseDir.then(shownOptions, (error: unknown) =>
+          building ? undefined : { error: `checkout for ${STRICT_CONFIG} failed: ${message(error)}` },
+        )
+      : undefined;
+  const strictList = strictListProblems(root, files, baseOptions);
 
   // A head path of a moved file maps to its base path, so a path that names it compares as one naming the base file.
   const movedFrom = new Map<string, string>();
@@ -722,15 +821,15 @@ function refuseLinks(dir: string, label: string, deep: boolean): void {
   );
 }
 
-/** Builds the merge base (checked out under CACHE) and the working tree at once. Resolves to the base folder and one
- * report block per failed build. The base folder has no node_modules, so its build loads the repo's packages from
- * above it, and checkoutBase refuses anything else in CACHE that would come first. That is sound: a change to
- * package.json or bun.lock already fails the file checks, so both builds would install the same packages. */
+/** Builds the merge base, checked out at `base` (checkoutBase, under CACHE), and the working tree at once. Resolves to
+ * the base folder and one report block per failed build. The base folder has no node_modules, so its build loads the
+ * repo's packages from above it, and checkoutBase refuses anything else in CACHE that would come first. That is sound:
+ * a change to package.json or bun.lock already fails the file checks, so both builds would install the same packages. */
 async function buildBoth(
   root: string,
+  base: string,
   mergeBase: string,
 ): Promise<{ base: string; failures: string[]; started: boolean }> {
-  const base = checkoutBase(root, mergeBase);
   for (const name of BUILD_WRITES) {
     refuseLinks(path.join(base, name), `${CACHE}/${mergeBase}/${name}`, true);
     refuseLinks(path.join(root, name), name, true);

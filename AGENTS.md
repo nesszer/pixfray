@@ -17,7 +17,7 @@ before relying on memory. Don't guess commands, flags or file locations: they ar
 | Before every commit | `bun run check` (format, lint, types, unit tests; the pre-commit hook adds gitleaks) |
 | Unit tests | `bun run test:unit`, port tools `bun run test:port` |
 | Smoke test | `bun run test` (needs the dev server running) |
-| Everything | `bun run test:all` (unit, builds, workerd upload, browser tests, local end-to-end duel) |
+| Everything | `bun run test:all` (unit, builds, workerd upload, browser tests, local e2e duel) |
 | Deploy to staging | `bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.test.json` |
 | Deploy to production | `bunx cf deploy --secrets-file ~/.pixfray/secrets.json` |
 
@@ -85,21 +85,21 @@ Each one has happened here. Check for it by name before calling work done.
 [Design]|DESIGN.md: reader per page, structure, copy, tokens, motion, overlay, responsive, primitives, avoid list, verify
 [PixFray docs]|root: ./docs
 |README.md: map of these docs
-|STREAMER_SETUP.md: sign in on /start, OBS overlay, add the PixFray bot, mods, viewer sprites, StreamElements channels, troubleshooting, turning PixFray or the bot off
-|DUELS.md: chat commands, how a duel is rolled, dollars, ranked vs unrated, mod and broadcaster controls
-|PAGES.md: every page and every overlay URL option (channel size cap arena announce sound bubbles fx demo debug)
-|CONTRACTS.md: §1 conventions|§2 HTTP routes, channel registry, admin actions|§3 overlay socket /api/live|§4 EventSub webhook /api/eventsub|§5 characters, catalog|§6 game rules|§7 config and balance|§8 module ownership and signatures|§9 tests and build
-|TWITCH_SETUP.md: Twitch app, EventSub chat connection, PixFray bot account
+|STREAMER_SETUP.md: /start sign-in, OBS overlay, adding the bot, mods, viewer sprites, StreamElements, troubleshooting, turning PixFray or the bot off
+|DUELS.md: chat commands, duel rolls, dollars, ranked vs unrated, mod and broadcaster controls
+|PAGES.md: every page and overlay URL option (channel size cap arena announce sound bubbles fx demo debug)
+|CONTRACTS.md: §1 conventions|§2 HTTP routes, channel registry, admin actions|§3 overlay socket /api/live|§4 EventSub /api/eventsub|§5 characters, catalog|§6 game rules|§7 config and balance|§8 modules, signatures|§9 tests and build
+|TWITCH_SETUP.md: Twitch app, EventSub chat, PixFray bot account
 |SELF_HOSTING.md: site.config.js, Twitch app, secrets, deploy, limits
-|DEVELOPMENT.md: local dev, test suites, live chat test env vars
-|DEVTOOLS.md: test-site devtools (bot fighters, scripted duels, alt account in real chat, OBS)
+|DEVELOPMENT.md: local dev, test suites, port-check rules, live chat env vars
+|DEVTOOLS.md: test-site tools (bot fighters, scripted duels, alt account in real chat, OBS)
 |LIVE_FIX.md: release flow, owner page fix/deploy/rollback, backups
-|ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources | PROGRESSION_PLAN.md: historical
-[Code]|server/: worker.js routes and auth glue|channel.js ChannelRoom DO (state, bot commands, alarms, broadcast)|game.js rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.js webhooks, slimEvent, sendChat|auth.js sessions, Helix mod checks|channels.js registry|botcommands.js|streamelements.js|uploads.js|sprites.js|developer.js|security.js|ratelimit.js|dedupe.js|upgrades.js pets.js cosmetics.js
+|ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
+[Code]|server/: worker.js routes, auth glue|channel.js ChannelRoom DO (state, bot commands, alarms, broadcast)|game.js rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.js webhooks, slimEvent, sendChat|auth.js sessions, Helix mod checks|channels.js registry|botcommands.js|streamelements.js|uploads.js|sprites.js|developer.js|security.js|ratelimit.js|dedupe.js|upgrades.js pets.js cosmetics.js
 |src/: admin.js mod page|dashboard.js channel page|start.js sign-up|setup.js|intro/ home page 3D|scrub.js|sprite-maker.js spritify.js|fighter3d.js voxthumb.js
 |public/: overlay.html overlay.js|arena-client.js|chat.js anonymous IRC|dashboard.css design tokens
-|tests/: *.test.mjs unit|smoke.mjs|ui.mjs arena-browser.mjs|e2e-local.mjs|chrome.mjs
-|scripts/: devtools.mjs|release.mjs|live-chat-e2e.mjs|test-all.mjs|configure-twitch.ps1
+|tests/: *.test.{mjs,ts} unit|port/ port tools|smoke.mjs|ui.mjs arena-browser.mjs|e2e-local.mjs|chrome.mjs
+|scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.mjs|release.mjs|live-chat-e2e.mjs|test-all.mjs|configure-twitch.ps1
 ```
 
 ## Changing this file

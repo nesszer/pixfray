@@ -32,8 +32,9 @@ const RENAME = path.join(ROOT, "scripts", "port-rename.ts");
 const OXLINT = path.join(ROOT, "node_modules", "oxlint", "bin", "oxlint");
 
 /** This run's folder in the OS temp folder: every fixture repo, file moved out and lint probe goes inside, so a run
- * adds one entry there (about 18 MB) and two runs never share a folder. Fixed folders reused across runs would need
- * emptying first, which is deletion (AGENTS.md); recycle old runs by hand. */
+ * adds one entry there (about 15 MB of files, 20 MiB on disk) and two runs never share a folder. The link tests leave
+ * five junctions in it, each pointing at an empty folder in the same run folder. Fixed folders reused across runs
+ * would need emptying first, which is deletion (AGENTS.md); recycle old runs by hand. */
 const RUN = mkdtempSync(path.join(tmpdir(), "pixfray-port-check-"));
 
 // The pre-commit hook runs these tests with GIT_DIR and GIT_INDEX_FILE pointing at the PixFray repo. Passed on, they
@@ -681,7 +682,7 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
-  test("without a build config, a tsconfig change is allowed, and a tsconfig under public/ compares byte for byte", async () => {
+  test("without a build config, a tsconfig change is allowed but for the strict options, and a tsconfig under public/ compares byte for byte", async () => {
     const dir = await repo({
       "tsconfig.base.json": `${JSON.stringify({ compilerOptions: { target: "esnext", ...STRICT_OPTIONS } })}\n`,
       "tsconfig.strict.json":
@@ -706,7 +707,8 @@ describe("port-check", { concurrency: true }, () => {
         "allowed: tsconfig.json (no build config reads it)",
         "allowed: tsconfig.strict.json (no build config reads it)",
         "allowed: tsconfig.web.json (no build config reads it)",
-        "1 files compared, 1 different",
+        "tsconfig.strict.json changes useDefineForClassFields from the base (base not set, head false); a port changes only its files list",
+        "1 files compared, 1 different, 1 other problems",
         "",
       ].join("\n"),
       stderr: "",
@@ -1496,6 +1498,193 @@ describe("port-check", { concurrency: true }, () => {
     const { status, stdout, stderr } = await node(dir, SCRIPT, "--strict-list");
     assert.deepEqual({ status, stderr }, { status: 1, stderr: "" });
     assert.match(stdout, /^tsc -p tsconfig\.strict\.json: error TS6053: File '[^']*\/gone\.ts' not found\.\n$/);
+  });
+
+  // Every option port-check requires on (STRICT_ON) and every `no*` option that turns checking off (NO_TURNS_OFF),
+  // each turned to its loose value. The lists are written out here, not read from the script, so dropping a name
+  // there fails the guard test below as well as its own case.
+  const NO_TURNS_OFF = ["noCheck", "noLib", "noResolve", "noStrictGenericChecks"];
+  /** The names in the array literal `const <name> = [...]` in scripts/port-check.ts. */
+  const scriptList = (name) => {
+    const literal = new RegExp(`\\nconst ${name} = \\[([^\\]]*)\\]`).exec(readFileSync(SCRIPT, "utf8"))?.[1] ?? "";
+    return [...literal.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  };
+  test("the loose-option cases below cover exactly STRICT_ON and NO_TURNS_OFF in port-check.ts", () => {
+    assert.deepEqual(scriptList("STRICT_ON"), Object.keys(STRICT_OPTIONS));
+    assert.deepEqual(scriptList("NO_TURNS_OFF"), NO_TURNS_OFF);
+  });
+  const turnedOff = [
+    ...Object.keys(STRICT_OPTIONS).map((name) => ({
+      name,
+      value: false,
+      lines: [`tsconfig.strict.json must set ${name} to true (it is false)`],
+    })),
+    ...NO_TURNS_OFF.map((name) => ({
+      name,
+      value: true,
+      // tsc 7 dropped noStrictGenericChecks: it reads the option as unknown, and that error refuses the list instead.
+      lines: [`tsconfig.strict.json sets ${name} to true, which checks less`, `Unknown compiler option '${name}'.`],
+    })),
+  ];
+  for (const { name, value, lines } of turnedOff) {
+    test(`--strict-list fails a tsconfig.strict.json with ${name} set to ${value}`, async () => {
+      const dir = await repo({
+        "tsconfig.strict.json": strictConfig({ files: ["a.ts"], options: { [name]: value } }),
+        "a.ts": "export const a = 1;\n",
+      });
+      const { status, stdout, stderr } = await node(dir, SCRIPT, "--strict-list");
+      assert.deepEqual({ status, stderr }, { status: 1, stderr: "" });
+      const printed = stdout.split("\n");
+      assert.ok(
+        printed.some((line) => line === lines[0] || (lines[1] !== undefined && line.endsWith(lines[1]))),
+        stdout,
+      );
+    });
+  }
+
+  test("--strict-list fails .d.mts and .d.cts files, which skipLibCheck would skip as it does .d.ts", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictConfig({
+        files: ["a.ts", "types/x.d.mts", "types/y.d.cts"],
+        options: { skipLibCheck: true },
+      }),
+      "a.ts": "export const a = 1;\n",
+      "types/x.d.mts": "export type X = string;\n",
+      "types/y.d.cts": "export type Y = string;\n",
+    });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 1,
+      stdout: [
+        "types/x.d.mts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.strict.json; name it .ts",
+        "types/y.d.cts is a declaration file, which skipLibCheck leaves unchecked in tsconfig.strict.json; name it .ts",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  const nocheckWhy = "which turns type checking off; files on tsconfig.strict.json are checked whole";
+  const lintWhy =
+    "which can turn off any lint rule, ban-ts-comment included; files on tsconfig.strict.json take no lint directives";
+  const offSwitches = [
+    { text: "/// @ts-nocheck\nexport const a = 1;\n", lines: [`a.ts:1 has @ts-nocheck, ${nocheckWhy}`] },
+    { text: "// @TS-NOCHECK\nexport const a = 1;\n", lines: [`a.ts:1 has @TS-NOCHECK, ${nocheckWhy}`] },
+    {
+      text: "export const a = 1;\n/* @ts-nocheck */\n",
+      lines: [`a.ts:2 has @ts-nocheck, ${nocheckWhy}`],
+    },
+    {
+      text: "// eslint-disable-next-line typescript/ban-ts-comment\n// @ts-nocheck\nexport const a = 1;\n",
+      lines: [`a.ts:1 has eslint-disable-next-line, ${lintWhy}`, `a.ts:2 has @ts-nocheck, ${nocheckWhy}`],
+    },
+    {
+      text: "// oxlint-disable-next-line ban-ts-comment\n// @ts-ignore\nexport const a: number = 1;\n",
+      lines: [`a.ts:1 has oxlint-disable-next-line, ${lintWhy}`],
+    },
+    {
+      text: "// @ts-ignore\nexport const a: number = 1; // eslint-disable-line typescript/ban-ts-comment\n",
+      lines: [`a.ts:2 has eslint-disable-line, ${lintWhy}`],
+    },
+    {
+      text: "/* eslint-disable typescript/ban-ts-comment */\n// @ts-ignore\nexport const a: number = 1;\n",
+      lines: [`a.ts:1 has eslint-disable, ${lintWhy}`],
+    },
+    {
+      text: "/* oxlint-disable */\n// @ts-ignore\nexport const a: number = 1;\n",
+      lines: [`a.ts:1 has oxlint-disable, ${lintWhy}`],
+    },
+  ];
+  for (const { text, lines } of offSwitches) {
+    test(`--strict-list fails a strict-list file with ${JSON.stringify(text.split("\n")[0])}`, async () => {
+      const dir = await repo({ "tsconfig.strict.json": strictList("a.ts"), "a.ts": text });
+      assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+        status: 1,
+        stdout: [...lines, ""].join("\n"),
+        stderr: "",
+      });
+    });
+  }
+
+  test("--strict-list reads comments in every file on the list, JavaScript too, and only comments", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictConfig({
+        files: ["a.ts", "site.config.js"],
+        options: { allowJs: true, noEmit: true },
+      }),
+      "a.ts": 'export const note = "// @ts-nocheck and /* eslint-disable */ in a string are not comments";\n',
+      "site.config.js": "/* eslint-disable */\nexport default {};\n",
+    });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 1,
+      stdout: `site.config.js:1 has eslint-disable, ${lintWhy}\n`,
+      stderr: "",
+    });
+    write(dir, { "site.config.js": "// The site config.\nexport default {};\n" });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 0,
+      stdout: "tsconfig.strict.json covers every TypeScript file\n",
+      stderr: "",
+    });
+  });
+
+  const changedOption = (name, base, head) =>
+    `tsconfig.strict.json changes ${name} from the base (base ${base}, head ${head}); a port changes only its files list`;
+  /** The strict list below, extending tsconfig.base.json, with `options` added. */
+  const strictOn = (options = {}, files = ["a.ts"]) =>
+    strictConfig({ extends: "./tsconfig.base.json", files, options });
+  const optionChanges = [
+    {
+      what: "adds paths",
+      head: { "tsconfig.strict.json": strictOn({ paths: { "#x/*": ["./x/*"] } }) },
+      allowed: ["tsconfig.strict.json"],
+      line: changedOption("paths", "not set", '{"#x/*":["./x/*"]}'),
+    },
+    {
+      what: "adds types",
+      head: { "tsconfig.strict.json": strictOn({ types: [] }) },
+      allowed: ["tsconfig.strict.json"],
+      line: changedOption("types", "not set", "[]"),
+    },
+    {
+      what: "changes lib through the config it extends",
+      head: { "tsconfig.base.json": '{ "compilerOptions": { "lib": ["esnext", "dom"] } }\n' },
+      allowed: ["tsconfig.base.json"],
+      line: changedOption("lib", '["esnext"]', '["esnext","dom"]'),
+    },
+  ];
+  for (const { what, head, allowed, line } of optionChanges) {
+    test(`once the base has tsconfig.strict.json, a head that ${what} fails`, async () => {
+      const dir = await repo({
+        "tsconfig.base.json": '{ "compilerOptions": { "lib": ["esnext"] } }\n',
+        "tsconfig.strict.json": strictOn(),
+        "a.ts": "export const a = 1;\n",
+      });
+      write(dir, head);
+      assert.deepEqual(await portCheck(dir), {
+        status: 1,
+        stdout: [
+          ...allowed.map((file) => `allowed: ${file} (no build config reads it)`),
+          line,
+          "0 files compared, 0 different, 1 other problems",
+          "",
+        ].join("\n"),
+        stderr: "",
+      });
+    });
+  }
+
+  test("once the base has tsconfig.strict.json, a head that only adds a file to it passes", async () => {
+    const dir = await repo({
+      "tsconfig.base.json": '{ "compilerOptions": { "lib": ["esnext"] } }\n',
+      "tsconfig.strict.json": strictOn(),
+      "a.ts": "export const a = 1;\n",
+    });
+    write(dir, { "tsconfig.strict.json": strictOn({}, ["a.ts", "b.ts"]), "b.ts": "export type B = string;\n" });
+    assert.deepEqual(await portCheck(dir), {
+      status: 0,
+      stdout: "allowed: tsconfig.strict.json (no build config reads it)\n1 files compared, 0 different\n",
+      stderr: "",
+    });
   });
 
   test("oxlint fails // @ts-nocheck and a @ts-ignore that doesn't say why, and passes a @ts-expect-error that does", async () => {
