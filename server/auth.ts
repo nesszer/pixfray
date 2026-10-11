@@ -141,7 +141,7 @@ export async function digest(value: string): Promise<string> {
 // Sign-in lasts 30 days, so a viewer coming back for the next stream still sees their own fighter. Signing out ends it.
 export const SESSION_S = 30 * 86400;
 // T is what the caller knows the key holds (null when it is missing or expired). The default is any for the .js
-// callers (worker.js, developer.ts), which read fields straight off the result; .ts callers pass T.
+// callers (worker.ts, developer.ts), which read fields straight off the result; .ts callers pass T.
 export async function record<T = any>(env: Env, key: string, value?: unknown, expires?: number): Promise<T> {
   const stub = env.AUTH.get(env.AUTH.idFromName("auth"));
   const res = await stub.fetch("https://auth/entry?key=" + encodeURIComponent(key), {
@@ -299,7 +299,7 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
       pending = { signup: true, mods, next: "/admin/" };
       scope = mods ? (env.CHAT_BOT === "1" ? "moderation:read channel:bot" : "moderation:read") : "";
     } else {
-      // No ?channel (the bare /admin/ page): sign in only; the Worker then opens the account's own channel (worker.js ownAdmin).
+      // No ?channel (the bare /admin/ page): sign in only; the Worker then opens the account's own channel (worker.ts ownAdmin).
       const asked = safeNext(url.searchParams.get("next") || "/"),
         askedUrl = new URL(asked, "https://next.invalid");
       const bare =

@@ -39,6 +39,7 @@
     "server/backups.ts",
     "server/accounts.ts",
     "server/developer.ts",
-    "server/channel.ts"
+    "server/channel.ts",
+    "server/worker.ts"
   ]
 }

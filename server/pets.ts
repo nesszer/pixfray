@@ -77,7 +77,7 @@ type CustomPetRow = {
   width: number;
   height: number;
 };
-/** The Worker's request context for /api/pets (server/worker.js). */
+/** The Worker's request context for /api/pets (server/worker.ts). */
 export type PetsContext = {
   user: { id: string } | null | undefined;
   id: string;

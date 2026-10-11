@@ -277,7 +277,7 @@ async function init() {
       [h("a", { class: "btn btn-primary", href: loginHref(), "data-login": "" }, "Sign in with Twitch")],
     );
   }
-  // A signed-in streamer never sees the bare page: the Worker sends them to their own channel's controls (worker.js ownAdmin).
+  // A signed-in streamer never sees the bare page: the Worker sends them to their own channel's controls (worker.ts ownAdmin).
   const login = S.session.user.login;
   const access = await api("/api/access/" + CHANNEL);
   S.access = access.ok ? access.data : null;
@@ -554,7 +554,7 @@ function renderAll() {
     open = a.duels.filter((d) => OPEN.has(d.status));
   const chat = a.chatStatus || a.chat || {},
     health = chatHealth();
-  // resetting all ranks, a new StreamElements key and moving chat from another site are the broadcaster's (server/worker.js)
+  // resetting all ranks, a new StreamElements key and moving chat from another site are the broadcaster's (server/worker.ts)
   for (const id of ["#reset-all-ranks", "#rotate-se"]) $(id).hidden = !mayBroadcast();
   $("#meta").textContent =
     "Signed in as " +

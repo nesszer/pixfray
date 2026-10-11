@@ -32,21 +32,53 @@ import { COSMETIC_KINDS, COSMETIC_FIELDS, MAX_BUILDS } from "./cosmetics.ts";
 import { siteOrigin, channelPageRedirect, isPage } from "./hosts.ts";
 import { secure, PAGE_CSP, API_CSP } from "./security.ts";
 import { writeLimit } from "./ratelimit.ts";
+import type { Env } from "./env.ts";
+import type { TwitchUser } from "./auth.ts";
+import type { SeSettings } from "./channel.ts";
+import type { ChatStatus } from "./game.ts";
 export { ChannelRoom, AuthStore };
+/** A JSON object request body, as bodyJson parses it. */
+type JsonObject = { [field: string]: unknown };
+/** What bodyJson, setPaused and chatAction throw: an Error with the HTTP status to answer and chat details. */
+type HttpError = Error & { status?: number; reason?: string; reconnect?: unknown; connectedElsewhere?: unknown };
+/** The base look fields a profile save sends, unchecked. */
+type ProfileFields = { avatar: unknown; color: unknown; defaultAbility: unknown };
+/** A built-in or uploaded catalog entry (the fields read here). */
+type CatalogEntry = { id: string; owner?: string; [field: string]: unknown };
+/** A leaderboard row (the fields read here). */
+type BoardRow = { displayName: string; username: string; elo: number; avatar: string; wins: number; losses: number };
+/** The viewer's base look on another channel (fightersElsewhere). */
+type Fighter = { channel: string; avatar: string; color: unknown; defaultAbility: unknown; lastSeen: number };
+/** A saved profile as the room's GET /profile returns it (the fields read here). */
+type SavedLook = { avatar?: unknown; color?: unknown; defaultAbility?: unknown; lastSeen?: unknown } | null;
+/** The /play/ picker reply. */
+type PickerData = {
+  channels: {
+    login: string;
+    top: Pick<BoardRow, "displayName" | "username" | "elo" | "avatar">[];
+    catalog?: CatalogEntry[];
+  }[];
+  catalog: CatalogEntry[];
+  full: boolean;
+};
+/** The room's admin reply (the fields read here). */
+type AdminReply = { streamelements?: Partial<SeSettings> | null; [field: string]: unknown };
 // A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
 // page's state and profile saves are refused.
 const OPEN_WHEN_PAUSED = ["access", "admin", "leaderboard", "catalog", "assets", "pets", "sprites"];
 const WRITE_ROUTES = ["profile", "shop", "assets", "pets", "admin", "sprite", "sprites"];
-function json(data, status = 200) {
+function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 }
 // Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.ts (the room checks the ids and prices).
 const SHOP_KINDS = ["pet", "hat", "slot", ...COSMETIC_KINDS];
 // The price a buyer saw is optional; when sent it must match the current one (409 price_changed).
-const shopPrice = (p) => p === undefined || (Number.isInteger(p) && p >= 0 && p <= 1000000);
+// Number.isInteger has just checked p is a number
+const shopPrice = (p: unknown) =>
+  p === undefined || (Number.isInteger(p) && (p as number) >= 0 && (p as number) <= 1000000);
 // The cosmetics and build slot a profile save may carry, all optional: { ok, fields }.
-function loadoutFields(data) {
-  const fields = {};
+function loadoutFields(data: JsonObject) {
+  const fields: JsonObject = {};
   for (const kind of COSMETIC_KINDS) {
     const f = COSMETIC_FIELDS[kind],
       v = data[f];
@@ -55,19 +87,21 @@ function loadoutFields(data) {
     fields[f] = v;
   }
   if (data.build !== undefined) {
-    if (!Number.isInteger(data.build) || data.build < 0 || data.build >= MAX_BUILDS) return { ok: false };
+    // Number.isInteger has just checked build is a number
+    if (!Number.isInteger(data.build) || (data.build as number) < 0 || (data.build as number) >= MAX_BUILDS)
+      return { ok: false };
     fields.build = data.build;
   }
   return { ok: true, fields };
 }
-const validProfile = ({ avatar, color, defaultAbility }) =>
+const validProfile = ({ avatar, color, defaultAbility }: ProfileFields) =>
   typeof avatar === "string" &&
   /^[a-z0-9_-]{1,64}$/.test(avatar) &&
   typeof color === "string" &&
   /^#[a-f0-9]{6}$/i.test(color) &&
-  ["strike", "heavy", "heal"].includes(defaultAbility);
+  ["strike", "heavy", "heal"].includes(defaultAbility as string); // includes() only compares it
 // Raw call into a ChannelRoom. Adds the internal secret and channel binding; the caller owns method/body.
-function roomFetch(request, env, channel, path, init = {}) {
+function roomFetch(request: Request | null, env: Env, channel: string, path: string, init: RequestInit = {}) {
   const h = new Headers(init.headers || {});
   h.set("X-Mini-Internal", env.INTERNAL_SECRET);
   h.set("X-Mini-Channel", channel);
@@ -83,8 +117,8 @@ function roomFetch(request, env, channel, path, init = {}) {
 const FIGHTER_INDEX_MAX = 8,
   FIGHTER_INDEX_MS = 90 * 86400000,
   OTHERS_MAX = 5; // AuthStore keeps keys like this at most 100 days
-async function rememberFighter(env, userId, channel) {
-  const prev = (await record(env, "fighters:" + userId))?.channels || []; // rewritten on every save, so the expiry moves with it
+async function rememberFighter(env: Env, userId: string, channel: string) {
+  const prev = (await record<{ channels?: string[] } | null>(env, "fighters:" + userId))?.channels || []; // rewritten on every save, so the expiry moves with it
   await record(
     env,
     "fighters:" + userId,
@@ -94,8 +128,8 @@ async function rememberFighter(env, userId, channel) {
 }
 // The viewer's base look (character, color, ability) on their other channels, newest save first. The built-in channels
 // are always checked, since fighters saved before the index existed aren't in it. Gear stays per channel.
-async function fightersElsewhere(request, env, user, channel) {
-  const indexed = (await record(env, "fighters:" + user.id))?.channels || [];
+async function fightersElsewhere(request: Request, env: Env, user: TwitchUser, channel: string) {
+  const indexed = (await record<{ channels?: string[] } | null>(env, "fighters:" + user.id))?.channels || [];
   const candidates = [...new Set([...indexed, ...CHANNELS])]
     .filter((c) => c !== channel && /^[a-z0-9_]{1,25}$/.test(c))
     .slice(0, OTHERS_MAX);
@@ -106,7 +140,7 @@ async function fightersElsewhere(request, env, user, channel) {
         if (!isOn(st) && st !== "paused") return null;
         const r = await internal(request, env, c, "/profile?userId=" + encodeURIComponent(user.id));
         if (!r.ok) return null;
-        const p = await r.json();
+        const p = await r.json<SavedLook>();
         if (!p || typeof p.avatar !== "string") return null;
         return {
           channel: c,
@@ -120,12 +154,14 @@ async function fightersElsewhere(request, env, user, channel) {
       }
     }),
   );
-  return found.filter(Boolean).sort((a, b) => b.lastSeen - a.lastSeen);
+  // filter(Boolean) drops the nulls
+  return (found.filter(Boolean) as Fighter[]).sort((a, b) => b.lastSeen - a.lastSeen);
 }
-function internal(request, env, channel, path, body) {
-  const h = {};
-  if (body?.userId) h["X-Mini-User-Id"] = body.userId;
-  else if (body?.actorId) h["X-Mini-User-Id"] = body.actorId;
+function internal(request: Request, env: Env, channel: string, path: string, body?: JsonObject) {
+  const h: { [name: string]: string } = {};
+  // callers pass both ids as Twitch id strings
+  if (body?.userId) h["X-Mini-User-Id"] = body.userId as string;
+  else if (body?.actorId) h["X-Mini-User-Id"] = body.actorId as string; // as above
   if (body !== undefined) h["Content-Type"] = "application/json";
   return roomFetch(request, env, channel, path, {
     method: body === undefined ? "GET" : "POST",
@@ -134,7 +170,15 @@ function internal(request, env, channel, path, body) {
   });
 }
 // A save refused here never reaches the room, so log it there as the room logs its own refusals (owner log, warn row).
-async function refuseSave(request, env, channel, user, reason, error, status) {
+async function refuseSave(
+  request: Request,
+  env: Env,
+  channel: string,
+  user: TwitchUser,
+  reason: string,
+  error: string,
+  status: number,
+) {
   await internal(request, env, channel, "/dev/log", {
     source: "warn",
     message: `${user.login} profile not saved: ${reason}`,
@@ -142,12 +186,12 @@ async function refuseSave(request, env, channel, user, reason, error, status) {
   }).catch(() => {});
   return json({ error }, status);
 }
-async function bodyJson(request, limit = 2200000) {
+async function bodyJson(request: Request, limit = 2200000): Promise<JsonObject> {
   if (Number(request.headers.get("Content-Length")) > limit)
     throw Object.assign(new Error("Request too large"), { status: 413 });
   const reader = request.body?.getReader();
   if (!reader) return {};
-  const chunks = [];
+  const chunks: Uint8Array[] = [];
   let bytes = 0;
   for (;;) {
     const { done, value } = await reader.read();
@@ -176,8 +220,14 @@ async function bodyJson(request, limit = 2200000) {
   return value;
 }
 // Chat source lifecycle (owner or mod via /api/admin, owner via /api/dev). The room only records the outcome.
-async function chatAction(env, url, channel, action, { takeover = false } = {}) {
-  const room = (path, body) =>
+async function chatAction(
+  env: Env,
+  url: URL,
+  channel: string,
+  action: string,
+  { takeover = false }: { takeover?: boolean } = {},
+): Promise<Response> {
+  const room = (path: string, body?: JsonObject) =>
     roomFetch(
       null,
       env,
@@ -185,7 +235,7 @@ async function chatAction(env, url, channel, action, { takeover = false } = {}) 
       path,
       body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {},
     );
-  const current = await (await room("/chat")).json();
+  const current = await (await room("/chat")).json<ChatStatus>();
   if (action === "connectChat" && env.SE_ONLY === "1")
     throw Object.assign(new Error("This site uses StreamElements for chat. Choose Use StreamElements."), {
       status: 400,
@@ -206,7 +256,7 @@ async function chatAction(env, url, channel, action, { takeover = false } = {}) 
   }
   // CHAT_BOT (test site): chat is read and answered by the PixFray bot account (bot:twitch, signed in at /auth/login?bot=1).
   if (env.CHAT_BOT === "1") {
-    const bot = await record(env, "bot:twitch");
+    const bot = await record<{ id?: string } | null>(env, "bot:twitch");
     if (!bot?.id)
       throw Object.assign(new Error("Sign in the PixFray bot account first at " + BOT_LOGIN_URL), {
         status: 409,
@@ -225,7 +275,8 @@ async function chatAction(env, url, channel, action, { takeover = false } = {}) 
     });
     return room("/chat", { action: "connected", ...sub });
   }
-  const broadcasterId = env.OWNER_TWITCH_ID || (await record(env, "owner:" + channel))?.id || "";
+  const broadcasterId =
+    env.OWNER_TWITCH_ID || (await record<{ id?: string } | null>(env, "owner:" + channel))?.id || "";
   const sub = await connectChat(env, { broadcasterId, origin: env.PUBLIC_ORIGIN || url.origin, url, takeover });
   return room("/chat", { action: "connected", ...sub });
 }
@@ -233,7 +284,7 @@ async function chatAction(env, url, channel, action, { takeover = false } = {}) 
 // so the page headers are set here: no framing by other sites (clickjacking), and the staging and test sites stay out of search.
 // The home page (/) is the intro; with ?channel= it is that channel's fighter page. /play/ is the channel picker (the
 // viewer page without a channel), and /intro/ was the intro's old address.
-async function page(request, env, url) {
+async function page(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname,
     channel = url.searchParams.get("channel");
   if (/^\/intro(\/(index\.html)?)?$/.test(path)) return Response.redirect(url.origin + "/" + url.search, 301);
@@ -256,7 +307,7 @@ async function page(request, env, url) {
 }
 // The bare mod page (/admin/ without ?channel=) for a signed-in streamer: their own channel's controls. Decided here,
 // so the page doesn't load once to find out and then jump. Anyone else gets the page's sign-in or set-up message.
-async function ownAdmin(request, env, url) {
+async function ownAdmin(request: Request, env: Env, url: URL): Promise<string | null> {
   if (!env.AUTH_SECRET || !env.INTERNAL_SECRET) return null;
   try {
     const user = (await session(request, env))?.user;
@@ -273,8 +324,8 @@ async function ownAdmin(request, env, url) {
 }
 // robots.txt and sitemap.xml follow the host: the production site lists its public pages, and the test site stays out of search.
 const PUBLIC_PAGES = ["/", "/play/", "/start/"];
-function seoFile(url, path) {
-  const text = (body, type) =>
+function seoFile(url: URL, path: string): Response {
+  const text = (body: string, type: string) =>
     new Response(body, {
       headers: { "Content-Type": type + "; charset=utf-8", "Cache-Control": "public, max-age=3600" },
     });
@@ -296,7 +347,7 @@ function seoFile(url, path) {
   );
 }
 // Admin-only view of the StreamElements setup: the key and the paste-ready command replies.
-function seView(env, url, channel, se) {
+function seView(env: Env, url: URL, channel: string, se: Partial<SeSettings> | null | undefined) {
   if (!se?.secret) return null;
   const origin = siteOrigin(env, url, channel);
   return {
@@ -314,22 +365,28 @@ function seView(env, url, channel, se) {
 // Test site only: DEV_TOOLS_TOKEN is declared only by `cf deploy --mode test`, and only the test secrets file holds it
 // (cf deploy uploads every key in the file, declared or not), so production has no token to match.
 // A matching "Authorization: Bearer" acts as the owner, for scripts/devtools.mjs (docs/DEVTOOLS.md).
-async function devToken(request, env) {
+async function devToken(request: Request, env: Env): Promise<boolean> {
   const m = /^Bearer ([A-Za-z0-9_-]{32,200})$/.exec(request.headers.get("Authorization") || "");
   if (!env.DEV_TOOLS_TOKEN || env.DEV_TOOLS_TOKEN.length < 32 || !m) return false;
-  const hash = async (v) => new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
-  const [a, b] = await Promise.all([hash(m[1]), hash(env.DEV_TOOLS_TOKEN)]);
+  const hash = async (v: string) => new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
+  const [a, b] = await Promise.all([hash(m[1]!), hash(env.DEV_TOOLS_TOKEN)]); // the pattern has one group
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!; // both are 32-byte SHA-256 digests
   return diff === 0;
 }
-async function devUser(env) {
-  const id = env.OWNER_TWITCH_ID || (await record(env, "owner:" + site.owner.login))?.id || "";
+async function devUser(env: Env): Promise<TwitchUser | null> {
+  const id = env.OWNER_TWITCH_ID || (await record<{ id?: string } | null>(env, "owner:" + site.owner.login))?.id || "";
   return id ? { id, login: site.owner.login, displayName: site.owner.login + " (dev token)" } : null;
 }
 // Dev-token routes: save a profile for any account (test bots, an alt), or feed one chat line through the room as if
 // Twitch had delivered it. The room repeats the DEV_TOOLS_TOKEN check.
-async function handleDevtools(request, env, channel, action, data) {
+async function handleDevtools(
+  request: Request,
+  env: Env,
+  channel: string,
+  action: string,
+  data: JsonObject,
+): Promise<Response> {
   // {live:true} starts a pretend stream for !checkin (a new stream id each time), {live:false} ends it, {live:null} asks Twitch again.
   if (action === "live")
     return roomFetch(null, env, channel, "/dev-live", {
@@ -365,7 +422,8 @@ async function handleDevtools(request, env, channel, action, data) {
   // A bot buys a pet, a hat, a cosmetic or a build slot, the same room call as POST /api/shop.
   if (action === "shop") {
     const { kind, id = "", price } = data;
-    if (!SHOP_KINDS.includes(kind) || typeof id !== "string" || id.length > 64 || !shopPrice(price))
+    // includes() only compares the kind
+    if (!SHOP_KINDS.includes(kind as string) || typeof id !== "string" || id.length > 64 || !shopPrice(price))
       return json({ error: "Invalid item" }, 400);
     return internal(request, env, channel, "/shop", { userId, kind, id, price });
   }
@@ -380,15 +438,15 @@ async function handleDevtools(request, env, channel, action, data) {
   }
   return json({ error: "Not found" }, 404);
 }
-async function staticCatalog(env, url) {
+async function staticCatalog(env: Env, url: URL): Promise<CatalogEntry[]> {
   const r = await env.ASSETS.fetch(new Request(url.origin + "/assets/characters.json"));
-  return r.ok ? await r.json() : [];
+  return r.ok ? await r.json<CatalogEntry[]>() : [];
 }
 // The /play/ channel picker in one request: each listed channel with its top three ranked fighters (and the uploaded
 // looks they wear, which only that channel's catalog has), plus the built-in catalog once, and whether this site is full
 // (the search then can't invite a streamer here). Kept a minute per isolate.
-let pickerCache = null;
-async function picker(request, env, url) {
+let pickerCache: { data: PickerData; at: number } | null = null;
+async function picker(request: Request, env: Env, url: URL): Promise<PickerData> {
   if (pickerCache && Date.now() - pickerCache.at < 60000) return pickerCache.data;
   const [logins, catalog, full] = await Promise.all([publicChannels(env), staticCatalog(env, url), isFull(env)]),
     builtin = new Set(catalog.map((e) => e.id));
@@ -396,14 +454,14 @@ async function picker(request, env, url) {
     logins.map(async (login) => {
       try {
         const r = await internal(request, env, login, "/leaderboard"),
-          board = r.ok ? await r.json() : [];
+          board = r.ok ? await r.json<BoardRow[]>() : [];
         const top = board
           .filter((p) => p.wins + p.losses > 0)
           .slice(0, 3)
           .map(({ displayName, username, elo, avatar }) => ({ displayName, username, elo, avatar }));
         const own = top.filter((p) => !builtin.has(p.avatar)).map((p) => p.avatar);
         const c = own.length ? await internal(request, env, login, "/catalog") : null,
-          looks = c?.ok ? (await c.json()).filter((e) => own.includes(e.id)) : [];
+          looks = c?.ok ? (await c.json<CatalogEntry[]>()).filter((e) => own.includes(e.id)) : [];
         return { login, top, ...(looks.length ? { catalog: looks } : {}) };
       } catch {
         return { login, top: [] };
@@ -416,13 +474,14 @@ async function picker(request, env, url) {
 // Every response leaves through secure() (server/security.ts): HSTS on https, and a locked-down CSP on /api and /auth.
 const API_PATH = /^\/(api|auth)\//;
 export default {
-  async fetch(request, env, ctx) {
+  // tests call it without a ctx
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext) {
     const r = await handle(request, env, ctx),
       url = new URL(request.url);
     return secure(r, url, API_PATH.test(url.pathname) ? API_CSP : "");
   },
   // The daily cron (cloudflare.config.ts): back up every channel into D1 (server/backups.ts).
-  async scheduled(controller, env, ctx) {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     if (!env.BACKUPS || !env.INTERNAL_SECRET) return;
     const run = backupChannels(env, controller.scheduledTime, (channel, p, init) =>
       roomFetch(null, env, channel, p, init),
@@ -435,8 +494,8 @@ export default {
       .catch((e) => logWorkerError(env, e, { source: "backup" }));
     ctx.waitUntil(run);
   },
-};
-async function handle(request, env, ctx) {
+} satisfies ExportedHandler<Env>;
+async function handle(request: Request, env: Env, ctx: ExecutionContext | undefined): Promise<Response> {
   let path = "";
   try {
     const url = new URL(request.url),
@@ -499,7 +558,10 @@ async function handle(request, env, ctx) {
     const s = dev ? null : await session(request, env),
       user = dev ? await devUser(env) : s?.user || null,
       owner = await isOwner(env, user);
-    const devMatch = path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop|export)$/);
+    // both groups are required in the pattern, so a match has them
+    const devMatch = path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop|export)$/) as
+      | (RegExpMatchArray & [string, string, string])
+      | null;
     if (path.startsWith("/api/devtools/")) {
       if (!dev || !devMatch) return json({ error: "Not found" }, 404);
       const st = await channelState(env, devMatch[1]);
@@ -545,7 +607,8 @@ async function handle(request, env, ctx) {
       /^\/api\/(state|live|profile|leaderboard|looks|catalog|access|admin|assets|pets|shop|sprite|sprites)\/([a-z0-9_]{1,25})(?:\/([a-z0-9_-]{1,64}))?$/,
     );
     if (!match) return json({ error: "Not found" }, 404);
-    const [, route, channel, id] = match;
+    // route and channel are required groups in the pattern; id is optional
+    const [, route, channel, id] = match as RegExpMatchArray & [string, string, string, string | undefined];
     const state = await channelState(env, channel);
     // The shop list and the viewer's own profile stay readable while paused (like pets), so viewers still see their
     // fighter and what they own; saving and buying stay closed.
@@ -601,7 +664,8 @@ async function handle(request, env, ctx) {
       if (request.method !== "POST" || id) return json({ error: "Use GET or POST" }, 405);
       if (!user) return json({ error: "Sign in to shop" }, 401);
       const { kind, id: item = "", price } = await bodyJson(request, 1000);
-      if (!SHOP_KINDS.includes(kind) || typeof item !== "string" || item.length > 64 || !shopPrice(price))
+      // includes() only compares the kind
+      if (!SHOP_KINDS.includes(kind as string) || typeof item !== "string" || item.length > 64 || !shopPrice(price))
         return json({ error: "Invalid item" }, 400);
       return internal(request, env, channel, "/shop", { userId: user.id, kind, id: item, price });
     }
@@ -625,7 +689,7 @@ async function handle(request, env, ctx) {
       )
         return refuseSave(request, env, channel, user, "invalid_fields", "Invalid profile fields", 400);
       const dynamicRes = await internal(request, env, channel, "/catalog");
-      const dynamic = dynamicRes.ok ? await dynamicRes.json() : [];
+      const dynamic = dynamicRes.ok ? await dynamicRes.json<CatalogEntry[]>() : [];
       const character = [...(await staticCatalog(env, url)), ...dynamic].find((x) => x.id === avatar);
       if (!character) return refuseSave(request, env, channel, user, "unknown_character", "Unknown character", 400);
       // An approved viewer sprite belongs to the viewer who made it.
@@ -664,7 +728,7 @@ async function handle(request, env, ctx) {
       if (request.method === "GET") {
         const r = await internal(request, env, channel, "/admin");
         if (!r.ok) return r;
-        const data = await r.json();
+        const data = await r.json<AdminReply>();
         // modsReady: the broadcaster's token is stored, so moderators can be checked and open this page too.
         // modsLapsed: mod access was connected once (modsconnected:<login>, never expires) but the token has expired since.
         // Viewing this page keeps a stored token alive, and a token seen without its marker (connected before the marker
@@ -680,7 +744,7 @@ async function handle(request, env, ctx) {
             touchBroadcaster(env, channel, broadcaster),
             marker ? null : markModsConnected(env, channel),
           ]).catch((e) => console.warn("mods record refresh failed", e?.message)); // rare writes: weekly, and once per channel
-        const bot = env.CHAT_BOT === "1" ? await record(env, "bot:twitch") : null;
+        const bot = env.CHAT_BOT === "1" ? await record<{ login?: string } | null>(env, "bot:twitch") : null;
         return json({
           ...data,
           streamelements: seView(env, url, channel, data.streamelements),
@@ -721,7 +785,7 @@ async function handle(request, env, ctx) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: data.action, names: data.names, value: data.value === true }),
         });
-        const out = await r.json();
+        const out = await r.json<AdminReply>();
         if (!r.ok) return json(out, r.status);
         return json({ ok: true, streamelements: seView(env, url, channel, out.streamelements) });
       }
@@ -733,7 +797,8 @@ async function handle(request, env, ctx) {
         const r = await roomFetch(null, env, channel, "/checkin-test", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ on: data.value === true, by: user.displayName || user.login }),
+          // canManage above means a signed-in user
+          body: JSON.stringify({ on: data.value === true, by: user!.displayName || user!.login }),
         });
         return json(await r.json(), r.status);
       }
@@ -747,14 +812,14 @@ async function handle(request, env, ctx) {
         return await chatAction(env, url, channel, data.action, { takeover: data.takeover === true });
       return internal(request, env, channel, "/admin", {
         ...data,
-        actorId: user.id,
-        actorName: user.displayName || user.login,
+        actorId: user!.id, // canManage above means a signed-in user
+        actorName: user!.displayName || user!.login, // as above
       });
     }
     if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
     if (route === "catalog") {
       const [s, d] = await Promise.all([staticCatalog(env, url), internal(request, env, channel, "/catalog")]);
-      return json([...s, ...(d.ok ? await d.json() : [])]);
+      return json([...s, ...(d.ok ? await d.json<CatalogEntry[]>() : [])]);
     }
     // Saved looks for the overlay: public, the same fields the leaderboard shows.
     if (route === "live")
@@ -779,15 +844,20 @@ async function handle(request, env, ctx) {
     }
     return internal(request, env, channel, "/" + route);
   } catch (error) {
-    if (!error.status) ctx?.waitUntil?.(logWorkerError(env, error, { path }));
+    // each `as HttpError` below: what bodyJson, setPaused and chatAction throw; anything else a bug threw has no status
+    if (!(error as HttpError).status) ctx?.waitUntil?.(logWorkerError(env, error, { path }));
     return json(
       {
-        error: error.status ? error.message : "Service unavailable; check owner diagnostics",
-        ...(error.status && error.reason ? { reason: error.reason } : {}),
-        ...(error.reconnect ? { reconnect: error.reconnect } : {}),
-        ...(error.connectedElsewhere ? { connectedElsewhere: error.connectedElsewhere } : {}),
+        error: (error as HttpError).status
+          ? (error as HttpError).message
+          : "Service unavailable; check owner diagnostics",
+        ...((error as HttpError).status && (error as HttpError).reason ? { reason: (error as HttpError).reason } : {}),
+        ...((error as HttpError).reconnect ? { reconnect: (error as HttpError).reconnect } : {}),
+        ...((error as HttpError).connectedElsewhere
+          ? { connectedElsewhere: (error as HttpError).connectedElsewhere }
+          : {}),
       },
-      error.status || 503,
+      (error as HttpError).status || 503,
     );
   }
 }

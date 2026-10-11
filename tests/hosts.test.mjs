@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "../server/worker.js";
+import worker from "../server/worker.ts";
 import { hostChannel, siteOrigin, authOrigin, channelPageRedirect } from "../server/hosts.ts";
 import { PAGE_CSP } from "../server/security.ts";
 

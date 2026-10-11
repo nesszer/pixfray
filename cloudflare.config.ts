@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
     worker: defineWorker({
       name,
       compatibilityDate: "2026-09-25",
-      entrypoint: "./server/worker.js",
+      entrypoint: "./server/worker.ts",
       domains: [new URL(origin).hostname, ...Object.values(channelDomains)],
       // Daily backup of every channel into the BACKUPS D1 database at 09:00 UTC (server/backups.ts).
       ...(localTest ? {} : { triggers: [triggers.scheduled({ schedule: "0 9 * * *" })] }),

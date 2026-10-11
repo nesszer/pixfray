@@ -38,7 +38,7 @@ fighter (saving and buying stay closed).
 
 ## 2. HTTP routes
 
-Pages (server/worker.js `page()`): `/` is the intro (intro/index.html); `/?channel=x` is that channel's fighter page;
+Pages (server/worker.ts `page()`): `/` is the intro (intro/index.html); `/?channel=x` is that channel's fighter page;
 `/play/` is the channel picker (`/play/?channel=x` moves to `/?channel=x`, `/play` to `/play/`); `/intro/` moves to `/` (301).
 `/admin/` without `?channel=` sends a signed-in streamer whose own channel is set up (on or turned off) and who can manage
 it to `/admin/?channel=<their login>` (302); anyone else
@@ -492,12 +492,12 @@ subset of fields. Versioning works like this:
 
 | Lane | Owns | Contract |
 |---|---|---|
-| A (backend core) | `server/worker.js`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
+| A (backend core) | `server/worker.ts`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
 | B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.js` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.ts`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
 | E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.js` | The signatures below |
 
-Keep these signatures; worker.js and channel.js call them.
+Keep these signatures; worker.ts and channel.ts call them.
 
 ```js
 // server/uploads.ts (Lane D)

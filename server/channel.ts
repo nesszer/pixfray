@@ -197,7 +197,7 @@ type LiveMessage =
 /** What an overlay draws for a saved fighter (savedLook). */
 type Look = ReturnType<typeof savedLook>;
 /** The parsed se_settings row (seSettings). */
-type SeSettings = {
+export type SeSettings = {
   secret: string;
   names: SeNames;
   lastCommandAt: number;
@@ -490,7 +490,8 @@ export class ChannelRoom extends DurableObject<Env> {
   declare goneLooks: Set<string> | undefined;
   /** Every saved look changed (a restore): overlays drop what they cached. */
   declare looksReset: boolean;
-  declare lookFlush: ReturnType<typeof setTimeout> | number | undefined;
+  /** The pending setTimeout handle (a number in Workers, a Timeout under Node types), 0 once flushed. */
+  declare lookFlush: unknown;
   /** When the bot's recent chat replies went out (botReplyRoom). */
   declare botReplies: number[] | undefined;
   declare liveCache: { at: number; stream: { id: string; startedAt: number } | null } | undefined;
@@ -647,7 +648,7 @@ export class ChannelRoom extends DurableObject<Env> {
     const stored = this.readStoredState();
     if (stored && stored.channel !== channel) return json({ error: "channel binding mismatch" }, 409);
 
-    // Owner dev token only (server/worker.js /api/devtools/:channel/export): every row of the tables a copy needs. BLOBs as {$b64}.
+    // Owner dev token only (server/worker.ts /api/devtools/:channel/export): every row of the tables a copy needs. BLOBs as {$b64}.
     if (path === "/export" && request.method === "GET") {
       const bytes = (v: ArrayBuffer | ArrayBufferView) =>
         v instanceof ArrayBuffer ? new Uint8Array(v) : new Uint8Array(v.buffer, v.byteOffset, v.byteLength);

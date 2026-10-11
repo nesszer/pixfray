@@ -43,9 +43,9 @@ bun run dev
 - `bun run lint` runs [oxlint](https://oxc.rs/docs/guide/usage/linter) with type-aware rules
   (`.oxlintrc.json`). Warnings fail it. In `server/` every promise must be awaited or handed to
   `waitUntil`, because the Worker can cancel one that is dropped.
-- `bun run typecheck` runs `tsc` five times. `tsconfig.worker.json` (server/, Workers types),
+- `bun run typecheck` runs `tsc` five times. `tsconfig.worker.json` (server/, all TypeScript, with Workers types only),
   `tsconfig.web.json` (src/ with the served modules in src/served/, DOM types plus `types/browser.d.ts`) and `tsconfig.node.json`
-  (the build configs) check the JavaScript loosely; `tsconfig.strict.json` (Worker and Node types) and
+  (the build configs) check loosely; `tsconfig.strict.json` (Worker and Node types) and
   `tsconfig.strict-web.json` (DOM types) check every TypeScript file with `strict`,
   `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests and the
   `.mjs` scripts are linted but not type checked. In a `.js` file, add JSDoc where inference falls

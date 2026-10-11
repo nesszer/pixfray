@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "../server/worker.js";
+import worker from "../server/worker.ts";
 import { digest, seal, unseal, openState, safeNext, CONNECT_SCOPES } from "../server/auth.ts";
 
 function environment() {

@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
-import worker from "../server/worker.js";
+import worker from "../server/worker.ts";
 import { AuthStore, digest, record } from "../server/auth.ts";
 import { hit, WRITE_LIMIT } from "../server/ratelimit.ts";
 import { secure, PAGE_CSP, OVERLAY_CSP, API_CSP, HSTS } from "../server/security.ts";

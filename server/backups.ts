@@ -82,7 +82,7 @@ export async function backupChannels(
       results.push({ channel, ok: false, reason: e instanceof Error ? e.message : String(e) });
     }
   }
-  const db = env.BACKUPS!; // !: worker.js scheduled() and developer.ts backupsRun check env.BACKUPS first
+  const db = env.BACKUPS!; // !: worker.ts scheduled() and developer.ts backupsRun check env.BACKUPS first
   await db.batch([
     db.prepare(SCHEMA),
     db.prepare("DELETE FROM backups WHERE day < ?").bind(backupDay(at - BACKUP_DAYS * DAY_MS)),

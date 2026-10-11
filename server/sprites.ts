@@ -35,7 +35,7 @@ export type SpriteUpload = {
 };
 /** A checked redraw input (validateRedrawImage). */
 export type RedrawImage = { bytes: Uint8Array<ArrayBuffer>; type: "image/jpeg" | "image/png" };
-/** The Worker's request context for /api/sprite and /api/sprites (server/worker.js). */
+/** The Worker's request context for /api/sprite and /api/sprites (server/worker.ts). */
 export type SpritesContext = Omit<PetsContext, "user"> & {
   user: { id: string; login: string; displayName?: string } | null | undefined;
 };

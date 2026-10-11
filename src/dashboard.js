@@ -1601,7 +1601,7 @@ async function pickChannel() {
   // Signing in happens on a channel's page, so the picker shows only who is already signed in.
   if (session.ok && session.data?.user) renderWho($("#who"), session.data, signOut);
   else $("#who").replaceChildren();
-  // one request brings every channel's top fighters and the looks they wear (server/worker.js picker())
+  // one request brings every channel's top fighters and the looks they wear (server/worker.ts picker())
   const picked =
     list.ok && Array.isArray(list.data?.channels)
       ? list.data.channels
