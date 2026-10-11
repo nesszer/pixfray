@@ -28,7 +28,7 @@ import {
 } from "./eventsub.ts";
 import { handleStreamElements, seCommandLines, seHelpText, SE_SUBSCRIPTION_ID } from "./streamelements.ts";
 import { channelState, isOn, offError, setPaused, publicChannels, listRecords, isFull } from "./channels.ts";
-import { COSMETIC_KINDS, COSMETIC_FIELDS, MAX_BUILDS } from "./cosmetics.ts";
+import { parseAdminBody, parseDevAccount, parseDevLive, parseProfileSave, parseShopBuy } from "./parse.ts";
 import { siteOrigin, channelPageRedirect, isPage } from "./hosts.ts";
 import { secure, PAGE_CSP, API_CSP } from "./security.ts";
 import { writeLimit } from "./ratelimit.ts";
@@ -37,12 +37,10 @@ import type { TwitchUser } from "./auth.ts";
 import type { SeSettings } from "./channel.ts";
 import type { ChatStatus } from "./game.ts";
 export { ChannelRoom, AuthStore };
-/** A JSON object request body, as bodyJson parses it. */
-type JsonObject = { [field: string]: unknown };
+import type { JsonObject } from "./parse.ts";
 /** What bodyJson, setPaused and chatAction throw: an Error with the HTTP status to answer and chat details. */
 type HttpError = Error & { status?: number; reason?: string; reconnect?: unknown; connectedElsewhere?: unknown };
-/** The base look fields a profile save sends, unchecked. */
-type ProfileFields = { avatar: unknown; color: unknown; defaultAbility: unknown };
+
 /** A built-in or uploaded catalog entry (the fields read here). */
 type CatalogEntry = { id: string; owner?: string; [field: string]: unknown };
 /** A leaderboard row (the fields read here). */
@@ -70,36 +68,6 @@ const WRITE_ROUTES = ["profile", "shop", "assets", "pets", "admin", "sprite", "s
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 }
-// Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.ts (the room checks the ids and prices).
-const SHOP_KINDS = ["pet", "hat", "slot", ...COSMETIC_KINDS];
-// The price a buyer saw is optional; when sent it must match the current one (409 price_changed).
-// Number.isInteger has just checked p is a number
-const shopPrice = (p: unknown) =>
-  p === undefined || (Number.isInteger(p) && (p as number) >= 0 && (p as number) <= 1000000);
-// The cosmetics and build slot a profile save may carry, all optional: { ok, fields }.
-function loadoutFields(data: JsonObject) {
-  const fields: JsonObject = {};
-  for (const kind of COSMETIC_KINDS) {
-    const f = COSMETIC_FIELDS[kind],
-      v = data[f];
-    if (v === undefined) continue;
-    if (typeof v !== "string" || v.length > 32) return { ok: false };
-    fields[f] = v;
-  }
-  if (data.build !== undefined) {
-    // Number.isInteger has just checked build is a number
-    if (!Number.isInteger(data.build) || (data.build as number) < 0 || (data.build as number) >= MAX_BUILDS)
-      return { ok: false };
-    fields.build = data.build;
-  }
-  return { ok: true, fields };
-}
-const validProfile = ({ avatar, color, defaultAbility }: ProfileFields) =>
-  typeof avatar === "string" &&
-  /^[a-z0-9_-]{1,64}$/.test(avatar) &&
-  typeof color === "string" &&
-  /^#[a-f0-9]{6}$/i.test(color) &&
-  ["strike", "heavy", "heal"].includes(defaultAbility as string); // includes() only compares it
 // Raw call into a ChannelRoom. Adds the internal secret and channel binding; the caller owns method/body.
 function roomFetch(request: Request | null, env: Env, channel: string, path: string, init: RequestInit = {}) {
   const h = new Headers(init.headers || {});
@@ -389,26 +357,34 @@ async function handleDevtools(
   data: JsonObject,
 ): Promise<Response> {
   // {live:true} starts a pretend stream for !checkin (a new stream id each time), {live:false} ends it, {live:null} asks Twitch again.
-  if (action === "live")
+  if (action === "live") {
+    const live = parseDevLive(data);
+    if (!live.ok) return json({ error: live.error }, 400);
     return roomFetch(null, env, channel, "/dev-live", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ live: data.live ?? null, streamId: String(data.streamId || "").slice(0, 40) }),
+      body: JSON.stringify({ live: live.value.live, streamId: live.value.streamId.slice(0, 40) }),
     });
-  const userId = String(data.userId || ""),
-    username = String(data.username || "").toLowerCase(),
-    displayName = String(data.displayName || username).slice(0, 48);
+  }
+  const account = parseDevAccount(data);
+  if (!account.ok) return json({ error: account.error }, 400);
+  const userId = account.value.userId,
+    username = account.value.username.toLowerCase(),
+    displayName = (account.value.displayName || username).slice(0, 48);
   if (!/^[a-zA-Z0-9_:-]{1,64}$/.test(userId) || !/^[a-z0-9_]{1,25}$/.test(username))
     return json({ error: "userId and username required" }, 400);
   if (action === "profile") {
-    const { avatar = "player", color = "#4FA3FF", defaultAbility = "strike", pet } = data,
-      loadout = loadoutFields(data);
-    if (
-      !validProfile({ avatar, color, defaultAbility }) ||
-      (pet !== undefined && (typeof pet !== "string" || pet.length > 64)) ||
-      !loadout.ok
-    )
-      return json({ error: "Invalid profile fields" }, 400);
+    // The dev tools may leave the look out (a plain fighter), and never send upgrades or a hat.
+    const look = parseProfileSave({
+      ...data,
+      avatar: data.avatar === undefined ? "player" : data.avatar,
+      color: data.color === undefined ? "#4FA3FF" : data.color,
+      defaultAbility: data.defaultAbility === undefined ? "strike" : data.defaultAbility,
+      stats: undefined,
+      hat: undefined,
+    });
+    if (!look.ok) return json({ error: "Invalid profile fields" }, 400);
+    const { avatar, color, defaultAbility, pet, loadout } = look.value;
     return internal(request, env, channel, "/profile", {
       userId,
       username,
@@ -417,19 +393,17 @@ async function handleDevtools(
       color,
       defaultAbility,
       pet,
-      ...loadout.fields,
+      ...loadout,
     });
   }
   // A bot buys a pet, a hat, a cosmetic or a build slot, the same room call as POST /api/shop.
   if (action === "shop") {
-    const { kind, id = "", price } = data;
-    // includes() only compares the kind
-    if (!SHOP_KINDS.includes(kind as string) || typeof id !== "string" || id.length > 64 || !shopPrice(price))
-      return json({ error: "Invalid item" }, 400);
-    return internal(request, env, channel, "/shop", { userId, kind, id, price });
+    const item = parseShopBuy(data);
+    if (!item.ok) return json({ error: "Invalid item" }, 400);
+    return internal(request, env, channel, "/shop", { userId, ...item.value });
   }
   if (action === "chat") {
-    const text = String(data.text || "").slice(0, 500);
+    const text = account.value.text.slice(0, 500);
     if (!text.trim()) return json({ error: "text required" }, 400);
     return roomFetch(null, env, channel, "/dev-chat", {
       method: "POST",
@@ -664,11 +638,9 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
       if (request.method === "GET" && !id) return internal(request, env, channel, "/shop");
       if (request.method !== "POST" || id) return json({ error: "Use GET or POST" }, 405);
       if (!user) return json({ error: "Sign in to shop" }, 401);
-      const { kind, id: item = "", price } = await bodyJson(request, 1000);
-      // includes() only compares the kind
-      if (!SHOP_KINDS.includes(kind as string) || typeof item !== "string" || item.length > 64 || !shopPrice(price))
-        return json({ error: "Invalid item" }, 400);
-      return internal(request, env, channel, "/shop", { userId: user.id, kind, id: item, price });
+      const item = parseShopBuy(await bodyJson(request, 1000));
+      if (!item.ok) return json({ error: "Invalid item" }, 400);
+      return internal(request, env, channel, "/shop", { userId: user.id, ...item.value });
     }
     if (route === "profile") {
       if (!user) return json({ error: "Sign in to customize your profile" }, 401);
@@ -677,18 +649,10 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
       if (request.method === "GET")
         return internal(request, env, channel, "/profile?userId=" + encodeURIComponent(user.id));
       if (request.method !== "POST") return json({ error: "Use GET or POST" }, 405);
-      const body = await bodyJson(request, 4000),
-        { avatar, color, defaultAbility, stats, hat, pet } = body,
-        loadout = loadoutFields(body);
-      if (!validProfile({ avatar, color, defaultAbility }) || !loadout.ok)
-        return refuseSave(request, env, channel, user, "invalid_fields", "Invalid profile fields", 400);
       // stats/hat are optional; the room checks them against the saved wins (server/upgrades.ts).
-      if (
-        (stats !== undefined && (!stats || typeof stats !== "object" || Array.isArray(stats))) ||
-        (hat !== undefined && typeof hat !== "string") ||
-        (pet !== undefined && (typeof pet !== "string" || pet.length > 64))
-      )
-        return refuseSave(request, env, channel, user, "invalid_fields", "Invalid profile fields", 400);
+      const look = parseProfileSave(await bodyJson(request, 4000));
+      if (!look.ok) return refuseSave(request, env, channel, user, look.error, "Invalid profile fields", 400);
+      const { avatar, color, defaultAbility, stats, hat, pet, loadout } = look.value;
       const dynamicRes = await internal(request, env, channel, "/catalog");
       const dynamic = dynamicRes.ok ? await dynamicRes.json<CatalogEntry[]>() : [];
       const character = [...(await staticCatalog(env, url)), ...dynamic].find((x) => x.id === avatar);
@@ -714,7 +678,7 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
         stats,
         hat,
         pet,
-        ...loadout.fields,
+        ...loadout,
       });
       if (saved.ok)
         await rememberFighter(env, user.id, channel).catch((e) =>
@@ -758,6 +722,7 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
           channelState: state,
         });
       }
+      // Until the role checks below pass, data.action and data.takeover are only compared; then the body is parsed.
       const data = await bodyJson(request, 12000);
       // Turn PixFray off or back on: the broadcaster or the owner, never a mod. Fighters and ranks are kept.
       if (data.action === "pauseChannel" || data.action === "resumeChannel") {
@@ -780,11 +745,14 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
               : "";
       if (only && !roles.owner && !roles.broadcaster)
         return json({ error: "Only " + channel + " can " + only, reason: "broadcaster_only" }, 403);
-      if (data.action === "rotateSeKey" || data.action === "setSeNames" || data.action === "setDuelModuleOff") {
+      const admin = parseAdminBody(data);
+      if (!admin.ok) return json({ ok: false, reason: admin.error, error: admin.error }, 400);
+      const { action, takeover, value, names } = admin.value;
+      if (action === "rotateSeKey" || action === "setSeNames" || action === "setDuelModuleOff") {
         const r = await roomFetch(null, env, channel, "/se-admin", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: data.action, names: data.names, value: data.value === true }),
+          body: JSON.stringify({ action, names, value }),
         });
         const out = await r.json<AdminReply>();
         if (!r.ok) return json(out, r.status);
@@ -792,27 +760,23 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
       }
       // Check-in test mode: !checkin answers while offline for 15 minutes, saving nothing. Any mod can turn it on or off,
       // on the site's own channel only, so a test never reaches another streamer's chat.
-      if (data.action === "checkinTest") {
+      if (action === "checkinTest") {
         if (channel !== site.defaultChannel)
           return json({ error: "Check-in test mode is only for " + site.defaultChannel + "'s channel" }, 403);
         const r = await roomFetch(null, env, channel, "/checkin-test", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           // canManage above means a signed-in user
-          body: JSON.stringify({ on: data.value === true, by: user!.displayName || user!.login }),
+          body: JSON.stringify({ on: value, by: user!.displayName || user!.login }),
         });
         return json(await r.json(), r.status);
       }
-      if (
-        data.action === "connectChat" &&
-        env.CHAT_BOT !== "1" &&
-        (channel !== site.defaultChannel || env.SE_ONLY === "1")
-      )
+      if (action === "connectChat" && env.CHAT_BOT !== "1" && (channel !== site.defaultChannel || env.SE_ONLY === "1"))
         return json({ error: "This channel uses StreamElements for chat. Choose Use StreamElements." }, 400);
-      if (data.action === "connectChat" || data.action === "disconnectChat" || data.action === "useStreamElements")
-        return await chatAction(env, url, channel, data.action, { takeover: data.takeover === true });
+      if (action === "connectChat" || action === "disconnectChat" || action === "useStreamElements")
+        return await chatAction(env, url, channel, action, { takeover });
       return internal(request, env, channel, "/admin", {
-        ...data,
+        ...admin.value.fields,
         actorId: user!.id, // canManage above means a signed-in user
         actorName: user!.displayName || user!.login, // as above
       });

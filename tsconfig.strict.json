@@ -23,6 +23,7 @@
     "server/upgrades.ts",
     "server/uploads.ts",
     "server/cosmetics.ts",
+    "server/parse.ts",
     "server/botcommands.ts",
     "server/dedupe.ts",
     "server/hosts.ts",
@@ -40,6 +41,7 @@
     "server/accounts.ts",
     "server/developer.ts",
     "server/channel.ts",
-    "server/worker.ts"
+    "server/worker.ts",
+    "tests/parse.test.ts"
   ]
 }

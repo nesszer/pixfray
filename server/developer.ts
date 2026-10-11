@@ -4,10 +4,21 @@ import { CHANNELS, record } from "./auth.ts";
 import { channelState, overview, listRecords, setPaused, LOGIN } from "./channels.ts";
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.ts";
 import { rankHistory } from "./ranklog.ts";
+import {
+  isObject,
+  parseBackupsRun,
+  parseChannelsAction,
+  parseCodePr,
+  parseRestore,
+  parseRoomRestore,
+  parseRoomRestored,
+  parseSettings,
+} from "./parse.ts";
 import { BACKUP_DAYS, backupChannels, backupDay, listBackups, readBackup, writeBackup } from "./backups.ts";
 import type { TwitchUser } from "./auth.ts";
 import type { Env } from "./env.ts";
 import type { GameState } from "./model.ts";
+import type { JsonObject } from "./parse.ts";
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.ts and channel.ts only call the exports below;
 // keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -17,8 +28,6 @@ import type { GameState } from "./model.ts";
 //   Current version: version_metadata binding CF_VERSION_METADATA.
 // The Worker never holds a token that can deploy; deploys run in GitHub Actions (docs/LIVE_FIX.md).
 
-/** A JSON object request body, as bodyJson parses it. */
-type JsonObject = { [field: string]: unknown };
 /** What bodyJson, setPaused and chatAction throw: an Error with the HTTP status to answer and chat details. */
 type HttpError = Error & { status?: number; reason?: string; reconnect?: unknown; connectedElsewhere?: unknown };
 /** The Worker's request context for /api/dev/* (server/worker.ts). */
@@ -303,7 +312,9 @@ async function backupsRead({ env, query }: RouteArgs): Promise<Response> {
 }
 async function backupsRun({ env, c, body }: RouteArgs): Promise<Response> {
   if (!env.BACKUPS) return fail(501, "No BACKUPS database is bound (local dev)", "backups_unavailable");
-  const login = String(body?.channel || "").toLowerCase();
+  const input = parseBackupsRun(body);
+  if (!input.ok) return fail(400, "channel must be a login", input.error);
+  const login = input.value.channel.toLowerCase();
   if (login && !(await channelState(env, login))) return fail(404, login + " is not set up", "unknown_channel");
   const now = Date.now();
   return json({ day: backupDay(now), channels: await backupChannels(env, now, c.roomFetch, login) });
@@ -331,10 +342,11 @@ async function restoreInfo({ env, query }: RouteArgs): Promise<Response> {
   });
 }
 async function restore({ env, c, body }: RouteArgs): Promise<Response> {
-  const login = String(body?.channel || "").toLowerCase(),
-    undo = body?.undo === true,
-    now = Date.now(),
-    at = Number(body?.at);
+  const input = parseRestore(body);
+  if (!input.ok) return fail(400, "Send {channel, at} or {channel, undo: true}", input.error);
+  const login = input.value.channel.toLowerCase(),
+    { undo, at } = input.value,
+    now = Date.now();
   if (!LOGIN.test(login) || !(await channelState(env, login)))
     return fail(404, (login || "That channel") + " is not set up", "unknown_channel");
   const last = undo ? await record<RestoreRecord | null>(env, "restore:" + login) : null;
@@ -402,10 +414,11 @@ async function restore({ env, c, body }: RouteArgs): Promise<Response> {
 
 // Owner Channels box: turn a channel off or on. Off from here sticks: the streamer can't turn it back on.
 async function channelsAction({ env, body }: RouteArgs): Promise<Response> {
-  const { action } = body || {};
+  const input = parseChannelsAction(body);
+  if (!input.ok) return fail(400, "login must be a channel login", input.error);
+  const { action, login } = input.value;
   try {
-    if (action === "pause" || action === "resume")
-      await setPaused(env, String(body.login || ""), action === "pause", "owner");
+    if (action === "pause" || action === "resume") await setPaused(env, login, action === "pause", "owner");
     else return fail(400, "Unknown action", "unknown_action");
   } catch (e) {
     // setPaused throws an HttpError with a status and reason; anything else is unexpected. Each cast reads that error.
@@ -444,10 +457,12 @@ function logQuery(query: URLSearchParams): string {
 // Live settings editor: a thin passthrough to the room's versioned config (docs/CONTRACTS.md section 7),
 // plus the chat source lifecycle (connectChat / disconnectChat, handled by the Worker's EventSub helpers).
 async function settings({ body, c, room }: RouteArgs): Promise<Response> {
-  const action = body.action;
+  const input = parseSettings(body);
+  if (!input.ok) return fail(400, "takeover must be true or false", input.error);
+  const { action, takeover } = input.value;
   if (action === "connectChat" || action === "disconnectChat") {
     try {
-      return await c.chatAction(site.defaultChannel, action, { takeover: body.takeover === true });
+      return await c.chatAction(site.defaultChannel, action, { takeover });
     } catch (e) {
       // chatAction throws an HttpError (status, maybe reconnect or connectedElsewhere) for answers the page shows;
       // each cast below reads that error
@@ -461,9 +476,8 @@ async function settings({ body, c, room }: RouteArgs): Promise<Response> {
   }
   if (action !== "config" && action !== "rollbackConfig")
     return fail(400, "action must be config, rollbackConfig, connectChat or disconnectChat", "invalid_action");
-  const payload = body.payload;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload))
-    return fail(400, "payload object required", "invalid_payload");
+  const { payload } = input.value;
+  if (!isObject(payload)) return fail(400, "payload object required", "invalid_payload");
   return room("/admin", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Mini-User-Id": c.user.id },
@@ -806,14 +820,17 @@ async function openPr(
 }
 
 async function codePr({ g, gh, body }: GithubArgs): Promise<Response> {
-  if (typeof body.branch !== "string" || !BRANCH.test(body.branch))
+  const input = parseCodePr(body);
+  if (!input.ok) return fail(400, "title and body must be text", input.error);
+  const { branch, title, text } = input.value;
+  if (typeof branch !== "string" || !BRANCH.test(branch))
     return fail(400, "branch must be live-fix/* or hotfix/*", "invalid_branch");
   const p = await openPr(
     g,
     gh,
-    body.branch,
-    clean(body.title || "Live fix: " + body.branch, 120),
-    clean(body.body || "Opened from the mini-chat live-fix space.", 2000),
+    branch,
+    clean(title || "Live fix: " + branch, 120),
+    clean(text || "Opened from the mini-chat live-fix space.", 2000),
   );
   return p.ok ? json({ ok: true, ...p.pr }) : p.response;
 }
@@ -1150,18 +1167,17 @@ export async function handleRoomDeveloper(
   // the undo point; restart ends this session so the next one loads the restored storage; restored moves the revision
   // past the pre-restore one, because open overlays drop a snapshot older than the last revision they saw.
   if (path === "/dev/restore" && method === "POST") {
-    // Any JSON: bookmark goes through String() and BOOKMARK, at through Number()
-    const body = await request
-        .json<{ bookmark?: unknown; at?: unknown }>()
-        .catch((): { bookmark?: unknown; at?: unknown } => ({})),
+    // Any JSON, checked by parseRoomRestore: unreadable JSON is refused the same way
+    const body = parseRoomRestore(await request.json<unknown>().catch(() => undefined)),
       storage = room.ctx.storage;
+    if (!body.ok) return json({ error: "Send {bookmark} or {at}", reason: body.error }, 400);
     const unavailable = () =>
       json({ error: "Restore works on Cloudflare only, not in local dev", reason: "restore_unavailable" }, 501);
     if (typeof storage.getBookmarkForTime !== "function" || typeof storage.onNextSessionRestoreBookmark !== "function")
       return unavailable();
     let bookmark: string;
     try {
-      bookmark = body.bookmark ? String(body.bookmark) : await storage.getBookmarkForTime(Number(body.at));
+      bookmark = body.value.bookmark || (await storage.getBookmarkForTime(body.value.at));
     } catch {
       return unavailable();
     }
@@ -1175,10 +1191,11 @@ export async function handleRoomDeveloper(
     return json({ ok: true });
   }
   if (path === "/dev/restored" && method === "POST") {
-    // Any JSON: revision goes through Number()
-    const body = await request.json<{ revision?: unknown }>().catch((): { revision?: unknown } => ({})),
-      state = room.readState(channel);
-    state.revision = Math.max(Number(state.revision) || 0, Number(body.revision) || 0) + 1;
+    // Any JSON, checked by parseRoomRestored: unreadable JSON is refused the same way
+    const body = parseRoomRestored(await request.json<unknown>().catch(() => undefined));
+    if (!body.ok) return json({ error: "Send {revision}", reason: body.error }, 400);
+    const state = room.readState(channel);
+    state.revision = Math.max(Number(state.revision) || 0, body.value.revision || 0) + 1;
     room.writeState(state);
     logRoomEvent(room, "warn", "Channel data restored to an earlier time", { revision: state.revision });
     room.broadcast(state);

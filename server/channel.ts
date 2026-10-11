@@ -80,6 +80,17 @@ import {
   botNames,
 } from "./streamelements.ts";
 import type { CheckinReply, GiveReply, SeNames } from "./streamelements.ts";
+import {
+  parseBotSent,
+  parseCheckinTest,
+  parseDevChat,
+  parseProfileInput,
+  parseRoomAdminBody,
+  parseRoomDevLive,
+  parseRoomEventsub,
+  parseSeAdmin,
+} from "./parse.ts";
+import type { ProfileInput } from "./parse.ts";
 import type { SendResult } from "./eventsub.ts";
 import type { SpriteRow } from "./sprites.ts";
 import type { CatalogEntry } from "./uploads.ts";
@@ -864,7 +875,10 @@ export class ChannelRoom extends DurableObject<Env> {
         });
         return json({ error: "profile identity mismatch" }, 403);
       }
-      const result = this.saveProfile(channel, actorId, body.value);
+      const input = parseProfileInput(body.value);
+      const result: SaveResult = input.ok
+        ? this.saveProfile(channel, actorId, input.value)
+        : { ok: false, reason: input.error };
       if (!result.ok) {
         logRoomEvent(this, "warn", `${login} profile not saved: ${result.reason}`, {
           ...logCtx,
@@ -892,26 +906,21 @@ export class ChannelRoom extends DurableObject<Env> {
       if (!body.ok) return json({ error: body.error }, 400);
       const actorId = validUserId(body.value.actorId);
       if (!actorId) return json({ error: "authorized actor required" }, 403);
-      const action = String(body.value.action || "");
-      let payload: JsonObject =
-        body.value.payload && typeof body.value.payload === "object" && !Array.isArray(body.value.payload)
-          ? (body.value.payload as JsonObject) // an object, checked here
-          : body.value;
+      const admin = parseRoomAdminBody(body.value);
+      if (!admin.ok) return json({ ok: false, reason: admin.error, error: admin.error }, 400);
+      const { action } = admin.value,
+        actorName = admin.value.actorName.slice(0, 48);
+      let payload: JsonObject = admin.value.payload;
       let note = "";
       if (action === "giftDollars") {
-        const gift = this.giftDollars(channel, payload, actorId, String(body.value.actorName || "").slice(0, 48));
+        const gift = this.giftDollars(channel, payload, actorId, actorName);
         return json(
           gift.ok ? gift : { ...gift, error: gift.reason },
           gift.ok ? 200 : gift.reason === "profile_not_found" ? 404 : 400,
         );
       }
       if (action === "saveCommand" || action === "deleteCommand" || action === "setCounter") {
-        const out = this.editBotCommands(
-          channel,
-          action,
-          payload,
-          String(body.value.actorName || actorId).slice(0, 48),
-        );
+        const out = this.editBotCommands(channel, action, payload, actorName || actorId);
         return json(
           out.ok ? { ...out, botCommands: this.botCommands() } : { ...out, error: out.reason },
           out.ok ? 200 : 400,
@@ -938,7 +947,6 @@ export class ChannelRoom extends DurableObject<Env> {
       }
       const targetId = validUserId(payload.userId);
       const targetProfile = targetId ? this.getProfile(targetId, this.readState(channel).config) : null;
-      const actorName = String(body.value.actorName || "").slice(0, 48);
       const event: AdminEvent = {
         type: "admin",
         actorId,
@@ -946,7 +954,8 @@ export class ChannelRoom extends DurableObject<Env> {
         action: action === "rollbackConfig" ? "config" : action,
         payload,
         targetProfile,
-        note: note || String(payload.note || "").slice(0, 200),
+        // parseAdminBody checked the note is a string when sent; a rolled-back version's patch has none
+        note: note || (typeof payload.note === "string" ? payload.note : "").slice(0, 200),
       };
       const result = this.advance(channel, event, Date.now());
       if (!result.result.ok)
@@ -971,14 +980,18 @@ export class ChannelRoom extends DurableObject<Env> {
     if (path === "/bot-sent" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
-      this.noteBotSent(channel, Array.isArray(body.value.results) ? body.value.results.slice(0, 10) : []);
+      const sent = parseBotSent(body.value);
+      if (!sent.ok) return json({ error: sent.error }, 400);
+      this.noteBotSent(channel, sent.value.results.slice(0, 10));
       return json({ ok: true });
     }
     if (path === "/eventsub" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
-      // the Worker forwards a verified EventSub body; handleEventsub checks each field it reads
-      return this.eventsub(channel, body.value as BotMessage, url.searchParams.get("origin") || "");
+      // the Worker forwards a verified EventSub body, its event cut down by slimEvent
+      const msg = parseRoomEventsub(body.value);
+      if (!msg.ok) return json({ error: msg.error }, 400);
+      return this.eventsub(channel, msg.value, url.searchParams.get("origin") || "");
     }
     // StreamElements custom commands, forwarded by the Worker from GET /api/se/<channel>/<action>.
     if (path === "/se" && request.method === "POST") {
@@ -991,7 +1004,9 @@ export class ChannelRoom extends DurableObject<Env> {
       return res;
     }
     if (path === "/se-admin" && request.method === "POST") {
-      const body = await this.readJson(request);
+      const read = await this.readJson(request);
+      if (!read.ok) return json({ error: read.error }, 400);
+      const body = parseSeAdmin(read.value);
       if (!body.ok) return json({ error: body.error }, 400);
       const current = this.seSettings();
       if (body.value.action === "rotateSeKey") {
@@ -1000,8 +1015,7 @@ export class ChannelRoom extends DurableObject<Env> {
           "UPDATE se_settings SET last_command_at = 0, rejected_at = 0, seen_json = '{}' WHERE id = 1",
         ); // a new key starts unheard
       } else if (body.value.action === "setSeNames") {
-        const input: JsonObject =
-          body.value.names && typeof body.value.names === "object" ? (body.value.names as JsonObject) : {}; // an object, checked here
+        const input = body.value.names;
         const names: SeNames = {};
         for (const action of SE_ACTIONS) {
           const name = String(
@@ -1015,22 +1029,21 @@ export class ChannelRoom extends DurableObject<Env> {
           return json({ error: "Each action needs its own command name" }, 400);
         this.writeSeSettings(current.secret, names);
       } else if (body.value.action === "setDuelModuleOff") {
-        this.ctx.storage.sql.exec(
-          "UPDATE se_settings SET duel_module_off = ? WHERE id = 1",
-          body.value.value === true ? 1 : 0,
-        );
+        this.ctx.storage.sql.exec("UPDATE se_settings SET duel_module_off = ? WHERE id = 1", body.value.value ? 1 : 0);
       } else return json({ error: "unknown StreamElements action" }, 400);
       return json({ ok: true, streamelements: this.seSettings() });
     }
     // Check-in test mode (mods, via /api/admin action checkinTest): {on:true} for CHECKIN_TEST_MS, {on:false} ends it.
     if (path === "/checkin-test" && request.method === "POST") {
-      const body = await this.readJson(request);
+      const read = await this.readJson(request);
+      if (!read.ok) return json({ error: read.error }, 400);
+      const body = parseCheckinTest(read.value);
       if (!body.ok) return json({ error: body.error }, 400);
-      if (body.value.on === true)
+      if (body.value.on)
         this.ctx.storage.sql.exec(
           "INSERT OR REPLACE INTO checkin_test (id, until, by_name) VALUES (1, ?, ?)",
           Date.now() + CHECKIN_TEST_MS,
-          String(body.value.by || "").slice(0, 48),
+          body.value.by.slice(0, 48),
         );
       else this.ctx.storage.sql.exec("DELETE FROM checkin_test");
       return json({ ok: true, checkinTest: this.checkinTest() });
@@ -1038,20 +1051,11 @@ export class ChannelRoom extends DurableObject<Env> {
     // Test site only (worker dev token): one chat line as if Twitch had delivered it on the current subscription.
     if (path === "/dev-chat" && request.method === "POST") {
       if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
-      const body = await this.readJson(request);
+      const read = await this.readJson(request);
+      if (!read.ok) return json({ error: read.error }, 400);
+      const body = parseDevChat(read.value);
       if (!body.ok) return json({ error: body.error }, 400);
-      // the test site's own tool (scripts/devtools.mjs) sends these as strings; text goes through String() below
-      const {
-        userId,
-        username,
-        displayName,
-        text: line,
-      } = body.value as {
-        userId: string;
-        username: string;
-        displayName: string;
-        text: unknown;
-      };
+      const { userId, username, displayName, text: line } = body.value;
       const now = Date.now(),
         messageId = "dev:" + randomHex().slice(0, 24);
       const msg: BotMessage = {
@@ -1063,7 +1067,7 @@ export class ChannelRoom extends DurableObject<Env> {
           chatter_user_login: username,
           chatter_user_name: displayName,
           message_id: messageId,
-          message: { text: String(line || "") },
+          message: { text: line },
         },
       };
       await this.checkAccountAge(userId);
@@ -1072,7 +1076,7 @@ export class ChannelRoom extends DurableObject<Env> {
       if (result.changed) await this.scheduleAlarm(result.state);
       const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
       if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
-      const devGive = /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(String(line || "").trim()) as
+      const devGive = /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(line.trim()) as
         | (RegExpExecArray & [string, string])
         | null; // group 1 is required, so a match has it
       if (devGive) {
@@ -1098,14 +1102,14 @@ export class ChannelRoom extends DurableObject<Env> {
           reply: seGiveText(given, { who, target: devTarget, origin: "", channel, names: this.seSettings().names }),
         });
       }
-      if (/^!checkin(?:\s|$)/i.test(String(line || "").trim())) {
+      if (/^!checkin(?:\s|$)/i.test(line.trim())) {
         const checked = await this.checkin(channel, { userId: validUserId(userId) }, now);
         return json({
           ...checked,
           reply: seCheckinText(checked, { who: displayName || username, origin: "", channel, maxPoints: MAX_POINTS }),
         });
       }
-      const parsed = parseGameCommand(String(line || "")); // the reply is the line a StreamElements bot would post
+      const parsed = parseGameCommand(line); // the reply is the line a StreamElements bot would post
       // other actions keep their own name
       const action = parsed
         ? ({ duel: "challenge" } as { [action: string]: string | undefined })[parsed.action] || parsed.action
@@ -1131,16 +1135,17 @@ export class ChannelRoom extends DurableObject<Env> {
     // ({live:false}), or ask Twitch again ({live:null}).
     if (path === "/dev-live" && request.method === "POST") {
       if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
-      const body = await this.readJson(request);
+      const read = await this.readJson(request);
+      if (!read.ok) return json({ error: read.error }, 400);
+      const body = parseRoomDevLive(read.value);
       if (!body.ok) return json({ error: body.error }, 400);
-      // the test site's own tool sends streamId as a string; the pattern below checks it
-      const { live, streamId } = body.value as { live?: unknown; streamId?: string },
+      const { live, streamId } = body.value,
         sql = this.ctx.storage.sql;
       if (typeof live !== "boolean") sql.exec("DELETE FROM dev_live");
       else
         sql.exec(
           "INSERT OR REPLACE INTO dev_live (id, stream_id, started_at) VALUES (1, ?, ?)",
-          live ? "dev-" + (/^[a-z0-9_-]{1,36}$/i.test(streamId || "") ? streamId : randomHex().slice(0, 12)) : "",
+          live ? "dev-" + (/^[a-z0-9_-]{1,36}$/i.test(streamId) ? streamId : randomHex().slice(0, 12)) : "",
           Date.now(),
         );
       const row = sql.exec<{ stream_id: string }>("SELECT stream_id FROM dev_live WHERE id = 1").toArray()[0];
@@ -1303,20 +1308,12 @@ export class ChannelRoom extends DurableObject<Env> {
     }
   }
 
-  saveProfile(channel: string, userId: string, input: JsonObject): SaveResult {
+  saveProfile(channel: string, userId: string, input: ProfileInput): SaveResult {
     const username = normalizeUsername(input.username);
-    const displayName = String(input.displayName || username)
-      .trim()
-      .slice(0, 48);
-    const avatar = String(input.avatar || "player")
-      .trim()
-      .slice(0, 64);
-    // test() reads any value as text, so a string passes, and so does an array holding one (a TSF candidate)
-    const color = /^#[0-9a-f]{6}$/i.test((input.color as string) || "") ? (input.color as string).toUpperCase() : "";
-    // includes() is true only for one of those strings
-    const defaultAbility = ["strike", "heavy", "heal"].includes(input.defaultAbility as string)
-      ? (input.defaultAbility as string) // one of the strings above
-      : "";
+    const displayName = (input.displayName || username).trim().slice(0, 48);
+    const avatar = (input.avatar || "player").trim().slice(0, 64);
+    const color = /^#[0-9a-f]{6}$/i.test(input.color) ? input.color.toUpperCase() : "";
+    const defaultAbility = ["strike", "heavy", "heal"].includes(input.defaultAbility) ? input.defaultAbility : "";
     if (!username || !/^[a-z0-9_]{1,25}$/.test(username) || !displayName || !avatar || !color || !defaultAbility) {
       return { ok: false, reason: "invalid_profile" };
     }
@@ -1330,8 +1327,7 @@ export class ChannelRoom extends DurableObject<Env> {
       const wins = Math.max(0, (existing?.wins || 0) - (hiddenResults(state, now).get(userId)?.wins || 0));
       const stats = input.stats === undefined ? existing?.stats : validStats(input.stats, wins, existing?.bonus || 0);
       if (stats === null) return { ok: false, reason: "invalid_upgrades" };
-      // a string once the check below passes: the saved hat, an unlocked one or an owned known one
-      const hat = (input.hat === undefined ? existing?.hat || "" : input.hat) as string;
+      const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
       const owns = (kind: string, id: string) =>
         this.ctx.storage.sql
           .exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id)
@@ -1339,8 +1335,7 @@ export class ChannelRoom extends DurableObject<Env> {
       if (hat !== (existing?.hat || "") && !hatUnlocked(hat, wins) && !(knownHat(hat) && owns("hat", hat)))
         return { ok: false, reason: knownHat(hat) ? "hat_locked" : "invalid_profile" };
       // Pet: "" (none) or one the fighter bought that still exists.
-      const petId = input.pet === undefined ? existing?.pet || "" : typeof input.pet === "string" ? input.pet : null;
-      if (petId === null) return { ok: false, reason: "invalid_profile" };
+      const petId = input.pet === undefined ? existing?.pet || "" : input.pet;
       const custom = petId
         ? this.ctx.storage.sql
             .exec<{ c: string | null }>(
