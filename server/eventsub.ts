@@ -4,20 +4,10 @@ import { record, seal, unseal, randomToken } from "./auth.ts";
 import site from "../site.config.js";
 import type { Sealed } from "./auth.ts";
 import type { Env } from "./env.ts";
+import { isObject, parseEventsubEnvelope } from "./parse.ts";
+import type { JsonObject } from "./parse.ts";
 import type { ChatEvent } from "./model.ts";
 
-/** channel.chat.message's event as Twitch sends it: untrusted JSON, read only through slimEvent. */
-type RawChatEvent = { [key: string]: unknown; message?: { text?: unknown } | null };
-/** A parsed EventSub POST body: untrusted JSON, every field checked where it is read. */
-type EventsubBody = {
-  subscription?: {
-    id?: unknown;
-    status?: unknown;
-    condition?: { user_id?: unknown; broadcaster_user_id?: unknown } | null;
-  } | null;
-  event?: RawChatEvent | null;
-  challenge?: unknown;
-};
 /** The bot's reply lines for one command, handed to deps.sendChat after the 204. */
 export type BotChat = { channel: string; broadcasterId: string; senderId: string; messages: string[]; replyTo: string };
 /** What handleEventsub needs from the Worker (see the comment above handleEventsub). */
@@ -163,8 +153,10 @@ async function readRaw(request: Request, limit: number): Promise<Uint8Array> {
 // A lead moderator wears only lead_moderator (no moderator badge), so it has to count on its own.
 const MOD_BADGES = new Set(["broadcaster", "moderator", "lead_moderator"]);
 const str = (v: unknown, n: number): string => (typeof v === "string" ? v.slice(0, n) : "");
-function slimEvent(ev: RawChatEvent | null | undefined): ChatEvent | null {
-  if (!ev || typeof ev !== "object") return null;
+// ev is channel.chat.message's event as Twitch sent it (parseEventsubEnvelope checked it is an object).
+function slimEvent(ev: JsonObject | null): ChatEvent | null {
+  if (!ev) return null;
+  const message = isObject(ev.message) ? ev.message : {};
   // caps sit above every valid length, so the room's own validation still decides
   return {
     broadcaster_user_id: str(ev.broadcaster_user_id, 100),
@@ -174,7 +166,7 @@ function slimEvent(ev: RawChatEvent | null | undefined): ChatEvent | null {
     chatter_user_name: str(ev.chatter_user_name, 100),
     color: str(ev.color, 16),
     message_id: str(ev.message_id, 100),
-    message: { text: str(ev.message?.text, 512) },
+    message: { text: str(message.text, 512) },
     mod: Array.isArray(ev.badges) && ev.badges.some((b) => b && MOD_BADGES.has(b.set_id)),
   };
 }
@@ -211,15 +203,17 @@ export async function handleEventsub(
   if (!(await verify(env, id, timestamp, raw, signature))) return text("Invalid signature", 403);
   const at = parseTwitchTime(timestamp);
   if (!Number.isFinite(at) || now - at > 600000 || at - now > 60000) return text("Stale message", 403);
-  let body: EventsubBody | null;
+  let parsed: unknown;
   try {
-    body = JSON.parse(new TextDecoder().decode(raw));
+    parsed = JSON.parse(new TextDecoder().decode(raw));
   } catch {
     return text("Invalid JSON", 400);
   }
-  if (!body || typeof body !== "object") return text("Invalid JSON", 400);
-  const subscription: { id?: unknown; status?: unknown } =
-    body.subscription && typeof body.subscription === "object" ? body.subscription : {};
+  const envelope = parseEventsubEnvelope(parsed);
+  if (!envelope.ok) return text(envelope.error, 400);
+  const body = envelope.value,
+    { subscription, condition } = body,
+    chat = slimEvent(body.event); // the only event fields read here or forwarded to a room
   const message = {
     messageId: id,
     messageType: type,
@@ -233,8 +227,6 @@ export async function handleEventsub(
   // Only the fields the room reads are forwarded (fragments, badges, reply and cheer are dropped), so an emote-heavy
   // message stays a few hundred bytes. A room 4xx for a validly signed message is acknowledged (204) so Twitch does not
   // retry it into notification_failures_exceeded; only real room failures (5xx) answer 503 for a retry.
-  const condition: { user_id?: unknown; broadcaster_user_id?: unknown } =
-    body.subscription?.condition && typeof body.subscription.condition === "object" ? body.subscription.condition : {};
   const reader = condition.user_id ? String(condition.user_id).slice(0, 100) : "";
   let botId = reader && reader !== condition.broadcaster_user_id ? reader : "";
   // Verifications and revocations carry only the broadcaster id: the built-in rooms plus that broadcaster's signed-up room.
@@ -249,7 +241,7 @@ export async function handleEventsub(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...message, ...extra, event: slimEvent(body.event) }),
+        body: JSON.stringify({ ...message, ...extra, event: chat }),
       },
     );
     if (r.status >= 500) throw new Error("Room rejected EventSub message (" + r.status + ")");
@@ -266,7 +258,7 @@ export async function handleEventsub(
     return new Response(null, { status: 204 });
   }
   if (type === "notification" && subType === "channel.chat.message") {
-    const channel = String(body.event?.broadcaster_user_login || "").toLowerCase();
+    const channel = (chat?.broadcaster_user_login || "").toLowerCase();
     if (!channels.includes(channel) && !(await isEnabled(channel).catch(() => false)))
       return new Response(null, { status: 204 });
     if (!botId && reader && reader === (await botUserId().catch(() => ""))) botId = reader;
@@ -274,12 +266,7 @@ export async function handleEventsub(
       await send(channel);
       return new Response(null, { status: 204 });
     }
-    if (
-      !String(body.event?.message?.text || "")
-        .trimStart()
-        .startsWith("!")
-    )
-      return new Response(null, { status: 204 }); // chat, not a command: no room request
+    if (!chat?.message.text.trimStart().startsWith("!")) return new Response(null, { status: 204 }); // chat, not a command: no room request
     const r = await send(channel, { bot: true, botId });
     const d: { replies?: unknown; reply?: unknown } = r.ok ? await r.json<object>().catch(() => ({})) : {};
     const messages = (Array.isArray(d.replies) ? d.replies : [d.reply])
@@ -289,11 +276,10 @@ export async function handleEventsub(
     if (messages.length && sendChat)
       sendChat({
         channel,
-        // !: body.event?.message?.text started with '!' above, so the event is there
-        broadcasterId: String(body.event!.broadcaster_user_id || condition.broadcaster_user_id || ""),
+        broadcasterId: String(chat.broadcaster_user_id || condition.broadcaster_user_id || ""),
         senderId: botId,
         messages,
-        replyTo: String(body.event!.message_id || ""), // !: as above
+        replyTo: chat.message_id,
       });
   }
   return new Response(null, { status: 204 }); // other channels, subscription types and message types are ignored
