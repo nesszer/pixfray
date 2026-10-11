@@ -8,8 +8,8 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
-import { createSound } from "./sound.js";
-import { loadImage, sampleSprite, VoxelFighter } from "./voxels.js";
+import { createSound } from "./sound.ts";
+import { loadImage, sampleSprite, VoxelFighter } from "./voxels.ts";
 import {
   buildSky,
   buildIsland,
@@ -24,16 +24,83 @@ import {
   buildChest,
   buildHoard,
   buildFrame,
-} from "./world.js";
+} from "./world.ts";
+import type { DieValue, Uniforms } from "./world.ts";
+import type { SpriteFrame, VoxelOptions } from "./voxels.ts";
 
-const $ = (s) => document.querySelector(s);
+type Vec2 = [number, number];
+type Vec3 = [number, number, number];
+// one fighter on the example ladder or in the crowd; the fallback crowd has only an avatar
+type Person = {
+  avatar: string;
+  username?: string;
+  displayName?: string;
+  color?: string;
+  elo?: number;
+  wins?: number;
+  losses?: number;
+};
+// a /assets/characters.json entry, as far as this page reads it
+type Character = { id: string; url: string; frames: SpriteFrame[]; animations?: { idle?: SpriteFrame[] } };
+type Tag = {
+  el: HTMLDivElement;
+  inner: HTMLElement;
+  on: boolean;
+  html?: string;
+  w?: number;
+  corner?: boolean;
+  call?: boolean;
+  set(html: string): void;
+};
+type Box = { x0: number; y0: number; x1: number; y1: number };
+type FBox = [number, number, number, number, number, number]; // x0, x1, y0, y1, z0, z1
+type LockInfo = { key: string; title: string; sub: string; pos: string };
+type LockTarget = LockInfo & { boxes: FBox[] };
+type Lock = {
+  el: HTMLDivElement;
+  txt: HTMLElement;
+  b: HTMLElement;
+  s: HTMLElement;
+  r: Box | null;
+  key: string | null;
+  on: boolean;
+  pos: string | null;
+};
+type Mood = {
+  fog: number;
+  fogD: number;
+  cloud: number;
+  sky: Vec3;
+  hemi: number;
+  key: number;
+  keyI: number;
+  cool: number;
+  coolI: number;
+  warm: number;
+  warmI: number;
+  moon: number;
+  lift: Vec3;
+  gain: Vec3;
+  bloom?: number;
+  rim: number;
+  floor: Vec3;
+  ring: number;
+};
+type Roll = { at: number; v: DieValue; by: "a" | "b"; text: string };
+
+const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector(s) as T; // element type from the page HTML
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const small = matchMedia("(max-width: 760px)").matches;
-const clamp01 = (x) => Math.min(1, Math.max(0, x));
-const ease = (t) => t * t * (3 - 2 * t);
-const easeOut = (t) => 1 - Math.pow(1 - t, 3);
-const range = (x, a, b) => clamp01((x - a) / (b - a));
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+const ease = (t: number) => t * t * (3 - 2 * t);
+const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+const range = (x: number, a: number, b: number) => clamp01((x - a) / (b - a));
+// the regex matches only the four keys
+const esc = (s: unknown) =>
+  String(s).replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c as "&" | "<" | ">" | '"'],
+  );
 if (reduced) document.body.classList.add("no-motion");
 
 // ---------- headings type in word by word ----------
@@ -48,18 +115,18 @@ for (const h of document.querySelectorAll("[data-type]")) {
 
 // ---------- loader ----------
 const loader = $("#loader"),
-  grid = loader.querySelector(".loader-grid"),
+  grid = loader.querySelector(".loader-grid") as HTMLElement, // element type from the page HTML
   pct = $("#loader-pct");
 const cells = Array.from({ length: 100 }, () => grid.appendChild(document.createElement("i")));
 const order = cells.map((_, i) => i).sort((a, b) => Math.sin(a * 91.7) - Math.sin(b * 91.7));
 let shown = 0;
-function setProgress(f) {
+function setProgress(f: number) {
   const n = Math.round(clamp01(f) * 100);
   for (; shown < n; shown++) {
-    cells[order[shown]].className = "on";
+    cells[order[shown]!]!.className = "on"; // in range: shown < n <= 100, the length of cells and order
   }
   cells.forEach((c) => c.classList.remove("hot"));
-  if (shown > 0 && shown < 100) cells[order[shown - 1]].classList.add("hot");
+  if (shown > 0 && shown < 100) cells[order[shown - 1]!]!.classList.add("hot"); // in range: 0 < shown < 100
   pct.textContent = n + "%";
 }
 let bornAt = 1e9; // the hero assembles once the loader lifts, so the first thing people see is the knight forming
@@ -95,10 +162,10 @@ function loadBoard() {
 // ---------- sound toggle ----------
 const sound = createSound();
 const soundBtn = $("#sound");
-function setSound(on) {
+function setSound(on: boolean) {
   sound.setOn(on);
   soundBtn.setAttribute("aria-pressed", String(on));
-  soundBtn.querySelector(".sound-label").textContent = on ? "Sound on" : "Sound off";
+  (soundBtn.querySelector(".sound-label") as HTMLElement).textContent = on ? "Sound on" : "Sound off"; // element type from the page HTML
   try {
     localStorage.setItem("pixfray-intro-sound", on ? "1" : "0");
   } catch {
@@ -108,9 +175,9 @@ function setSound(on) {
 soundBtn.addEventListener("click", () => setSound(!sound.on));
 
 // ---------- scroll -> chapter coordinate ----------
-const sections = [...document.querySelectorAll(".chapter")];
+const sections = [...document.querySelectorAll<HTMLElement>(".chapter")];
 const railItems = [...document.querySelectorAll("#rail li")];
-let bounds = [];
+let bounds: { top: number; h: number }[] = [];
 function measure() {
   bounds = sections.map((s) => ({ top: s.offsetTop, h: s.offsetHeight }));
 }
@@ -118,7 +185,7 @@ function scrollC() {
   const y = scrollY + innerHeight * 0.5;
   if (scrollY <= 2) return 0;
   for (let i = 0; i < bounds.length; i++) {
-    const b = bounds[i];
+    const b = bounds[i]!; // in range: i < bounds.length
     if (y < b.top + b.h) return Math.max(0, Math.min(5, i + (y - b.top) / b.h - 0.5));
   }
   return 5;
@@ -127,16 +194,17 @@ let activeChapter = -1,
   activeCopy = -1;
 // a chapter's scene is framed when the middle of its section is mid-screen; a plain #link would stop at the section's top,
 // a fifth of a chapter short. The camera eases there on its own, so the page itself jumps.
-function centerChapter(sec) {
+function centerChapter(sec: HTMLElement) {
   const b = bounds[sections.indexOf(sec)];
   if (b) scrollTo({ top: sec === sections[0] ? 0 : b.top + b.h / 2 - innerHeight / 2, behavior: "instant" });
 }
 railItems.forEach((li) =>
-  li.querySelector("a").addEventListener("click", (e) => {
-    const sec = document.querySelector(e.currentTarget.hash);
+  // every rail item holds a link (page HTML)
+  li.querySelector("a")!.addEventListener("click", (e) => {
+    const sec = document.querySelector<HTMLElement>((e.currentTarget as HTMLAnchorElement).hash); // the listener is on a rail link
     if (!sec || document.body.classList.contains("no-motion")) return;
     e.preventDefault();
-    history.pushState(null, "", e.currentTarget.hash);
+    history.pushState(null, "", (e.currentTarget as HTMLAnchorElement).hash); // the listener is on a rail link
     centerChapter(sec);
   }),
 );
@@ -147,11 +215,12 @@ addEventListener("popstate", () => {
 });
 // the copy is fixed in place while its chapter is on, so a keyboard user tabbing into another chapter's link scrolls that chapter in
 document.addEventListener("focusin", (e) => {
-  const sec = /** @type {any} */ (e.target).closest?.(".chapter");
+  // the target is an element, or the document, which has no closest(); chapters are HTML elements
+  const sec = (e.target as { closest?: (selector: string) => HTMLElement | null }).closest?.(".chapter");
   if (sec && !sec.classList.contains("is-on") && !document.body.classList.contains("no-motion")) centerChapter(sec);
 });
 // the rail follows the nearest chapter; the copy shows only near a chapter's centre, so text never sits on a scene change
-function setChapter(c) {
+function setChapter(c: number) {
   const i = Math.round(c),
     copy = reduced || Math.abs(c - i) < (innerWidth < innerHeight ? 0.4 : 0.45) ? i : -1; // phones: the copy sits under the scene, so it can stay on longer
   if (copy !== activeCopy) {
@@ -162,14 +231,14 @@ function setChapter(c) {
   activeChapter = i;
   railItems.forEach((li, k) => {
     li.classList.toggle("is-on", k === i);
-    li.querySelector("a").toggleAttribute("aria-current", k === i);
+    li.querySelector("a")!.toggleAttribute("aria-current", k === i); // every rail item holds a link (page HTML)
   });
   if (i > 0) sound.chapter(i);
 }
 
 // ---------- 3D ----------
-const canvas = $("#stage");
-let renderer;
+const canvas = $<HTMLCanvasElement>("#stage");
+let renderer: THREE.WebGLRenderer;
 try {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
   if (!renderer.capabilities.isWebGL2) throw new Error("webgl2");
@@ -201,7 +270,8 @@ const QUALITY = [
   { ao: false, s: 0.5 },
 ];
 let quality = 0;
-const pixelRatio = () => Math.min(DPR, Math.sqrt(PIXEL_BUDGET / (innerWidth * innerHeight))) * QUALITY[quality].s;
+// in range: govern() stops at the last QUALITY step
+const pixelRatio = () => Math.min(DPR, Math.sqrt(PIXEL_BUDGET / (innerWidth * innerHeight))) * QUALITY[quality]!.s;
 renderer.setPixelRatio(pixelRatio());
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
@@ -209,7 +279,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = !small;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 
-const scene = new THREE.Scene();
+const scene = new THREE.Scene() as THREE.Scene & { fog: THREE.FogExp2 }; // fog is set to a FogExp2 below and never replaced
 scene.fog = new THREE.FogExp2(0x0d0906, small ? 0.022 : 0.027);
 const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.1, 200);
 
@@ -226,7 +296,7 @@ scene.add(sky);
       new THREE.MeshBasicMaterial({ color: 0x1a120c, side: THREE.BackSide }),
     ),
   );
-  const glow = (c, x, y, z, sx, sy, sz) => {
+  const glow = (c: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
     const m = new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: c }));
     m.position.set(x, y, z);
     m.scale.set(sx, sy, sz);
@@ -263,11 +333,13 @@ rim.position.set(-1.5, 10, -8);
 scene.add(rim);
 const clash = new THREE.PointLight(0xffc070, 0, 4, 2);
 scene.add(clash); // the flash between the fighters on a hit
-const warm = [
-  [-3.2, 1.9, 2.6],
-  [3.3, 1.9, 2.2],
-  [0.2, 1.9, -3.6],
-].map(([x, y, z]) => {
+const warm = (
+  [
+    [-3.2, 1.9, 2.6],
+    [3.3, 1.9, 2.2],
+    [0.2, 1.9, -3.6],
+  ] satisfies Vec3[]
+).map(([x, y, z]) => {
   const l = new THREE.PointLight(0xff9a40, 16, 10, 2);
   l.position.set(x, y, z);
   scene.add(l);
@@ -386,23 +458,36 @@ const film = new ShaderPass({
       c *= mix(1.0, 0.52, smoothstep(0.35, 1.05, length(d)));
       c += (h(vUv * 1000.0 + fract(uTime) * 61.0) - 0.5) * 0.028;
       gl_FragColor = vec4(c, 1.0);
-    }`,
-});
+    }`, // as on the next line: the uniforms passed in above
+}) as ShaderPass & {
+  uniforms: Uniforms<{
+    tDiffuse: THREE.Texture | null;
+    uTime: number;
+    uAspect: number;
+    uFray: number;
+    uHit: number;
+    uDir: number;
+    uRes: THREE.Vector2;
+    uLift: THREE.Vector3;
+    uGain: THREE.Vector3;
+    uBlur: number;
+  }>;
+};
 composer.addPass(film);
 
 // ---------- tags pinned to 3D points ----------
 const tagLayer = $("#tags");
 const proj = new THREE.Vector3();
-function makeTag(cls, html) {
+function makeTag(cls: string, html: string): Tag {
   const el = document.createElement("div");
   el.className = "tag";
   el.innerHTML = `<div class="${cls}">${html}</div>`;
   tagLayer.appendChild(el);
   return {
     el,
-    inner: /** @type {HTMLElement} */ (el.firstChild),
+    inner: el.firstChild as HTMLElement, // the div written just above
     on: false,
-    set(html) {
+    set(html: string) {
       if (this.html !== html) {
         this.inner.innerHTML = html;
         this.html = html;
@@ -410,7 +495,7 @@ function makeTag(cls, html) {
     },
   };
 }
-function placeTag(tag, pos, visible) {
+function placeTag(tag: Tag, pos: THREE.Vector3, visible: boolean) {
   if (visible) {
     proj.copy(pos).project(camera);
     const lim = tag.corner ? 0.985 : 0.9; // frame-corner labels are anchored by their own edge, so they may sit near the screen edge
@@ -419,7 +504,7 @@ function placeTag(tag, pos, visible) {
     else {
       let x = ((proj.x + 1) / 2) * innerWidth;
       if (!tag.call && !tag.corner) {
-        const hw = (tag.w ||= tag.el.firstElementChild.offsetWidth) / 2 + 8;
+        const hw = (tag.w ||= (tag.el.firstElementChild as HTMLElement).offsetWidth) / 2 + 8; // makeTag's inner div
         x = Math.min(innerWidth - hw, Math.max(hw, x));
       }
       // plain labels grow upward from their point, so one near the top is held down clear of the header's links
@@ -434,7 +519,7 @@ function placeTag(tag, pos, visible) {
   }
 }
 // callouts: a dot on the 3D point, a leader line, then a title and one line of detail
-function makeCall(title, sub, cls = "") {
+function makeCall(title: string, sub: string, cls = "") {
   return Object.assign(
     makeTag(
       "tag-call " + cls,
@@ -444,16 +529,16 @@ function makeCall(title, sub, cls = "") {
   );
 }
 // lock-on bracket: four corner marks that glide from subject to subject, with a two-line readout
-const lock = (() => {
+const lock = ((): Lock => {
   const el = document.createElement("div");
   el.className = "lock";
   el.innerHTML = '<i></i><i></i><i></i><i></i><div class="lock-txt"><b></b><span></span></div>';
   tagLayer.appendChild(el);
   return {
     el,
-    txt: /** @type {HTMLElement} */ (el.lastChild),
-    b: el.querySelector("b"),
-    s: el.querySelector(".lock-txt span"),
+    txt: el.lastChild as HTMLElement, // the .lock-txt div written just above
+    b: el.querySelector("b") as HTMLElement, // written just above
+    s: el.querySelector(".lock-txt span") as HTMLElement, // written just above
     r: null,
     key: null,
     on: false,
@@ -462,7 +547,7 @@ const lock = (() => {
 })();
 const lockP = new THREE.Vector3(),
   lockBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
-function boxRect(boxes, out) {
+function boxRect(boxes: FBox[], out: Box) {
   out.x0 = out.y0 = Infinity;
   out.x1 = out.y1 = -Infinity;
   for (const [x0, x1, y0, y1, z0, z1] of boxes)
@@ -478,12 +563,13 @@ function boxRect(boxes, out) {
     }
   return true;
 }
-const fbox = (f, pad = 0.25) => {
+const fbox = (f: VoxelFighter, pad = 0.25): FBox => {
   const p = f.group.position;
   return [p.x - f.width / 2, p.x + f.width / 2, p.y, p.y + f.height, p.z - pad, p.z + pad];
 };
-function placeLock(target, alpha, dt, portrait) {
-  const ok = Boolean(target) && alpha > 0.01 && boxRect(target.boxes, lockBox);
+function placeLock(target: LockTarget | null, alpha: number, dt: number, portrait: boolean) {
+  // target!: ok is true only when Boolean(target) was (here and below)
+  const ok = Boolean(target) && alpha > 0.01 && boxRect(target!.boxes, lockBox);
   if (ok) {
     const b = lockBox,
       pad = 12,
@@ -495,12 +581,13 @@ function placeLock(target, alpha, dt, portrait) {
     if (!lock.r) lock.r = { ...b };
     else {
       const k = reduced ? 1 : 1 - Math.exp(-dt * 7);
-      for (const n of ["x0", "y0", "x1", "y1"]) lock.r[n] += (b[n] - lock.r[n]) * k;
+      for (const n of ["x0", "y0", "x1", "y1"] satisfies (keyof Box)[]) lock.r[n] += (b[n] - lock.r[n]) * k;
     }
-    if (lock.key !== target.key) {
-      lock.key = target.key;
-      lock.b.textContent = target.title;
-      lock.s.textContent = target.sub;
+    // target!: ok is true only when Boolean(target) was
+    if (lock.key !== target!.key) {
+      lock.key = target!.key; // target!: as above
+      lock.b.textContent = target!.title; // target!: as above
+      lock.s.textContent = target!.sub; // target!: as above
     }
     const r = lock.r,
       st = lock.el.style;
@@ -508,7 +595,7 @@ function placeLock(target, alpha, dt, portrait) {
     st.width = `${(r.x1 - r.x0).toFixed(1)}px`;
     st.height = `${(r.y1 - r.y0).toFixed(1)}px`;
     st.opacity = alpha.toFixed(3);
-    let pos = portrait ? "none" : target.pos; // on a phone the corners alone; the copy below carries the numbers
+    let pos = portrait ? "none" : target!.pos; // on a phone the corners alone; the copy below carries the numbers
     if (pos === "below" && r.y1 + 64 > innerHeight) pos = "above";
     if (pos !== lock.pos) {
       lock.pos = pos;
@@ -528,9 +615,9 @@ document.body.insertBefore(scrimL, tagLayer);
 document.body.insertBefore(scrimR, tagLayer);
 
 // ---------- loading ----------
-const tasks = [];
+const tasks: Promise<unknown>[] = [];
 let done = 0;
-const track = (p) => {
+const track = <T>(p: Promise<T>) => {
   tasks.push(p);
   p.finally(() => {
     done++;
@@ -541,35 +628,35 @@ const track = (p) => {
 setProgress(0.04);
 
 const boardP = track(loadBoard());
-const catalogP = track(fetch("/assets/characters.json").then((r) => r.json()));
+const catalogP = track(fetch("/assets/characters.json").then((r): Promise<Character[]> => r.json()));
 track(document.fonts?.load("650 40px Fraunces") ?? Promise.resolve());
 
 const catalog = await catalogP.catch(() => []);
-const byId = new Map(catalog.map((c) => [c.id, c]));
+const byId = new Map<string, Character>(catalog.map((c) => [c.id, c]));
 const rows = await boardP;
 const FALLBACK_CROWD = ["adventurer", "pixel-bot", "cowgirl", "bunny-brown", "cute-girl"];
 const crowdPeople = (rows.length ? rows : FALLBACK_CROWD.map((a) => ({ avatar: a })))
   .slice(0, 5)
-  .map((r, i) => ({ ...r, avatar: byId.has(r.avatar) ? r.avatar : FALLBACK_CROWD[i] }));
+  .map((r: Person, i) => ({ ...r, avatar: byId.has(r.avatar) ? r.avatar : FALLBACK_CROWD[i]! })); // in range: i < 5
 const wanted = [...new Set(["knight", "toon-ranger", ...crowdPeople.map((p) => p.avatar)])].filter((id) =>
   byId.has(id),
 );
-const images = new Map();
+const images = new Map<string, HTMLImageElement>();
 await Promise.all(
   wanted.map((id) =>
     track(
-      loadImage(byId.get(id).url)
+      loadImage(byId.get(id)!.url) // wanted holds only ids in byId
         .then((img) => images.set(id, img))
         .catch(() => {}),
     ),
   ),
 );
 
-function fighter(id, height, opts, density = 15) {
+function fighter(id: string, height: number, opts: VoxelOptions, density = 15) {
   const c = byId.get(id),
     img = images.get(id);
   if (!c || !img) return null;
-  const frame = c.animations?.idle?.[0] || c.frames[0];
+  const frame = c.animations?.idle?.[0] || c.frames[0]!; // every catalog character has a frame
   const targetRows = Math.round(height * (small ? density * 0.75 : density));
   const step = Math.max(2, Math.round(frame.h / targetRows));
   const sprite = sampleSprite(img, frame, step);
@@ -585,7 +672,7 @@ const crowd = crowdPeople
     person: p,
     f: fighter(p.avatar, 1.35, { scatter: "rain", seed: 11 + i, shadows: !small, layers: 6 }),
   }))
-  .filter((c) => c.f);
+  .filter((c) => c.f) as { person: Person; f: VoxelFighter }[]; // the filter drops the fighters that didn't build
 
 // podium: rank 1 in the middle, then 2 left, 3 right, 4 and 5 outside
 const PODIUM_X = [0, -1.25, 1.25, -2.5, 2.5],
@@ -598,7 +685,7 @@ const DUEL_SPOT = [
   [-5.6, -5.4],
   [-5.3, -3.6],
   [-2.1, -4.9],
-]; // the crowd steps back to the ropes for the duel
+] satisfies Vec2[]; // the crowd steps back to the ropes for the duel
 // a column of light over the rank 1 tower
 const beam = new THREE.Mesh(
   new THREE.CylinderGeometry(0.42, 0.62, 16, 20, 1, true),
@@ -614,7 +701,7 @@ const beam = new THREE.Mesh(
     void main(){ float band = 0.75 + 0.25 * step(0.5, fract(vUv.y * 22.0 - uTime * 0.8));
       float a = uA * sqrt(sqrt(max(1.0 - vUv.y, 0.0))) * (1.0 - smoothstep(0.85, 1.0, vUv.y)) * band * 0.32;
       gl_FragColor = vec4(vec3(1.0, 0.72, 0.38) * a, a); }`,
-  }),
+  }) as THREE.ShaderMaterial & { uniforms: Uniforms<{ uA: number; uTime: number }> }, // the uniforms passed in above
 );
 beam.visible = false;
 scene.add(beam);
@@ -624,7 +711,7 @@ const CROWD_SPOT = [
   [0.2, -3.1],
   [1.9, -2.3],
   [2.8, -1.0],
-];
+] satisfies Vec2[];
 
 // tags
 const T = {
@@ -660,7 +747,7 @@ const LOCKS = [
     pos: "above",
   },
   { key: "loot", title: "+$5 a win", sub: "+$3 a loss · plus an upgrade point", pos: "left" },
-];
+] satisfies [LockInfo, LockInfo, LockInfo, LockInfo, LockInfo];
 const names = crowd.map((c) =>
   makeTag(
     "tag-line",
@@ -676,123 +763,125 @@ const ranks = crowd.map((c, i) =>
 
 // ---------- moods ----------
 // each chapter is its own world: ember arena, teal dusk for chat, crimson duel, cold moonlit ladder, gold loot, blue night stream
-const MOODS = [
-  {
-    fog: 0x0d0906,
-    fogD: 0.027,
-    cloud: 0x4a3020,
-    sky: [1, 1, 1],
-    hemi: 0x8a6a4a,
-    key: 0xffcf96,
-    keyI: 1.8,
-    cool: 0x5d7cff,
-    coolI: 0.8,
-    warm: 0xff9a40,
-    warmI: 1,
-    moon: 1,
-    lift: [0, 0, 0],
-    gain: [1, 1, 1],
-    rim: 1.5,
-    floor: [1, 1, 1],
-    ring: 0xff7a26,
-  },
-  {
-    fog: 0x061110,
-    fogD: 0.025,
-    cloud: 0x1f4846,
-    sky: [0.5, 1.15, 1.25],
-    hemi: 0x3f7a76,
-    key: 0xffd7a8,
-    keyI: 1.5,
-    cool: 0x46d0c4,
-    coolI: 1.3,
-    warm: 0xff9a40,
-    warmI: 0.95,
-    moon: 1,
-    lift: [0, 0.024, 0.032],
-    gain: [0.8, 1.04, 1.14],
-    rim: 0.9,
-    floor: [0.72, 0.92, 0.98],
-    ring: 0x2fd0c0,
-  },
-  {
-    fog: 0x120506,
-    fogD: 0.027,
-    cloud: 0x4a1a16,
-    sky: [1.45, 0.6, 0.55],
-    hemi: 0x7a4038,
-    key: 0xffa27a,
-    keyI: 1.95,
-    cool: 0x7c66ff,
-    coolI: 0.6,
-    warm: 0xff6a34,
-    warmI: 1.05,
-    moon: 0,
-    lift: [0.014, 0, 0.004],
-    gain: [1.03, 0.97, 0.95],
-    rim: 0.25,
-    floor: [1.08, 0.78, 0.74],
-    ring: 0xff3020,
-  },
-  {
-    fog: 0x050a16,
-    fogD: 0.024,
-    cloud: 0x2c3c66,
-    sky: [0.45, 0.75, 1.7],
-    hemi: 0x45578a,
-    key: 0x9fb8ff,
-    keyI: 1.45,
-    cool: 0x7090ff,
-    coolI: 1.7,
-    warm: 0xffa850,
-    warmI: 0.55,
-    moon: 1,
-    lift: [0, 0.004, 0.022],
-    gain: [0.9, 0.98, 1.12],
-    rim: 1.4,
-    floor: [0.7, 0.8, 1.08],
-    ring: 0x6c9cff,
-  },
-  {
-    fog: 0x0e0802,
-    fogD: 0.03,
-    cloud: 0x4a3010,
-    sky: [1.3, 1.0, 0.4],
-    hemi: 0x8a6a34,
-    key: 0xfff0d0,
-    keyI: 2.3,
-    cool: 0x5d7cff,
-    coolI: 0.35,
-    warm: 0xffb040,
-    warmI: 1.3,
-    moon: 0.4,
-    lift: [0.012, 0.008, 0.002],
-    gain: [1.1, 1.05, 0.94],
-    bloom: 0.42,
-    rim: 0.5,
-    floor: [1.1, 0.98, 0.8],
-    ring: 0xffb030,
-  },
-  {
-    fog: 0x070913,
-    fogD: 0.011,
-    cloud: 0x2a3560,
-    sky: [0.6, 0.7, 1.35],
-    hemi: 0x6a7090,
-    key: 0xffd9a8,
-    keyI: 1.9,
-    cool: 0x6a86ff,
-    coolI: 1.1,
-    warm: 0xffa040,
-    warmI: 1.35,
-    moon: 1,
-    lift: [0, 0.004, 0.018],
-    gain: [0.9, 0.97, 1.12],
-    rim: 1.8,
-    floor: [0.86, 0.88, 1.0],
-    ring: 0xff8a36,
-  },
-].map((m) => ({
+const MOODS = (
+  [
+    {
+      fog: 0x0d0906,
+      fogD: 0.027,
+      cloud: 0x4a3020,
+      sky: [1, 1, 1],
+      hemi: 0x8a6a4a,
+      key: 0xffcf96,
+      keyI: 1.8,
+      cool: 0x5d7cff,
+      coolI: 0.8,
+      warm: 0xff9a40,
+      warmI: 1,
+      moon: 1,
+      lift: [0, 0, 0],
+      gain: [1, 1, 1],
+      rim: 1.5,
+      floor: [1, 1, 1],
+      ring: 0xff7a26,
+    },
+    {
+      fog: 0x061110,
+      fogD: 0.025,
+      cloud: 0x1f4846,
+      sky: [0.5, 1.15, 1.25],
+      hemi: 0x3f7a76,
+      key: 0xffd7a8,
+      keyI: 1.5,
+      cool: 0x46d0c4,
+      coolI: 1.3,
+      warm: 0xff9a40,
+      warmI: 0.95,
+      moon: 1,
+      lift: [0, 0.024, 0.032],
+      gain: [0.8, 1.04, 1.14],
+      rim: 0.9,
+      floor: [0.72, 0.92, 0.98],
+      ring: 0x2fd0c0,
+    },
+    {
+      fog: 0x120506,
+      fogD: 0.027,
+      cloud: 0x4a1a16,
+      sky: [1.45, 0.6, 0.55],
+      hemi: 0x7a4038,
+      key: 0xffa27a,
+      keyI: 1.95,
+      cool: 0x7c66ff,
+      coolI: 0.6,
+      warm: 0xff6a34,
+      warmI: 1.05,
+      moon: 0,
+      lift: [0.014, 0, 0.004],
+      gain: [1.03, 0.97, 0.95],
+      rim: 0.25,
+      floor: [1.08, 0.78, 0.74],
+      ring: 0xff3020,
+    },
+    {
+      fog: 0x050a16,
+      fogD: 0.024,
+      cloud: 0x2c3c66,
+      sky: [0.45, 0.75, 1.7],
+      hemi: 0x45578a,
+      key: 0x9fb8ff,
+      keyI: 1.45,
+      cool: 0x7090ff,
+      coolI: 1.7,
+      warm: 0xffa850,
+      warmI: 0.55,
+      moon: 1,
+      lift: [0, 0.004, 0.022],
+      gain: [0.9, 0.98, 1.12],
+      rim: 1.4,
+      floor: [0.7, 0.8, 1.08],
+      ring: 0x6c9cff,
+    },
+    {
+      fog: 0x0e0802,
+      fogD: 0.03,
+      cloud: 0x4a3010,
+      sky: [1.3, 1.0, 0.4],
+      hemi: 0x8a6a34,
+      key: 0xfff0d0,
+      keyI: 2.3,
+      cool: 0x5d7cff,
+      coolI: 0.35,
+      warm: 0xffb040,
+      warmI: 1.3,
+      moon: 0.4,
+      lift: [0.012, 0.008, 0.002],
+      gain: [1.1, 1.05, 0.94],
+      bloom: 0.42,
+      rim: 0.5,
+      floor: [1.1, 0.98, 0.8],
+      ring: 0xffb030,
+    },
+    {
+      fog: 0x070913,
+      fogD: 0.011,
+      cloud: 0x2a3560,
+      sky: [0.6, 0.7, 1.35],
+      hemi: 0x6a7090,
+      key: 0xffd9a8,
+      keyI: 1.9,
+      cool: 0x6a86ff,
+      coolI: 1.1,
+      warm: 0xffa040,
+      warmI: 1.35,
+      moon: 1,
+      lift: [0, 0.004, 0.018],
+      gain: [0.9, 0.97, 1.12],
+      rim: 1.8,
+      floor: [0.86, 0.88, 1.0],
+      ring: 0xff8a36,
+    },
+  ] satisfies Mood[]
+).map((m) => ({
   ...m,
   cloud: new THREE.Color(m.cloud),
   fog: new THREE.Color(m.fog),
@@ -802,15 +891,16 @@ const MOODS = [
   warm: new THREE.Color(m.warm),
   ring: new THREE.Color(m.ring),
 }));
-const mixN = (a, b, f) => a + (b - a) * f;
-function applyMood(C) {
+const mixN = (a: number, b: number, f: number) => a + (b - a) * f;
+function applyMood(C: number) {
+  // in range: i <= 4 and MOODS has 6 entries
   const i = Math.min(4, Math.floor(C)),
     f = ease(clamp01(C - i)),
-    a = MOODS[i],
-    b = MOODS[i + 1];
+    a = MOODS[i]!,
+    b = MOODS[i + 1]!;
   scene.fog.color.copy(a.fog).lerp(b.fog, f);
   // scene.fog is always the FogExp2 this file creates at scene setup.
-  /** @type {THREE.FogExp2} */ (scene.fog).density = mixN(a.fogD, b.fogD, f) * FOG;
+  scene.fog.density = mixN(a.fogD, b.fogD, f) * FOG;
   for (const m of clouds.mats) {
     m.uniforms.uDeep.value.copy(scene.fog.color);
     m.uniforms.uLit.value.copy(a.cloud).lerp(b.cloud, f);
@@ -823,12 +913,13 @@ function applyMood(C) {
   warm.forEach((l) => l.color.copy(a.warm).lerp(b.warm, f));
   sky.material.uniforms.uMoon.value = mixN(a.moon, b.moon, f);
   rim.intensity = mixN(a.rim ?? 0.7, b.rim ?? 0.7, f);
-  island.userData.floor.value.setRGB(...a.floor.map((x, j) => mixN(x, b.floor[j], f)));
+  // b.X[j]!: in range, every mood tuple has three entries; the map keeps them three
+  island.userData.floor.value.setRGB(...a.floor.map((x, j) => mixN(x, b.floor[j]!, f)));
   island.userData.rune.uColor.value.copy(a.ring).lerp(b.ring, f);
   lanterns.cone.uniforms.uColor.value.copy(a.warm).lerp(b.warm, f);
-  sky.material.uniforms.uMul.value.set(...a.sky.map((x, j) => mixN(x, b.sky[j], f)));
-  film.uniforms.uLift.value.set(...a.lift.map((x, j) => mixN(x, b.lift[j], f)));
-  film.uniforms.uGain.value.set(...a.gain.map((x, j) => mixN(x, b.gain[j], f)));
+  sky.material.uniforms.uMul.value.set(...(a.sky.map((x, j) => mixN(x, b.sky[j]!, f)) as Vec3)); // as above
+  film.uniforms.uLift.value.set(...(a.lift.map((x, j) => mixN(x, b.lift[j]!, f)) as Vec3)); // as above
+  film.uniforms.uGain.value.set(...(a.gain.map((x, j) => mixN(x, b.gain[j]!, f)) as Vec3)); // as above
   bloom.strength = mixN(a.bloom ?? 0.62, b.bloom ?? 0.62, f);
   return mixN(a.warmI, b.warmI, f);
 }
@@ -842,12 +933,12 @@ const KEYS = [
   { pos: [0.4, 1.0, 7.6], look: [0, 3.7, -2.05] },
   { pos: [2.6, 2.2, 5.6], look: [-0.5, 1.75, 0.1] },
   { pos: [-3.2, 3.0, 28.6], look: [0, -0.5, 0] },
-];
+] satisfies { pos: Vec3; look: Vec3 }[];
 const SIDE = [1, 1, -1, 1, -1, 0.95];
-function sideAt(C) {
+function sideAt(C: number) {
   const i = Math.min(4, Math.floor(C)),
     f = ease(clamp01(C - i));
-  return SIDE[i] + (SIDE[i + 1] - SIDE[i]) * f;
+  return SIDE[i]! + (SIDE[i + 1]! - SIDE[i]!) * f; // in range: i <= 4 and SIDE has 6 entries
 }
 const posCurve = new THREE.CatmullRomCurve3(
   KEYS.map((k) => new THREE.Vector3(...k.pos)),
@@ -864,7 +955,7 @@ const camPos = new THREE.Vector3(),
   tmp = new THREE.Vector3(),
   right = new THREE.Vector3(),
   up = new THREE.Vector3();
-function cameraAt(C, portrait) {
+function cameraAt(C: number, portrait: boolean) {
   const u = C / 5;
   posCurve.getPoint(u, camPos);
   lookCurve.getPoint(u, camLook);
@@ -923,12 +1014,13 @@ document.addEventListener("pointerleave", () => {
 let overHero = false,
   jumpAt = -10;
 addEventListener("click", (e) => {
-  if (!overHero || /** @type {Element} */ (e.target).closest("a, button, .copy")) return;
+  if (!overHero || (e.target as Element).closest("a, button, .copy")) return; // a click lands on an element
   jumpAt = now;
   sound.jump();
 });
 addEventListener("keydown", (e) => {
-  if (e.key === "j" && !(/** @type {Element} */ (e.target).closest("input, textarea"))) {
+  // as: a key event's target is the focused element or body
+  if (e.key === "j" && !(e.target as Element).closest("input, textarea")) {
     jumpAt = now;
     sound.jump();
   }
@@ -943,7 +1035,7 @@ const ROLLS = [
   { at: 0.22, v: 5, by: "a", text: "Challenger hits for 34" },
   { at: 0.5, v: 3, by: "b", text: "Rival misses" },
   { at: 0.78, v: 6, by: "a", text: "Challenger crits for 50" },
-];
+] satisfies Roll[];
 let lastRoll = -1,
   rollAt = -10;
 const timer = new THREE.Timer();
@@ -978,7 +1070,7 @@ addEventListener(
 );
 // smooth wheel: a mouse wheel moves the page in hard notches, so ease the page toward where the wheel wants it instead.
 // Keys, the scrollbar, touch and links keep the browser's own scrolling; any of them takes over from the wheel.
-let wantY = null,
+let wantY: number | null = null,
   curY = 0;
 addEventListener(
   "wheel",
@@ -992,7 +1084,7 @@ addEventListener(
   },
   { passive: false },
 );
-function glide(dt) {
+function glide(dt: number) {
   if (wantY === null) return;
   if (Math.abs(scrollY - curY) > 4) {
     wantY = null;
@@ -1069,8 +1161,9 @@ function frame() {
   }
   const hitAge = t - rollAt,
     hitK =
-      lastRoll >= 0 && ROLLS[lastRoll].by === "a" && hitAge < 0.6
-        ? (1 - hitAge / 0.6) * (ROLLS[lastRoll].v === 6 ? 1 : 0.45)
+      // in range: lastRoll >= 0 is checked first and lastRoll only holds ROLLS indexes
+      lastRoll >= 0 && ROLLS[lastRoll]!.by === "a" && hitAge < 0.6
+        ? (1 - hitAge / 0.6) * (ROLLS[lastRoll]!.v === 6 ? 1 : 0.45) // in range: as above
         : 0;
   if (hitK > 0 && !reduced)
     camera.position.add(tmp.set(Math.sin(t * 61) * 0.06, Math.sin(t * 47) * 0.05, 0).multiplyScalar(hitK));
@@ -1123,19 +1216,20 @@ function frame() {
       range(C, 0.3 + i * 0.07, 0.68 + i * 0.06),
       1 - range(C, 3.42 + i * 0.03, 3.68 + i * 0.03) + range(C, 4.4 + i * 0.05, 4.8 + i * 0.05),
     );
-    const sx = CROWD_SPOT[i][0] + (DUEL_SPOT[i][0] - CROWD_SPOT[i][0]) * duelIn,
-      sz = CROWD_SPOT[i][1] + (DUEL_SPOT[i][1] - CROWD_SPOT[i][1]) * duelIn;
-    const px = PODIUM_X[i],
-      h = Math.round(stacks[i] * grow) * podium.cell;
+    // in range (here and below): crowd has at most 5 fighters, like every per-rank list and names and ranks
+    const sx = CROWD_SPOT[i]![0] + (DUEL_SPOT[i]![0] - CROWD_SPOT[i]![0]) * duelIn,
+      sz = CROWD_SPOT[i]![1] + (DUEL_SPOT[i]![1] - CROWD_SPOT[i]![1]) * duelIn;
+    const px = PODIUM_X[i]!, // in range: as above
+      h = Math.round(stacks[i]! * grow) * podium.cell; // in range: as above
     c.f.group.position.set(sx + (px - sx) * climb, h * climb, sz + (PODIUM_Z - sz) * climb);
     c.f.update(reduced ? (C >= 0.5 ? 1 : 0) : a);
     placeTag(
-      names[i],
+      names[i]!, // in range: as above
       v.set(c.f.group.position.x, c.f.group.position.y + c.f.height + 0.12, c.f.group.position.z),
       a > 0.92 && C < 1.45 && (!portrait || i % 2 === 0),
     );
     placeTag(
-      ranks[i],
+      ranks[i]!, // in range: as above
       v.set(px, h + c.f.height + 0.12, PODIUM_Z),
       C > 2.95 && C < 3.4 && !portrait && Boolean(c.person.username) && i > 0,
     );
@@ -1146,7 +1240,7 @@ function frame() {
       beam.material.uniforms.uTime.value = t;
     }
     // podium column: 2x2 cubes per level, brass at the top
-    const levels = Math.round(stacks[i] * grow);
+    const levels = Math.round(stacks[i]! * grow);
     for (let l = 0; l < levels; l++)
       for (let k = 0; k < 4; k++) {
         m4.makeTranslation(
@@ -1197,7 +1291,7 @@ function frame() {
   });
   if (landed !== lastRoll) {
     if (landed > lastRoll && landed >= 0) {
-      const r = ROLLS[landed];
+      const r = ROLLS[landed]!; // in range: landed >= 0 indexes ROLLS
       if (r.v === 6) sound.hit(true);
       else if (r.v === 5) sound.hit(false);
       else sound.miss();
@@ -1216,7 +1310,8 @@ function frame() {
       const u = range(d, next.at - 0.13, next.at);
       if (u > 0) {
         const k = 1 - easeOut(u);
-        rot = FACE_UP[next.v].map((x, j) => x + k * [Math.PI * 4, Math.PI * 3, Math.PI * 2][j]);
+        // [j]!: in range, j < 3; the map keeps the three axes
+        rot = FACE_UP[next.v].map((x, j) => x + k * [Math.PI * 4, Math.PI * 3, Math.PI * 2][j]!) as Vec3;
         bounce = Math.sin(u * Math.PI) * 0.55;
         if (u > 0 && u < 0.05 && !reduced) sound.roll();
       }
@@ -1232,7 +1327,7 @@ function frame() {
   const duelTags = C > 1.75 && C < 2.6;
   T.roll.set(
     lastRoll >= 0
-      ? `<span class="n">${ROLLS[lastRoll].v}</span><span class="t">${ROLLS[lastRoll].text}</span>`
+      ? `<span class="n">${ROLLS[lastRoll]!.v}</span><span class="t">${ROLLS[lastRoll]!.text}</span>` // in range: lastRoll >= 0
       : '<span class="n">d6</span><span class="t">Challenger swings first</span>',
   );
   placeTag(T.roll, v.set(0, 3.35, 0.2), duelTags);
@@ -1301,7 +1396,7 @@ function frame() {
 
   // the lock-on bracket frames this chapter's subject; it fades out between chapters and glides to the next one
   const ch = Math.round(C);
-  let lockOn = null,
+  let lockOn: LockTarget | null = null,
     lockA = 1 - ease(range(Math.abs(C - ch), 0.18, 0.4));
   if (ch === 0 && hero) {
     lockOn = { ...LOCKS[0], boxes: [fbox(hero)] };
@@ -1373,22 +1468,22 @@ const COL_STONE_B = new THREE.Color().setRGB(0.19, 0.2, 0.24, THREE.SRGBColorSpa
 // once the opening has played, 40 frames with a median over 22 ms (under ~45 fps) drop one quality step
 let running = true,
   lastTs = 0,
-  frameMs = [];
-function govern(ts) {
+  frameMs: number[] = [];
+function govern(ts: number) {
   const d = ts - lastTs;
   lastTs = ts;
   if (quality === QUALITY.length - 1 || now - bornAt < 3 || d > 250) return; // gaps from a hidden tab don't count
   frameMs.push(d);
   if (frameMs.length < 40) return;
-  const median = frameMs.sort((a, b) => a - b)[20];
+  const median = frameMs.sort((a, b) => a - b)[20]!; // in range: 40 samples
   frameMs = [];
   if (median > 22) {
     quality++;
-    if (gtao) gtao.enabled = QUALITY[quality].ao;
+    if (gtao) gtao.enabled = QUALITY[quality]!.ao; // in range: the early return stops at the last step
     resize();
   }
 }
-function loop(ts) {
+function loop(ts: number) {
   timer.update(ts);
   if (running) {
     frame();
@@ -1420,10 +1515,11 @@ try {
 // lights, and the ones real frames use would still compile mid-scroll (the instanced podium and coins, the chest).
 {
   if (!podium.mesh.instanceColor) podium.mesh.setColorAt(0, COL_STONE_B);
-  const hidden = [],
-    culled = [],
-    empty = [];
-  scene.traverse((o) => {
+  const hidden: THREE.Object3D[] = [],
+    culled: THREE.Object3D[] = [],
+    empty: { count?: number | undefined }[] = [];
+  // only an InstancedMesh has isInstancedMesh and count
+  scene.traverse((o: THREE.Object3D & { isInstancedMesh?: boolean; count?: number | undefined }) => {
     if (!o.visible) {
       hidden.push(o);
       o.visible = true;
@@ -1433,7 +1529,7 @@ try {
       o.frustumCulled = false;
     }
     // isInstancedMesh is declared only on InstancedMesh; any other object reads it as undefined.
-    if (/** @type {THREE.InstancedMesh} */ (o).isInstancedMesh && o.count === 0) {
+    if (o.isInstancedMesh && o.count === 0) {
       empty.push(o);
       o.count = 1;
     }

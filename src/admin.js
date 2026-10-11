@@ -17,8 +17,8 @@ import {
   withChannel,
   loginHref,
   applyChannel,
-} from "./ui.js";
-import { skyBackdrop } from "./scrub.js";
+} from "./ui.ts";
+import { skyBackdrop } from "./scrub.ts";
 import site from "../site.config.js";
 skyBackdrop();
 applyChannel();

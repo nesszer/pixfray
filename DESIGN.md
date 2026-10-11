@@ -67,7 +67,7 @@ Write one line for yourself before laying anything out: who opens this page and 
 
 ## 5. Motion
 
-- The arena moves only as **baked stills scrubbed by scroll** (`src/scrub.js`, `public/assets/scene/seq/`). Only the
+- The arena moves only as **baked stills scrubbed by scroll** (`src/scrub.ts`, `public/assets/scene/seq/`). Only the
   home page runs live WebGL as the page itself, and the fighter stage is the one live 3D view elsewhere.
 - Other motion is feedback for an interaction: hover lift, tab panel settling, the Save bar stepping aside. No
   entrance or decorative scroll animations.

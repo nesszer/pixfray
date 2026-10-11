@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { channelParam } from "../src/channel-param.js";
+import { channelParam } from "../src/channel-param.ts";
 
 test("channelParam reads a login and drops punctuation chat links carry", () => {
   assert.equal(channelParam("miolafff"), "miolafff");

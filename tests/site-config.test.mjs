@@ -30,12 +30,12 @@ test("pages and browser scripts carry no hard-coded owner, channel or domain", a
     "src/served/overlay.js",
     "src/served/upload.js",
     "src/dev.js",
-    "src/ui.js",
+    "src/ui.ts",
     "src/admin.js",
     "src/dashboard.js",
-    "src/setup.js",
-    "src/start.js",
-    "src/intro/main.js",
+    "src/setup.ts",
+    "src/start.ts",
+    "src/intro/main.ts",
   ];
   const words = [
     site.owner.login,

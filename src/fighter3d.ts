@@ -1,19 +1,34 @@
 // The fighter page's 3D preview: the viewer's fighter rebuilt as voxels, standing in the intro's night arena.
 // Loaded lazily by dashboard.js; if WebGL is missing or the page runs slowly, the card keeps the 2D stage only.
-// set({ body, pet }) takes canvases already drawn by ui.js (hat, recolor and accessory included) and re-assembles
+// set({ body, pet }) takes canvases already drawn by ui.ts (hat, recolor and accessory included) and re-assembles
 // the voxels when the look changes. Drag turns the fighter; the cursor nudges its cubes aside.
 import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { sampleSprite, VoxelFighter } from "./intro/voxels.js";
-import { buildSky, buildIsland, buildLanterns, buildEmbers, buildIslets } from "./intro/world.js";
+import { sampleSprite, VoxelFighter } from "./intro/voxels.ts";
+import { buildSky, buildIsland, buildLanterns, buildEmbers, buildIslets } from "./intro/world.ts";
 
 const HEIGHT = 2.1; // the fighter's height in world units (a floor cell is 0.34)
 const AWAKE_MS = 8000; // the arena animates this long after the last input, then holds still and stops drawing
 
-export function createFighter3D(canvas, { zoom = 1 } = {}) {
+// look: ui.ts composeLook() — the idle frame and the pet drawn flat, plus the key that names the whole look
+export interface Look {
+  key: string;
+  body: HTMLCanvasElement;
+  frameH: number;
+  pet: HTMLCanvasElement | null;
+  petH: number;
+}
+export interface Fighter3D {
+  set(look: Look | null | undefined): void;
+  wake(): void;
+  readonly slow: boolean;
+  readonly count: number;
+}
+
+export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?: number } = {}): Fighter3D {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "low-power" });
   if (!renderer.capabilities.isWebGL2) {
@@ -43,7 +58,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
         new THREE.MeshBasicMaterial({ color: 0x1a120c, side: THREE.BackSide }),
       ),
     );
-    const glow = (c, x, y, z, sx, sy, sz) => {
+    const glow = (c: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
       const m = new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: c }));
       m.position.set(x, y, z);
       m.scale.set(sx, sy, sz);
@@ -80,7 +95,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     [-3.2, 1.9, 2.6],
     [3.3, 1.9, 2.2],
     [0.2, 1.9, -3.6],
-  ]) {
+  ] satisfies [number, number, number][]) {
     const l = new THREE.PointLight(0xff9a40, 16, 10, 2);
     l.position.set(x, y, z);
     scene.add(l);
@@ -106,8 +121,8 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
   // the fighter and its pet turn together on a turntable
   const table = new THREE.Group();
   scene.add(table);
-  let fighter = null,
-    pet = null,
+  let fighter: VoxelFighter | null = null,
+    pet: VoxelFighter | null = null,
     lookKey = "",
     builtAt = 0,
     buildMs = 1100;
@@ -115,17 +130,22 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     drawn = 0,
     yaw = -0.32,
     yawTarget = -0.32,
-    drag = null,
-    hover = null,
+    drag: { x: number; yaw: number } | null = null,
+    hover: PointerEvent | null = null,
     visible = true,
     slow = false,
     dirty = true,
     raf = 0,
     last = 0;
-  const frames = [];
+  const frames: number[] = [];
 
   // src: a canvas; refH: the height in its pixels that stands for `height` world units; rows: cubes across refH
-  function voxels(src, refH, height, opts) {
+  function voxels(
+    src: HTMLCanvasElement,
+    refH: number,
+    height: number,
+    opts: { rows: number; layers: number; seed: number },
+  ) {
     const step = Math.max(1, Math.round(refH / opts.rows));
     const s = sampleSprite(src, { x: 0, y: 0, w: src.width, h: src.height }, step);
     if (!s.cells.length) return null;
@@ -137,7 +157,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
       shadows: true,
     });
   }
-  function drop(f) {
+  function drop(f: VoxelFighter | null) {
     if (!f) return;
     table.remove(f.group);
     f.mesh.geometry.dispose();
@@ -146,10 +166,10 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
   }
   // a swapped-out look bursts apart while the new one gathers in through it, so the stage is never empty
   const OUT = 460,
-    leaving = [];
+    leaving: { f: VoxelFighter; at: number }[] = [];
 
-  // look: ui.js composeLook() — { key, body, frameH, pet, petH }
-  function set(look) {
+  // look: ui.ts composeLook() — { key, body, frameH, pet, petH }
+  function set(look: Look | null | undefined) {
     if (!look || look.key === lookKey) return;
     const first = !lookKey;
     lookKey = look.key;
@@ -195,22 +215,23 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
 
   // sprites have depth but no back: turning stops short of side-on, with a little give past the limit that springs back on release
   const TURN = 0.7;
-  const soft = (y) => (Math.abs(y) <= TURN ? y : Math.sign(y) * (TURN + Math.tanh((Math.abs(y) - TURN) * 2) * 0.2));
+  const soft = (y: number) =>
+    Math.abs(y) <= TURN ? y : Math.sign(y) * (TURN + Math.tanh((Math.abs(y) - TURN) * 2) * 0.2);
 
   // the cursor's point on the fighter's own plane, in its local space
   const ray = new THREE.Raycaster(),
     plane = new THREE.Plane(),
     hit = new THREE.Vector3(),
     nrm = new THREE.Vector3();
-  function pointerOn(f, e) {
+  function pointerOn(f: VoxelFighter | null, e: PointerEvent) {
     if (!f) return null;
     const r = canvas.getBoundingClientRect();
     // setFromCamera reads only .x and .y, so a plain object stands in for the Vector2.
     ray.setFromCamera(
-      /** @type {THREE.Vector2} */ ({
+      {
         x: ((e.clientX - r.left) / r.width) * 2 - 1,
         y: -((e.clientY - r.top) / r.height) * 2 + 1,
-      }),
+      } as THREE.Vector2, // as: setFromCamera reads only .x and .y
       camera,
     );
     f.group.updateWorldMatrix(true, false);
@@ -254,7 +275,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
   });
 
   new IntersectionObserver(([en]) => {
-    visible = en.isIntersecting;
+    visible = en!.isIntersecting; // one observed canvas, so every callback has one entry
     if (visible) wake();
   }).observe(canvas);
   new ResizeObserver(() => {
@@ -270,7 +291,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
   function kick() {
     if (!raf && visible && !document.hidden) raf = requestAnimationFrame(frame);
   }
-  function frame(now) {
+  function frame(now: number) {
     raf = 0;
     if (!canvas.isConnected || !resize()) return;
     // phones keep the card in view the whole time (sticky bar): idle at 30 fps there to save battery
@@ -293,7 +314,7 @@ export function createFighter3D(canvas, { zoom = 1 } = {}) {
     yaw += (yawTarget + sway - yaw) * (1 - Math.exp(-dt * 6));
     table.rotation.y = yaw;
     for (let i = leaving.length - 1; i >= 0; i--) {
-      const l = leaving[i],
+      const l = leaving[i]!, // in range: i counts down from leaving.length - 1
         k = (now - l.at) / OUT;
       if (k >= 1) {
         drop(l.f);
