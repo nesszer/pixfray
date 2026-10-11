@@ -19,7 +19,6 @@ const bad = (error: string): { ok: false; error: string; value?: undefined } => 
 const optString = (v: unknown): v is string | undefined => v === undefined || typeof v === "string";
 const optBoolean = (v: unknown): v is boolean | undefined => v === undefined || typeof v === "boolean";
 const optObject = (v: unknown): v is JsonObject | undefined => v === undefined || isObject(v);
-const optNumber = (v: unknown): v is number | undefined => v === undefined || typeof v === "number";
 // null counts as absent for these two
 const optBooleanOrNull = (v: unknown): v is boolean | null | undefined => v == null || typeof v === "boolean";
 const optObjectOrNull = (v: unknown): v is JsonObject | null | undefined => v == null || isObject(v);
@@ -284,12 +283,12 @@ export function parseChannelsAction(body: JsonObject): Parsed<{ action: unknown;
   const { action, login = "" } = body;
   return typeof login === "string" ? ok({ action, login }) : bad(INVALID_BODY);
 }
-// POST /api/dev/restore: channel a string, undo a boolean when sent. at stays NaN unless it is a number, so the
-// route's window check answers invalid_restore_time for it as before.
+// POST /api/dev/restore: channel a string, undo a boolean when sent. at goes through Number() as before, so the
+// route's window check answers invalid_restore_time for anything that isn't a time.
 export function parseRestore(body: JsonObject): Parsed<{ channel: string; at: number; undo: boolean }> {
   const { channel = "", at, undo } = body;
   if (typeof channel !== "string" || !optBoolean(undo)) return bad(INVALID_BODY);
-  return ok({ channel, at: typeof at === "number" ? at : Number.NaN, undo: undo === true });
+  return ok({ channel, at: Number(at), undo: undo === true });
 }
 // POST /api/dev/backups: channel a string when sent ("" backs up every channel).
 export function parseBackupsRun(body: JsonObject): Parsed<{ channel: string }> {
@@ -307,13 +306,11 @@ export function parseCodePr(body: JsonObject): Parsed<{ branch: unknown; title: 
   if (typeof title !== "string" || typeof text !== "string") return bad(INVALID_BODY);
   return ok({ branch, title, text });
 }
-// The room's /dev/restore: a JSON object with bookmark a string or at a number.
+// The room's /dev/restore: a JSON object with bookmark a string; at goes through Number() as before.
 export function parseRoomRestore(body: unknown): Parsed<{ bookmark: string; at: number }> {
   if (!isObject(body)) return bad(INVALID_BODY);
   const { bookmark = "", at } = body;
-  if (typeof bookmark !== "string") return bad(INVALID_BODY);
-  if (!optNumber(at)) return bad(INVALID_BODY);
-  return ok({ bookmark, at: at ?? Number.NaN });
+  return typeof bookmark === "string" ? ok({ bookmark, at: Number(at) }) : bad(INVALID_BODY);
 }
 // The room's /dev/restored: a JSON object with revision a number when sent.
 export function parseRoomRestored(body: unknown): Parsed<{ revision: number }> {

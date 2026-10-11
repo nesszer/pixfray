@@ -212,6 +212,10 @@ test("owner route parsers: channels, restore, backups, settings, code PR and the
   assert.deepEqual(p.parseRestore({ channel: "a", undo: "yes" }), no("invalid_body"));
   assert.deepEqual(p.parseRestore({ undo: true }), yes({ channel: "", at: Number.NaN, undo: true }));
   assert.deepEqual(
+    p.parseRestore({ channel: "a", at: "1700000000000" }),
+    yes({ channel: "a", at: 1700000000000, undo: false }),
+  );
+  assert.deepEqual(
     p.parseRestore({ channel: "a", at: "yesterday", x: 1 }),
     yes({ channel: "a", at: Number.NaN, undo: false }),
     "a time that is not a number reaches the window check",
@@ -239,7 +243,11 @@ test("owner route parsers: channels, restore, backups, settings, code PR and the
   assert.deepEqual(p.parseRoomRestore({ bookmark: "b" }), yes({ bookmark: "b", at: Number.NaN }));
   assert.deepEqual(p.parseRoomRestore({ at: 5 }), yes({ bookmark: "", at: 5 }));
   assert.deepEqual(p.parseRoomRestore({ bookmark: 5 }), no("invalid_body"));
-  assert.deepEqual(p.parseRoomRestore({ at: "5" }), no("invalid_body"));
+  assert.deepEqual(
+    p.parseRoomRestore({ at: "5" }),
+    yes({ bookmark: "", at: 5 }),
+    "at goes through Number() as on main",
+  );
   assert.deepEqual(p.parseRoomRestore(null), no("invalid_body"));
   assert.deepEqual(p.parseRoomRestore({ at: 5, x: 1 }), yes({ bookmark: "", at: 5 }));
 
@@ -460,6 +468,7 @@ test("room /profile: a base look field of the wrong type is invalid_profile, not
     ["displayName", {}],
     ["avatar", null],
   ] as const) {
+    // as const: keeps each field name a literal key of the profile body
     const send = room();
     assert.equal((await send("/profile", base, "u1")).status, 200);
     assert.deepEqual(
