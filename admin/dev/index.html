@@ -132,7 +132,7 @@
             <p class="muted">Loads from the branch if it exists, otherwise from main. Secrets, CI files and build output can't be opened here. Build files (package.json, configs, scripts/) open read-only.</p>
             <div class="controls">
               <div><label for="branch">Branch</label><input id="branch" autocomplete="off" spellcheck="false" placeholder="live-fix/overlay-text"></div>
-              <div><label for="path">File</label><input id="path" list="files" autocomplete="off" spellcheck="false" placeholder="public/overlay.js"><datalist id="files"></datalist></div>
+              <div><label for="path">File</label><input id="path" list="files" autocomplete="off" spellcheck="false" placeholder="src/served/overlay.js"><datalist id="files"></datalist></div>
               <div class="end toolbar"><button class="btn" id="load-file" type="button">Load file</button><button class="btn" id="load-tree" type="button">List files</button></div>
             </div>
             <label class="spaced" for="editor">Contents <span class="muted" id="file-info"></span></label>
@@ -222,5 +222,5 @@
   <nav aria-label="More"><a href="/">See a duel</a><a href="/play/">Pick a channel</a><a href="/start/">For streamers</a></nav>
   <p>Duels for Twitch chat. Your fighter is saved per channel, and signing in shares only your public Twitch name.</p>
 </div></footer>
-<script type="module" src="/dev.js"></script>
+<script type="module" src="/src/dev.js"></script>
 </body></html>

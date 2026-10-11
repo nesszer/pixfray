@@ -1,4 +1,4 @@
-// Lane D: upload validation (server/uploads.js), storage in the ChannelRoom, and the browser atlas packer (public/atlas.js).
+// Lane D: upload validation (server/uploads.js), storage in the ChannelRoom, and the browser atlas packer (src/served/atlas.js).
 // Run with: node --import ./tests/register.mjs --test tests/upload.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -13,7 +13,7 @@ import {
   customUsage,
 } from "../server/uploads.js";
 import { ChannelRoom } from "../server/channel.js";
-import { LIMITS, pngInfo, checkFrames, planAtlas, fitSingle, drawAtlas, uploadBody } from "../public/atlas.js";
+import { LIMITS, pngInfo, checkFrames, planAtlas, fitSingle, drawAtlas, uploadBody } from "../src/served/atlas.js";
 import { makePng, b64, fakeRoomCtx } from "./upload-helpers.mjs";
 
 const SECRET = "test-only-internal-secret-0123456789";

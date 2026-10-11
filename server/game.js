@@ -480,7 +480,7 @@ function beginDuel(state, duel, now, event = {}) {
 const QUICK_MAX_ROLLS = 12;
 // A quick duel is settled at once, but the overlay plays it out over seconds and viewers see the stream a few
 // seconds behind chat (config.streamDelayMs). Until revealAt, chat replies, !elo, !ranks and the leaderboard keep the pre-fight
-// numbers (hiddenResults), so the stream shows the winner first. Pacing mirrors public/overlay.js: a walk-in
+// numbers (hiddenResults), so the stream shows the winner first. Pacing mirrors src/served/overlay.js: a walk-in
 // of up to 2.2 s, then about 1.8 s per roll before the result banner.
 // REPLAY_SLACK_MS covers the overlay running a little long on a 12-roll fight, so chat never gets ahead of it.
 const REPLAY_WALK_MS = 2200,

@@ -222,16 +222,17 @@ export const framesFor = (entry, anim) => {
         : a[anim] || a.idle || entry?.frames;
   return Array.isArray(list) && list.length ? list : [];
 };
-// Hats are drawn by public/hats.js, the same module the overlay uses. It is a static file, so it loads at runtime.
+// Hats are drawn by src/served/hats.js, the same module the overlay uses. It is served as /hats.js (vite.config.js),
+// not bundled, so it loads at runtime.
 let hats = null;
-const HATS_URL = new URL("/hats.js", location.href).href; // a full URL, so the Vite dev server serves the public file as-is
+const HATS_URL = new URL("/hats.js", location.href).href; // a full URL, so Vite leaves the import alone
 import(/* @vite-ignore */ HATS_URL)
   .then((m) => {
     hats = m;
     redrawAll();
   })
   .catch(() => {});
-// Pets come from public/pets.js the same way. A pet is { id, tier, url? }; uploaded pets have a url to their PNG.
+// Pets come from src/served/pets.js the same way. A pet is { id, tier, url? }; uploaded pets have a url to their PNG.
 let pets = null;
 const PETS_URL = new URL("/pets.js", location.href).href;
 import(/* @vite-ignore */ PETS_URL)
@@ -240,7 +241,7 @@ import(/* @vite-ignore */ PETS_URL)
     redrawAll();
   })
   .catch(() => {});
-// Cosmetics (recolors, accessories, trails, win effects, taunts, titles) come from public/cosmetics.js, as on stream.
+// Cosmetics (recolors, accessories, trails, win effects, taunts, titles) come from src/served/cosmetics.js, as on stream.
 let cosmetics = null;
 const COSMETICS_URL = new URL("/cosmetics.js", location.href).href;
 export const cosmeticsReady = import(/* @vite-ignore */ COSMETICS_URL)
@@ -520,7 +521,8 @@ export function whenImage(url, fn) {
 }
 
 // ---------- the on-stream preview ----------
-// The viewer page's stage: the fighter walking in place as the overlay draws it (public/overlay.js), with its pet,
+// The viewer page's stage: the fighter walking in place as the overlay draws it (src/served/overlay.js), with its
+// pet,
 // trail, recolor, hat, accessory, the nameplate "name · Elo" and title, and on play() its win effect and taunt.
 // Sizes follow the overlay's 60 px fighter, 20 px nameplate and 14 px title, scaled to the canvas height.
 // set({ entry, hat, pet, color, name, elo, looks }) changes what it shows; looks holds the cosmetics.js ids.

@@ -1,5 +1,5 @@
 // Pets (docs/PROGRESSION_PLAN.md, Stage 3): bought with PixFray dollars, one active per fighter, each with a small
-// stat boost by tier. Built-in pets are drawn in code (public/pets.js, same ids); streamers can upload their own as
+// stat boost by tier. Built-in pets are drawn in code (src/served/pets.js, same ids); streamers can upload their own as
 // PNGs (custom_pets, ids "p-..."), picking the tier and the boosted stat.
 //
 // GET    /api/pets/:channel        public: { pets:[{id,label,tier,boost,price,custom,url?}], hatPricePerWin }

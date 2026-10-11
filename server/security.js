@@ -23,7 +23,8 @@ export const PAGE_CSP = [
   "connect-src 'self' https://cloudflareinsights.com",
   "frame-ancestors 'none'",
 ].join("; ");
-// The OBS overlay: public/chat.js reads Twitch chat over IRC (wss), and the page stays frameable (the start page demo embeds it).
+// The OBS overlay: src/served/chat.js reads Twitch chat over IRC (wss), and the page stays frameable (the start page
+// demo embeds it).
 export const OVERLAY_CSP = [
   "default-src 'self'",
   "script-src 'self'",

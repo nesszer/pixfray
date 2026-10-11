@@ -298,7 +298,7 @@ export class ChannelRoom extends DurableObject {
     /** @type {Map<string, number> | undefined} text command cooldowns (customReply) */
     this.commandCooldowns = undefined;
     // Overlays send "ping" every 20 s to catch a half-open socket. The runtime answers "pong" itself, without waking this
-    // object from hibernation or billing its time (public/arena-client.js).
+    // object from hibernation or billing its time (src/served/arena-client.js).
     if (typeof WebSocketRequestResponsePair === "function")
       ctx.setWebSocketAutoResponse?.(new WebSocketRequestResponsePair("ping", "pong"));
     const sql = this.ctx.storage.sql;

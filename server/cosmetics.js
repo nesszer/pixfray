@@ -1,7 +1,7 @@
 // Cosmetics and builds (docs/PROGRESSION_PLAN.md, Stage 4). Everything here is looks only: no stat changes.
 // Bought with PixFray dollars in the website shop (channel.js buy), owned forever (owned_items, kind = the kind
 // below), and worn per build. Taunts and titles are preset lines, so no viewer-typed text ever reaches the stream.
-// The overlay and the dashboard preview draw them with public/cosmetics.js; its ids must match these.
+// The overlay and the dashboard preview draw them with src/served/cosmetics.js; its ids must match these.
 
 // kind -> the profile field that wears it, and the config key with its price (every item of a kind costs the same).
 export const COSMETIC_KINDS = ["recolor", "petcolor", "accessory", "trail", "effect", "taunt", "title"];

@@ -2,7 +2,7 @@
 // paths, comments and string literals are.
 import { parseSync } from "vite";
 
-/** Served as written: Vite copies public/ to the build unchanged, and the build's `?v=` hash covers its .js bytes. */
+/** Served as written: Vite copies public/ to the build unchanged. */
 export const PUBLIC = "public/";
 
 /** A span of source text: `start` and `end` are UTF-16 offsets, the same as String#slice. */

@@ -4,7 +4,7 @@
 // and can be moved around (respec) for free whenever the fighter is not in a duel.
 //   power: +4% damage dealt per point      guard: -4% damage taken per point
 //   luck:  4% per point that a miss still lands as a hit
-// Hats are cosmetic; some unlock at a number of wins. The overlay draws them (public/hats.js).
+// Hats are cosmetic; some unlock at a number of wins. The overlay draws them (src/served/hats.js).
 
 export const STATS = ["power", "guard", "luck"];
 export const MAX_PER_STAT = 8;

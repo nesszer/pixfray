@@ -44,7 +44,7 @@ bun run dev
   (`.oxlintrc.json`). Warnings fail it. In `server/` every promise must be awaited or handed to
   `waitUntil`, because the Worker can cancel one that is dropped.
 - `bun run typecheck` runs `tsc` four times. `tsconfig.worker.json` (server/, Workers types),
-  `tsconfig.web.json` (src/ and public/, DOM types plus `types/browser.d.ts`) and `tsconfig.node.json`
+  `tsconfig.web.json` (src/ with the served modules in src/served/, DOM types plus `types/browser.d.ts`) and `tsconfig.node.json`
   (the build configs) check the JavaScript loosely; `tsconfig.strict.json` checks every TypeScript
   file with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests and the
   `.mjs` scripts are linted but not type checked. In a `.js` file, add JSDoc where inference falls
@@ -113,8 +113,10 @@ A port pull request changes types only, from a `port/<name>` branch:
    under `public/`, which Vite serves as written, so they stay JavaScript, and it never rewrites a
    file there: each line under `public/` that names a renamed file prints as
    `note: <file>:<line> names a renamed file; left as is, since public/ is served as written`.
-   Any byte changed there changes what browsers load (and the build's `?v=` hash), so update those
-   lines in a change of their own.
+   Any byte changed there changes what browsers load, so update those lines in a change of their own.
+   The overlay modules in `src/served/` port like any other file: the build serves each as the
+   oxc-stripped JavaScript of its `.js` or `.ts` source at `/<name>.js` (docs/CONTRACTS.md §9), so a
+   port that adds only types serves the same code under the same `?v=` hash.
 2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json`.
 3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) checks every file that
    differs between the working tree and where the branch left `main`. Code files are `.js`, `.mjs`,
