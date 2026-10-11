@@ -531,13 +531,15 @@ gitleaks git --config .gitleaks.toml --redact .   # secret scan; CI scans the wh
 bun run audit              # bun audit --audit-level=high; CI fails on a high or critical advisory
 bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
-bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), tsconfig.strict.json (strict:
-                           # the TypeScript files plus site.config.js); then port-check --strict-list. It
-                           # requires every TypeScript file in the program tsc reads from tsconfig.strict.json,
-                           # except cloudflare.config.ts (tsconfig.node.json) and types/browser.d.ts
-                           # (tsconfig.web.json). It fails a tsc error reading it, a strict option off, a .d.ts,
-                           # .d.mts or .d.cts under skipLibCheck, and in any code file in that program a comment
-                           # with @ts-nocheck (any letter case) or eslint-disable / oxlint-disable (any form).
+bun run typecheck          # tsc: tsconfig.worker/web/node.json (JS, loose), then two strict programs split by
+                           # runtime: tsconfig.strict.json (Worker and Node types: server/, scripts/,
+                           # site.config.js, shared types) and tsconfig.strict-web.json (DOM types: src/,
+                           # types/dom.ts); then port-check --strict-list. It requires every TypeScript file in
+                           # the program tsc reads from either strict config, except cloudflare.config.ts
+                           # (tsconfig.node.json) and types/browser.d.ts (tsconfig.web.json). It fails a tsc
+                           # error reading either, a strict option off in either, a .d.ts, .d.mts or .d.cts
+                           # under skipLibCheck, and in any code file in those programs a comment with
+                           # @ts-nocheck (any letter case) or eslint-disable / oxlint-disable (any form).
 bun run port-check         # node scripts/port-check.ts --base origin/main. Exits 1 on a difference or problem,
                            # 2 on bad usage; CI runs it on pushes to and PRs from port/ branches
                            # (docs/DEVELOPMENT.md has every rule).
@@ -547,9 +549,9 @@ bun run port-check         # node scripts/port-check.ts --base origin/main. Exit
                            #   bunx cf build, offline, and compares every .cloudflare/output file (JS without
                            #   comments, the rest byte for byte).
                            # - Leaves tsconfig*.json changes to that build diff, but fails a new root
-                           #   tsconfig.json. Once the merge base has tsconfig.strict.json, the head's resolved
-                           #   compilerOptions for it (tsc --showConfig) must equal the base's; only its files
-                           #   list may change.
+                           #   tsconfig.json. For each strict config the merge base has (tsconfig.strict.json,
+                           #   tsconfig.strict-web.json), the head's resolved compilerOptions for it
+                           #   (tsc --showConfig) must equal the base's; only its files list may change.
                            # - In tests/, scripts/, cloudflare.config.ts and vite.config.js, passes a string
                            #   naming a moved file's new path.
                            # - Treats public/ as served as written: its code keeps its path and stays

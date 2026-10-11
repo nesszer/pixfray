@@ -1481,6 +1481,99 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
+  test("--strict-list passes a TypeScript file listed only in tsconfig.strict-web.json, and names both lists for one in neither", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("a.ts"),
+      "tsconfig.strict-web.json": strictList("src/view.ts"),
+      "a.ts": "export const a = 1;\n",
+      "src/view.ts": "export const view = 1;\n",
+    });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 0,
+      stdout: "tsconfig.strict.json and tsconfig.strict-web.json cover every TypeScript file\n",
+      stderr: "",
+    });
+    write(dir, { "src/other.ts": "export const other = 1;\n" });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 1,
+      stdout: "src/other.ts is not in tsconfig.strict.json or tsconfig.strict-web.json\n",
+      stderr: "",
+    });
+  });
+
+  test("--strict-list holds tsconfig.strict-web.json to the strict options and reads its files' comments once", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("a.ts", "shared.ts"),
+      "tsconfig.strict-web.json": strictConfig({
+        files: ["shared.ts", "src/view.ts"],
+        options: { exactOptionalPropertyTypes: false },
+      }),
+      "a.ts": "export const a = 1;\n",
+      "shared.ts": "// @ts-nocheck\nexport const shared = 1;\n",
+      "src/view.ts": "// @ts-nocheck\nexport const view = 1;\n",
+    });
+    assert.deepEqual(await node(dir, SCRIPT, "--strict-list"), {
+      status: 1,
+      stdout: [
+        "shared.ts:1 has @ts-nocheck, which turns type checking off; files on tsconfig.strict.json are checked whole",
+        "tsconfig.strict-web.json must set exactOptionalPropertyTypes to true (it is false)",
+        "src/view.ts:1 has @ts-nocheck, which turns type checking off; files on tsconfig.strict-web.json are checked whole",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test("a port changes only tsconfig.strict-web.json's files list, and keeps the file once the base has it", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList(),
+      "tsconfig.strict-web.json": strictList("src/a.ts"),
+      "src/a.ts": "export const a = 1;\n",
+    });
+    write(dir, {
+      "tsconfig.strict-web.json": strictList("src/a.ts", "src/b.ts"),
+      "src/b.ts": "export type B = string;\n",
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 0,
+      stdout: [
+        "allowed: tsconfig.strict-web.json (no build config reads it)",
+        "1 files compared, 0 different",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    write(dir, {
+      "tsconfig.strict-web.json": strictConfig({
+        files: ["src/a.ts", "src/b.ts"],
+        options: { useDefineForClassFields: false },
+      }),
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "allowed: tsconfig.strict-web.json (no build config reads it)",
+        "tsconfig.strict-web.json changes useDefineForClassFields from the base (base not set, head false); a port changes only its files list",
+        "1 files compared, 0 different, 1 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    moveOut(dir, "tsconfig.strict-web.json");
+    assert.deepEqual(await portCheck(dir), {
+      status: 1,
+      stdout: [
+        "allowed: tsconfig.strict-web.json (no build config reads it)",
+        "tsconfig.strict-web.json is gone at head; the base has it, so a port keeps it",
+        "src/a.ts is not in tsconfig.strict.json",
+        "src/b.ts is not in tsconfig.strict.json",
+        "1 files compared, 0 different, 3 other problems",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
   const loose = [
     {
       options: { exactOptionalPropertyTypes: undefined },

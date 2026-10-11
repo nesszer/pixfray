@@ -43,10 +43,11 @@ bun run dev
 - `bun run lint` runs [oxlint](https://oxc.rs/docs/guide/usage/linter) with type-aware rules
   (`.oxlintrc.json`). Warnings fail it. In `server/` every promise must be awaited or handed to
   `waitUntil`, because the Worker can cancel one that is dropped.
-- `bun run typecheck` runs `tsc` four times. `tsconfig.worker.json` (server/, Workers types),
+- `bun run typecheck` runs `tsc` five times. `tsconfig.worker.json` (server/, Workers types),
   `tsconfig.web.json` (src/ with the served modules in src/served/, DOM types plus `types/browser.d.ts`) and `tsconfig.node.json`
-  (the build configs) check the JavaScript loosely; `tsconfig.strict.json` checks every TypeScript
-  file with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests and the
+  (the build configs) check the JavaScript loosely; `tsconfig.strict.json` (Worker and Node types) and
+  `tsconfig.strict-web.json` (DOM types) check every TypeScript file with `strict`,
+  `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests and the
   `.mjs` scripts are linted but not type checked. In a `.js` file, add JSDoc where inference falls
   short (`/** @param {{ … }} opts */`) rather than casting the problem away.
 - `bun run audit` checks every installed package against the advisory database and fails on a high or
@@ -64,39 +65,54 @@ The code moves from JSDoc-typed JavaScript to strict TypeScript one file at a ti
 - New and ported files are `.ts`, import local files with the `.ts` extension and use only syntax
   that strips to JavaScript (no `enum`, `namespace` or parameter properties; `erasableSyntaxOnly`).
   Type-only imports say `import type` (`verbatimModuleSyntax`).
-- Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`) is listed in `files` in
-  `tsconfig.strict.json`; a `.d.ts` file there fails (below), so new types go in `.ts` files. Two
-  are checked by another program instead: `cloudflare.config.ts` by
-  `tsconfig.node.json` and `types/browser.d.ts` by `tsconfig.web.json`. `bun run typecheck` (so
-  `bun run check`) enforces this by ending with `node scripts/port-check.ts --strict-list`, which
-  reads every tracked and untracked file that git doesn't ignore and prints
-  `tsconfig.strict.json covers every TypeScript file`, or one line per file it misses. It asks tsc
-  for the program (`tsc -p <config> --listFilesOnly`), so `files`, `include` and `exclude` count as
-  tsc reads them, and each error tsc prints reading the config fails it too, as
-  `tsc -p tsconfig.strict.json: error TS…`.
-- The strict list also fails when `tsconfig.strict.json` checks less, as tsc reads it after
-  `extends` (`tsc --showConfig`; the rules take about 0.25 s):
+- Every TypeScript file (`.ts`, `.mts`, `.cts`, `.tsx`) is listed in `files` in one of the two
+  strict programs, split by runtime so each sees only its own globals:
+  - `tsconfig.strict.json`: the Worker (`server/`), the `.ts` scripts (`scripts/`), `site.config.js`
+    and the shared types. Worker and Node types, no DOM, so server code can't use `document` or
+    `window`, and Web Crypto and streams keep the Workers types.
+  - `tsconfig.strict-web.json`: browser code (`src/`, and `types/dom.ts`). DOM types and
+    `vite/client`, no Worker or Node types. A browser file that imports a server module pulls it
+    into this program too, so such a module (today `server/upgrades.ts`, imported by
+    `src/dashboard.js`) must type-check with DOM types as well.
+
+  `types/lib-guards.ts`, `types/site.ts` and `site.config.js` are on both lists. A `.d.ts` file on
+  either fails (below), so new types go in `.ts` files. Two TypeScript files are checked by
+  another program instead: `cloudflare.config.ts` by `tsconfig.node.json` and
+  `types/browser.d.ts` by `tsconfig.web.json`. `bun run typecheck` (so `bun run check`) enforces
+  this by ending with `node scripts/port-check.ts --strict-list`, which reads every tracked and
+  untracked file that git doesn't ignore and prints
+  `tsconfig.strict.json and tsconfig.strict-web.json cover every TypeScript file`, or one line per
+  file it misses, as `<file> is not in tsconfig.strict.json or tsconfig.strict-web.json` (in a repo
+  without `tsconfig.strict-web.json`, the lines name `tsconfig.strict.json` alone). It asks tsc for
+  each program (`tsc -p <config> --listFilesOnly`), so `files`, `include` and `exclude` count as
+  tsc reads them, and each error tsc prints reading a config fails it too, as
+  `tsc -p <config>: error TS…`.
+- The strict list also fails when either strict config checks less, as tsc reads it after
+  `extends` (`tsc --showConfig`; the rules take about 0.25 s). Each line names the config
+  (`tsconfig.strict.json` or `tsconfig.strict-web.json`); the problems of `tsconfig.strict.json`
+  print first:
   - `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax` and
     `erasableSyntaxOnly` must be true:
-    `tsconfig.strict.json must set <option> to true (it is <value or "not set">)`.
+    `<config> must set <option> to true (it is <value or "not set">)`.
   - `noCheck`, `noLib`, `noResolve` and `noStrictGenericChecks` turn checks off, so true fails. Every
     other `strict*` or `no*` option, `alwaysStrict` and `useUnknownInCatchVariables` fail at false:
-    `tsconfig.strict.json sets <option> to <value>, which checks less`.
+    `<config> sets <option> to <value>, which checks less`.
   - Every program keeps `skipLibCheck`, because `@types/node` and `@cloudflare/workers-types`
     declare the same globals, and `skipLibCheck` skips every declaration file. So a `.d.ts` file in
-    the strict program fails with
-    `<file> is a declaration file, which skipLibCheck leaves unchecked in tsconfig.strict.json; name it .ts`.
+    a strict program fails with
+    `<file> is a declaration file, which skipLibCheck leaves unchecked in <config>; name it .ts`.
     That is why `types/lib-guards.ts` is a `.ts` file.
 - `bun run lint` fails `// @ts-nocheck` and a `@ts-ignore` or `@ts-expect-error` with no reason
   after it (`typescript/ban-ts-comment`), so a TypeScript file is checked whole. oxlint reads that
   rule in TypeScript files only, and a lint directive comment can turn it off (oxlint has no option
   to ignore them), so the strict list also reads the comments of every code file in the strict
-  program, JavaScript ones included; text in strings is not read. A `@ts-nocheck` in any letter
-  case (`/// @ts-nocheck`, `// @TS-NOCHECK`) fails as
-  `<file>:<line> has <pragma>, which turns type checking off; files on tsconfig.strict.json are checked whole`,
+  programs, JavaScript ones included; text in strings is not read. A file in both programs is read
+  once and named with `tsconfig.strict.json`. A `@ts-nocheck` in any letter case
+  (`/// @ts-nocheck`, `// @TS-NOCHECK`) fails as
+  `<file>:<line> has <pragma>, which turns type checking off; files on <config> are checked whole`,
   and any `eslint-disable` or `oxlint-disable` comment (line, next-line or block; naming rules or
   blanket) as
-  `<file>:<line> has <directive>, which can turn off any lint rule, ban-ts-comment included; files on tsconfig.strict.json take no lint directives`.
+  `<file>:<line> has <directive>, which can turn off any lint rule, ban-ts-comment included; files on <config> take no lint directives`.
 - Each `any`, `as` cast or `!` assertion says why in a comment on that line or the line above.
 - `types/lib-guards.ts` lets `Number.isInteger` narrow `unknown` to `number`, so a port needs no
   added `typeof` check, which would change the runtime code. The guard names a branded number, so
@@ -118,7 +134,8 @@ A port pull request changes types only, from a `port/<name>` branch:
    oxc-stripped JavaScript of its `.js` or `.ts` source at `/<name>.js` (docs/CONTRACTS.md §9). oxc
    keeps comments, so a port that adds only types serves the same code under the same `?v=` hash,
    while a changed comment changes the hash and open overlays reload once.
-2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json`.
+2. Add types until `bun run typecheck` passes, and add the file to `tsconfig.strict.json` (Worker,
+   scripts) or `tsconfig.strict-web.json` (browser code in `src/`).
 3. `bun run port-check` (`node scripts/port-check.ts --base origin/main`) checks every file that
    differs between the working tree and where the branch left `main`. Code files are `.js`, `.mjs`,
    `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` and `.tsx`. Run without `--base <ref>` or `--strict-list`,
@@ -157,15 +174,17 @@ A port pull request changes types only, from a `port/<name>` branch:
    - A `tsconfig*.json` outside `public/` prints
      `allowed: <path> (the build diff compares what the build makes with it)` and is not counted:
      the build diff below sees what it changes, and the strict options are compared on their own.
-     When the merge base has `tsconfig.strict.json`, the head's `compilerOptions` for it, as tsc
-     resolves them after `extends` (`tsc -p tsconfig.strict.json --showConfig`, run in the working
-     tree and in the base checkout at `.port-check/<sha>/`, which is made for this even without a
-     build config), must equal the base's, so a port changes only the `files` list. That covers
-     `paths`, `types`, `lib`, `typeRoots` and every other option, not only the ones the strict list
-     reads. Each option that differs fails as
-     `tsconfig.strict.json changes <option> from the base (base <JSON or "not set">, head <JSON or "not set">); a port changes only its files list`.
-     A base without `tsconfig.strict.json` (the change that adds it) skips this; the strict-list
-     rules above still apply. Without `cloudflare.config.ts` nothing builds, and
+     For each strict config the merge base has (`tsconfig.strict.json`, `tsconfig.strict-web.json`),
+     the head's `compilerOptions` for it, as tsc resolves them after `extends`
+     (`tsc -p <config> --showConfig`, run in the working tree and in the base checkout at
+     `.port-check/<sha>/`, which is made for this even without a build config), must equal the
+     base's, so a port changes only the `files` lists. That covers `paths`, `types`, `lib`,
+     `typeRoots` and every other option, not only the ones the strict list reads. Each option that
+     differs fails as
+     `<config> changes <option> from the base (base <JSON or "not set">, head <JSON or "not set">); a port changes only its files list`,
+     and a strict config the base has but the head lacks as
+     `<config> is gone at head; the base has it, so a port keeps it`. A base without a strict config
+     (the change that adds it) skips this for that config; the strict-list rules above still apply. Without `cloudflare.config.ts` nothing builds, and
      the reason reads `no build config reads it`. One case fails, and counts as compared and
      different: a `tsconfig.json` new at the repo root, because the base build runs inside the
      repo and would read it too. It prints `tsconfig.json is new at the repo root, where the base
