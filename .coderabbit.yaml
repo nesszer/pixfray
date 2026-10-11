@@ -28,7 +28,7 @@ reviews:
       instructions: >-
         Cloudflare Worker and the ChannelRoom SQLite Durable Object, on the Workers Free plan only (no paid
         products). Every promise is awaited or handed to ctx.waitUntil; a dropped one can be cancelled. Chat mod
-        checks use ev.mod from MOD_BADGES in eventsub.js (a lead moderator has only the lead_moderator badge);
+        checks use ev.mod from MOD_BADGES in server/eventsub.ts (a lead moderator has only the lead_moderator badge);
         flag any other badge read. Refusing the bot as a target stays the single BOT_TARGET_ACTIONS check.
         Channels, logins and domains come from site.config.js only. Secrets, OAuth tokens and session values must
         never reach logs, chat replies or error bodies.
@@ -63,7 +63,7 @@ reviews:
         mode: warning
         instructions: >-
           If the pull request changes behavior in server/, src/ or public/ (not only formatting, comments or
-          types), it must also change or add a test in tests/*.test.{mjs,ts} and update the matching doc in docs/
+          types), it must also change or add a test in tests/*.test.ts and update the matching doc in docs/
           (CONTRACTS.md for routes, rules and config; STREAMER_SETUP.md or DUELS.md for what a streamer sees).
           Pass if both are present or the change has no behavior effect.
       - name: Config lives in site.config.js

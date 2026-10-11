@@ -57,8 +57,9 @@ bun run dev
 
 ## TypeScript port
 
-The code moved from JSDoc-typed JavaScript to strict TypeScript one file at a time, and every file is now `.ts`. Node 22.18+ runs
-`.ts` scripts with no flags, and Vite and `cf build` strip the types from the pages and the Worker.
+The code moved from JSDoc-typed JavaScript to strict TypeScript one file at a time. Every file outside
+`public/`, except `site.config.js`, is now `.ts`. Node 22.18+ runs `.ts` scripts with no flags, and Vite
+and `cf build` strip the types from the pages and the Worker.
 
 - New and ported files are `.ts`, import local files with the `.ts` extension and use only syntax
   that strips to JavaScript (no `enum`, `namespace` or parameter properties; `erasableSyntaxOnly`).
@@ -97,8 +98,8 @@ The code moved from JSDoc-typed JavaScript to strict TypeScript one file at a ti
   value the test expects to find, and `Loose` (`any`) for JSON bodies and rows a test asserts on.
   Each of their casts carries its reason there once.
 
-  The first two take a folder (`include`), so a new file in `server/` or `src/` is checked as soon as it
-  exists; the three Node programs list each file in `files`. `types/lib-guards.ts`, `types/site.ts` and
+  `tsconfig.worker.json` and `tsconfig.web.json` take a folder (`include`), so a new file in `server/`
+  or `src/` is checked as soon as it exists; the three Node programs list each file in `files`. `types/lib-guards.ts`, `types/site.ts` and
   `site.config.js` are in every program. A `.d.ts` file in any fails (below), so new types go in `.ts`
   files. `bun run typecheck` (so `bun run check`) enforces
   this by ending with `node scripts/port-check.ts --strict-list`, which reads every tracked and
