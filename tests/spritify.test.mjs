@@ -1,4 +1,4 @@
-// The browser's picture-to-sprite steps (src/spritify.js) on plain images, and the server checks they must pass.
+// The browser's picture-to-sprite steps (src/spritify.ts) on plain images, and the server checks they must pass.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -13,7 +13,7 @@ import {
   spritify,
   SPRITE_MAX,
   OUTLINE,
-} from "../src/spritify.js";
+} from "../src/spritify.ts";
 import { validateSprite, validateRedrawImage, jpegSize, spriteDay, SPRITE_LIMITS } from "../server/sprites.ts";
 import { makePng, b64 } from "./upload-helpers.mjs";
 

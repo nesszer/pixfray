@@ -21,11 +21,11 @@ import {
   CHANNEL_PICKED,
   DEFAULT_COLOR,
   applyChannel,
-} from "./ui.js";
+} from "./ui.ts";
 import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.ts";
-import { CHARACTER_GROUPS } from "./character-groups.js";
-import { skyBackdrop } from "./scrub.js";
-import { initSpriteMaker } from "./sprite-maker.js";
+import { CHARACTER_GROUPS } from "./character-groups.ts";
+import { skyBackdrop } from "./scrub.ts";
+import { initSpriteMaker } from "./sprite-maker.ts";
 import site from "../site.config.js";
 skyBackdrop();
 applyChannel();
@@ -73,7 +73,7 @@ const stage = addStage($("#preview"));
 // The 3D fighter above the on-stream preview loads after the page works; without WebGL the card keeps the 2D stage.
 let fighter3d = null;
 if (CHANNEL_PICKED && !navigator.connection?.saveData) {
-  import("./fighter3d.js")
+  import("./fighter3d.ts")
     .then(({ createFighter3D }) => {
       $("#showcase").hidden = false;
       try {
@@ -105,7 +105,7 @@ function readout(entry) {
   $("#readout-name").textContent = entry.label || entry.id;
   $("#readout-sub").textContent = i >= 0 ? "Character " + (i + 1) + " of " + pickable().length : "";
 }
-// Picker tiles get voxel thumbnails too (src/voxthumb.js); until it loads, or without WebGL, they show flat sprites.
+// Picker tiles get voxel thumbnails too (src/voxthumb.ts); until it loads, or without WebGL, they show flat sprites.
 const voxJobs = new Map();
 let voxThumb = null,
   voxAll = null;
@@ -119,7 +119,7 @@ onLooksReady($("#preview3d"), () => {
   for (const [c, make] of voxJobs) if (c.isConnected) voxThumb?.(c, make);
 });
 if (!navigator.connection?.saveData) {
-  import("./voxthumb.js")
+  import("./voxthumb.ts")
     .then((m) => {
       voxThumb = m.voxThumb;
       voxAll = m.voxAll;
@@ -1549,7 +1549,7 @@ async function init() {
   state.session = session.ok ? session.data : null;
   if (catalog.ok && Array.isArray(catalog.data) && catalog.data.length) state.catalog = catalog.data; // else the static list stays
   state.config = live.ok ? live.data?.config : null;
-  // the intro's main button offers this channel next time (src/intro/back.js)
+  // the intro's main button offers this channel next time (src/intro/back.ts)
   if (live.ok)
     try {
       localStorage.setItem("pixfray:channel", CHANNEL);
@@ -1712,7 +1712,7 @@ function channelSearch(listed, full = false) {
 const landing = { arena: null, show: null, first: null, fallback: null, labels: new Map(), links: new Map() };
 function liveLanding() {
   if (navigator.connection?.saveData || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  import("./fighter3d.js")
+  import("./fighter3d.ts")
     .then(({ createFighter3D }) => {
       const canvas = h("canvas", { class: "landing-3d", "aria-hidden": "true" });
       $("#pick").prepend(canvas);

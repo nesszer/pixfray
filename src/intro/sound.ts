@@ -1,8 +1,8 @@
 // Synthesized sound for the intro: a low fire-lit drone with crackle, and short pixel blips for events.
 // Nothing plays until the visitor turns sound on (browsers need a click first). No audio files.
 export function createSound() {
-  let ctx = null,
-    master = null,
+  let ctx: AudioContext | null = null,
+    master: GainNode = null!, // set in start() together with ctx; every reader checks ctx first
     on = false;
 
   function start() {
@@ -26,7 +26,7 @@ export function createSound() {
       [55, 0.05],
       [82.6, 0.035],
       [110.3, 0.012],
-    ]) {
+    ] satisfies [number, number][]) {
       const o = ctx.createOscillator(),
         v = ctx.createGain();
       o.type = "triangle";
@@ -54,7 +54,7 @@ export function createSound() {
     src.start();
   }
 
-  function setOn(value) {
+  function setOn(value: boolean) {
     on = value;
     if (on && !ctx) start();
     if (!ctx) return;
@@ -64,7 +64,16 @@ export function createSound() {
   }
 
   // A short square-wave note, optionally sliding to another pitch.
-  function blip(freq = 660, { to = freq, dur = 0.09, type = "square", gain = 0.05, delay = 0 } = {}) {
+  function blip(
+    freq = 660,
+    {
+      to = freq,
+      dur = 0.09,
+      type = "square",
+      gain = 0.05,
+      delay = 0,
+    }: { to?: number; dur?: number; type?: OscillatorType; gain?: number; delay?: number } = {},
+  ) {
     if (!on || !ctx) return;
     const t = ctx.currentTime + delay,
       o = ctx.createOscillator(),
@@ -84,7 +93,7 @@ export function createSound() {
       return on;
     },
     setOn,
-    chapter(i) {
+    chapter(i: number) {
       blip(392 * Math.pow(2, (i / 12) * 2), { dur: 0.12, type: "triangle", gain: 0.06 });
       blip(784 * Math.pow(2, (i / 12) * 2), { dur: 0.08, type: "triangle", gain: 0.03, delay: 0.07 });
     },
@@ -92,7 +101,7 @@ export function createSound() {
       for (let i = 0; i < 6; i++)
         blip(1400 + Math.random() * 600, { to: 900, dur: 0.025, gain: 0.025, delay: i * 0.055 });
     },
-    hit(crit) {
+    hit(crit: boolean) {
       blip(crit ? 330 : 260, { to: 70, dur: crit ? 0.32 : 0.2, gain: 0.07 });
       if (crit) blip(990, { to: 1320, dur: 0.12, type: "triangle", gain: 0.04, delay: 0.05 });
     },

@@ -2,7 +2,7 @@
 // ?channel=<login> picks the channel; the configured default is used otherwise.
 // Without it the viewer page asks which stream the viewer watches (CHANNEL_PICKED false); the admin page uses the default.
 import site from "../site.config.js";
-import { channelParam } from "./channel-param.js";
+import { channelParam } from "./channel-param.ts";
 // The pages' HTML names the default channel (%SITE_CHANNEL%, vite.config.js); applyChannel swaps it for the current one.
 const TEMPLATE_CHANNEL = site.defaultChannel;
 const raw = new URLSearchParams(location.search).get("channel");
@@ -16,7 +16,7 @@ if (CHANNEL_PICKED && raw !== asked) {
 }
 export const CHANNEL = CHANNEL_PICKED ? asked : site.defaultChannel;
 // A same-site link that keeps the current channel. Links always name it, since the viewer page without one is the /play/ picker.
-export const withChannel = (path) => path + (path.includes("?") ? "&" : "?") + "channel=" + CHANNEL;
+export const withChannel = (path: string) => path + (path.includes("?") ? "&" : "?") + "channel=" + CHANNEL;
 // This page's address without the one-time flags sign-in adds: where signing in or out comes back to.
 export function here() {
   const u = new URL(location.href);
@@ -24,13 +24,14 @@ export function here() {
   return u.pathname + u.search + u.hash;
 }
 // Twitch sign-in that comes back to this page, its channel and its tab.
-export const loginHref = (next = here()) =>
+export const loginHref = (next: string = here()) =>
   "/auth/login?" + new URLSearchParams({ ...(CHANNEL_PICKED ? { channel: CHANNEL } : {}), next });
 // Sign-in links (data-login) take the tab that is open when they're clicked, not the one open when they were drawn.
 document.addEventListener(
   "click",
   (e) => {
-    const a = /** @type {any} */ (e.target).closest?.("a[data-login]");
+    // the target of a click is an element; closest?. still skips anything else
+    const a = (e.target as Element).closest?.<HTMLAnchorElement>("a[data-login]");
     if (a) a.href = loginHref();
   },
   true,
@@ -39,20 +40,23 @@ document.addEventListener(
 {
   const nav = document.querySelector(".topbar nav"),
     cur = nav?.querySelector("[aria-current]");
-  if (cur && nav.scrollWidth > nav.clientWidth)
-    nav.scrollLeft = Math.max(0, cur.getBoundingClientRect().right - nav.getBoundingClientRect().right + 28);
+  // nav!: cur was found inside nav, so nav is set whenever cur is
+  if (cur && nav!.scrollWidth > nav!.clientWidth)
+    nav!.scrollLeft = Math.max(0, cur.getBoundingClientRect().right - nav!.getBoundingClientRect().right + 28); // nav!: as above
 }
 // Put the channel name into the page: elements marked data-channel get the template token replaced, and links in nav keep the channel.
 export function applyChannel() {
   for (const a of document.querySelectorAll("a[data-keep-channel]"))
-    a.setAttribute("href", withChannel(a.getAttribute("href")));
+    a.setAttribute("href", withChannel(a.getAttribute("href") as string)); // the page HTML gives each of these links an href
   for (const a of document.querySelectorAll("a[data-login]")) a.setAttribute("href", loginHref());
   if (CHANNEL === TEMPLATE_CHANNEL) return;
   document.title = document.title.replaceAll(TEMPLATE_CHANNEL, CHANNEL);
   for (const el of document.querySelectorAll("[data-channel]")) {
-    if (el.tagName === "INPUT") el.value = CHANNEL;
-    else if (el.tagName === "META") el.content = el.content.replaceAll(TEMPLATE_CHANNEL, CHANNEL);
-    else el.textContent = el.textContent.replaceAll(TEMPLATE_CHANNEL, CHANNEL);
+    // casts: the tag name was just checked, and an element's textContent is never null
+    if (el.tagName === "INPUT") (el as HTMLInputElement).value = CHANNEL;
+    else if (el.tagName === "META")
+      (el as HTMLMetaElement).content = (el as HTMLMetaElement).content.replaceAll(TEMPLATE_CHANNEL, CHANNEL); // the tag name was just checked
+    else el.textContent = (el.textContent as string).replaceAll(TEMPLATE_CHANNEL, CHANNEL); // an element's textContent is never null
   }
 }
 export const DEFAULT_COLOR = "#a78bfa";
@@ -64,14 +68,16 @@ export const DEFAULT_ABILITIES = {
 export const ABILITY_NAMES = { strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 
 // JSON fetch that never throws: {ok, status, data}. Same-origin, so POSTs carry the Origin header the Worker requires.
-/**
- * @param {string} path
- * @param {{ method?: string, body?: unknown }} [opts]
- * @returns {Promise<{ ok: boolean, status: number, data: any }>}
- */
-export async function api(path, { method = "GET", body } = {}) {
-  /** @type {RequestInit & { headers: Record<string, string> }} */
-  const init = { method, credentials: "same-origin", headers: { Accept: "application/json" } };
+export async function api(
+  path: string,
+  { method = "GET", body }: { method?: string; body?: unknown } = {},
+  // data is any: the parsed JSON body, which callers that are still .js read per route (typed per route in TS20)
+): Promise<{ ok: boolean; status: number; data: any }> {
+  const init: RequestInit & { headers: Record<string, string> } = {
+    method,
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
@@ -94,7 +100,8 @@ export async function api(path, { method = "GET", body } = {}) {
   } catch {}
   return { ok: response.ok, status: response.status, data };
 }
-export const errorText = (r, fallback = "Request failed") =>
+// r.data is any: api()'s parsed body, untyped until TS20
+export const errorText = (r: { status: number; data: any }, fallback = "Request failed") =>
   (r.data && (r.data.error || r.data.reason)) ||
   (r.status === 429
     ? "Too many requests right now. Try again in a minute"
@@ -105,21 +112,21 @@ export const errorText = (r, fallback = "Request failed") =>
         : fallback);
 
 // Tiny DOM builder. Strings become text nodes, so user-supplied names are never parsed as HTML.
-/**
- * @param {string} tag
- * @param {Record<string, any> | null} [attrs]
- * @param {...any} children
- * @returns {any}
- */
-export function h(tag, attrs = {}, ...children) {
+// Returns the element type of the tag, so callers can set its own properties (input.value, img.src).
+export function h<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, unknown> | null = {},
+  ...children: unknown[]
+): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
     if (value === undefined || value === null || value === false) continue;
-    if (key === "class") node.className = value;
+    if (key === "class") node.className = value as string; // callers pass the class list as a string
     else if (key === "style" && typeof value === "object")
-      for (const [p, v] of Object.entries(value)) node.style.setProperty(p, v);
-    else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value);
-    else if (key in node && typeof value !== "string") node[key] = value;
+      for (const [p, v] of Object.entries(value)) node.style.setProperty(p, v as string); // style values are strings
+    else if (key.startsWith("on") && typeof value === "function")
+      node.addEventListener(key.slice(2), value as EventListener); // on* attrs are event handlers
+    else if (key in node && typeof value !== "string") (node as unknown as Record<string, unknown>)[key] = value; // key in node: a property this element has (own or inherited, like value or checked)
     else node.setAttribute(key, value === true ? "" : String(value));
   }
   for (const child of children.flat(Infinity))
@@ -127,23 +134,22 @@ export function h(tag, attrs = {}, ...children) {
       node.append(child instanceof Node ? child : String(child));
   return node;
 }
-/** @type {(selector: string, root?: ParentNode) => any} */
-export const $ = (selector, root = document) => root.querySelector(selector);
-export function setStatus(node, message, kind = "") {
+export const $ = (selector: string, root: ParentNode = document) => root.querySelector(selector);
+export function setStatus(node: Element, message: string | null | undefined, kind = "") {
   node.textContent = message || "";
   node.className = "status" + (kind ? " " + kind : "");
 }
 
-export const seconds = (ms) => {
+export const seconds = (ms: number) => {
   const s = ms / 1000;
   return (Number.isInteger(s) ? s : s.toFixed(2).replace(/0+$/, "")) + " s";
 };
-export function abilityDetail(name, spec = {}) {
+export function abilityDetail(name: string, spec: { damage?: number; amount?: number; cooldownMs?: number } = {}) {
   const cd = Number.isInteger(spec.cooldownMs) ? seconds(spec.cooldownMs) + " cooldown" : "";
   if (name === "heal") return (spec.amount ?? "?") + " HP heal, " + cd;
   return (spec.damage ?? "?") + " damage, " + cd;
 }
-export function timeAgo(ms) {
+export function timeAgo(ms: number | null | undefined) {
   if (!ms) return "never";
   const s = Math.round((Date.now() - ms) / 1000);
   if (s < 5) return "just now";
@@ -152,13 +158,17 @@ export function timeAgo(ms) {
   if (s < 86400) return Math.round(s / 3600) + " h ago";
   return new Date(ms).toLocaleDateString();
 }
-export const dateTime = (ms) =>
+export const dateTime = (ms: number | null | undefined) =>
   ms ? new Date(ms).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
-export const formatBytes = (n) =>
+export const formatBytes = (n: number) =>
   n >= 1048576 ? (n / 1048576).toFixed(2) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B";
 
 // Fills the signed-in area of the top bar on both pages.
-export function renderWho(container, session, onSignOut) {
+export function renderWho(
+  container: Element,
+  session: { user?: { login: string; displayName?: string } | null; configured?: boolean } | null | undefined,
+  onSignOut: () => void,
+) {
   container.replaceChildren();
   if (session?.user) {
     container.append(
@@ -182,10 +192,44 @@ export async function signOut() {
 // ---------- sprite previews ----------
 // One requestAnimationFrame loop drives every animated canvas. Thumbnails stay on a still frame and animate only
 // while hovered, focused or selected; the main preview loops the walk cycle. prefers-reduced-motion keeps all still.
-const images = new Map();
-const sprites = new Set();
+/** A frame's rectangle in a character sheet. */
+type Frame = { x: number; y: number; w: number; h: number };
+/** A catalog character as the API sends it (the fields drawn here). */
+type Entry = {
+  id: string;
+  url: string;
+  frames?: Frame[];
+  animations?: Record<string, Frame[] | undefined>;
+  fps?: number;
+  head?: unknown;
+};
+/** A pet: { id, tier, url? }; uploaded pets have a url to their PNG. */
+type Pet = { id?: string; tier?: unknown; url?: string };
+/** cosmetics.js ids. */
+type Looks = {
+  recolor?: string;
+  accessory?: string;
+  petColor?: string;
+  trail?: string;
+  winEffect?: string;
+  title?: string;
+  taunt?: string;
+};
+type Sprite = {
+  canvas: HTMLCanvasElement;
+  entry: Entry | null | undefined;
+  anim: string;
+  active: () => boolean;
+  hat: string;
+  pet: Pet | null;
+  looks: Looks;
+  looksKey: string;
+  drawn: string;
+};
+const images = new Map<string, HTMLImageElement>();
+const sprites = new Set<Sprite>();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
-const redraws = new Map(); // stills and stages that redraw once a module or image arrives: draw -> its canvas
+const redraws = new Map<() => void, Element>(); // stills and stages that redraw once a module or image arrives: draw -> its canvas
 const redrawAll = () => {
   for (const s of sprites) s.drawn = "";
   start();
@@ -193,8 +237,8 @@ const redrawAll = () => {
 };
 // Lists rebuild their canvases on every render; the old ones are dropped a moment later, once the new list is in
 // the page (a canvas is added here before it is attached).
-let sweep = 0;
-function onRedraw(canvas, draw) {
+let sweep: ReturnType<typeof setTimeout> = 0; // a number in the browser, so 0 means none
+function onRedraw(canvas: Element, draw: () => void) {
   redraws.set(draw, canvas);
   if (!sweep)
     sweep = setTimeout(() => {
@@ -203,17 +247,17 @@ function onRedraw(canvas, draw) {
     }, 1000);
 }
 reducedMotion.addEventListener("change", redrawAll);
-function image(url) {
+function image(url: string) {
   if (!images.has(url)) {
     const img = new Image();
     img.decoding = "async";
     img.src = url;
     images.set(url, img);
   }
-  return images.get(url);
+  return images.get(url)!; // set just above when it was missing
 }
-export const framesFor = (entry, anim) => {
-  const a = entry?.animations || {};
+export const framesFor = (entry: Entry | null | undefined, anim: string) => {
+  const a: Record<string, Frame[] | undefined> = entry?.animations || {};
   const list =
     anim === "idle"
       ? a.idle || entry?.frames
@@ -224,7 +268,7 @@ export const framesFor = (entry, anim) => {
 };
 // Hats are drawn by src/served/hats.js, the same module the overlay uses. It is served as /hats.js (vite.config.js),
 // not bundled, so it loads at runtime.
-let hats = null;
+let hats: any = null; // src/served/hats.js, loaded at runtime from its URL, so no types reach here
 const HATS_URL = new URL("/hats.js", location.href).href; // a full URL, so Vite leaves the import alone
 import(/* @vite-ignore */ HATS_URL)
   .then((m) => {
@@ -233,7 +277,7 @@ import(/* @vite-ignore */ HATS_URL)
   })
   .catch(() => {});
 // Pets come from src/served/pets.js the same way. A pet is { id, tier, url? }; uploaded pets have a url to their PNG.
-let pets = null;
+let pets: any = null; // src/served/pets.js, loaded at runtime like hats
 const PETS_URL = new URL("/pets.js", location.href).href;
 import(/* @vite-ignore */ PETS_URL)
   .then((m) => {
@@ -242,7 +286,7 @@ import(/* @vite-ignore */ PETS_URL)
   })
   .catch(() => {});
 // Cosmetics (recolors, accessories, trails, win effects, taunts, titles) come from src/served/cosmetics.js, as on stream.
-let cosmetics = null;
+let cosmetics: any = null; // src/served/cosmetics.js, loaded at runtime like hats
 const COSMETICS_URL = new URL("/cosmetics.js", location.href).href;
 export const cosmeticsReady = import(/* @vite-ignore */ COSMETICS_URL)
   .then((m) => {
@@ -251,12 +295,16 @@ export const cosmeticsReady = import(/* @vite-ignore */ COSMETICS_URL)
     return m;
   })
   .catch(() => null);
-const tint = (id) => cosmetics?.recolorFilter(id) || "none";
-const petArg = (pet) => (pet?.url ? { image: image(pet.url) } : pet?.id || "");
+const tint = (id: string | undefined) => cosmetics?.recolorFilter(id) || "none";
+const petArg = (pet: Pet | null | undefined) => (pet?.url ? { image: image(pet.url) } : pet?.id || "");
 // A still pet on its own canvas (the dashboard's pet list), in a pet color (cosmetics.js) if one is given.
-export function addPet(canvas, pet, { color = "" } = {}) {
+export function addPet(
+  canvas: HTMLCanvasElement,
+  pet: Pet | null | undefined,
+  { color = "" }: { color?: string } = {},
+) {
   const draw = () => {
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d") as CanvasRenderingContext2D; // a canvas only drawn in 2D always has one
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!pets || !pet?.id) return;
     pets.drawPet(ctx, petArg(pet), canvas.width / 2, canvas.height - 2, canvas.height * 0.62, {
@@ -270,9 +318,9 @@ export function addPet(canvas, pet, { color = "" } = {}) {
   draw();
 }
 // A still sample of a trail or a win effect for the shop lists.
-export function addCosmeticSample(canvas, kind, id) {
+export function addCosmeticSample(canvas: HTMLCanvasElement, kind: string, id: string) {
   const draw = () => {
-    const ctx = canvas.getContext("2d"),
+    const ctx = canvas.getContext("2d") as CanvasRenderingContext2D, // a canvas only drawn in 2D always has one
       w = canvas.width,
       hgt = canvas.height;
     ctx.clearRect(0, 0, w, hgt);
@@ -293,8 +341,16 @@ export function addCosmeticSample(canvas, kind, id) {
   draw();
 }
 // looks: { recolor, accessory, petColor } (cosmetics.js ids), drawn as on stream.
-export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0, looks = {}) {
-  const ctx = canvas.getContext("2d");
+export function drawFrame(
+  canvas: HTMLCanvasElement,
+  entry: Entry,
+  frame: Frame | undefined,
+  hat = "",
+  pet: Pet | null = null,
+  t = 0,
+  looks: Looks = {},
+) {
+  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D; // a canvas only drawn in 2D always has one
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const img = entry && image(entry.url);
   if (!frame || !img.complete || !img.naturalWidth) return false;
@@ -330,17 +386,18 @@ export function drawFrame(canvas, entry, frame, hat = "", pet = null, t = 0, loo
   return true;
 }
 // sprite = {canvas, entry, anim, active()} ; returns a handle with .set(entry) and .destroy()
-/**
- * @param {HTMLCanvasElement} canvas
- * @param {any} entry
- * @param {{ anim?: string, active?: () => boolean, hat?: string, pet?: any, looks?: Record<string, any> }} [opts]
- */
 export function addSprite(
-  canvas,
-  entry,
-  { anim = "walk", active = () => true, hat = "", pet = null, looks = {} } = {},
+  canvas: HTMLCanvasElement,
+  entry: Entry | null | undefined,
+  {
+    anim = "walk",
+    active = () => true,
+    hat = "",
+    pet = null,
+    looks = {},
+  }: { anim?: string; active?: () => boolean; hat?: string; pet?: Pet | null; looks?: Looks } = {},
 ) {
-  const s = { canvas, entry, anim, active, hat, pet, looks, looksKey: JSON.stringify(looks), drawn: "" };
+  const s: Sprite = { canvas, entry, anim, active, hat, pet, looks, looksKey: JSON.stringify(looks), drawn: "" };
   sprites.add(s);
   const img = entry && image(entry.url);
   img?.addEventListener(
@@ -353,18 +410,18 @@ export function addSprite(
   );
   start();
   return {
-    hat(id) {
+    hat(id: string | null | undefined) {
       s.hat = id || "";
       s.drawn = "";
       start();
     },
-    looks(next) {
+    looks(next: Looks | null | undefined) {
       s.looks = next || {};
       s.looksKey = JSON.stringify(s.looks);
       s.drawn = "";
       start();
     },
-    pet(next) {
+    pet(next: Pet | null | undefined) {
       s.pet = next?.id ? next : null;
       s.drawn = "";
       if (next?.url)
@@ -378,7 +435,7 @@ export function addSprite(
         );
       start();
     },
-    set(next) {
+    set(next: Entry | null | undefined) {
       s.entry = next;
       s.drawn = "";
       if (next)
@@ -406,7 +463,7 @@ function start() {
 }
 // Walking sprites and the on-stream stage come to rest REST_MS after the last input, and stop drawing; any input wakes them.
 const REST_MS = 10000,
-  stages = new Set();
+  stages = new Set<() => void>();
 let lastInput = performance.now();
 const awake = () => performance.now() - lastInput < REST_MS;
 for (const ev of [
@@ -428,7 +485,7 @@ for (const ev of [
     },
     { passive: true, capture: true },
   );
-function tick(now) {
+function tick(now: number) {
   let busy = false;
   for (const s of sprites) {
     if (!s.canvas.isConnected) {
@@ -454,7 +511,9 @@ function tick(now) {
       petT +
       ":" +
       s.looksKey;
-    if (key !== s.drawn && drawFrame(s.canvas, s.entry, frames[index], s.hat, s.pet, petT, s.looks)) s.drawn = key;
+    // s.entry as Entry: without an entry there are no frames, and drawFrame returns before reading it
+    if (key !== s.drawn && drawFrame(s.canvas, s.entry as Entry, frames[index], s.hat, s.pet, petT, s.looks))
+      s.drawn = key;
     if (moving || key !== s.drawn) busy = true;
   }
   // With reduced motion every sprite is a still frame, so the loop sleeps until something needs redrawing.
@@ -463,29 +522,29 @@ function tick(now) {
 }
 
 // ---------- the 3D preview's source pictures ----------
-// The look as flat pictures for src/fighter3d.js to rebuild as voxels: the idle frame with its hat, recolor and
+// The look as flat pictures for src/fighter3d.ts to rebuild as voxels: the idle frame with its hat, recolor and
 // accessory, and the pet on its own canvas. frameH is the sprite's drawn height in pixels, so every character keeps
 // its size relative to the frame, as on stream. Returns null until the character image has loaded.
-/**
- * @param {any} entry
- * @param {{ hat?: string, pet?: any, looks?: Record<string, any> }} [opts]
- */
-export function composeLook(entry, { hat = "", pet = null, looks = {} } = {}) {
+export function composeLook(
+  entry: Entry | null | undefined,
+  { hat = "", pet = null, looks = {} }: { hat?: string; pet?: Pet | null; looks?: Looks } = {},
+) {
   const frame = framesFor(entry, "idle")[0],
-    img = entry && image(entry.url);
+    // as: img is null only without an entry, and then there is no frame and the check below returns first
+    img = (entry && image(entry.url)) as HTMLImageElement;
   if (!frame || !img.complete || !img.naturalWidth) return null;
   const body = document.createElement("canvas");
   body.width = frame.w;
   body.height = frame.h;
-  if (!drawFrame(body, entry, frame, hat, null, 0, looks)) return null;
+  if (!drawFrame(body, entry!, frame, hat, null, 0, looks)) return null; // entry!: there is a frame, so there is an entry
   const room = (hat && hats) || (looks.accessory && cosmetics) ? 0.8 : 1;
-  const out = {
+  const out: { body: HTMLCanvasElement; frameH: number; pet: HTMLCanvasElement | null; petH: number; key: string } = {
     body,
     frameH: frame.h * room,
     pet: null,
     petH: 64,
     key: [
-      entry.id,
+      entry!.id, // entry!: there is a frame, so there is an entry
       hat,
       looks.recolor,
       looks.accessory,
@@ -511,10 +570,10 @@ export function composeLook(entry, { hat = "", pet = null, looks = {} } = {}) {
   return out;
 }
 // Calls fn whenever a drawing module (hats, pets, cosmetics) or a watched image arrives.
-export function onLooksReady(canvas, fn) {
+export function onLooksReady(canvas: Element, fn: () => void) {
   onRedraw(canvas, fn);
 }
-export function whenImage(url, fn) {
+export function whenImage(url: string, fn: () => void) {
   const img = image(url);
   if (img.complete && img.naturalWidth) return;
   img.addEventListener("load", fn, { once: true });
@@ -525,16 +584,16 @@ export function whenImage(url, fn) {
 // pet, trail, recolor, hat, accessory, the nameplate "name · Elo" and title, and on play() its win effect and taunt.
 // Sizes follow the overlay's 60 px fighter, 20 px nameplate and 14 px title, scaled to the canvas height.
 // set({ entry, hat, pet, color, name, elo, looks }) changes what it shows; looks holds the cosmetics.js ids.
-const fits = new Map();
-function fitOf(entry, img, frame) {
+const fits = new Map<string, number>();
+function fitOf(entry: Entry, img: HTMLImageElement, frame: Frame) {
   // the overlay's bulkFit: big, square sprites are drawn a little smaller
-  if (fits.has(entry.id)) return fits.get(entry.id);
+  if (fits.has(entry.id)) return fits.get(entry.id)!; // has() just found it
   let fit = 1;
   try {
     const c = document.createElement("canvas");
     c.width = frame.w;
     c.height = frame.h;
-    const g = c.getContext("2d", { willReadFrequently: true });
+    const g = c.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D; // a new canvas always has a 2D context
     g.drawImage(img, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
     const data = g.getImageData(0, 0, frame.w, frame.h).data;
     let left = frame.w,
@@ -543,7 +602,7 @@ function fitOf(entry, img, frame) {
       bottom = -1;
     for (let y = 0; y < frame.h; y++)
       for (let x = 0; x < frame.w; x++) {
-        if (data[(y * frame.w + x) * 4 + 3] <= 40) continue;
+        if (data[(y * frame.w + x) * 4 + 3]! <= 40) continue; // in range: x and y stay inside the frame's pixels
         if (x < left) left = x;
         if (x > right) right = x;
         if (y < top) top = y;
@@ -554,9 +613,28 @@ function fitOf(entry, img, frame) {
   fits.set(entry.id, fit);
   return fit;
 }
-export function addStage(canvas) {
-  const st = { entry: null, hat: "", pet: null, color: DEFAULT_COLOR, name: "you", elo: null, looks: {}, win: null };
-  let trail = null,
+type Stage = {
+  entry: Entry | null;
+  hat: string;
+  pet: Pet | null;
+  color: string;
+  name: string;
+  elo: number | null;
+  looks: Looks;
+  win: { start: number; seed: number } | null;
+};
+export function addStage(canvas: HTMLCanvasElement) {
+  const st: Stage = {
+    entry: null,
+    hat: "",
+    pet: null,
+    color: DEFAULT_COLOR,
+    name: "you",
+    elo: null,
+    looks: {},
+    win: null,
+  };
+  let trail: any = null, // a cosmetics.js trail; that module loads at runtime, untyped
     trailId = "",
     raf = 0,
     shown = true;
@@ -565,18 +643,18 @@ export function addStage(canvas) {
   };
   // off screen or hidden by the layout (phones), the stage stops drawing until it shows again
   new IntersectionObserver(([en]) => {
-    shown = en.isIntersecting;
+    shown = en!.isIntersecting; // an observer callback always gets at least one entry
     kick();
   }).observe(canvas);
   stages.add(kick);
-  function loop(now) {
+  function loop(now: number) {
     raf = 0;
     if (!canvas.isConnected || document.hidden) return;
     draw(now);
     const playing = st.win && now - st.win.start < 4500;
     if ((!reducedMotion.matches && awake()) || playing) kick();
   }
-  function draw(now) {
+  function draw(now: number) {
     const dpr = Math.min(2, devicePixelRatio || 1),
       cw = canvas.clientWidth,
       ch = canvas.clientHeight;
@@ -587,7 +665,7 @@ export function addStage(canvas) {
     }
     const W = canvas.width,
       H = canvas.height,
-      ctx = canvas.getContext("2d");
+      ctx = canvas.getContext("2d") as CanvasRenderingContext2D; // a canvas only drawn in 2D always has one
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     const still = reducedMotion.matches || !awake(),
@@ -628,24 +706,26 @@ export function addStage(canvas) {
         tint: tint(L.petColor),
       });
     }
-    const img = st.entry && image(st.entry.url);
+    // as: img is null only without an entry, and then there are no frames and it is never read
+    const img = (st.entry && image(st.entry.url)) as HTMLImageElement;
     const frames = framesFor(st.entry, moving ? "walk" : effectOn ? "cheer" : "idle");
+    // st.entry!, frames[0]!: without an entry there are no frames, so with a frame both are set
     const frame = frames.length
-      ? frames[still ? 0 : Math.floor(now / (1000 / (st.entry.fps || 8))) % frames.length]
+      ? frames[still ? 0 : Math.floor(now / (1000 / (st.entry!.fps || 8))) % frames.length] // st.entry!: as above
       : null;
     if (frame && img.complete && img.naturalWidth) {
-      const dh = s * fitOf(st.entry, img, frames[0]),
+      const dh = s * fitOf(st.entry!, img, frames[0]!), // st.entry!, frames[0]!: as above
         dw = (dh * frame.w) / frame.h,
         dx = x - dw / 2,
         dy = ground - dh;
-      const look = { headHint: st.entry.head, t: now, moving };
+      const look = { headHint: st.entry!.head, t: now, moving }; // st.entry!: see the frame check above
       if (L.accessory && cosmetics)
         cosmetics.drawAccessory(ctx, L.accessory, img, frame, dx, dy, dw, dh, { ...look, layer: "back" });
       ctx.save();
       ctx.filter = tint(L.recolor);
       ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
       ctx.restore();
-      if (st.hat && hats) hats.drawHat(ctx, st.hat, img, frame, dx, dy, dw, dh, st.entry.head);
+      if (st.hat && hats) hats.drawHat(ctx, st.hat, img, frame, dx, dy, dw, dh, st.entry!.head); // see the frame check
       if (L.accessory && cosmetics) cosmetics.drawAccessory(ctx, L.accessory, img, frame, dx, dy, dw, dh, look);
     }
     // The win effect, shrunk if the stage is too short for it; a still page shows one frame of it.
@@ -675,7 +755,7 @@ export function addStage(canvas) {
     ctx.fillStyle = st.color;
     ctx.strokeText(label, lx, ground + 23 * k, fit);
     ctx.fillText(label, lx, ground + 23 * k, fit);
-    const title = cosmetics?.TITLES[L.title];
+    const title = cosmetics?.TITLES[L.title as string]; // as: an unset title reads TITLES[undefined], which is no title
     if (title) {
       ctx.font = "bold " + Math.round(14 * k) + "px system-ui, sans-serif";
       ctx.lineWidth = 3 * k;
@@ -683,7 +763,7 @@ export function addStage(canvas) {
       ctx.strokeText(title, lx, ground + 39 * k);
       ctx.fillText(title, lx, ground + 39 * k);
     }
-    const taunt = win && cosmetics?.TAUNTS[L.taunt];
+    const taunt = win && cosmetics?.TAUNTS[L.taunt as string]; // as: an unset taunt reads TAUNTS[undefined], no taunt
     if (taunt) {
       ctx.font = "bold " + Math.round(14 * k) + "px system-ui, sans-serif";
       const bw = Math.min(W, ctx.measureText(taunt).width + 16 * k),
@@ -699,7 +779,7 @@ export function addStage(canvas) {
   new ResizeObserver(kick).observe(canvas);
   kick();
   return {
-    set(next) {
+    set(next: Partial<Stage>) {
       Object.assign(st, next);
       if (next.entry) image(next.entry.url).addEventListener("load", kick, { once: true });
       if (next.pet?.url) image(next.pet.url).addEventListener("load", kick, { once: true });

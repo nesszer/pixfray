@@ -1,21 +1,40 @@
-// /play/ "Your own sprite": a picture becomes a pixel sprite in the browser (src/spritify.js), optionally redrawn by
+// /play/ "Your own sprite": a picture becomes a pixel sprite in the browser (src/spritify.ts), optionally redrawn by
 // Workers AI first, and is sent to the mods (server/sprites.ts). Once approved it is in the viewer's character list.
-import { api, errorText, h, $, setStatus, CHANNEL } from "./ui.js";
-import { decodeFile, decodeBase64, encode, fitSize, paint, spritify, REDRAW_MAX } from "./spritify.js";
+import { api, errorText, h, $, setStatus, CHANNEL } from "./ui.ts";
+import { decodeFile, decodeBase64, encode, fitSize, paint, spritify, REDRAW_MAX } from "./spritify.ts";
+import type { Img } from "./spritify.ts";
 
-const box = $("#sprite-maker"),
-  canvas = $("#sprite-canvas"),
-  status = $("#sprite-status");
-const fileInput = $("#sprite-file"),
-  nameInput = $("#sprite-name"),
-  bgInput = $("#sprite-bg");
-const aiBtn = $("#sprite-ai"),
-  plainBtn = $("#sprite-plain"),
-  sendBtn = $("#sprite-send");
-const s = { source: null, redrawn: null, sprite: null, info: null, busy: false, onChange: () => {} };
+// element types from the page HTML
+const box = $("#sprite-maker") as HTMLFieldSetElement,
+  canvas = $("#sprite-canvas") as HTMLCanvasElement,
+  status = $("#sprite-status") as HTMLParagraphElement;
+// element types from the page HTML
+const fileInput = $("#sprite-file") as HTMLInputElement,
+  nameInput = $("#sprite-name") as HTMLInputElement,
+  bgInput = $("#sprite-bg") as HTMLInputElement;
+// element types from the page HTML
+const aiBtn = $("#sprite-ai") as HTMLButtonElement,
+  plainBtn = $("#sprite-plain") as HTMLButtonElement,
+  sendBtn = $("#sprite-send") as HTMLButtonElement;
+/** GET /api/sprite/:channel (server/sprites.ts), the fields read here. */
+type SpriteInfo = {
+  live?: { url: string; label: string } | null;
+  pending?: { label: string; createdAt: number } | null;
+  rejected?: { label: string } | null;
+  submitsLeft?: number;
+  ai: { available: boolean; left: number };
+};
+const s: {
+  source: Img | null;
+  redrawn: Img | null;
+  sprite: Img | null;
+  info: SpriteInfo | null;
+  busy: boolean;
+  onChange: () => void;
+} = { source: null, redrawn: null, sprite: null, info: null, busy: false, onChange: () => {} };
 
 const base = "/api/sprite/" + CHANNEL;
-const name = (file) =>
+const name = (file: File) =>
   file.name
     .replace(/\.[a-z0-9]+$/i, "")
     .replace(/[_-]+/g, " ")
@@ -25,7 +44,10 @@ const name = (file) =>
 
 function render() {
   paint(canvas, s.sprite);
-  $("#sprite-size").textContent = s.sprite ? s.sprite.width + " x " + s.sprite.height + " px" : "";
+  // element type from the page HTML
+  ($("#sprite-size") as HTMLParagraphElement).textContent = s.sprite
+    ? s.sprite.width + " x " + s.sprite.height + " px"
+    : "";
   const ai = s.info?.ai || { available: false, left: 0 };
   aiBtn.hidden = !ai.available;
   aiBtn.textContent = s.redrawn ? "Redraw again" : "Redraw with AI";
@@ -36,7 +58,7 @@ function render() {
   bgInput.disabled = s.busy || Boolean(s.redrawn); // the AI draws on plain white, which always goes
   const left = s.info?.submitsLeft ?? 0;
   sendBtn.disabled = s.busy || !s.sprite || !nameInput.value.trim() || left <= 0;
-  $("#sprite-note").textContent = s.info
+  ($("#sprite-note") as HTMLSpanElement).textContent = s.info // element type from the page HTML
     ? "(" + left + " sends left today" + (ai.available ? ", " + ai.left + " AI redraws" : "") + ")"
     : "";
 }
@@ -54,9 +76,9 @@ function rebuild() {
 }
 
 function renderCurrent() {
-  const cur = $("#sprite-current"),
-    { live, pending, rejected } = s.info || {};
-  const rows = [];
+  const cur = $("#sprite-current") as HTMLDivElement, // element type from the page HTML
+    { live, pending, rejected }: Partial<SpriteInfo> = s.info || {};
+  const rows: HTMLElement[] = [];
   if (live)
     rows.push(
       h("img", { class: "sprite-thumb", src: live.url, alt: live.label }),
@@ -103,7 +125,7 @@ async function refresh() {
   render();
 }
 
-async function drop(kind, ask) {
+async function drop(kind: string, ask?: string) {
   if (ask && !confirm(ask)) return;
   const r = await api(base + "/" + kind, { method: "DELETE" });
   setStatus(status, r.ok ? (kind === "live" ? "Sprite removed." : "Withdrawn.") : errorText(r), r.ok ? "ok" : "error");
@@ -124,7 +146,7 @@ fileInput.addEventListener("change", async () => {
     setStatus(status, "");
   } catch (error) {
     s.source = null;
-    setStatus(status, error.message, "error");
+    setStatus(status, (error as Error).message, "error"); // decodeFile throws only Errors
   }
   s.busy = false;
   rebuild();
@@ -148,24 +170,30 @@ aiBtn.addEventListener("click", async () => {
   if (r.ok) {
     try {
       s.redrawn = await decodeBase64(r.data.image);
-      s.info.ai.left = r.data.left;
+      s.info!.ai.left = r.data.left; // the AI button is enabled only after refresh() stored the info
       setStatus(status, "Redrawn. Send it, redraw again, or use your picture.", "ok");
     } catch {
       setStatus(status, "The AI's picture couldn't be opened. Try again.", "error");
     }
   } else {
-    if (r.data?.reason === "ai_daily_limit" || r.data?.reason === "ai_channel_limit") s.info.ai.left = 0;
+    // s.info!: the AI button is enabled only after refresh() stored the info
+    if (r.data?.reason === "ai_daily_limit" || r.data?.reason === "ai_channel_limit") s.info!.ai.left = 0;
     setStatus(status, errorText(r), "error");
   }
   s.busy = false;
   rebuild();
 });
 
-async function shrinkTo(img, width, height) {
+async function shrinkTo(img: Img, width: number, height: number) {
   const from = new OffscreenCanvas(img.width, img.height),
     to = new OffscreenCanvas(width, height);
-  from.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
-  const ctx = to.getContext("2d");
+  // as: a new canvas always has a 2D context
+  (from.getContext("2d") as OffscreenCanvasRenderingContext2D).putImageData(
+    new ImageData(new Uint8ClampedArray(img.data), img.width, img.height),
+    0,
+    0,
+  );
+  const ctx = to.getContext("2d") as OffscreenCanvasRenderingContext2D; // a new canvas always has a 2D context
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(from, 0, 0, width, height);
   return ctx.getImageData(0, 0, width, height);
@@ -194,8 +222,7 @@ sendBtn.addEventListener("click", async () => {
 
 // Shown to signed-in viewers on a channel that's on. onChange runs when the approved sprite goes away, so the page
 // can reload the character list.
-/** @param {{ onChange?: () => void }} [opts] */
-export function initSpriteMaker({ onChange } = {}) {
+export function initSpriteMaker({ onChange }: { onChange?: () => void } = {}) {
   s.onChange = onChange || s.onChange;
   return refresh();
 }

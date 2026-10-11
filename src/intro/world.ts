@@ -1,14 +1,105 @@
 // The night arena: a floating voxel island with a plank floor, a brass ring, lanterns, embers, a voxel d6,
 // podium columns for the live ladder and voxel coins. Everything is instanced boxes, so the scene stays light.
 import * as THREE from "three";
-import { bevel } from "./bevel.js";
+import { bevel } from "./bevel.ts";
+
+/** A shader's uniforms with the type of each value, e.g. Uniforms<{ uTime: number }>. */
+export type Uniforms<T> = { [K in keyof T]: THREE.IUniform<T[K]> };
+/** A ShaderMaterial whose uniforms are known by name and value type. */
+export interface ShaderMaterialOf<T> extends THREE.ShaderMaterial {
+  uniforms: Uniforms<T>;
+}
+type RGB = [number, number, number];
+/** A die face value. */
+export type DieValue = 1 | 2 | 3 | 4 | 5 | 6;
+export type SkyMaterial = ShaderMaterialOf<{ uTime: number; uMoon: number; uMul: THREE.Vector3 }>;
+export type RuneUniforms = Uniforms<{ uI: number; uTime: number; uColor: THREE.Color }>;
+export type ConeMaterial = ShaderMaterialOf<{ uColor: THREE.Color; uA: number }>;
+export type EmberMaterial = ShaderMaterialOf<{ uTime: number; uPx: number; uBurst: number }>;
+export type CloudMaterial = ShaderMaterialOf<{
+  uTime: number;
+  uDeep: THREE.Color;
+  uLit: THREE.Color;
+  uA: number;
+  uS: number;
+  uV: number;
+}>;
+export type ShaftMaterial = ShaderMaterialOf<{ uA: number; uTime: number }>;
+/** A lantern's flame, flickered by the frame loop. */
+export interface Flame {
+  mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+  seed: number;
+}
+export interface LanternParts {
+  group: THREE.Group;
+  flames: Flame[];
+  cone: ConeMaterial;
+}
+export interface IsletParts {
+  group: THREE.Group;
+  list: { g: THREE.Group; y: number; seed: number }[];
+  glow: THREE.MeshStandardMaterial;
+}
+export interface PodiumParts {
+  mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+  cell: number;
+  maxStack: number;
+  count: number;
+}
+export interface CoinParts {
+  mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+  disc: [number, number][];
+  unit: number;
+  count: number;
+}
+export interface CloudParts {
+  group: THREE.Group;
+  mats: CloudMaterial[];
+}
+export interface ChestParts {
+  group: THREE.Group;
+  lid: THREE.Group;
+  shaft: THREE.Mesh<THREE.CylinderGeometry, ShaftMaterial>;
+  light: THREE.PointLight;
+  gold: THREE.MeshStandardMaterial;
+}
+/** One column of the gold heap; gem is an RGB colour or null. */
+export interface HoardColumn {
+  x: number;
+  z: number;
+  h: number;
+  gem: RGB | null;
+  s: number;
+}
+export interface HoardParts {
+  mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+  cols: HoardColumn[];
+  top: number;
+}
+/** One cube of the stream frame: its slot, where it flies in from, its delay and spin. */
+export interface FrameCube {
+  x: number;
+  y: number;
+  from: THREE.Vector3;
+  delay: number;
+  spin: number;
+}
+export interface FrameParts {
+  group: THREE.Group;
+  mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+  list: FrameCube[];
+  edgeMat: THREE.MeshBasicMaterial;
+  w: number;
+  h: number;
+  unit: number;
+}
 
 // small deterministic noise
-const hash = (x, y) => {
+const hash = (x: number, y: number) => {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
   return s - Math.floor(s);
 };
-function vnoise(x, y) {
+function vnoise(x: number, y: number) {
   const xi = Math.floor(x),
     yi = Math.floor(y),
     xf = x - xi,
@@ -21,7 +112,8 @@ function vnoise(x, y) {
     d = hash(xi + 1, yi + 1);
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
-const fbm = (x, y) => vnoise(x, y) * 0.6 + vnoise(x * 2.1, y * 2.1) * 0.3 + vnoise(x * 4.3, y * 4.3) * 0.1;
+const fbm = (x: number, y: number) =>
+  vnoise(x, y) * 0.6 + vnoise(x * 2.1, y * 2.1) * 0.3 + vnoise(x * 4.3, y * 4.3) * 0.1;
 
 export const ARENA_R = 3.3;
 const RING_R0 = 3.3,
@@ -29,7 +121,7 @@ const RING_R0 = 3.3,
 const m4 = new THREE.Matrix4(),
   col = new THREE.Color();
 
-export function buildSky() {
+export function buildSky(): THREE.Mesh<THREE.SphereGeometry, SkyMaterial> {
   const geo = new THREE.SphereGeometry(80, 32, 16);
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -101,15 +193,21 @@ export function buildSky() {
         c += vec3(0.55, 0.45, 0.32) * rays * 0.07 * front * uMoon * (0.6 + cl);
         gl_FragColor = vec4(c, 1.);
       }`,
-  });
+  }) as SkyMaterial; // the uniforms passed above
   return new THREE.Mesh(geo, mat);
 }
 
 // The island: one column per grid cell. Tops are plank floor inside the ring, brass on the ring, stone outside;
 // the bodies hang below and taper with noise so the island floats.
-export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {}) {
-  const tops = [],
-    bodies = [];
+export function buildIsland({
+  radius = 7.2,
+  cell = 0.34,
+  shadows = false,
+}: { radius?: number; cell?: number; shadows?: boolean } = {}): THREE.Group {
+  type Top = { x: number; z: number; y: number; color: RGB; kind: "floor" | "ring" | "stone" };
+  type Body = { x: number; z: number; top: number; bottom: number };
+  const tops: Top[] = [],
+    bodies: Body[] = [];
   const n = Math.ceil(radius / cell);
   for (let gx = -n; gx <= n; gx++)
     for (let gz = -n; gz <= n; gz++) {
@@ -118,7 +216,7 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
         r = Math.hypot(x, z);
       const edge = radius * (0.86 + fbm(x * 0.35 + 9, z * 0.35) * 0.28);
       if (r > edge) continue;
-      let topY, color, kind;
+      let topY: number, color: RGB, kind: Top["kind"];
       if (r < RING_R0) {
         const board = Math.floor((x + 20) / (cell * 2)),
           plank = board % 2,
@@ -222,7 +320,11 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
       );
   };
   for (const m of [topMat, ringMat, bodyMat]) bevel(m, [cell * 0.4925, 0.5, cell * 0.4925]);
-  const make = (list, mat, fn) => {
+  const make = <T>(
+    list: T[],
+    mat: THREE.MeshStandardMaterial,
+    fn: (it: T, i: number, mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>) => void,
+  ) => {
     const mesh = new THREE.InstancedMesh(boxGeo, mat, list.length);
     list.forEach((it, i) => {
       fn(it, i, mesh);
@@ -250,7 +352,7 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
     }),
   );
   // the duel circle: drawn in fine pixels (8 per floor cell) on a flat disc, so it stays a clean circle at any angle
-  const rune = { uI: { value: 0.9 }, uTime: { value: 0 }, uColor: { value: new THREE.Color(0xff7a26) } };
+  const rune: RuneUniforms = { uI: { value: 0.9 }, uTime: { value: 0 }, uColor: { value: new THREE.Color(0xff7a26) } };
   const disc = new THREE.Mesh(
     new THREE.CircleGeometry(3.05, 72).rotateX(-Math.PI / 2),
     new THREE.ShaderMaterial({
@@ -290,9 +392,9 @@ export function buildIsland({ radius = 7.2, cell = 0.34, shadows = false } = {})
 }
 
 // Lantern posts on the ring. Returns { group, flames: [{ mesh, base }] } so the frame loop can flicker them.
-export function buildLanterns({ count = 8, radius = 3.95 } = {}) {
+export function buildLanterns({ count = 8, radius = 3.95 }: { count?: number; radius?: number } = {}): LanternParts {
   const group = new THREE.Group(),
-    flames = [];
+    flames: Flame[] = [];
   const wood = new THREE.MeshStandardMaterial({ color: 0x2b1d12, roughness: 0.9 });
   const brass = new THREE.MeshStandardMaterial({ color: 0xc9a45c, roughness: 0.35, metalness: 0.9 });
   bevel(wood, [0.07, 0.75, 0.07]);
@@ -308,7 +410,7 @@ export function buildLanterns({ count = 8, radius = 3.95 } = {}) {
       void main(){ vY = position.y / 1.62 + 0.5; vec4 mv = modelViewMatrix * vec4(position, 1.); vN = normalMatrix * normal; vV = -mv.xyz; gl_Position = projectionMatrix * mv; }`,
     fragmentShader: `uniform vec3 uColor; uniform float uA; varying float vY; varying vec3 vN, vV;
       void main(){ float f = abs(dot(normalize(vN), normalize(vV))); float a = f * f * smoothstep(0.0, 0.3, vY) * (0.35 + 0.65 * vY); gl_FragColor = vec4(uColor * a * uA, 1.0); }`,
-  });
+  }) as ConeMaterial; // the uniforms passed above
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2 + Math.PI / count;
     const x = Math.sin(a) * radius,
@@ -333,7 +435,7 @@ export function buildLanterns({ count = 8, radius = 3.95 } = {}) {
 }
 
 // Embers drifting up from the arena: points whose motion lives entirely in the vertex shader.
-export function buildEmbers(count = 900) {
+export function buildEmbers(count = 900): THREE.Points<THREE.BufferGeometry, EmberMaterial> {
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(count * 3),
     seed = new Float32Array(count);
@@ -373,16 +475,16 @@ export function buildEmbers(count = 900) {
         vec3 c = mix(vec3(1.0, 0.45, 0.12), vec3(1.0, 0.78, 0.42), vS);
         gl_FragColor = vec4(c * 1.6, vA);
       }`,
-  });
+  }) as EmberMaterial; // the uniforms passed above
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false;
   return pts;
 }
 
 // Small floating rocks around the island: moss caps on top, a lantern crystal hanging underneath.
-export function buildIslets() {
+export function buildIslets(): IsletParts {
   const group = new THREE.Group(),
-    list = [];
+    list: IsletParts["list"] = [];
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.9 });
   mat.onBeforeCompile = (sh) => {
     sh.fragmentShader = sh.fragmentShader.replace(
@@ -393,7 +495,7 @@ export function buildIslets() {
   const glow = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xff8a2a, emissiveIntensity: 1.8 });
   const geo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
   bevel(mat, [0.15, 0.15, 0.15]);
-  const spots = [
+  const spots: [number, number, number, number][] = [
     [-9, 1.5, -6, 5],
     [10, -1, -8, 6],
     [-12, -3, 2, 4],
@@ -404,7 +506,7 @@ export function buildIslets() {
   for (const [x, y, z, n] of spots) {
     const g = new THREE.Group();
     g.position.set(x, y, z);
-    const cols = [];
+    const cols: { a: number; b: number; d: number; top: number }[] = [];
     for (let a = -n; a <= n; a++)
       for (let b = -n; b <= n; b++) {
         const r = Math.hypot(a, b) / n;
@@ -418,7 +520,7 @@ export function buildIslets() {
       }
     const mesh = new THREE.InstancedMesh(geo, mat, cols.length * 2);
     let i = 0;
-    let deep = cols[0];
+    let deep = cols[0]!; // the centre column (r = 0) is always in the list
     for (const c of cols) {
       m4.makeScale(1, c.d, 1).setPosition(c.a * 0.3, c.top - c.d * 0.15 - 0.075, c.b * 0.3);
       mesh.setMatrixAt(i, m4);
@@ -434,7 +536,7 @@ export function buildIslets() {
       if (c.d > deep.d) deep = c;
     }
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.needsUpdate = true;
+    mesh.instanceColor!.needsUpdate = true; // setColorAt above created it
     const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), glow);
     lamp.position.set(deep.a * 0.3, deep.top - deep.d * 0.3 - 0.35, deep.b * 0.3);
     const chain = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, 0.03), mat);
@@ -447,11 +549,11 @@ export function buildIslets() {
 }
 
 // A voxel d6: a 5x5x5 block with its pips cut in brass. Faces: +y 6, -y 1, +x 3, -x 4, +z 2... see FACE_UP.
-export function buildDie(unit = 0.14) {
+export function buildDie(unit = 0.14): THREE.Group {
   const N = 5,
     half = (N - 1) / 2,
-    cubes = [];
-  const pipsFor = {
+    cubes: { x: number; y: number; z: number; pip: boolean }[] = [];
+  const pipsFor: Record<DieValue, [number, number][]> = {
     1: [[0, 0]],
     2: [
       [-1, -1],
@@ -485,8 +587,7 @@ export function buildDie(unit = 0.14) {
     ],
   };
   // face normal -> value (opposite faces add up to 7)
-  /** @type {[number[], number][]} */
-  const faces = [
+  const faces: [RGB, DieValue][] = [
     [[0, 1, 0], 6],
     [[0, -1, 0], 1],
     [[1, 0, 0], 3],
@@ -494,7 +595,7 @@ export function buildDie(unit = 0.14) {
     [[0, 0, 1], 5],
     [[0, 0, -1], 2],
   ];
-  const isPip = (x, y, z) => {
+  const isPip = (x: number, y: number, z: number) => {
     for (const [[nx, ny, nz], v] of faces) {
       const onFace = (nx && x === nx * half) || (ny && y === ny * half) || (nz && z === nz * half);
       if (!onFace) continue;
@@ -531,7 +632,7 @@ export function buildDie(unit = 0.14) {
   return group;
 }
 // Rotation (Euler XYZ) that turns the face with this value to the top.
-export const FACE_UP = {
+export const FACE_UP: Record<DieValue, [number, number, number]> = {
   6: [0, 0, 0],
   1: [Math.PI, 0, 0],
   3: [0, 0, Math.PI / 2],
@@ -541,7 +642,7 @@ export const FACE_UP = {
 };
 
 // Podium columns for the ladder: one instanced mesh, heights set per frame.
-export function buildPodium(count = 5, cell = 0.3) {
+export function buildPodium(count = 5, cell = 0.3): PodiumParts {
   const geo = new THREE.BoxGeometry(cell * 0.96, cell * 0.96, cell * 0.96);
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.12 });
   // bright instance colours (brass, runes) glow; stone faces carry carved glyphs that smoulder, and their seams catch the moon
@@ -584,8 +685,8 @@ export function buildPodium(count = 5, cell = 0.3) {
 }
 
 // Voxel coins: each coin is a 5x5 disc of cubes.
-export function buildCoins(count = 40, unit = 0.05) {
-  const disc = [];
+export function buildCoins(count = 40, unit = 0.05): CoinParts {
+  const disc: [number, number][] = [];
   for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) if (a * a + b * b <= 5) disc.push([a, b]);
   const geo = new THREE.BoxGeometry(unit * 0.95, unit * 0.95, unit * 0.95);
   const mat = new THREE.MeshStandardMaterial({
@@ -602,13 +703,13 @@ export function buildCoins(count = 40, unit = 0.05) {
 }
 
 // A sea of cloud below the island, lit by the chapter's mood: two drifting noise layers on big planes.
-export function buildClouds() {
+export function buildClouds(): CloudParts {
   const group = new THREE.Group(),
-    mats = [];
+    mats: CloudMaterial[] = [];
   for (const [y, scale, speed, a] of [
     [-5.2, 0.05, 0.6, 0.9],
     [-3.4, 0.08, 1.0, 0.55],
-  ]) {
+  ] satisfies [number, number, number, number][]) {
     const mat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -636,7 +737,7 @@ export function buildClouds() {
           vec3 c = mix(uDeep, uLit, smoothstep(0.45, 0.95, d));
           gl_FragColor = vec4(c, a);
         }`,
-    });
+    }) as CloudMaterial; // the uniforms passed above
     const plane = new THREE.Mesh(new THREE.PlaneGeometry(200, 200).rotateX(-Math.PI / 2), mat);
     plane.position.y = y;
     plane.renderOrder = -1;
@@ -647,7 +748,7 @@ export function buildClouds() {
 }
 
 // The treasure chest for the loot chapter: wood and brass boxes, a lid on a hinge, gold inside that glows.
-export function buildChest() {
+export function buildChest(): ChestParts {
   const group = new THREE.Group(),
     lid = new THREE.Group();
   const wood = bevel(new THREE.MeshStandardMaterial({ color: 0x5a3519, roughness: 0.8 }), [0.7, 0.3, 0.42], 0.6);
@@ -663,7 +764,16 @@ export function buildChest() {
     roughness: 0.3,
     metalness: 0.5,
   });
-  const box = (w, h, d, mat, x, y, z, parent = group) => {
+  const box = (
+    w: number,
+    h: number,
+    d: number,
+    mat: THREE.Material,
+    x: number,
+    y: number,
+    z: number,
+    parent: THREE.Group = group,
+  ) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     m.position.set(x, y, z);
     m.castShadow = true;
@@ -698,7 +808,7 @@ export function buildChest() {
         float rays = 0.6 + 0.4 * step(0.5, fract(vUv.x * 9.0 + uTime * 0.05));
         float a = uA * d * sqrt(d) * y * y * rays * 0.15;   // no pow(): pow(0, y) is NaN on some GPUs
         gl_FragColor = vec4(vec3(1.0, 0.7, 0.3) * a, 1.0); }`,
-    }),
+    }) as ShaftMaterial, // the uniforms passed above
   );
   shaft.position.y = 0.62 + 1.6;
   group.add(shaft);
@@ -709,8 +819,8 @@ export function buildChest() {
 }
 
 // A heap of gold under the hero in the loot chapter: one column of stacked gold per cell, gems here and there.
-export function buildHoard({ radius = 1.6, cell = 0.14 } = {}) {
-  const cols = [];
+export function buildHoard({ radius = 1.6, cell = 0.14 }: { radius?: number; cell?: number } = {}): HoardParts {
+  const cols: HoardColumn[] = [];
   const n = Math.ceil(radius / cell);
   for (let a = -n; a <= n; a++)
     for (let b = -n; b <= n; b++) {
@@ -745,17 +855,22 @@ export function buildHoard({ radius = 1.6, cell = 0.14 } = {}) {
         : col.setRGB(0.95, 0.68 + c.s * 0.12, 0.25 + c.s * 0.1, THREE.SRGBColorSpace),
     ),
   );
-  mesh.instanceColor.needsUpdate = true;
+  mesh.instanceColor!.needsUpdate = true; // setColorAt above created it
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.frustumCulled = false;
-  return { mesh, cols, top: cols.find((c) => !c.x && !c.z).h };
+  // the centre column (r = 0) always passes the radius test
+  return { mesh, cols, top: cols.find((c) => !c.x && !c.z)!.h };
 }
 
 // The stream frame for the finale: a 16:9 bezel of cubes around the whole island, with a lit inner edge.
-// Cubes fly in from a scatter as the chapter arrives (see main.js).
-export function buildFrame({ w = 19.2, h = 10.8, unit = 0.4 } = {}) {
-  const slots = [];
+// Cubes fly in from a scatter as the chapter arrives (see main.ts).
+export function buildFrame({
+  w = 19.2,
+  h = 10.8,
+  unit = 0.4,
+}: { w?: number; h?: number; unit?: number } = {}): FrameParts {
+  const slots: [number, number][] = [];
   const nx = Math.round(w / unit),
     ny = Math.round(h / unit);
   for (let i = -1; i <= nx; i++) for (const j of [-1, ny]) slots.push([i, j]);
@@ -786,7 +901,7 @@ export function buildFrame({ w = 19.2, h = 10.8, unit = 0.4 } = {}) {
     [w, 0.05, 0, -h / 2],
     [0.05, h, -w / 2, 0],
     [0.05, h, w / 2, 0],
-  ]) {
+  ] satisfies [number, number, number, number][]) {
     const m = new THREE.Mesh(new THREE.BoxGeometry(ew, eh, 0.05), edgeMat);
     m.position.set(ex, ey, 0.92);
     edges.add(m);

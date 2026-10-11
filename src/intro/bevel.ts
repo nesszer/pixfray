@@ -2,7 +2,18 @@
 // so every edge catches the light like a rounded block. Works on instanced and scaled boxes; half = the box's half-extents.
 import * as THREE from "three";
 
-export function bevel(mat, half, amount = 0.85, width = 0.24) {
+// three declares onBeforeCompile as a method; bevel keeps the old hook and calls it with prev.call(mat, ...),
+// so the hook is restated here as a plain function property
+type BevelMaterial = Omit<THREE.Material, "onBeforeCompile"> & {
+  onBeforeCompile: (sh: THREE.WebGLProgramParametersWithUniforms, r: THREE.WebGLRenderer) => void;
+};
+
+export function bevel<M extends BevelMaterial>(
+  mat: M,
+  half: readonly [number, number, number],
+  amount = 0.85,
+  width = 0.24,
+): M {
   const prev = mat.onBeforeCompile;
   mat.onBeforeCompile = (sh, r) => {
     prev.call(mat, sh, r);

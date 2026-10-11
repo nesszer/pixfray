@@ -5,25 +5,37 @@ export const SPRITE_MAX = 128;
 export const SOURCE_MAX = 512; // pictures are decoded at most this size before any step
 export const REDRAW_MAX = 504; // the AI model takes images under 512 px a side
 export const FILE_MAX = 10 * 1024 * 1024;
-export const OUTLINE = [24, 18, 30];
+/** A color as [red, green, blue], each 0-255. */
+export type RGB = [number, number, number];
+/** A plain RGBA image in ImageData's shape (4 bytes a pixel), so tests run the steps without a DOM. */
+export type Img = { width: number; height: number; data: Uint8ClampedArray };
+/** A rectangle inside an image, in pixels. */
+export type Box = { x: number; y: number; width: number; height: number };
+export const OUTLINE: RGB = [24, 18, 30];
 
-const image = (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) });
-const dist2 = (d, i, r, g, b) => (d[i] - r) ** 2 + (d[i + 1] - g) ** 2 + (d[i + 2] - b) ** 2;
+const image = (width: number, height: number): Img => ({
+  width,
+  height,
+  data: new Uint8ClampedArray(width * height * 4),
+});
+// d[...]!: in range, i is the first byte of a pixel
+const dist2 = (d: Uint8ClampedArray, i: number, r: number, g: number, b: number) =>
+  (d[i]! - r) ** 2 + (d[i + 1]! - g) ** 2 + (d[i + 2]! - b) ** 2;
 
 // The largest size within max x max that keeps the aspect ratio (never enlarges).
-export function fitSize(width, height, max) {
+export function fitSize(width: number, height: number, max: number) {
   const k = Math.min(1, max / Math.max(width, height));
   return { width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)) };
 }
 
 // True when the picture already has a cut-out (enough see-through pixels on its border).
-export function hasCutout(img) {
+export function hasCutout(img: Img) {
   const { width: w, height: h, data: d } = img;
   let clear = 0,
     n = 0;
-  const at = (x, y) => {
+  const at = (x: number, y: number) => {
     n++;
-    if (d[(y * w + x) * 4 + 3] < 128) clear++;
+    if (d[(y * w + x) * 4 + 3]! < 128) clear++; // in range: x and y are on the border
   };
   for (let x = 0; x < w; x++) {
     at(x, 0);
@@ -39,12 +51,12 @@ export function hasCutout(img) {
 // Clears the background: the border's main colors (each on at least 15% of the border) are the background, and a
 // flood fill from the border clears every connected pixel close to one of them. tolerance is a color distance
 // (0-441). Pictures that already have a cut-out keep theirs.
-export function removeBackground(img, tolerance = 40) {
+export function removeBackground(img: Img, tolerance = 40) {
   if (hasCutout(img)) return img;
   const { width: w, height: h, data: src } = img,
     d = new Uint8ClampedArray(src),
     t2 = tolerance * tolerance;
-  const border = [];
+  const border: number[] = [];
   for (let x = 0; x < w; x++) border.push(x, (h - 1) * w + x);
   for (let y = 1; y < h - 1; y++) border.push(y * w, y * w + w - 1);
   const ring = { width: border.length, height: 1, data: new Uint8ClampedArray(border.length * 4) };
@@ -54,7 +66,7 @@ export function removeBackground(img, tolerance = 40) {
   });
   const pal = palette(ring, 4),
     share = pal.map(() => 0);
-  const nearest = (i, data) => {
+  const nearest = (i: number, data: Uint8ClampedArray) => {
     let best = -1,
       bd = t2;
     pal.forEach((c, k) => {
@@ -68,15 +80,15 @@ export function removeBackground(img, tolerance = 40) {
   };
   for (let k = 0; k < border.length; k++) {
     const n = nearest(k * 4, ring.data);
-    if (n >= 0) share[n]++;
+    if (n >= 0) share[n]!++; // in range: n is a palette index
   }
-  const keep = new Set(pal.map((_, k) => k).filter((k) => share[k] >= border.length * 0.15));
-  const background = (i) => src[i + 3] < 128 || keep.has(nearest(i, src));
+  const keep = new Set(pal.map((_, k) => k).filter((k) => share[k]! >= border.length * 0.15)); // in range: k is a palette index
+  const background = (i: number) => src[i + 3]! < 128 || keep.has(nearest(i, src)); // in range: i is a pixel's first byte
   const seen = new Uint8Array(w * h),
     queue = new Int32Array(w * h);
   let head = 0,
     tail = 0;
-  const push = (p) => {
+  const push = (p: number) => {
     if (!seen[p]) {
       seen[p] = 1;
       queue[tail++] = p;
@@ -84,7 +96,7 @@ export function removeBackground(img, tolerance = 40) {
   };
   for (const p of border) push(p);
   while (head < tail) {
-    const p = queue[head++],
+    const p = queue[head++]!, // in range: head < tail, the queue's filled length
       i = p * 4;
     if (!background(i)) continue; // the subject's edge
     d[i + 3] = 0;
@@ -98,7 +110,7 @@ export function removeBackground(img, tolerance = 40) {
 }
 
 // The smallest box around the solid pixels, or null when there are none.
-export function contentBox(img, alphaMin = 128) {
+export function contentBox(img: Img, alphaMin = 128): Box | null {
   const { width: w, height: h, data: d } = img;
   let x0 = w,
     y0 = h,
@@ -106,7 +118,8 @@ export function contentBox(img, alphaMin = 128) {
     y1 = -1;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
-      if (d[(y * w + x) * 4 + 3] >= alphaMin) {
+      // in range: x and y are inside the image
+      if (d[(y * w + x) * 4 + 3]! >= alphaMin) {
         if (x < x0) x0 = x;
         if (x > x1) x1 = x;
         if (y < y0) y0 = y;
@@ -115,7 +128,7 @@ export function contentBox(img, alphaMin = 128) {
   return x1 < 0 ? null : { x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 };
 }
 
-export function crop(img, box) {
+export function crop(img: Img, box: Box) {
   const out = image(box.width, box.height);
   for (let y = 0; y < box.height; y++) {
     const from = ((box.y + y) * img.width + box.x) * 4;
@@ -126,7 +139,7 @@ export function crop(img, box) {
 
 // Area-average shrink to width x height. Colors are weighted by alpha so edges don't pick up the cleared background;
 // alpha ends up fully on or off (sprites have hard edges).
-export function shrink(img, width, height) {
+export function shrink(img: Img, width: number, height: number) {
   const out = image(width, height),
     sx = img.width / width,
     sy = img.height / height,
@@ -144,11 +157,12 @@ export function shrink(img, width, height) {
         xb = Math.max(xa + 1, Math.floor((x + 1) * sx));
       for (let yy = ya; yy < yb && yy < img.height; yy++)
         for (let xx = xa; xx < xb && xx < img.width; xx++) {
+          // d[...]!: in range, xx and yy stay inside the image
           const i = (yy * img.width + xx) * 4,
-            w = d[i + 3];
-          r += d[i] * w;
-          g += d[i + 1] * w;
-          b += d[i + 2] * w;
+            w = d[i + 3]!;
+          r += d[i]! * w; // in range: as above
+          g += d[i + 1]! * w; // in range: as above
+          b += d[i + 2]! * w; // in range: as above
           a += w;
           n++;
         }
@@ -164,10 +178,11 @@ export function shrink(img, width, height) {
 }
 
 // Median cut: a palette of at most `colors` from the solid pixels.
-export function palette(img, colors) {
+export function palette(img: Img, colors: number) {
   const d = img.data,
-    px = [];
-  for (let i = 0; i < d.length; i += 4) if (d[i + 3]) px.push([d[i], d[i + 1], d[i + 2]]);
+    px: RGB[] = [];
+  // d[...]!: in range, i is a pixel's first byte
+  for (let i = 0; i < d.length; i += 4) if (d[i + 3]) px.push([d[i]!, d[i + 1]!, d[i + 2]!]);
   if (!px.length) return [];
   const boxes = [px];
   while (boxes.length < colors) {
@@ -180,8 +195,8 @@ export function palette(img, colors) {
         let lo = 255,
           hi = 0;
         for (const p of box) {
-          if (p[c] < lo) lo = p[c];
-          if (p[c] > hi) hi = p[c];
+          if (p[c]! < lo) lo = p[c]!; // in range: c is a channel, 0-2
+          if (p[c]! > hi) hi = p[c]!; // in range: c is a channel, 0-2
         }
         if (hi - lo > bestRange) {
           bestRange = hi - lo;
@@ -191,20 +206,22 @@ export function palette(img, colors) {
       }
     });
     if (best < 0 || bestRange < 6) break; // what's left is one color already
-    const box = boxes[best].sort((a, b) => a[bestCh] - b[bestCh]),
+    // in range: best is an index into boxes and bestCh a channel, 0-2
+    const box = boxes[best]!.sort((a, b) => a[bestCh]! - b[bestCh]!),
       mid = box.length >> 1;
     boxes.splice(best, 1, box.slice(0, mid), box.slice(mid));
   }
-  return boxes.map((box) => [0, 1, 2].map((c) => Math.round(box.reduce((s, p) => s + p[c], 0) / box.length)));
+  // as RGB: the map keeps the three channels; p[c]!: c is a channel, 0-2
+  return boxes.map((box) => [0, 1, 2].map((c) => Math.round(box.reduce((s, p) => s + p[c]!, 0) / box.length)) as RGB);
 }
 
-export function quantize(img, colors) {
+export function quantize(img: Img, colors: number) {
   const pal = palette(img, colors),
     out = { width: img.width, height: img.height, data: new Uint8ClampedArray(img.data) },
     d = out.data;
   for (let i = 0; i < d.length; i += 4) {
     if (!d[i + 3]) continue;
-    let best = pal[0],
+    let best = pal[0]!, // this pixel is solid, so the palette has at least one color
       bd = Infinity;
     for (const p of pal) {
       const v = dist2(d, i, p[0], p[1], p[2]);
@@ -221,11 +238,13 @@ export function quantize(img, colors) {
 }
 
 // One pixel of dark outline around the solid pixels (the image grows by 1 on each side).
-export function outline(img, color = OUTLINE) {
+export function outline(img: Img, color: RGB = OUTLINE) {
   const w = img.width + 2,
     h = img.height + 2,
     out = image(w, h),
-    solid = (x, y) => x >= 0 && y >= 0 && x < img.width && y < img.height && img.data[(y * img.width + x) * 4 + 3] > 0;
+    // in range: the bounds are checked before the read
+    solid = (x: number, y: number) =>
+      x >= 0 && y >= 0 && x < img.width && y < img.height && img.data[(y * img.width + x) * 4 + 3]! > 0;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const o = (y * w + x) * 4;
@@ -243,7 +262,7 @@ export function outline(img, color = OUTLINE) {
   return out;
 }
 
-export function enlarge(img, k) {
+export function enlarge(img: Img, k: number) {
   if (k === 1) return img;
   const out = image(img.width * k, img.height * k);
   for (let y = 0; y < out.height; y++)
@@ -256,7 +275,16 @@ export function enlarge(img, k) {
 
 // The whole recipe. height = the subject's height in sprite pixels before doubling (the overlay scales sprites to the
 // same bulk anyway). Returns null when nothing is left after the background goes.
-export function spritify(img, { removeBg = true, tolerance = 40, height = 56, colors = 14, edge = true } = {}) {
+export function spritify(
+  img: Img,
+  {
+    removeBg = true,
+    tolerance = 40,
+    height = 56,
+    colors = 14,
+    edge = true,
+  }: { removeBg?: boolean; tolerance?: number; height?: number; colors?: number; edge?: boolean } = {},
+) {
   const cut = removeBg ? removeBackground(img, tolerance) : img;
   const box = contentBox(cut);
   if (!box) return null;
@@ -277,10 +305,10 @@ export function spritify(img, { removeBg = true, tolerance = 40, height = 56, co
 // ---- browser only below ----
 
 // A File -> ImageData no bigger than max x max. Throws Error with a viewer-facing message.
-export async function decodeFile(file, max = SOURCE_MAX) {
+export async function decodeFile(file: File | null | undefined, max = SOURCE_MAX) {
   if (!file?.type?.startsWith("image/")) throw new Error("Choose a picture file (PNG, JPEG, WebP or GIF).");
   if (file.size > FILE_MAX) throw new Error("That picture is over 10 MB. Choose a smaller one.");
-  let bitmap;
+  let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(file);
   } catch {
@@ -288,14 +316,14 @@ export async function decodeFile(file, max = SOURCE_MAX) {
   }
   return drawBitmap(bitmap, max);
 }
-export async function decodeBase64(b64, max = SOURCE_MAX) {
+export async function decodeBase64(b64: string, max = SOURCE_MAX) {
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   return drawBitmap(await createImageBitmap(new Blob([bytes])), max);
 }
-function drawBitmap(bitmap, max) {
+function drawBitmap(bitmap: ImageBitmap, max: number) {
   const { width, height } = fitSize(bitmap.width, bitmap.height, max);
   const canvas = new OffscreenCanvas(width, height),
-    ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx = canvas.getContext("2d", { willReadFrequently: true }) as OffscreenCanvasRenderingContext2D; // a new canvas always has a 2D context
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close?.();
@@ -303,15 +331,20 @@ function drawBitmap(bitmap, max) {
 }
 
 // An image -> base64 PNG, or JPEG for the AI's input (smaller upload; flattened onto white).
-export async function encode(img, type = "image/png") {
+export async function encode(img: Img, type = "image/png") {
   const canvas = new OffscreenCanvas(img.width, img.height),
-    ctx = canvas.getContext("2d");
+    ctx = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D; // a new canvas always has a 2D context
   if (type === "image/jpeg") {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, img.width, img.height);
   }
   const tmp = new OffscreenCanvas(img.width, img.height);
-  tmp.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
+  // as: a new canvas always has a 2D context
+  (tmp.getContext("2d") as OffscreenCanvasRenderingContext2D).putImageData(
+    new ImageData(new Uint8ClampedArray(img.data), img.width, img.height),
+    0,
+    0,
+  );
   ctx.drawImage(tmp, 0, 0);
   const blob = await canvas.convertToBlob({ type, quality: 0.9 });
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -321,13 +354,18 @@ export async function encode(img, type = "image/png") {
 }
 
 // Draws a sprite onto a visible canvas at whole-pixel scale, centered and standing on the bottom edge.
-export function paint(canvas, img) {
-  const ctx = canvas.getContext("2d");
+export function paint(canvas: HTMLCanvasElement, img: Img | null | undefined) {
+  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D; // a canvas only drawn in 2D always has one
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!img) return;
   const k = Math.max(1, Math.floor(Math.min(canvas.width / img.width, canvas.height / img.height)));
   const tmp = new OffscreenCanvas(img.width, img.height);
-  tmp.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
+  // as: a new canvas always has a 2D context
+  (tmp.getContext("2d") as OffscreenCanvasRenderingContext2D).putImageData(
+    new ImageData(new Uint8ClampedArray(img.data), img.width, img.height),
+    0,
+    0,
+  );
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(
     tmp,

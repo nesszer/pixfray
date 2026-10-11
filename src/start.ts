@@ -1,20 +1,21 @@
 // /start: what PixFray is, the Twitch sign-in that turns it on for a streamer's channel, and the setup steps.
-import { h, $ } from "./ui.js";
-import { scrub, skyBackdrop } from "./scrub.js";
+import { h, $ } from "./ui.ts";
+import { scrub, skyBackdrop } from "./scrub.ts";
 import site from "../site.config.js";
 
 const params = new URLSearchParams(location.search);
 // Sites with a PixFray chat bot (site.config.js bot) set chat up with it; the others keep the StreamElements steps.
 const BOT = Boolean(site.bot?.[location.origin === site.origins.test ? "test" : "production"]);
-for (const n of document.querySelectorAll("[data-chat]"))
+for (const n of document.querySelectorAll<HTMLElement>("[data-chat]"))
   if (n.dataset.chat === (BOT ? "bot" : "se")) n.hidden = false;
   else n.remove();
 const error = params.get("error") || "";
 
 // The overlay lays fighters out in the pixels it gets. Narrow stages render it at least 640px wide (in the stage's own
 // shape: 16:9 wide, 4:5 on phones) and scale it down, so the nameplates keep their room and stay readable.
-const stage = $(".stage"),
-  frame = stage.querySelector("iframe");
+// element types from the page HTML
+const stage = $(".stage") as HTMLDivElement,
+  frame = stage.querySelector("iframe") as HTMLIFrameElement;
 // the demo loads once the stage comes near the screen, capped at 6 fighters so it stays light on phones
 const demoSrc =
   "/overlay.html?" + new URLSearchParams({ channel: site.defaultChannel, arena: "1", demo: "1", size: "64", cap: "6" });
@@ -34,8 +35,8 @@ fitStage();
 // the demo only draws while it's on screen
 new IntersectionObserver(
   ([en]) => {
-    if (en.isIntersecting && !frame.src) frame.src = demoSrc;
-    frame.contentWindow?.postMessage({ demoPaused: !en.isIntersecting }, location.origin);
+    if (en!.isIntersecting && !frame.src) frame.src = demoSrc; // en!: an observer callback always gets an entry
+    frame.contentWindow?.postMessage({ demoPaused: !en!.isIntersecting }, location.origin); // en!: as above
   },
   { rootMargin: "200px 0px" },
 ).observe(stage);
@@ -44,7 +45,7 @@ frame.addEventListener("load", () => {
   frame.contentWindow?.postMessage({ demoPaused: r.bottom < 0 || r.top > innerHeight }, location.origin);
 });
 
-const PROBLEMS = {
+const PROBLEMS: Record<string, string | undefined> = {
   full: "PixFray is full right now. Try again in a few days, or run your own copy from the code on GitHub.",
   denied: BOT
     ? "You cancelled the Twitch permissions. You can set up without them and allow them later from the Stream setup page. Until then only you can open your mod controls, and the bot stays out of your chat."
@@ -56,16 +57,18 @@ const PROBLEMS = {
     "This channel name was set up by a different Twitch account (an earlier owner of the name). Open an issue on GitHub and the site owner can move it to you.",
 };
 
-function show(title, text, actions = [], problem = "") {
-  $("#signup-title").textContent = title;
-  $("#signup-text").textContent = text;
-  $("#signup-actions").replaceChildren(...actions);
+function show(title: string, text: string, actions: HTMLAnchorElement[] = [], problem = "") {
+  // element types from the page HTML
+  ($("#signup-title") as HTMLHeadingElement).textContent = title;
+  ($("#signup-text") as HTMLParagraphElement).textContent = text; // element type from the page HTML
+  ($("#signup-actions") as HTMLDivElement).replaceChildren(...actions); // element type from the page HTML
   // the closing band repeats the card's main link as a plain button, so the page ends on the next step with one primary action
-  $("#ready-actions").replaceChildren(
+  // element types from the page HTML
+  ($("#ready-actions") as HTMLDivElement).replaceChildren(
     ...actions.filter((n) => n.matches("a.btn-primary")).map((n) => n.cloneNode(true)),
   );
-  $("#ready").hidden = !$("#ready-actions").children.length;
-  const box = $("#signup-problem");
+  ($("#ready") as HTMLElement).hidden = !($("#ready-actions") as HTMLDivElement).children.length; // element types from the page HTML
+  const box = $("#signup-problem") as HTMLParagraphElement; // element type from the page HTML
   box.textContent = problem;
   box.hidden = !problem;
   box.className = "callout small" + (problem ? " warning" : "");
@@ -97,7 +100,7 @@ init();
 // The setup steps scroll past a scene that shows each one: the overlay framed as an OBS source, a bot reply in chat,
 // !challenge and !fight starting a duel, then the ranking pillars. The middle of the window picks the step.
 const steps = [...document.querySelectorAll(".story .step-grid > li")],
-  cap = $("#story-cap");
+  cap = $("#story-cap") as HTMLElement; // element type from the page HTML
 const CAPS = [
   "The overlay is one browser source, drawn over your game.",
   BOT
@@ -111,18 +114,21 @@ let active = -1;
 const narrow = matchMedia("(max-width: 960px)");
 function storyAt() {
   // phones pin the scene as a strip along the top, so the step that counts is the one mid-way down the rest of the screen
-  const top = narrow.matches ? Math.max(0, $(".story-stage").getBoundingClientRect().bottom) : 0;
+  // element type from the page HTML
+  const top = narrow.matches ? Math.max(0, ($(".story-stage") as HTMLElement).getBoundingClientRect().bottom) : 0;
   const mid = (top + innerHeight) * 0.5,
     c = steps.map((li) => {
       const r = li.getBoundingClientRect();
       return r.top + r.height / 2;
     });
+  // c[...]!: in range, since storyAt runs only with the 4 steps (the scrub call below), n is the last index and i < n
   const n = c.length - 1,
-    gap = (c[n] - c[0]) / n;
-  let s = mid < c[0] ? (mid - c[0]) / gap : mid >= c[n] ? n + (mid - c[n]) / gap : 0;
+    gap = (c[n]! - c[0]!) / n;
+  let s = mid < c[0]! ? (mid - c[0]!) / gap : mid >= c[n]! ? n + (mid - c[n]!) / gap : 0; // c[...]!: as above
   for (let i = 0; i < n; i++)
-    if (mid >= c[i] && mid < c[i + 1]) {
-      s = i + (mid - c[i]) / (c[i + 1] - c[i]);
+    // c[...]!: as above
+    if (mid >= c[i]! && mid < c[i + 1]!) {
+      s = i + (mid - c[i]!) / (c[i + 1]! - c[i]!); // c[...]!: as above
       break;
     }
   s = Math.max(-1, Math.min(n + 1, s));
@@ -130,7 +136,7 @@ function storyAt() {
   if (k !== active) {
     active = k;
     steps.forEach((li, i) => li.classList.toggle("is-active", i === k));
-    cap.textContent = CAPS[k];
+    cap.textContent = CAPS[k]!; // in range: k is clamped to the 4 steps, one caption each
   }
   // each step's scene drifts through its own 5 frames; the cut to the next scene is a short dissolve half-way between steps
   const i = Math.floor(s),
@@ -151,7 +157,8 @@ function storyAt() {
 skyBackdrop();
 if (steps.length === 4) {
   document.documentElement.classList.add("has-story");
-  scrub($("#story-scene"), {
+  // element type from the page HTML
+  scrub($("#story-scene") as HTMLCanvasElement, {
     frames: Array.from({ length: 20 }, (_, i) => "/assets/scene/seq/start-" + String(i).padStart(2, "0") + ".webp"),
     progress: storyAt,
     keys: KEYS,

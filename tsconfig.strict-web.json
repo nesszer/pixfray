@@ -1,4 +1,4 @@
-// Strict TypeScript for browser code (src/, and types/dom.ts once it lands): DOM types, no Worker or Node types.
+// Strict TypeScript for browser code (src/ and types/dom.ts): DOM types, no Worker or Node types.
 // Every ported browser .ts file is listed here, one entry per file; Worker, script and shared files go in
 // tsconfig.strict.json. scripts/port-check.ts fails a branch that changes a .ts file missing from both lists.
 {
@@ -11,5 +11,26 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true
   },
-  "files": ["types/lib-guards.ts", "types/site.ts", "site.config.js"]
+  "files": [
+    "types/lib-guards.ts",
+    "types/site.ts",
+    "site.config.js",
+    "types/dom.ts",
+    "src/channel-param.ts",
+    "src/character-groups.ts",
+    "src/setup.ts",
+    "src/scrub.ts",
+    "src/intro/back.ts",
+    "src/intro/sound.ts",
+    "src/ui.ts",
+    "src/start.ts",
+    "src/sprite-maker.ts",
+    "src/spritify.ts",
+    "src/intro/bevel.ts",
+    "src/intro/voxels.ts",
+    "src/intro/world.ts",
+    "src/fighter3d.ts",
+    "src/voxthumb.ts",
+    "src/intro/main.ts"
+  ]
 }

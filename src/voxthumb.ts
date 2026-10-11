@@ -1,18 +1,25 @@
-// Voxel thumbnails for the picker tiles: each look (ui.js composeLook) is rebuilt as cubes, like the 3D preview,
+// Voxel thumbnails for the picker tiles: each look (ui.ts composeLook) is rebuilt as cubes, like the 3D preview,
 // and rendered once at a three-quarter turn into the tile's own 2D canvas. One small WebGL context does every tile,
 // a few per frame and only once a tile scrolls into view. Without WebGL the tiles keep their flat sprites.
 import * as THREE from "three";
-import { sampleSprite, VoxelFighter } from "./intro/voxels.js";
+import { sampleSprite, VoxelFighter } from "./intro/voxels.ts";
+import type { Look } from "./fighter3d.ts";
+
+interface Job {
+  target: HTMLCanvasElement;
+  make: () => Look | null;
+  tries: number;
+}
 
 const SIZE = 160,
   GRID = 4; // tiles are drawn GRID x GRID to an atlas, so reading them back costs one GPU sync per batch, not per tile
-let renderer = null,
-  scene,
-  camera,
+let renderer: THREE.WebGLRenderer | null = null,
+  scene: THREE.Scene,
+  camera: THREE.PerspectiveCamera,
   broken = false;
-const queue = [],
-  cache = new Map(),
-  waiting = new Map(); // waiting: canvas -> its latest job
+const queue: Job[] = [],
+  cache = new Map<string, HTMLCanvasElement>(),
+  waiting = new Map<Element, Job>(); // waiting: canvas -> its latest job
 let pumping = false;
 
 function setup() {
@@ -51,7 +58,7 @@ function setup() {
 }
 
 // draws one look into atlas cell i (0 is the top left)
-function render(look, i) {
+function render(look: Look, i: number) {
   const step = Math.max(1, Math.round(look.frameH / 30));
   const sprite = sampleSprite(look.body, { x: 0, y: 0, w: look.body.width, h: look.body.height }, step);
   if (!sprite.cells.length) return null;
@@ -63,8 +70,9 @@ function render(look, i) {
     y0 = Infinity,
     y1 = -Infinity;
   for (let i = 0; i < f.count; i++) {
-    const x = f.home[i * 3],
-      y = f.home[i * 3 + 1];
+    // in range: i < count, and home holds 3 numbers per cube
+    const x = f.home[i * 3]!,
+      y = f.home[i * 3 + 1]!; // in range
     x0 = Math.min(x0, x);
     x1 = Math.max(x1, x);
     y0 = Math.min(y0, y);
@@ -82,26 +90,26 @@ function render(look, i) {
   camera.updateProjectionMatrix();
   const x = (i % GRID) * SIZE,
     y = (GRID - 1 - Math.floor(i / GRID)) * SIZE; // WebGL counts y from the bottom
-  renderer.setViewport(x, y, SIZE, SIZE);
-  renderer.setScissor(x, y, SIZE, SIZE);
-  renderer.render(scene, camera);
+  renderer!.setViewport(x, y, SIZE, SIZE); // setup() made it before any job ran
+  renderer!.setScissor(x, y, SIZE, SIZE); // setup() made it before any job ran
+  renderer!.render(scene, camera); // setup() made it before any job ran
   scene.remove(turn);
   f.mesh.geometry.dispose();
   f.mesh.material.dispose();
   f.mesh.dispose();
   return true;
 }
-function copyCell(i) {
+function copyCell(i: number) {
   const out = document.createElement("canvas");
   out.width = out.height = SIZE;
   out
-    .getContext("2d")
-    .drawImage(renderer.domElement, (i % GRID) * SIZE, Math.floor(i / GRID) * SIZE, SIZE, SIZE, 0, 0, SIZE, SIZE);
+    .getContext("2d")! // a fresh canvas always has a 2d context
+    .drawImage(renderer!.domElement, (i % GRID) * SIZE, Math.floor(i / GRID) * SIZE, SIZE, SIZE, 0, 0, SIZE, SIZE); // renderer: setup() made it
   return out;
 }
 
-function paint(target, img) {
-  const g = target.getContext("2d");
+function paint(target: HTMLCanvasElement, img: HTMLCanvasElement) {
+  const g = target.getContext("2d")!; // tiles are 2d canvases, never given to WebGL
   g.clearRect(0, 0, target.width, target.height);
   g.drawImage(img, 0, 0, target.width, target.height);
   target.parentElement?.classList.add("has-vox");
@@ -110,14 +118,14 @@ function paint(target, img) {
 function pump() {
   pumping = false;
   const t0 = performance.now(),
-    drawn = [],
-    paints = [];
-  renderer.setScissorTest(false);
-  renderer.setViewport(0, 0, SIZE * GRID, SIZE * GRID);
-  renderer.clear();
-  renderer.setScissorTest(true);
+    drawn: { key: string; cell: number; targets: HTMLCanvasElement[] }[] = [],
+    paints: [HTMLCanvasElement, HTMLCanvasElement][] = [];
+  renderer!.setScissorTest(false); // setup() made it before any job ran
+  renderer!.setViewport(0, 0, SIZE * GRID, SIZE * GRID); // setup() made it before any job ran
+  renderer!.clear(); // setup() made it before any job ran
+  renderer!.setScissorTest(true); // setup() made it before any job ran
   while (queue.length && drawn.length < GRID * GRID && performance.now() - t0 < 24) {
-    const job = queue.shift();
+    const job = queue.shift()!; // the loop runs only while queue.length
     if (!job.target.isConnected) {
       if (waiting.get(job.target) === job) waiting.delete(job.target);
       continue;
@@ -148,10 +156,10 @@ function pump() {
     }
     if (render(look, drawn.length)) drawn.push({ key: look.key, cell: drawn.length, targets: [job.target] });
   }
-  renderer.setScissorTest(false);
+  renderer!.setScissorTest(false); // setup() made it before any job ran
   for (const d of drawn) {
     const img = copyCell(d.cell);
-    if (cache.size > 300) cache.delete(cache.keys().next().value);
+    if (cache.size > 300) cache.delete(cache.keys().next().value!); // size > 300, so there is a first key
     cache.set(d.key, img);
     for (const t of d.targets) paints.push([t, img]);
   }
@@ -181,7 +189,7 @@ const seen = new IntersectionObserver(
 );
 
 // once the visible tiles are done, fill in the rest of the page (hidden tiles wait until they are shown)
-let idleTimer = 0;
+let idleTimer: ReturnType<typeof setTimeout> = 0; // a number in the browser, so 0 means none
 function fillRest() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
@@ -190,16 +198,16 @@ function fillRest() {
   }, 1200);
 }
 // queues every shown tile, in page order; a tab that just opened calls it so its lower tiles don't stay flat
-export function voxAll() {
+export function voxAll(): void {
   for (const t of waiting.keys()) if (!t.isConnected) waiting.delete(t);
   for (const job of waiting.values())
     if (job.target.isConnected && job.target.offsetParent && !queue.includes(job)) queue.push(job);
   if (queue.length) wake();
 }
 
-// target: the tile's .vox canvas; make(): returns ui.js composeLook(...), or null while its images load.
+// target: the tile's .vox canvas; make(): returns ui.ts composeLook(...), or null while its images load.
 // Calling it again for the same canvas replaces the pending look (the picked character changed).
-export function voxThumb(target, make) {
+export function voxThumb(target: HTMLCanvasElement, make: () => Look | null): boolean {
   if (!setup()) return false;
   waiting.set(target, { target, make, tries: 0 });
   seen.unobserve(target);
