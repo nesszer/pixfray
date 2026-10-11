@@ -54,7 +54,7 @@ const reply = (body: string, status = 200) =>
     headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
   });
 
-// Keys are 24 random bytes as hex (randomHex in server/channel.js). Anything else is refused without waking the room.
+// Keys are 24 random bytes as hex (randomHex in server/channel.ts). Anything else is refused without waking the room.
 export const SE_KEY = /^[a-f0-9]{48}$/;
 export const WRONG_KEY_TEXT = "PixFray: wrong key. Copy the commands again from the admin page.";
 // Per-isolate memory of refused (channel, key) pairs: the first refusal reaches the room (it records rejected_at for the
@@ -139,7 +139,7 @@ export async function handleStreamElements(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  // The type argument names what the room's /se route answers (server/channel.js); nothing checks it at run time.
+  // The type argument names what the room's /se route answers (server/channel.ts); nothing checks it at run time.
   const data: SeRoomReply = await r.json<SeRoomReply>().catch(() => ({}));
   const sent = r.headers.get("X-Se-Key");
   if (sent && /^[a-f0-9]{32}$/.test(sent)) {
@@ -350,8 +350,8 @@ export function seEloText(
   const { profile: p, rank, total } = found;
   return `${short(p.displayName || p.username)}: ${p.elo} Elo, rank ${rank} of ${total}, ${p.wins} win${p.wins === 1 ? "" : "s"} and ${p.losses} loss${p.losses === 1 ? "" : "es"}.`;
 }
-// !checkin: one line per outcome of ChannelRoom.checkin (server/channel.js).
-/** ChannelRoom.checkin's answer; the fields beside `reason` depend on it (server/channel.js). */
+// !checkin: one line per outcome of ChannelRoom.checkin (server/channel.ts).
+/** ChannelRoom.checkin's answer; the fields beside `reason` depend on it (server/channel.ts). */
 export type CheckinReply = {
   reason: string;
   streak?: number;
@@ -427,8 +427,8 @@ export function sePetText(
   return `@${target ? short(p.name) : me}'s pet: ${p.pet.label} (${p.pet.tier}), ${boostText(p.pet.boost)}.`;
 }
 
-// !give @name amount: one line per outcome of ChannelRoom.give (server/channel.js).
-/** ChannelRoom.give's answer; the fields beside `reason` depend on it (server/channel.js). */
+// !give @name amount: one line per outcome of ChannelRoom.give (server/channel.ts).
+/** ChannelRoom.give's answer; the fields beside `reason` depend on it (server/channel.ts). */
 export type GiveReply = {
   reason: string;
   amount?: number;

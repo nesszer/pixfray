@@ -322,7 +322,7 @@ function petId(label: string): string {
   return "p-" + slug + "-" + rand;
 }
 
-// Durable Object side: /pets and /pets/<id>. onDelete(id) clears the pet from fighters (channel.js).
+// Durable Object side: /pets and /pets/<id>. onDelete(id) clears the pet from fighters (channel.ts).
 export async function handleRoomPets(
   room: { ctx: DurableObjectState },
   request: Request,

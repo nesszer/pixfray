@@ -79,6 +79,185 @@ import {
   seKeyHash,
   botNames,
 } from "./streamelements.ts";
+import type { CheckinReply, GiveReply, SeNames } from "./streamelements.ts";
+import type { SendResult } from "./eventsub.ts";
+import type { SpriteRow } from "./sprites.ts";
+import type { CatalogEntry } from "./uploads.ts";
+import type { CosmeticKind } from "./cosmetics.ts";
+import type { Env } from "./env.ts";
+import type {
+  AdminEvent,
+  ChatEvent,
+  Config,
+  Cosmetics,
+  Duel,
+  GameEvent,
+  GameResult,
+  GameState,
+  Player,
+  ReduceOutput,
+  Snapshot,
+} from "./model.ts";
+
+/** A JSON object request body, as readJson parses it; routes check each field they read. */
+type JsonObject = { [field: string]: unknown };
+/** A profiles row: the table the constructor makes, with every column its migrations add. */
+type ProfileTable = {
+  user_id: string;
+  username: string;
+  display_name: string;
+  avatar: string;
+  color: string;
+  default_ability: string;
+  elo: number;
+  wins: number;
+  losses: number;
+  last_seen: number;
+  power: number;
+  guard: number;
+  luck: number;
+  hat: string;
+  last_opponent: string;
+  bonus_points: number;
+  checkins: number;
+  streak: number;
+  last_stream_seq: number;
+  free_miss_at: number;
+  last_stream: string;
+  dollars: number;
+  given_in_stream: number;
+  give_stream: string;
+  pet: string;
+  recolor: string;
+  pet_color: string;
+  accessory: string;
+  trail: string;
+  win_effect: string;
+  taunt: string;
+  title: string;
+  build: number;
+  account_created_at: number;
+  account_checked_at: number;
+};
+/** What a SELECT of PROFILE_COLUMNS returns; getProfile also reads last_opponent. */
+type ProfileRow = Omit<
+  ProfileTable,
+  | "last_opponent"
+  | "last_stream_seq"
+  | "free_miss_at"
+  | "last_stream"
+  | "given_in_stream"
+  | "give_stream"
+  | "account_created_at"
+  | "account_checked_at"
+> & { pet_custom: string | null; last_opponent?: string };
+/** A saved fighter as normalizeProfileRow builds it: the player plus the columns only the profile keeps. */
+type Profile = Player & { checkins: number; streak: number; dollars: number; build: number };
+/** A config_history row. */
+type ConfigHistoryRow = {
+  version: number;
+  config: string;
+  actor_id: string;
+  actor_name: string;
+  at: number;
+  note: string;
+};
+/** The bot_status row (the constructor's DDL). */
+type BotStatusRow = {
+  id: number;
+  heard_at: number;
+  heard: string;
+  sent_at: number;
+  sent_total: number;
+  failed_at: number;
+  failed_total: number;
+  failed_reason: string;
+  held_at: number;
+  held_reason: string;
+};
+/**
+ * A chat message as /eventsub, /chat and /dev-chat hand it to the room (server/eventsub.ts): the EventSub envelope
+ * fields the room reads, each unchecked until it is read.
+ */
+type BotMessage = {
+  messageId?: unknown;
+  messageType?: unknown;
+  subscription?: { id?: unknown; status?: unknown; [field: string]: unknown } | undefined;
+  event?: Partial<ChatEvent> | undefined;
+  botId?: unknown;
+  bot?: unknown;
+  timestamp?: unknown;
+  quick?: unknown;
+  [field: string]: unknown;
+};
+/** What the overlay sockets get: the state, or the saved looks that changed. */
+type LiveMessage =
+  | (Snapshot & { build: string })
+  | { type: "looks"; looks: { [login: string]: Look | null }; reset?: boolean };
+/** What an overlay draws for a saved fighter (savedLook). */
+type Look = ReturnType<typeof savedLook>;
+/** The parsed se_settings row (seSettings). */
+type SeSettings = {
+  secret: string;
+  names: SeNames;
+  lastCommandAt: number;
+  rejectedAt: number;
+  /** When each command (action) last arrived with the right key. */
+  seen: { [action: string]: number };
+  duelModuleOff: boolean;
+};
+/** What a chat message did to the game (processChatMessage, advance). */
+type ChatOutcome = Pick<ReduceOutput, "state" | "result" | "changed" | "visible">;
+/** A caught value: anything can be thrown, and an Error's message reads best. */
+type Thrown = { message?: unknown } | null | undefined;
+/** What a fighter bought (owned): ids per pet, hat and cosmetic kind, plus build slots. */
+type Owned = { pets: string[]; hats: string[]; slots: number } & { [kind in CosmeticKind]: string[] };
+/** A duel whose result chat may now hear (dueResults): completed, rated and revealed. */
+type DueDuel = Duel & { ratings: NonNullable<Duel["ratings"]>; revealAt: number };
+/** How a bot command reached the room, for its replies and the command log. */
+type BotCtx = { origin: string; settings: SeSettings; subscriptionId: string };
+/** A command as runCommand takes it: from StreamElements (/se), the bot (botCommand) or the test site. */
+type CommandInput = {
+  action?: unknown;
+  userId?: unknown;
+  username?: unknown;
+  displayName?: unknown;
+  target?: unknown;
+  targetRaw?: unknown;
+  amount?: unknown;
+  messageId?: unknown;
+  key?: unknown;
+  [field: string]: unknown;
+};
+/** readJson's answer. Each side names the other's fields as optional, for the loose worker program. */
+type ReadJson = { ok: false; error: string; value?: undefined } | { ok: true; value: JsonObject; error?: undefined };
+/** An event advance takes: any reducer event; the admin fields it logs are absent on the others. */
+type RoomEvent = GameEvent & { actorId?: unknown; actorName?: unknown; note?: unknown };
+/** The fields upsertProfile writes: a state player, a saved profile or saveProfile's loadout. */
+type ProfileWrite = Pick<
+  Player,
+  | "userId"
+  | "username"
+  | "displayName"
+  | "avatar"
+  | "color"
+  | "defaultAbility"
+  | "elo"
+  | "wins"
+  | "losses"
+  | "lastSeen"
+  | "stats"
+  | "hat"
+> &
+  Partial<Cosmetics> & { pet?: string; lastOpponentId?: string | undefined };
+/** A profile saveProfile answers with: the saved loadout plus the columns only the profiles table keeps. */
+type SavedProfile = ProfileWrite & { bonus: number; checkins: number; streak: number; dollars: number; build: number };
+/** saveProfile's answer. */
+type SaveResult =
+  | { ok: false; reason: string | undefined; status?: number; profile?: undefined; state?: undefined }
+  | { ok: true; profile: SavedProfile; state: GameState; reason?: undefined; status?: undefined };
+/** runCommand's answer (the /se body). */
+type CommandReply = { reply: string; reason: string; switchedFrom?: string };
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -95,16 +274,15 @@ const BOT_RESERVED_LINES = 4; // of those, kept for the bot's own result and exp
 const RESULT_WINDOW_MS = 120000; // a result line not sent within 2 minutes of its reveal is given up
 const RESULT_RETRY_MS = 5000; // how often the alarm retries a due result line that couldn't go out
 // Hidden bot-channel aliases for words new viewers guess: !accept and !duel, and !top (StreamElements owns it on SE channels).
-const BOT_ALIASES = { "!accept": "accept", "!duel": "challenge", "!top": "top" };
+const BOT_ALIASES: { [word: string]: string } = { "!accept": "accept", "!duel": "challenge", "!top": "top" };
 // Commands that refuse the bot account as their target, with the reply (outside the BOT_DEBUG test site).
-const BOT_TARGET_ACTIONS = {
+const BOT_TARGET_ACTIONS: { [action: string]: (names: SeNames) => string } = {
   challenge: (names) => `The bot doesn't fight (yet)! Name a rival: ${names.challenge || "!challenge"} @name`,
   give: () => "The bot doesn't take dollars. Give them to a rival!",
 };
 // !fray e2e (BOT_DEBUG): [who, action, target, expected reasons, gate]. B is the bot account, O the opponent. A gate step
 // starts or answers a duel the next steps need, so the run stops when it fails.
-/** @type {[who: string, action: string, target: string, want: string[], gate?: boolean][]} */
-const E2E_STEPS = [
+const E2E_STEPS: [who: "B" | "O", action: string, target: "" | "O", want: string[], gate?: boolean][] = [
   ["B", "help", "", ["help"]],
   ["B", "look", "", ["look"]],
   ["B", "top", "", ["top"]],
@@ -125,10 +303,10 @@ const E2E_STEPS = [
 ];
 const MAX_E2E_LINE = 470; // under the bot's 480-character chat line
 // Joins parts into as few lines as fit max characters each.
-function chatLines(parts, sep, max) {
-  const out = [];
+function chatLines(parts: string[], sep: string, max: number): string[] {
+  const out: string[] = [];
   for (const part of parts) {
-    const last = out.length ? out[out.length - 1] : null;
+    const last = out.length ? (out[out.length - 1] as string) : null; // out has that many lines
     if (last !== null && last.length + sep.length + part.length <= max) out[out.length - 1] = last + sep + part;
     else out.push(part.slice(0, max));
   }
@@ -165,33 +343,33 @@ const MAX_GIFT = 10_000; // the most a mod can add or take back in one gift
 const PROFILE_COLUMNS =
   "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak, dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom";
 
-function json(data, status = 200, headers = {}) {
+function json(data: unknown, status = 200, headers: { [name: string]: string } = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers },
   });
 }
 
-function text(value, status = 200) {
+function text(value: string, status = 200): Response {
   return new Response(value, {
     status,
     headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
   });
 }
 
-function normalizeChannel(value) {
+function normalizeChannel(value: unknown): string {
   const channel = String(value || "")
     .trim()
     .toLowerCase();
   return /^[a-z0-9_]{1,25}$/.test(channel) ? channel : "";
 }
 
-function validUserId(value) {
+function validUserId(value: unknown): string {
   const id = String(value ?? "").trim();
   return id.length > 0 && id.length <= MAX_PROFILE_ID_LENGTH && /^[a-zA-Z0-9_:-]+$/.test(id) ? id : "";
 }
 
-function normalizeUsername(value) {
+function normalizeUsername(value: unknown): string {
   return String(value || "")
     .trim()
     .replace(/^@/, "")
@@ -200,7 +378,7 @@ function normalizeUsername(value) {
 }
 
 // Stage 4 cosmetics: profile field -> profiles column (server/cosmetics.ts).
-const COSMETIC_COLUMNS = {
+const COSMETIC_COLUMNS: { [field in keyof Cosmetics]: keyof ProfileTable } = {
   recolor: "recolor",
   petColor: "pet_color",
   accessory: "accessory",
@@ -211,14 +389,17 @@ const COSMETIC_COLUMNS = {
 };
 
 // Leaderboard order, as in the SQL: Elo, then wins, then name.
-function boardOrder(a, b) {
+function boardOrder(
+  a: { username: string; elo: number; wins: number },
+  b: { username: string; elo: number; wins: number },
+): number {
   const x = a.username.toLowerCase(),
     y = b.username.toLowerCase();
   return b.elo - a.elo || b.wins - a.wins || (x < y ? -1 : x > y ? 1 : 0);
 }
 
 // What an overlay draws for a viewer with a saved fighter: /looks and the "looks" push send the same fields.
-function savedLook(p) {
+function savedLook(p: Player) {
   return {
     avatar: p.avatar,
     color: p.color,
@@ -231,7 +412,9 @@ function savedLook(p) {
   };
 }
 
-function normalizeProfileRow(row, config) {
+function normalizeProfileRow(row: ProfileRow, config: Config): Profile;
+function normalizeProfileRow(row: ProfileRow | null | undefined, config: Config): Profile | null;
+function normalizeProfileRow(row: ProfileRow | null | undefined, config: Config): Profile | null {
   if (!row) return null;
   return {
     userId: String(row.user_id),
@@ -255,7 +438,10 @@ function normalizeProfileRow(row, config) {
     dollars: Number.isInteger(row.dollars) ? row.dollars : 0, // PixFray dollars (payDuels, give, giftDollars)
     ...petFieldsOf(row),
     ...cleanCosmetics(
-      Object.fromEntries(Object.entries(COSMETIC_COLUMNS).map(([field, column]) => [field, row[column]])),
+      // each COSMETIC_COLUMNS column is in PROFILE_COLUMNS
+      Object.fromEntries(
+        Object.entries(COSMETIC_COLUMNS).map(([field, column]) => [field, row[column as keyof ProfileRow]]),
+      ),
     ),
     build: Number.isInteger(row.build) ? row.build : 0, // the active build slot (builds table)
     ...(row.last_opponent ? { lastOpponentId: String(row.last_opponent) } : {}), // only getProfile reads it
@@ -263,39 +449,62 @@ function normalizeProfileRow(row, config) {
 }
 
 // The active pet (server/pets.ts): its id, tier and boost; none when it's gone (a deleted upload).
-function petFieldsOf(row) {
+function petFieldsOf(row: { pet: string; pet_custom: string | null }) {
   const pet = petOf(row.pet, row.pet_custom);
   return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };
 }
 
-function safeJsonParse(value, fallback) {
+// T is the object the caller stored; F is what a missing, broken or non-object value reads as.
+function safeJsonParse<T extends object, F = T>(value: string | null | undefined, fallback: F): T | F {
   try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" ? parsed : fallback;
+    const parsed: unknown = JSON.parse(value as string); // null and undefined parse or throw into the fallback
+    return parsed && typeof parsed === "object" ? (parsed as T) : fallback; // the caller names what it stored
   } catch {
     return fallback;
   }
 }
 
-function randomHex() {
+function randomHex(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(24)), (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-function timingSafeEqual(a, b) {
+function timingSafeEqual(a: unknown, b: unknown): boolean {
   if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
   let difference = 0;
   for (let i = 0; i < a.length; i += 1) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return difference === 0;
 }
 
-export class ChannelRoom extends DurableObject {
-  constructor(ctx, env) {
+export class ChannelRoom extends DurableObject<Env> {
+  // public, so the room helpers in pets, sprites, uploads and developer can take the room
+  declare ctx: DurableObjectState<{}>; // DurableObject's own Props default
+  declare env: Env;
+  /** Last time each held-duel reason was logged. */
+  declare heldLogged: Record<string, number> | undefined;
+  /** Text command cooldowns (customReply). */
+  declare commandCooldowns: Map<string, number> | undefined;
+  /** EventSub Message-Id -> receivedAt. */
+  declare seenMessages: Map<string, number>;
+  /** Logins whose saved look changed or went away since the last "looks" push (flushLooks). */
+  declare dirtyLooks: Set<string> | undefined;
+  declare goneLooks: Set<string> | undefined;
+  /** Every saved look changed (a restore): overlays drop what they cached. */
+  declare looksReset: boolean;
+  declare lookFlush: ReturnType<typeof setTimeout> | number | undefined;
+  /** When the bot's recent chat replies went out (botReplyRoom). */
+  declare botReplies: number[] | undefined;
+  declare liveCache: { at: number; stream: { id: string; startedAt: number } | null } | undefined;
+  /** Duel ids whose expired-challenge line went out. */
+  declare expiredSaid: Set<string> | undefined;
+  declare postingResults: Promise<void> | null | undefined;
+
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
-    /** @type {Record<string, number> | undefined} last time each held-duel reason was logged */
+    // last time each held-duel reason was logged
     this.heldLogged = undefined;
-    /** @type {Map<string, number> | undefined} text command cooldowns (customReply) */
+    // text command cooldowns (customReply)
     this.commandCooldowns = undefined;
     // Overlays send "ping" every 20 s to catch a half-open socket. The runtime answers "pong" itself, without waking this
     // object from hibernation or billing its time (src/served/arena-client.js).
@@ -310,7 +519,7 @@ export class ChannelRoom extends DurableObject {
     );
     // v2.5: upgrade points spent from wins (server/upgrades.ts) and the chosen hat.
     const profileColumns = sql
-      .exec("PRAGMA table_info(profiles)")
+      .exec<{ name: string }>("PRAGMA table_info(profiles)")
       .toArray()
       .map((c) => c.name);
     for (const column of ["power", "guard", "luck"])
@@ -367,7 +576,7 @@ export class ChannelRoom extends DurableObject {
     // results_through: the latest duel revealAt the bot has announced, so a result line goes out once.
     if (
       !sql
-        .exec("PRAGMA table_info(bot_reminder)")
+        .exec<{ name: string }>("PRAGMA table_info(bot_reminder)")
         .toArray()
         .some((c) => c.name === "results_through")
     )
@@ -392,7 +601,7 @@ export class ChannelRoom extends DurableObject {
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
     if (
       !sql
-        .exec("PRAGMA table_info(config_history)")
+        .exec<{ name: string }>("PRAGMA table_info(config_history)")
         .toArray()
         .some((c) => c.name === "actor_name")
     )
@@ -405,7 +614,7 @@ export class ChannelRoom extends DurableObject {
     // v2.4: when a StreamElements command last reached this room with the right key, and with a wrong one, so the admin
     // page can tell when the bot's commands were copied from another site (test vs production) or an old key.
     const seColumns = sql
-      .exec("PRAGMA table_info(se_settings)")
+      .exec<{ name: string }>("PRAGMA table_info(se_settings)")
       .toArray()
       .map((c) => c.name);
     for (const column of ["last_command_at", "rejected_at"])
@@ -420,7 +629,7 @@ export class ChannelRoom extends DurableObject {
     this.seenMessages = new Map(); // EventSub Message-Id -> receivedAt; commands are also deduped durably by message_id
   }
 
-  async fetch(request) {
+  async fetch(request: Request): Promise<Response> {
     if (!this.authorized(request)) return json({ error: "internal authorization required" }, 403);
     try {
       return await this.route(request);
@@ -430,7 +639,7 @@ export class ChannelRoom extends DurableObject {
     }
   }
 
-  async route(request) {
+  async route(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const channel = this.requestChannel(request);
@@ -440,15 +649,15 @@ export class ChannelRoom extends DurableObject {
 
     // Owner dev token only (server/worker.js /api/devtools/:channel/export): every row of the tables a copy needs. BLOBs as {$b64}.
     if (path === "/export" && request.method === "GET") {
-      const bytes = (v) =>
+      const bytes = (v: ArrayBuffer | ArrayBufferView) =>
         v instanceof ArrayBuffer ? new Uint8Array(v) : new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-      const b64 = (v) =>
+      const b64 = (v: unknown) =>
         v instanceof ArrayBuffer || ArrayBuffer.isView(v)
           ? {
               $b64: btoa(Array.from(bytes(v), (c) => String.fromCharCode(c)).join("")),
             }
           : v;
-      const out = {};
+      const out: { [table: string]: unknown } = {};
       for (const table of [
         "game_state",
         "profiles",
@@ -478,11 +687,11 @@ export class ChannelRoom extends DurableObject {
 
     // The catalog is the mods' uploads plus approved viewer sprites (each with the `owner` who alone may wear it).
     if (path === "/catalog" && request.method === "GET") {
-      const custom = await (await handleRoomAssets(this, request, { path, channel })).json();
+      const custom = await (await handleRoomAssets(this, request, { path, channel })).json<CatalogEntry[]>(); // the /catalog list
       return json([...custom, ...spriteCatalog(this.ctx.storage.sql, channel)]);
     }
     if (path === "/sprites" || path.startsWith("/sprites/") || path.startsWith("/asset/v-")) {
-      let changed = null;
+      let changed: GameState | null = null;
       const response = await handleRoomSprites(this, request, {
         path,
         url,
@@ -504,7 +713,7 @@ export class ChannelRoom extends DurableObject {
     if (path.startsWith("/dev/")) return handleRoomDeveloper(this, request, { path, channel, url });
     if (path === "/pets" || path.startsWith("/pets/")) {
       // A deleted upload leaves the fighters using it with no pet; the stored profiles are cleared by handleRoomPets.
-      let cleared = null;
+      let cleared: GameState | null = null;
       const response = await handleRoomPets(this, request, {
         path,
         channel,
@@ -561,7 +770,7 @@ export class ChannelRoom extends DurableObject {
       const state = this.readState(channel);
       this.seedConfigHistory(state);
       const history = this.ctx.storage.sql
-        .exec(
+        .exec<ConfigHistoryRow>(
           "SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?",
           MAX_CONFIG_HISTORY,
         )
@@ -607,9 +816,9 @@ export class ChannelRoom extends DurableObject {
       const state = this.readState(channel),
         config = state.config,
         hidden = hiddenResults(state, Date.now()),
-        out = {};
+        out: { [login: string]: Look } = {};
       const rows = this.ctx.storage.sql
-        .exec(
+        .exec<ProfileRow>(
           `SELECT ${PROFILE_COLUMNS} FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`,
           ...logins,
         )
@@ -626,7 +835,8 @@ export class ChannelRoom extends DurableObject {
       if (!userId) return json({ error: "valid userId required" }, 400);
       const state = this.readState(channel);
       const hidden = hiddenResults(state, Date.now());
-      const profile = shownProfile(this.getProfile(userId, state.config), hidden);
+      // shownProfile hands a null profile back unchanged, as the check below expects
+      const profile = shownProfile(this.getProfile(userId, state.config) as Profile, hidden);
       if (!profile) return json(null);
       // A knocked-out fighter (hp 0, respawnAt) would give away a result the stream hasn't shown yet.
       const active = !hidden.has(userId) && state.players.find((item) => item.userId === userId);
@@ -682,9 +892,9 @@ export class ChannelRoom extends DurableObject {
       const actorId = validUserId(body.value.actorId);
       if (!actorId) return json({ error: "authorized actor required" }, 403);
       const action = String(body.value.action || "");
-      let payload =
+      let payload: JsonObject =
         body.value.payload && typeof body.value.payload === "object" && !Array.isArray(body.value.payload)
-          ? body.value.payload
+          ? (body.value.payload as JsonObject) // an object, checked here
           : body.value;
       let note = "";
       if (action === "giftDollars") {
@@ -709,7 +919,9 @@ export class ChannelRoom extends DurableObject {
       if (action === "rollbackConfig") {
         const version = Number(payload.version);
         const row = Number.isInteger(version)
-          ? this.ctx.storage.sql.exec("SELECT config FROM config_history WHERE version = ?", version).toArray()[0]
+          ? this.ctx.storage.sql
+              .exec<Pick<ConfigHistoryRow, "config">>("SELECT config FROM config_history WHERE version = ?", version)
+              .toArray()[0]
           : null;
         if (!row)
           return json({ ok: false, reason: "config_version_not_found", error: "config_version_not_found" }, 404);
@@ -726,7 +938,7 @@ export class ChannelRoom extends DurableObject {
       const targetId = validUserId(payload.userId);
       const targetProfile = targetId ? this.getProfile(targetId, this.readState(channel).config) : null;
       const actorName = String(body.value.actorName || "").slice(0, 48);
-      const event = {
+      const event: AdminEvent = {
         type: "admin",
         actorId,
         actorName,
@@ -764,7 +976,8 @@ export class ChannelRoom extends DurableObject {
     if (path === "/eventsub" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
-      return this.eventsub(channel, body.value, url.searchParams.get("origin") || "");
+      // the Worker forwards a verified EventSub body; handleEventsub checks each field it reads
+      return this.eventsub(channel, body.value as BotMessage, url.searchParams.get("origin") || "");
     }
     // StreamElements custom commands, forwarded by the Worker from GET /api/se/<channel>/<action>.
     if (path === "/se" && request.method === "POST") {
@@ -786,10 +999,14 @@ export class ChannelRoom extends DurableObject {
           "UPDATE se_settings SET last_command_at = 0, rejected_at = 0, seen_json = '{}' WHERE id = 1",
         ); // a new key starts unheard
       } else if (body.value.action === "setSeNames") {
-        const input = body.value.names && typeof body.value.names === "object" ? body.value.names : {};
-        const names = {};
+        const input: JsonObject =
+          body.value.names && typeof body.value.names === "object" ? (body.value.names as JsonObject) : {}; // an object, checked here
+        const names: SeNames = {};
         for (const action of SE_ACTIONS) {
-          const name = String(input[action] ?? current.names[action] ?? DEFAULT_SE_NAMES[action]).trim();
+          const name = String(
+            // SE_ACTIONS are DEFAULT_SE_NAMES's keys
+            input[action] ?? current.names[action] ?? DEFAULT_SE_NAMES[action as keyof typeof DEFAULT_SE_NAMES],
+          ).trim();
           if (!/^!?[a-z0-9_]{1,24}$/i.test(name)) return json({ error: `Invalid command name for ${action}` }, 400);
           names[action] = (name.startsWith("!") ? name : "!" + name).toLowerCase();
         }
@@ -822,10 +1039,21 @@ export class ChannelRoom extends DurableObject {
       if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
-      const { userId, username, displayName, text: line } = body.value;
+      // the test site's own tool (scripts/devtools.mjs) sends these as strings; text goes through String() below
+      const {
+        userId,
+        username,
+        displayName,
+        text: line,
+      } = body.value as {
+        userId: string;
+        username: string;
+        displayName: string;
+        text: unknown;
+      };
       const now = Date.now(),
         messageId = "dev:" + randomHex().slice(0, 24);
-      const msg = {
+      const msg: BotMessage = {
         messageId,
         timestamp: now,
         subscription: { id: this.readState(channel).chat.subscriptionId || "" },
@@ -841,9 +1069,11 @@ export class ChannelRoom extends DurableObject {
       const result = this.processChatMessage(channel, msg, now);
       if (result.visible) this.broadcast(result.state);
       if (result.changed) await this.scheduleAlarm(result.state);
-      const r = result.result || {};
+      const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
       if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
-      const devGive = /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(String(line || "").trim());
+      const devGive = /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(String(line || "").trim()) as
+        | (RegExpExecArray & [string, string])
+        | null; // group 1 is required, so a match has it
       if (devGive) {
         // the reply is the line a StreamElements bot would post
         const who = displayName || username,
@@ -875,7 +1105,10 @@ export class ChannelRoom extends DurableObject {
         });
       }
       const parsed = parseGameCommand(String(line || "")); // the reply is the line a StreamElements bot would post
-      const action = parsed ? { duel: "challenge" }[parsed.action] || parsed.action : "";
+      // other actions keep their own name
+      const action = parsed
+        ? ({ duel: "challenge" } as { [action: string]: string | undefined })[parsed.action] || parsed.action
+        : "";
       return json({
         ...r,
         revision: result.state.revision,
@@ -899,7 +1132,8 @@ export class ChannelRoom extends DurableObject {
       if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
-      const { live, streamId } = body.value,
+      // the test site's own tool sends streamId as a string; the pattern below checks it
+      const { live, streamId } = body.value as { live?: unknown; streamId?: string },
         sql = this.ctx.storage.sql;
       if (typeof live !== "boolean") sql.exec("DELETE FROM dev_live");
       else
@@ -908,14 +1142,14 @@ export class ChannelRoom extends DurableObject {
           live ? "dev-" + (/^[a-z0-9_-]{1,36}$/i.test(streamId || "") ? streamId : randomHex().slice(0, 12)) : "",
           Date.now(),
         );
-      const row = sql.exec("SELECT stream_id FROM dev_live WHERE id = 1").toArray()[0];
+      const row = sql.exec<{ stream_id: string }>("SELECT stream_id FROM dev_live WHERE id = 1").toArray()[0];
       return json({ ok: true, live: row ? Boolean(row.stream_id) : null, streamId: row?.stream_id || "" });
     }
     if (path === "/chat" && request.method === "GET") return json(chatStatus(this.readState(channel)));
     if (path === "/chat" && request.method === "POST") {
       const body = await this.readJson(request);
       if (!body.ok) return json({ error: body.error }, 400);
-      const event =
+      const event: GameEvent | null =
         body.value.action === "connected"
           ? {
               type: "chat_subscription",
@@ -936,30 +1170,32 @@ export class ChannelRoom extends DurableObject {
     return text("Not found", 404);
   }
 
-  authorized(request) {
+  authorized(request: Request): boolean {
     const expected = this.env.INTERNAL_SECRET;
     const received = request.headers.get(INTERNAL_HEADER);
     if (typeof expected !== "string" || expected.length < 16) return false;
     return timingSafeEqual(received, expected);
   }
 
-  requestChannel(request) {
+  requestChannel(request: Request): string {
     return normalizeChannel(request.headers.get(CHANNEL_HEADER) || this.env.CHANNEL_NAME || site.defaultChannel);
   }
 
   readStoredState() {
-    const row = this.ctx.storage.sql.exec("SELECT channel, document FROM game_state WHERE id = 1").toArray()[0];
+    const row = this.ctx.storage.sql
+      .exec<{ channel: string; document: string }>("SELECT channel, document FROM game_state WHERE id = 1")
+      .toArray()[0];
     if (!row) return null;
-    return safeJsonParse(row.document, null);
+    return safeJsonParse<{ channel?: unknown; [field: string]: unknown }, null>(row.document, null);
   }
 
-  readState(channel) {
+  readState(channel: string): GameState {
     const stored = this.readStoredState();
     if (!stored) return createInitialState(channel);
     return normalizeGameState({ ...createInitialState(channel), ...stored, channel });
   }
 
-  writeState(state) {
+  writeState(state: GameState): void {
     this.ctx.storage.sql.exec(
       "INSERT INTO game_state (id, channel, document) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET channel = excluded.channel, document = excluded.document",
       state.channel,
@@ -967,7 +1203,7 @@ export class ChannelRoom extends DurableObject {
     );
   }
 
-  advance(channel, event, now) {
+  advance(channel: string, event: RoomEvent, now: number): ReduceOutput {
     return this.ctx.storage.transactionSync(() => {
       const state = this.readState(channel);
       if (event.type === "admin" && event.action === "config") this.seedConfigHistory(state);
@@ -999,7 +1235,8 @@ export class ChannelRoom extends DurableObject {
         logRoomEvent(
           this,
           "command",
-          `${event.actorName || event.actorId} restored rank ${set.elo}/${set.wins}/${set.losses} -> ${set.userId}`,
+          // the /admin route sets both as strings
+          `${(event.actorName || event.actorId) as string} restored rank ${set.elo}/${set.wins}/${set.losses} -> ${set.userId}`,
           {
             channel,
             action: "restoreRank",
@@ -1023,12 +1260,22 @@ export class ChannelRoom extends DurableObject {
   }
 
   // Config history keeps every version so mods can review and roll back (see docs/CONTRACTS.md).
-  seedConfigHistory(state) {
-    const [{ n }] = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM config_history").toArray();
+  seedConfigHistory(state: GameState): void {
+    // COUNT(*) always returns one row
+    const [{ n }] = this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM config_history").toArray() as [
+      { n: number },
+    ];
     if (!n) this.recordConfigVersion(state.configVersion, state.config, "system", "initial", Date.now());
   }
 
-  recordConfigVersion(version, config, actorId, note, now, actorName = "") {
+  recordConfigVersion(
+    version: number,
+    config: Config,
+    actorId: unknown,
+    note: unknown,
+    now: number,
+    actorName: unknown = "",
+  ): void {
     const sql = this.ctx.storage.sql;
     sql.exec(
       "INSERT OR REPLACE INTO config_history (version, config, actor_id, actor_name, at, note) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1042,11 +1289,11 @@ export class ChannelRoom extends DurableObject {
     sql.exec("DELETE FROM config_history WHERE version <= ?", version - 200);
   }
 
-  async readJson(request) {
+  async readJson(request: Request): Promise<ReadJson> {
     const length = Number(request.headers.get("content-length") || 0);
     if (length > 16 * 1024) return { ok: false, error: "request body too large" };
     try {
-      const value = await request.json();
+      const value = await request.json<JsonObject | null>(); // any JSON: only an object gets past the check below
       if (!value || typeof value !== "object" || Array.isArray(value))
         return { ok: false, error: "JSON object required" };
       return { ok: true, value };
@@ -1055,7 +1302,7 @@ export class ChannelRoom extends DurableObject {
     }
   }
 
-  saveProfile(channel, userId, input) {
+  saveProfile(channel: string, userId: string, input: JsonObject): SaveResult {
     const username = normalizeUsername(input.username);
     const displayName = String(input.displayName || username)
       .trim()
@@ -1063,14 +1310,18 @@ export class ChannelRoom extends DurableObject {
     const avatar = String(input.avatar || "player")
       .trim()
       .slice(0, 64);
-    const color = /^#[0-9a-f]{6}$/i.test(input.color || "") ? input.color.toUpperCase() : "";
-    const defaultAbility = ["strike", "heavy", "heal"].includes(input.defaultAbility) ? input.defaultAbility : "";
+    // test() reads any value as text, so a string passes, and so does an array holding one (a TSF candidate)
+    const color = /^#[0-9a-f]{6}$/i.test((input.color as string) || "") ? (input.color as string).toUpperCase() : "";
+    // includes() is true only for one of those strings
+    const defaultAbility = ["strike", "heavy", "heal"].includes(input.defaultAbility as string)
+      ? (input.defaultAbility as string) // one of the strings above
+      : "";
     if (!username || !/^[a-z0-9_]{1,25}$/.test(username) || !displayName || !avatar || !color || !defaultAbility) {
       return { ok: false, reason: "invalid_profile" };
     }
 
     const now = Date.now();
-    return this.ctx.storage.transactionSync(() => {
+    return this.ctx.storage.transactionSync((): SaveResult => {
       const state = this.readState(channel);
       const existing = this.getProfile(userId, state.config);
       // Upgrades and hat: optional in the request (left out = keep the saved ones), checked against the wins the stream
@@ -1078,8 +1329,9 @@ export class ChannelRoom extends DurableObject {
       const wins = Math.max(0, (existing?.wins || 0) - (hiddenResults(state, now).get(userId)?.wins || 0));
       const stats = input.stats === undefined ? existing?.stats : validStats(input.stats, wins, existing?.bonus || 0);
       if (stats === null) return { ok: false, reason: "invalid_upgrades" };
-      const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
-      const owns = (kind, id) =>
+      // a string once the check below passes: the saved hat, an unlocked one or an owned known one
+      const hat = (input.hat === undefined ? existing?.hat || "" : input.hat) as string;
+      const owns = (kind: string, id: string) =>
         this.ctx.storage.sql
           .exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id)
           .toArray().length > 0;
@@ -1090,13 +1342,16 @@ export class ChannelRoom extends DurableObject {
       if (petId === null) return { ok: false, reason: "invalid_profile" };
       const custom = petId
         ? this.ctx.storage.sql
-            .exec("SELECT tier || ':' || stat || ':' || stat2 AS c FROM custom_pets WHERE id = ?", petId)
+            .exec<{ c: string | null }>(
+              "SELECT tier || ':' || stat || ':' || stat2 AS c FROM custom_pets WHERE id = ?",
+              petId,
+            )
             .toArray()[0]?.c
         : "";
       const pet = petId ? petOf(petId, custom) : null;
       if (petId && (!pet || !owns("pet", petId))) return { ok: false, reason: "pet_locked" };
       // Cosmetics: "" (none) or one the fighter bought. Left out = keep the saved one.
-      const cosmetics = {};
+      const cosmetics: Partial<Cosmetics> = {};
       for (const kind of COSMETIC_KINDS) {
         const field = COSMETIC_FIELDS[kind],
           id = input[field] === undefined ? existing?.[field] || "" : input[field];
@@ -1166,7 +1421,7 @@ export class ChannelRoom extends DurableObject {
 
   // An approved viewer sprite goes on its uploader's saved fighter, and replaces their previous sprite in every build
   // slot. Returns the new game state when the overlay needs it, else null.
-  wearSprite(channel, row, previous) {
+  wearSprite(channel: string, row: SpriteRow, previous: string): GameState | null {
     const sql = this.ctx.storage.sql;
     if (previous)
       sql.exec(
@@ -1188,9 +1443,9 @@ export class ChannelRoom extends DurableObject {
   }
 
   // A removed viewer sprite: fighters wearing it, saved or on stage, go back to the default character.
-  dropSprite(channel, id) {
+  dropSprite(channel: string, id: string): GameState | null {
     const sql = this.ctx.storage.sql;
-    for (const row of sql.exec("SELECT user_id FROM profiles WHERE avatar = ?", id).toArray())
+    for (const row of sql.exec<{ user_id: string }>("SELECT user_id FROM profiles WHERE avatar = ?", id).toArray())
       this.lookChanged(row.user_id);
     sql.exec("UPDATE profiles SET avatar = 'player' WHERE avatar = ?", id);
     sql.exec(
@@ -1210,23 +1465,23 @@ export class ChannelRoom extends DurableObject {
     return state;
   }
 
-  getProfile(userId, config) {
+  getProfile(userId: string, config: Config): Profile | null {
     const row = this.ctx.storage.sql
-      .exec(`SELECT ${PROFILE_COLUMNS}, last_opponent FROM profiles WHERE user_id = ?`, userId)
+      .exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS}, last_opponent FROM profiles WHERE user_id = ?`, userId)
       .toArray()[0];
     return normalizeProfileRow(row, config);
   }
 
-  getProfileByUsername(username, config) {
+  getProfileByUsername(username: unknown, config: Config): Profile | null {
     const name = normalizeUsername(username);
     if (!name) return null;
     const row = this.ctx.storage.sql
-      .exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`, name)
+      .exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`, name)
       .toArray()[0];
     return normalizeProfileRow(row, config);
   }
 
-  upsertProfile(profile) {
+  upsertProfile(profile: ProfileWrite): void {
     // Twitch logins can be renamed and later reused; free the login if a stale row still holds it.
     this.ctx.storage.sql.exec(
       "UPDATE profiles SET username = '~' || user_id WHERE username = ? COLLATE NOCASE AND user_id <> ?",
@@ -1264,16 +1519,16 @@ export class ChannelRoom extends DurableObject {
         `UPDATE profiles SET ${Object.values(COSMETIC_COLUMNS)
           .map((c) => c + " = ?")
           .join(", ")} WHERE user_id = ?`,
-        ...Object.keys(COSMETIC_COLUMNS).map((f) => worn[f]),
+        ...Object.keys(COSMETIC_COLUMNS).map((f) => worn[f as keyof Cosmetics]), // COSMETIC_COLUMNS's keys
         profile.userId,
       );
     }
     this.lookChanged(profile.userId);
   }
 
-  deleteProfile(userId) {
+  deleteProfile(userId: string): void {
     const login = this.ctx.storage.sql
-      .exec("SELECT username FROM profiles WHERE user_id = ?", userId)
+      .exec<{ username: string }>("SELECT username FROM profiles WHERE user_id = ?", userId)
       .toArray()[0]?.username;
     if (login) this.lookGone(login);
     this.ctx.storage.sql.exec("DELETE FROM profiles WHERE user_id = ?", userId);
@@ -1281,7 +1536,7 @@ export class ChannelRoom extends DurableObject {
     this.ctx.storage.sql.exec("DELETE FROM builds WHERE user_id = ?", userId);
   }
 
-  resetAllRanks(initialElo) {
+  resetAllRanks(initialElo: number): void {
     this.ctx.storage.sql.exec("UPDATE profiles SET elo = ?, wins = 0, losses = 0", initialElo);
     this.looksReset = true;
     this.flushLooksSoon();
@@ -1292,22 +1547,22 @@ export class ChannelRoom extends DurableObject {
   // to open overlays as one {type:"looks"} message per turn of the event loop. It carries only viewers the active list
   // doesn't: snapshots already carry those, and a pushed look (masked while a duel result is hidden) must not overwrite
   // them. looks maps login -> look, or null for a deleted fighter; reset: every saved look is stale (all ranks reset).
-  lookChanged(userId) {
+  lookChanged(userId: unknown): void {
     (this.dirtyLooks ||= new Set()).add(String(userId));
     this.flushLooksSoon();
   }
-  lookGone(login) {
+  lookGone(login: string): void {
     (this.goneLooks ||= new Set()).add(String(login).toLowerCase());
     this.flushLooksSoon();
   }
-  flushLooksSoon() {
+  flushLooksSoon(): void {
     if (!this.lookFlush)
       this.lookFlush = setTimeout(() => {
         this.lookFlush = 0;
         this.flushLooks();
       }, 0);
   }
-  flushLooks() {
+  flushLooks(): void {
     const ids = [...(this.dirtyLooks || [])],
       gone = [...(this.goneLooks || [])],
       reset = this.looksReset === true;
@@ -1319,7 +1574,8 @@ export class ChannelRoom extends DurableObject {
     const channel = sockets
       .map((ws) => {
         try {
-          return ws.deserializeAttachment()?.channel;
+          // upgrade() attaches {kind, channel} to every socket
+          return (ws.deserializeAttachment() as { channel?: string } | null)?.channel;
         } catch {
           return "";
         }
@@ -1328,14 +1584,17 @@ export class ChannelRoom extends DurableObject {
     if (!channel) return;
     const state = this.readState(channel),
       hidden = hiddenResults(state, Date.now()),
-      looks = {};
+      looks: { [login: string]: Look | null } = {};
     const listed = new Set(state.players.map((p) => p.userId)),
       wanted = ids.filter((id) => !listed.has(id));
     for (const login of gone) looks[login] = null;
     for (let i = 0; i < wanted.length; i += 50) {
       const part = wanted.slice(i, i + 50);
       const rows = this.ctx.storage.sql
-        .exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id IN (${part.map(() => "?").join(",")})`, ...part)
+        .exec<ProfileRow>(
+          `SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id IN (${part.map(() => "?").join(",")})`,
+          ...part,
+        )
         .toArray();
       for (const row of rows) {
         const p = shownProfile(normalizeProfileRow(row, state.config), hidden);
@@ -1343,7 +1602,7 @@ export class ChannelRoom extends DurableObject {
       }
     }
     if (!reset && !Object.keys(looks).length) return;
-    const message = JSON.stringify({ type: "looks", looks, ...(reset ? { reset: true } : {}) });
+    const message = JSON.stringify({ type: "looks", looks, ...(reset ? { reset: true } : {}) } satisfies LiveMessage);
     for (const ws of sockets) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       try {
@@ -1352,10 +1611,10 @@ export class ChannelRoom extends DurableObject {
     }
   }
 
-  leaderboard(channel) {
+  leaderboard(channel: string) {
     const state = this.readState(channel);
     const rows = this.ctx.storage.sql
-      .exec(
+      .exec<ProfileRow>(
         `SELECT ${PROFILE_COLUMNS} FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC LIMIT 100`,
       )
       .toArray();
@@ -1369,12 +1628,12 @@ export class ChannelRoom extends DurableObject {
   }
 
   // One saved profile with its leaderboard place (same order as leaderboard()), or null.
-  eloLookup(channel, { userId = "", username = "" }) {
+  eloLookup(channel: string, { userId = "", username = "" }: { userId?: string; username?: string }) {
     const sql = this.ctx.storage.sql;
     const row = (
       userId
-        ? sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, userId)
-        : sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`, username)
+        ? sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, userId)
+        : sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`, username)
     ).toArray()[0];
     if (!row) return null;
     const state = this.readState(channel),
@@ -1382,7 +1641,7 @@ export class ChannelRoom extends DurableObject {
     const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
     let ahead = Number(
       sql
-        .exec(
+        .exec<{ n: number }>(
           "SELECT COUNT(*) AS n FROM profiles WHERE user_id != ? AND (elo > ? OR (elo = ? AND wins > ?) OR (elo = ? AND wins = ? AND username COLLATE NOCASE < ?))",
           profile.userId,
           profile.elo,
@@ -1392,21 +1651,21 @@ export class ChannelRoom extends DurableObject {
           profile.wins,
           row.username,
         )
-        .toArray()[0].n,
+        .toArray()[0]!.n, // COUNT(*) always returns one row
     );
     // The count used everyone's saved numbers; swap in the shown ones for fighters whose result is still hidden.
     for (const id of hidden.keys()) {
       if (id === profile.userId) continue;
-      const other = sql.exec(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, id).toArray()[0];
+      const other = sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, id).toArray()[0];
       if (!other) continue;
       const saved = normalizeProfileRow(other, state.config);
       ahead += Number(boardOrder(shownProfile(saved, hidden), profile) < 0) - Number(boardOrder(saved, profile) < 0);
     }
-    const total = sql.exec("SELECT COUNT(*) AS n FROM profiles").toArray()[0].n;
+    const total = sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM profiles").toArray()[0]!.n; // one row, as above
     return { profile, rank: ahead + 1, total: Number(total) };
   }
 
-  publicState(state) {
+  publicState(state: GameState): Snapshot & { build: string } {
     return {
       type: "snapshot",
       channel: state.channel,
@@ -1429,7 +1688,7 @@ export class ChannelRoom extends DurableObject {
     };
   }
 
-  async upgrade(request, kind, channel, overlay = false) {
+  async upgrade(request: Request, kind: string, channel: string, overlay = false): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return json({ error: "websocket upgrade required" }, 426);
     const ip = request.headers.get("X-Mini-Client-Ip"),
@@ -1459,14 +1718,14 @@ export class ChannelRoom extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  async webSocketMessage(ws) {
+  async webSocketMessage(ws: WebSocket): Promise<void> {
     // Overlay sockets are read-only snapshots. "ping" never reaches here: the auto-response in the constructor answers it.
     try {
       ws.close(1008, "Read-only socket");
     } catch {}
   }
 
-  async eventsub(channel, msg, origin = "") {
+  async eventsub(channel: string, msg: BotMessage, origin = ""): Promise<Response> {
     const now = Date.now();
     const id = String(msg.messageId || "").slice(0, 100);
     if (!id) return json({ error: "messageId required" }, 400);
@@ -1493,9 +1752,9 @@ export class ChannelRoom extends DurableObject {
     } // a failed message may be redelivered
   }
 
-  async handleEventsub(channel, msg, origin, kind, now) {
+  async handleEventsub(channel: string, msg: BotMessage, origin: string, kind: string, now: number): Promise<Response> {
     const subscriptionId = String(msg.subscription?.id || "");
-    let result;
+    let result: ChatOutcome;
     if (kind === "webhook_callback_verification")
       result = this.advance(channel, { type: "chat_verified", subscriptionId }, now);
     else if (kind === "revocation") {
@@ -1516,20 +1775,25 @@ export class ChannelRoom extends DurableObject {
     return json({ ok: Boolean(result.result?.ok), reason: String(result.result?.reason || "") });
   }
 
-  seSettings() {
+  seSettings(): SeSettings {
     const row = this.ctx.storage.sql
-      .exec(
-        "SELECT secret, names, last_command_at, rejected_at, seen_json, duel_module_off FROM se_settings WHERE id = 1",
-      )
+      .exec<{
+        secret: string;
+        names: string;
+        last_command_at: number;
+        rejected_at: number;
+        seen_json: string;
+        duel_module_off: number;
+      }>("SELECT secret, names, last_command_at, rejected_at, seen_json, duel_module_off FROM se_settings WHERE id = 1")
       .toArray()[0];
     if (row) {
-      const names = { ...DEFAULT_SE_NAMES, ...safeJsonParse(row.names, {}) };
+      const names: SeNames = { ...DEFAULT_SE_NAMES, ...safeJsonParse<SeNames>(row.names, {}) };
       if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept; // StreamElements' Duel module owns !accept
       if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top; // and its built-in !top can't be replaced
       if (names.give === "!give") names.give = DEFAULT_SE_NAMES.give; // nor its !givepoints alias !give
       if (names.help === "!minichat") names.help = DEFAULT_SE_NAMES.help; // the old name, from before the rename to PixFray
-      const stored = safeJsonParse(row.seen_json, {}),
-        seen = {};
+      const stored = safeJsonParse<{ [action: string]: unknown }>(row.seen_json, {}),
+        seen: { [action: string]: number } = {};
       for (const action of SE_ACTIONS) if (Number(stored?.[action]) > 0) seen[action] = Number(stored[action]);
       return {
         secret: row.secret,
@@ -1545,7 +1809,7 @@ export class ChannelRoom extends DurableObject {
     return { secret, names: { ...DEFAULT_SE_NAMES }, lastCommandAt: 0, rejectedAt: 0, seen: {}, duelModuleOff: false };
   }
 
-  writeSeSettings(secret, names) {
+  writeSeSettings(secret: string, names: SeNames): void {
     this.ctx.storage.sql.exec(
       "INSERT INTO se_settings (id, secret, names) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET secret = excluded.secret, names = excluded.names",
       secret,
@@ -1554,7 +1818,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   // A connected PixFray chat bot (test site, CHAT_BOT=1): an EventSub subscription that reads chat as the bot account.
-  botSource(state) {
+  botSource(state: GameState): boolean {
     const id = state.chat.subscriptionId;
     return (
       this.env?.CHAT_BOT === "1" &&
@@ -1566,7 +1830,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   // One StreamElements command. It goes through the same path as a Twitch chat message, then gets a one-line reply.
-  async streamElements(channel, input, origin) {
+  async streamElements(channel: string, input: CommandInput, origin: string): Promise<Response> {
     const settings = this.seSettings();
     if (!timingSafeEqual(String(input.key || ""), settings.secret)) {
       if (Date.now() - settings.rejectedAt > REJECTED_WRITE_MS)
@@ -1575,7 +1839,8 @@ export class ChannelRoom extends DurableObject {
     }
     // The bot answers every command itself, so StreamElements posts nothing (no double replies) and keeps the chat source.
     if (this.botSource(this.readState(channel))) return json({ reply: "" });
-    const action = SE_ACTIONS.includes(input.action) ? input.action : "";
+    // includes() is true only for one of those strings
+    const action = SE_ACTIONS.includes(input.action as string) ? (input.action as string) : "";
     if (action && Date.now() - (settings.seen[action] || 0) > SEEN_WRITE_MS) {
       this.ctx.storage.sql.exec(
         "UPDATE se_settings SET last_command_at = ?, seen_json = ? WHERE id = 1",
@@ -1588,8 +1853,8 @@ export class ChannelRoom extends DurableObject {
 
   // A chat line read by the PixFray bot. Its first word is matched against the channel's command names (the same names
   // StreamElements uses); anything else, like another bot's command, gets no reply. Replies are capped per 30 s.
-  async botCommand(channel, msg, origin) {
-    const ev = msg.event && typeof msg.event === "object" ? msg.event : {};
+  async botCommand(channel: string, msg: BotMessage, origin: string): Promise<Response> {
+    const ev: Partial<ChatEvent> = msg.event && typeof msg.event === "object" ? msg.event : {};
     const words = String(ev.message?.text || "")
       .trim()
       .split(/\s+/);
@@ -1603,7 +1868,9 @@ export class ChannelRoom extends DurableObject {
     const custom =
       action || !first.startsWith("!")
         ? null
-        : this.ctx.storage.sql.exec("SELECT name, reply FROM bot_commands WHERE name = ?", first).toArray()[0];
+        : this.ctx.storage.sql
+            .exec<{ name: string; reply: string }>("SELECT name, reply FROM bot_commands WHERE name = ?", first)
+            .toArray()[0];
     // Words new viewers guess (!accept, !duel, !top) work as hidden aliases, unless the channel made them its own commands.
     if (
       !action &&
@@ -1698,7 +1965,7 @@ export class ChannelRoom extends DurableObject {
     // BOT_DEBUG (test site): the bot account also plays. "!fray spar" and "!fray e2e" replace the help reply.
     const botId = this.env?.BOT_DEBUG === "1" ? validUserId(msg.botId) : "";
     const mode = botId && action === "help" ? String(words[1] || "").toLowerCase() : "";
-    let lines;
+    let lines: string[];
     if (mode === "spar" || mode === "e2e")
       lines = await this.botDebug(channel, mode, { ev, words, botId, origin, settings, subscriptionId });
     else if (
@@ -1709,12 +1976,12 @@ export class ChannelRoom extends DurableObject {
     ) {
       // The bot account isn't a fighter or a wallet (yet; it may become a boss viewers fight together). The test site's
       // sparring bot (BOT_DEBUG) still plays.
-      lines = [BOT_TARGET_ACTIONS[action](settings.names)];
+      lines = [BOT_TARGET_ACTIONS[action]!(settings.names)]; // checked in the condition above
     } else {
       const since = this.readState(channel).revision;
       const out = await (
         await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })
-      ).json();
+      ).json<CommandReply>(); // runCommand's answer
       const expired = this.expiredLines(this.readState(channel), since);
       lines = [
         ...expired,
@@ -1732,16 +1999,16 @@ export class ChannelRoom extends DurableObject {
   // Replies to commands stop BOT_RESERVED_LINES short of the cap; the bot's own lines (results, expired challenges;
   // the first `system` lines) may use the rest, so a chatter spamming commands can't crowd out who won.
   // How many more command replies fit under the cap right now.
-  botReplyRoom(now) {
+  botReplyRoom(now: number): number {
     return Math.max(
       0,
       BOT_REPLIES_PER_30S - BOT_RESERVED_LINES - (this.botReplies || []).filter((at) => now - at < 30000).length,
     );
   }
 
-  sendBotLines(lines, channel = "", { system = 0 } = {}) {
+  sendBotLines(lines: string[], channel = "", { system = 0 }: { system?: number } = {}): Response {
     const now = Date.now(),
-      sent = [];
+      sent: string[] = [];
     this.botReplies = (this.botReplies || []).filter((at) => now - at < 30000);
     for (const [i, line] of lines.entries()) {
       if (!line) continue;
@@ -1760,14 +2027,13 @@ export class ChannelRoom extends DurableObject {
   }
 
   // One command played by the bot account (BOT_DEBUG), through the same path as a chat line. Returns { reply, reason }.
-  /**
-   * @param {string} channel
-   * @param {any} bot
-   * @param {string} action
-   * @param {string} target
-   * @param {{ origin: string, settings: any, subscriptionId: string, kind?: string, amount?: number }} ctx
-   */
-  async botPlays(channel, bot, action, target, { origin, settings, subscriptionId, kind = "bot", amount }) {
+  async botPlays(
+    channel: string,
+    bot: Profile,
+    action: string,
+    target: string,
+    { origin, settings, subscriptionId, kind = "bot", amount }: BotCtx & { kind?: string; amount?: unknown },
+  ): Promise<CommandReply> {
     const input = {
       action,
       userId: bot.userId,
@@ -1777,11 +2043,16 @@ export class ChannelRoom extends DurableObject {
       targetRaw: target ? "@" + target : "",
       ...(amount !== undefined ? { amount: String(amount) } : {}),
     };
-    return (await this.runCommand(channel, input, origin, settings, { kind, subscriptionId })).json();
+    return (await this.runCommand(channel, input, origin, settings, { kind, subscriptionId })).json<CommandReply>(); // runCommand's answer
   }
 
   // Sparring partner (BOT_DEBUG): a challenge or rematch aimed at the bot is accepted, and dollars paid to it are paid back.
-  async botAnswer(channel, input, out, ctx) {
+  async botAnswer(
+    channel: string,
+    input: CommandInput,
+    out: CommandReply,
+    ctx: BotCtx & { botId: string },
+  ): Promise<string[]> {
     const config = this.readState(channel).config,
       bot = this.getProfile(ctx.botId, config);
     if (!bot) return [];
@@ -1799,7 +2070,18 @@ export class ChannelRoom extends DurableObject {
 
   // "!fray spar": the bot challenges whoever asked. "!fray e2e [@name]" (broadcaster, mods or the bot account): the bot
   // plays every chat command once against @name (default: whoever asked) and posts which steps passed.
-  async botDebug(channel, mode, { ev, words, botId, origin, settings, subscriptionId }) {
+  async botDebug(
+    channel: string,
+    mode: string,
+    {
+      ev,
+      words,
+      botId,
+      origin,
+      settings,
+      subscriptionId,
+    }: BotCtx & { ev: Partial<ChatEvent>; words: string[]; botId: string },
+  ): Promise<string[]> {
     const config = this.readState(channel).config,
       bot = this.getProfile(botId, config);
     const userId = validUserId(ev.chatter_user_id),
@@ -1834,9 +2116,9 @@ export class ChannelRoom extends DurableObject {
     return this.botE2e(channel, bot, opponent, { ...ctx, kind: "e2e" });
   }
 
-  async botE2e(channel, bot, opponent, ctx) {
+  async botE2e(channel: string, bot: Profile, opponent: Profile, ctx: BotCtx & { kind: string }): Promise<string[]> {
     const names = ctx.settings.names,
-      results = [];
+      results: { label: string; action: string; ok: boolean; reason: string; want: string[] }[] = [];
     const player = { B: bot, O: opponent };
     for (const [who, action, target, want, gate] of E2E_STEPS) {
       const actor = player[who],
@@ -1877,8 +2159,15 @@ export class ChannelRoom extends DurableObject {
   }
 
   // The command itself, shared by StreamElements and the bot. source: { kind: "se" | "bot", subscriptionId }.
-  async runCommand(channel, input, origin, settings, source) {
-    const action = SE_ACTIONS.includes(input.action) ? input.action : "";
+  async runCommand(
+    channel: string,
+    input: CommandInput,
+    origin: string,
+    settings: SeSettings,
+    source: { kind: string; subscriptionId: string },
+  ): Promise<Response> {
+    // includes() is true only for one of those strings
+    const action = SE_ACTIONS.includes(input.action as string) ? (input.action as string) : "";
     const userId = validUserId(input.userId);
     const username = normalizeUsername(input.username);
     const target = normalizeUsername(input.target);
@@ -1905,11 +2194,12 @@ export class ChannelRoom extends DurableObject {
       state0 = switched.state;
     }
     // Every command is logged with what came in, what the game decided and what the bot said.
-    const done = (reply, reason, extra = {}) => {
+    const done = (reply: string, reason: string, extra: JsonObject = {}) => {
       logRoomEvent(
         this,
         "command",
-        `${username || "?"} ${input.action || "?"}${target ? " @" + target : ""} -> ${reason}`,
+        // the action as sent, whatever its type, reads as text in the log
+        `${username || "?"} ${(input.action as string) || "?"}${target ? " @" + target : ""} -> ${reason}`,
         {
           channel,
           via: source.kind,
@@ -1935,7 +2225,13 @@ export class ChannelRoom extends DurableObject {
       // works while duels are paused: it only needs the stream to be live
       const checked = await this.checkin(channel, { userId }, now);
       return done(
-        seCheckinText(checked, { who: input.displayName || username, origin, channel, maxPoints: MAX_POINTS }),
+        // the sender's name as sent; short() reads it through String()
+        seCheckinText(checked, {
+          who: (input.displayName as string) || username,
+          origin,
+          channel,
+          maxPoints: MAX_POINTS,
+        }),
         checked.reason,
         checked.reason === "checked_in" ? { streak: checked.streak, points: checked.points } : {},
       );
@@ -1944,7 +2240,13 @@ export class ChannelRoom extends DurableObject {
       // like !elo, it works while duels are paused
       const wallet = this.wallet(channel, userId);
       return done(
-        seWalletText(wallet, { who: input.displayName || username, origin, channel, maxPoints: MAX_POINTS }),
+        // the sender's name as sent; short() reads it through String()
+        seWalletText(wallet, {
+          who: (input.displayName as string) || username,
+          origin,
+          channel,
+          maxPoints: MAX_POINTS,
+        }),
         wallet ? "wallet" : "no_fighter",
       );
     }
@@ -1953,14 +2255,21 @@ export class ChannelRoom extends DurableObject {
       const self = !target || target === username,
         info = this.petInfo(channel, self ? { userId } : { username: target });
       return done(
-        sePetText(info, { who: input.displayName || username, target: self ? "" : target, origin, channel }),
+        // the sender's name as sent; short() reads it through String()
+        sePetText(info, {
+          who: (input.displayName as string) || username,
+          target: self ? "" : target,
+          origin,
+          channel,
+        }),
         info ? (info.pet ? "pet" : "no_pet") : "no_fighter",
       );
     }
     if (action === "give") {
       const given = await this.give(channel, { userId, target, amount: seAmount(input.amount) }, now);
       return done(
-        seGiveText(given, { who: input.displayName || username, target, origin, channel, names }),
+        // the sender's name as sent; short() reads it through String()
+        seGiveText(given, { who: (input.displayName as string) || username, target, origin, channel, names }),
         given.reason,
         given.reason === "given" ? { amount: given.amount } : {},
       );
@@ -1970,7 +2279,8 @@ export class ChannelRoom extends DurableObject {
       if (action === "look")
         return done(
           seLookText({
-            who: input.displayName || username,
+            // the sender's name as sent; short() reads it through String()
+            who: (input.displayName as string) || username,
             hasFighter: Boolean(this.getProfile(userId, state0.config)),
             origin,
             channel,
@@ -1980,7 +2290,14 @@ export class ChannelRoom extends DurableObject {
       if (action === "top") return done(seTopText(this.leaderboard(channel).slice(0, 5), { origin, channel }), "top");
       const found = this.eloLookup(channel, target ? { username: target } : { userId });
       return done(
-        seEloText(found, { self: !target, askerName: input.displayName || username, target, origin, channel }),
+        // the sender's name as sent; short() reads it through String()
+        seEloText(found, {
+          self: !target,
+          askerName: (input.displayName as string) || username,
+          target,
+          origin,
+          channel,
+        }),
         found ? "elo" : "elo_not_found",
       );
     }
@@ -2013,7 +2330,7 @@ export class ChannelRoom extends DurableObject {
         "target_required",
       );
     const messageId = source.kind + ":" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));
-    const msg = {
+    const msg: BotMessage = {
       messageId,
       timestamp: now,
       quick: true,
@@ -2030,7 +2347,7 @@ export class ChannelRoom extends DurableObject {
     const result = this.processChatMessage(channel, msg, Date.now());
     if (result.visible) this.broadcast(result.state);
     if (result.changed) await this.scheduleAlarm(result.state);
-    const r = result.result || {};
+    const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
     if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
     const actorRegistered =
       r.reason !== "ranked_sign_in_required" ||
@@ -2051,7 +2368,13 @@ export class ChannelRoom extends DurableObject {
       r.swings
         ? {
             duelId: r.duelId,
-            swings: r.swings.map((s) => s.die + ({ crit: "x" }[s.outcome] || s.outcome[0])).join(" "),
+            // other outcomes use their first letter (each outcome is a non-empty word)
+            swings: r.swings
+              .map(
+                (s) =>
+                  s.die + (({ crit: "x" } as { [outcome: string]: string | undefined })[s.outcome] || s.outcome[0]!),
+              )
+              .join(" "),
           }
         : {},
     );
@@ -2060,42 +2383,46 @@ export class ChannelRoom extends DurableObject {
   // !checkin: once per stream, only while Twitch says the channel is live. Gives config.checkinPoints, plus 1 when the
   // streak reaches a milestone. A streak counts this channel's streams with check-ins (the streams table) in a row;
   // one missed stream a week is forgiven. Points are stored apart from wins (bonus_points), so a rank reset keeps them.
-  async checkin(channel, { userId }, now = Date.now()) {
+  async checkin(channel: string, { userId }: { userId: string }, now = Date.now()): Promise<CheckinReply> {
     if (!userId || !this.getProfile(userId, this.readState(channel).config)) return { reason: "no_fighter" };
-    let stream;
+    let stream: { id: string; startedAt: number } | null;
     try {
       stream = await this.currentStream(channel, now);
     } catch (error) {
       logRoomEvent(this, "warn", "twitch stream lookup failed", {
         channel,
-        error: String(error?.message || error).slice(0, 200),
+        error: String((error as Thrown)?.message || error).slice(0, 200), // anything can be thrown
       });
       return { reason: "twitch_error" };
     }
     // Test mode while offline: the check-in a next stream would give, worked out the same way but never saved.
     const test = !stream && Boolean(this.checkinTest(now));
     if (!stream && !test) return { reason: "not_live" };
-    return this.ctx.storage.transactionSync(() => {
+    return this.ctx.storage.transactionSync((): CheckinReply => {
       const sql = this.ctx.storage.sql,
         state = this.readState(channel),
         config = state.config;
       const row = sql
-        .exec(
+        .exec<
+          Pick<ProfileTable, "wins" | "bonus_points" | "streak" | "last_stream" | "last_stream_seq" | "free_miss_at">
+        >(
           "SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at FROM profiles WHERE user_id = ?",
           userId,
         )
         .toArray()[0];
       if (!row) return { reason: "no_fighter" };
-      if (!test && row.last_stream === stream.id) return { reason: "already_checked_in", streak: row.streak };
+      // stream! : without a stream, test is true (checked above)
+      if (!test && row.last_stream === stream!.id) return { reason: "already_checked_in", streak: row.streak };
       if (!test)
         sql.exec(
           "INSERT OR IGNORE INTO streams (stream_id, started_at) VALUES (?, ?)",
-          stream.id,
-          stream.startedAt || now,
+          stream!.id, // not a test, so there is a stream
+          stream!.startedAt || now, // as above
         );
       const seq = test
-        ? (sql.exec("SELECT MAX(seq) AS seq FROM streams").toArray()[0]?.seq || 0) + 1
-        : sql.exec("SELECT seq FROM streams WHERE stream_id = ?", stream.id).toArray()[0].seq;
+        ? (sql.exec<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM streams").toArray()[0]?.seq || 0) + 1
+        : // not a test, so there is a stream, and its row was inserted just above
+          sql.exec<{ seq: number }>("SELECT seq FROM streams WHERE stream_id = ?", stream!.id).toArray()[0]!.seq;
       const missed = row.last_stream_seq > 0 ? seq - row.last_stream_seq - 1 : -1;
       const freeMiss = missed === 1 && now - row.free_miss_at >= FREE_MISS_MS;
       const streak = missed === 0 || freeMiss ? row.streak + 1 : 1;
@@ -2110,7 +2437,7 @@ export class ChannelRoom extends DurableObject {
         "UPDATE profiles SET bonus_points = ?, checkins = checkins + 1, streak = ?, last_stream = ?, last_stream_seq = ?, free_miss_at = ? WHERE user_id = ?",
         bonus,
         streak,
-        stream.id,
+        stream!.id, // not a test, so there is a stream
         seq,
         freeMiss ? now : row.free_miss_at,
         userId,
@@ -2125,9 +2452,11 @@ export class ChannelRoom extends DurableObject {
   }
 
   // !wallet: dollars, upgrade points and streak as the stream has shown them (a quick duel's payout stays hidden too).
-  wallet(channel, userId) {
+  wallet(channel: string, userId: string) {
     const state = this.readState(channel);
-    const profile = userId && shownProfile(this.getProfile(userId, state.config), hiddenResults(state, Date.now()));
+    // shownProfile passes null (no fighter) through
+    const profile =
+      userId && shownProfile(this.getProfile(userId, state.config) as Profile, hiddenResults(state, Date.now()));
     return profile
       ? { dollars: profile.dollars, points: pointsFor(profile.wins, profile.bonus), streak: profile.streak }
       : null;
@@ -2135,7 +2464,11 @@ export class ChannelRoom extends DurableObject {
 
   // !give @name amount: dollars from one saved fighter to another, only while the channel is live. Limits (config):
   // giveEnabled, giveMinDuels finished duels first, and at most giveMaxPerStream given per stream.
-  async give(channel, { userId, target, amount }, now = Date.now()) {
+  async give(
+    channel: string,
+    { userId, target, amount }: { userId: string; target: string; amount: number | null },
+    now = Date.now(),
+  ): Promise<GiveReply> {
     const config = this.readState(channel).config;
     if (!config.giveEnabled) return { reason: "give_off" };
     const giver = userId && this.getProfile(userId, config);
@@ -2144,23 +2477,23 @@ export class ChannelRoom extends DurableObject {
     const to = this.getProfileByUsername(target, config);
     if (!to) return { reason: "target_not_found" };
     if (to.userId === giver.userId) return { reason: "self_give" };
-    let stream;
+    let stream: { id: string; startedAt: number } | null;
     try {
       stream = await this.currentStream(channel, now);
     } catch (error) {
       logRoomEvent(this, "warn", "twitch stream lookup failed", {
         channel,
-        error: String(error?.message || error).slice(0, 200),
+        error: String((error as Thrown)?.message || error).slice(0, 200), // anything can be thrown
       });
       return { reason: "twitch_error" };
     }
     if (!stream) return { reason: "not_live" };
-    return this.ctx.storage.transactionSync(() => {
+    return this.ctx.storage.transactionSync((): GiveReply => {
       const sql = this.ctx.storage.sql,
         state = this.readState(channel),
         cfg = state.config;
       const row = sql
-        .exec(
+        .exec<Pick<ProfileTable, "wins" | "losses" | "dollars" | "give_stream" | "given_in_stream">>(
           "SELECT wins, losses, dollars, give_stream, given_in_stream FROM profiles WHERE user_id = ?",
           giver.userId,
         )
@@ -2179,7 +2512,8 @@ export class ChannelRoom extends DurableObject {
       // A wallet holds at most MAX_DOLLARS; a gift that wouldn't fit is refused rather than losing the rest.
       const room =
         MAX_DOLLARS -
-        (sql.exec("SELECT dollars FROM profiles WHERE user_id = ?", to.userId).toArray()[0]?.dollars || 0);
+        (sql.exec<{ dollars: number }>("SELECT dollars FROM profiles WHERE user_id = ?", to.userId).toArray()[0]
+          ?.dollars || 0);
       if (amount > room) return { reason: "target_full", to: to.displayName || to.username, room: Math.max(0, room) };
       sql.exec(
         "UPDATE profiles SET dollars = dollars - ?, give_stream = ?, given_in_stream = ? WHERE user_id = ?",
@@ -2200,39 +2534,52 @@ export class ChannelRoom extends DurableObject {
   }
 
   // What a fighter bought: { pets: [ids], hats: [ids], <cosmetic kind>: [ids], slots: build slots (1 free + bought) }.
-  owned(userId) {
-    const out = { pets: [], hats: [], ...Object.fromEntries(COSMETIC_KINDS.map((k) => [k, []])), slots: 1 };
+  owned(userId: string): Owned {
+    const out: Owned = {
+      pets: [],
+      hats: [],
+      // one empty list per cosmetic kind
+      ...(Object.fromEntries(COSMETIC_KINDS.map((k): [CosmeticKind, string[]] => [k, []])) as {
+        [kind in CosmeticKind]: string[];
+      }),
+      slots: 1,
+    };
     for (const r of this.ctx.storage.sql
-      .exec("SELECT kind, item_id FROM owned_items WHERE user_id = ? ORDER BY bought_at", userId)
+      .exec<{ kind: string; item_id: string }>(
+        "SELECT kind, item_id FROM owned_items WHERE user_id = ? ORDER BY bought_at",
+        userId,
+      )
       .toArray()) {
       if (r.kind === "pet") out.pets.push(r.item_id);
       else if (r.kind === "hat") out.hats.push(r.item_id);
       else if (r.kind === "slot") out.slots += 1;
-      else if (out[r.kind]) out[r.kind].push(r.item_id);
+      // a cosmetic kind; any other reads undefined and is skipped
+      else if (out[r.kind as CosmeticKind]) out[r.kind as CosmeticKind].push(r.item_id);
     }
     return out;
   }
 
-  buildSlots(userId) {
+  buildSlots(userId: string): number {
     return (
       1 +
       this.ctx.storage.sql
-        .exec("SELECT COUNT(*) AS n FROM owned_items WHERE user_id = ? AND kind = 'slot'", userId)
-        .toArray()[0].n
+        .exec<{ n: number }>("SELECT COUNT(*) AS n FROM owned_items WHERE user_id = ? AND kind = 'slot'", userId)
+        .toArray()[0]!.n // COUNT(*) always returns one row
     );
   }
 
   // Every build slot's loadout, in slot order; null for a bought slot that was never saved. The active slot is
   // always the profile itself (a fighter saved before builds has no row yet).
-  builds(profile) {
-    const out = Array.from({ length: this.buildSlots(profile.userId) }, () => null);
+  builds(profile: { readonly [field: string]: unknown; userId: string; build?: number | undefined }) {
+    const out = Array.from({ length: this.buildSlots(profile.userId) }, (): JsonObject | null => null);
     const pets = new Set(this.owned(profile.userId).pets);
     for (const r of this.ctx.storage.sql
-      .exec("SELECT slot, data FROM builds WHERE user_id = ?", profile.userId)
+      .exec<{ slot: number; data: string }>("SELECT slot, data FROM builds WHERE user_id = ?", profile.userId)
       .toArray()) {
       if (r.slot >= out.length) continue;
-      const build = safeJsonParse(r.data, null);
-      if (build?.pet && !pets.has(build.pet)) build.pet = ""; // an uploaded pet a mod deleted since this build was saved
+      const build = safeJsonParse<{ pet?: unknown; [field: string]: unknown }, null>(r.data, null);
+      // a pet id that isn't a string is never owned
+      if (build?.pet && !pets.has(build.pet as string)) build.pet = ""; // an uploaded pet a mod deleted since this build was saved
       out[r.slot] = build;
     }
     if ((profile.build || 0) < out.length) out[profile.build || 0] = buildOf(profile);
@@ -2241,16 +2588,22 @@ export class ChannelRoom extends DurableObject {
 
   // Shop: a pet (price by tier, config) or a hat before its wins unlock it (hatPrice). Pays with the dollars the
   // stream has shown, like give(). Buying doesn't equip; the dashboard selects it and the viewer saves.
-  buy(channel, userId, { kind, id, price: expected }) {
+  buy(
+    channel: string,
+    userId: string,
+    { kind, id, price: expected }: { kind?: unknown; id?: unknown; price?: unknown },
+  ) {
     return this.ctx.storage.transactionSync(() => {
       const sql = this.ctx.storage.sql,
         state = this.readState(channel),
         config = state.config,
         now = Date.now();
-      const row = sql.exec("SELECT wins, dollars FROM profiles WHERE user_id = ?", userId).toArray()[0];
+      const row = sql
+        .exec<Pick<ProfileTable, "wins" | "dollars">>("SELECT wins, dollars FROM profiles WHERE user_id = ?", userId)
+        .toArray()[0];
       if (!row) return { ok: false, reason: "no_fighter" };
       const h = hiddenResults(state, now).get(userId) || { wins: 0, dollars: 0 };
-      let price = null;
+      let price: number | null = null;
       if (kind === "pet") price = petCatalog(sql, channel, config).find((p) => p.id === id)?.price ?? null;
       else if (kind === "hat") {
         const hat = HATS.find((x) => x.id && x.id === id);
@@ -2262,7 +2615,9 @@ export class ChannelRoom extends DurableObject {
         if (slots >= MAX_BUILDS) return { ok: false, reason: "max_slots" };
         price = slotPrice(slots, config);
         id = String(slots + 1); // the slot number it adds, so each bought slot is its own owned_items row
-      } else if (COSMETIC_KINDS.includes(kind)) price = cosmeticItem(kind, id) ? cosmeticPrice(kind, config) : null;
+        // includes() is true only for a cosmetic kind; cosmeticItem finds no item for an id that isn't a string
+      } else if (COSMETIC_KINDS.includes(kind as CosmeticKind))
+        price = cosmeticItem(kind as CosmeticKind, id as string) ? cosmeticPrice(kind as CosmeticKind, config) : null;
       if (price === null) return { ok: false, reason: "unknown_item" };
       if (
         sql.exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id).toArray()
@@ -2295,7 +2650,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   // !pet [@name]: a saved fighter's active pet as the catalog names it, or null when there's no such fighter.
-  petInfo(channel, { userId = "", username = "" }) {
+  petInfo(channel: string, { userId = "", username = "" }: { userId?: string; username?: string }) {
     const config = this.readState(channel).config;
     const profile = userId ? this.getProfile(userId, config) : this.getProfileByUsername(username, config);
     if (!profile) return null;
@@ -2309,7 +2664,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   // Mod gift from the admin page: adds dollars to a saved fighter, or takes them back with a negative amount (never below 0).
-  giftDollars(channel, payload, actorId, actorName) {
+  giftDollars(channel: string, payload: JsonObject, actorId: string, actorName: string) {
     const amount = Number(payload.amount);
     if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > MAX_GIFT)
       return { ok: false, reason: "invalid_amount" };
@@ -2317,7 +2672,10 @@ export class ChannelRoom extends DurableObject {
     const sql = this.ctx.storage.sql;
     const row = name
       ? sql
-          .exec("SELECT user_id, username, display_name, dollars FROM profiles WHERE username = ? COLLATE NOCASE", name)
+          .exec<{ user_id: string; username: string; display_name: string; dollars: number }>(
+            "SELECT user_id, username, display_name, dollars FROM profiles WHERE username = ? COLLATE NOCASE",
+            name,
+          )
           .toArray()[0]
       : null;
     if (!row) return { ok: false, reason: "profile_not_found" };
@@ -2345,9 +2703,10 @@ export class ChannelRoom extends DurableObject {
 
   // Dollars for finished duels: game.ts finishDuel sets duel.payout, and this adds it to the saved profiles once
   // (duel.paid). Called inside the transaction that wrote the result; returns true when the state needs writing.
-  payDuels(state) {
+  payDuels(state: GameState): boolean {
     let paid = false;
-    for (const duel of state.duels) {
+    // paid is the room's own mark, kept on the duel but not part of the game's Duel type
+    for (const duel of state.duels as (Duel & { paid?: boolean })[]) {
       if (!duel.payout || duel.paid) continue;
       for (const [id, amount] of Object.entries(duel.payout))
         this.ctx.storage.sql.exec(
@@ -2364,7 +2723,9 @@ export class ChannelRoom extends DurableObject {
 
   // The bot's health row (bot_status), as the admin page reads it.
   botStatus() {
-    const r = this.ctx.storage.sql.exec("SELECT * FROM bot_status WHERE id = 1").toArray()[0] || {};
+    const r =
+      this.ctx.storage.sql.exec<BotStatusRow>("SELECT * FROM bot_status WHERE id = 1").toArray()[0] ||
+      ({} as Partial<BotStatusRow>); // no row: every field falls back below
     return {
       heardAt: r.heard_at || 0,
       heard: r.heard || "",
@@ -2381,7 +2742,7 @@ export class ChannelRoom extends DurableObject {
     };
   }
 
-  noteBotHeard(what) {
+  noteBotHeard(what: string): void {
     this.ctx.storage.sql.exec(
       "UPDATE bot_status SET heard_at = ?, heard = ? WHERE id = 1",
       Date.now(),
@@ -2390,7 +2751,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   // A reply the room didn't send. Logged as a warning at most once a minute per reason (cooldowns aren't logged).
-  noteBotHeld(channel, reason, context = {}, log = true) {
+  noteBotHeld(channel: string, reason: string, context: JsonObject = {}, log = true): void {
     const now = Date.now(),
       last = (this.heldLogged ||= {});
     this.ctx.storage.sql.exec("UPDATE bot_status SET held_at = ?, held_reason = ? WHERE id = 1", now, reason);
@@ -2401,10 +2762,11 @@ export class ChannelRoom extends DurableObject {
 
   // What Twitch said about the bot's lines ({sent, reason} each, from sendChatMessage). A dropped or failed line is
   // logged as a warning with Twitch's reason; sent lines only update the status.
-  noteBotSent(channel, results, via = "reply") {
+  noteBotSent(channel: string, results: (Partial<SendResult> | null | undefined)[], via = "reply"): void {
     const sql = this.ctx.storage.sql,
       now = Date.now();
-    for (const r of [].concat(results || [])) {
+    // an empty list of results to add these to
+    for (const r of ([] as (Partial<SendResult> | null | undefined)[]).concat(results || [])) {
       if (r?.sent === true) {
         sql.exec("UPDATE bot_status SET sent_at = ?, sent_total = sent_total + 1 WHERE id = 1", now);
         continue;
@@ -2420,11 +2782,12 @@ export class ChannelRoom extends DurableObject {
   }
 
   // "!fray debug": the health line, from the status before this command was heard.
-  botStatusLine(state, s, now) {
-    const ago = (at) => (at ? agoText(now - at) : "never");
+  botStatusLine(state: GameState, s: ReturnType<ChannelRoom["botStatus"]>, now: number): string {
+    const ago = (at: number) => (at ? agoText(now - at) : "never");
     const every = Number(state.config.reminderMin) || 0,
       due = every
-        ? this.ctx.storage.sql.exec("SELECT next_at FROM bot_reminder WHERE id = 1").toArray()[0]?.next_at
+        ? this.ctx.storage.sql.exec<{ next_at: number }>("SELECT next_at FROM bot_reminder WHERE id = 1").toArray()[0]
+            ?.next_at
         : 0;
     return [
       "PixFray debug: chat " + (state.chat.connected ? "connected" : "not connected"),
@@ -2445,11 +2808,11 @@ export class ChannelRoom extends DurableObject {
     const sql = this.ctx.storage.sql;
     return {
       commands: sql
-        .exec("SELECT name, reply FROM bot_commands ORDER BY name")
+        .exec<{ name: string; reply: string }>("SELECT name, reply FROM bot_commands ORDER BY name")
         .toArray()
         .map((r) => ({ name: r.name, reply: r.reply })),
       counters: sql
-        .exec("SELECT name, value FROM bot_counters ORDER BY name")
+        .exec<{ name: string; value: number }>("SELECT name, value FROM bot_counters ORDER BY name")
         .toArray()
         .map((r) => ({ name: r.name, value: r.value })),
       max: MAX_BOT_COMMANDS,
@@ -2458,7 +2821,7 @@ export class ChannelRoom extends DurableObject {
 
   // Admin page: saveCommand {name, reply, oldName?}, deleteCommand {name}, setCounter {name, value}. A name can't be a
   // PixFray command's (the channel's names, their defaults and !pay). A counter first used in a reply starts at 0.
-  editBotCommands(channel, action, payload, actorName) {
+  editBotCommands(channel: string, action: string, payload: JsonObject, actorName: string) {
     const sql = this.ctx.storage.sql;
     if (action === "setCounter") {
       const name = counterName(payload.name),
@@ -2493,7 +2856,7 @@ export class ChannelRoom extends DurableObject {
     const oldName = commandName(payload.oldName);
     const exists = sql.exec("SELECT 1 FROM bot_commands WHERE name = ?", name).toArray().length > 0;
     if (exists && oldName !== name) return { ok: false, reason: "command_exists" };
-    const total = sql.exec("SELECT COUNT(*) AS n FROM bot_commands").toArray()[0].n;
+    const total = sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM bot_commands").toArray()[0]!.n; // COUNT(*) always returns one row
     if (!exists && !oldName && total >= MAX_BOT_COMMANDS) return { ok: false, reason: "too_many_commands" };
     if (oldName && oldName !== name) sql.exec("DELETE FROM bot_commands WHERE name = ?", oldName);
     sql.exec(
@@ -2517,7 +2880,7 @@ export class ChannelRoom extends DurableObject {
 
   // A text command's reply, or "" during its cooldown (COMMAND_COOLDOWN_MS for everyone, COMMAND_USER_COOLDOWN_MS per
   // chatter). Counters change only when the reply is sent.
-  customReply(row, ev, words, now) {
+  customReply(row: { name: string; reply: string }, ev: Partial<ChatEvent>, words: string[], now: number): string {
     const user = String(ev.chatter_user_id || ""),
       cool = (this.commandCooldowns ||= new Map());
     if (now < (cool.get(row.name) || 0) || now < (cool.get(row.name + " " + user) || 0)) return "";
@@ -2532,27 +2895,32 @@ export class ChannelRoom extends DurableObject {
         count: (name, add) =>
           add
             ? sql
-                .exec(
+                .exec<{ value: number }>(
                   "INSERT INTO bot_counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = MIN(value + 1, ?) RETURNING value",
                   name,
                   MAX_COUNTER,
                 )
-                .toArray()[0].value
-            : (sql.exec("SELECT value FROM bot_counters WHERE name = ?", name).toArray()[0]?.value ?? 0),
+                .toArray()[0]!.value // RETURNING gives the upserted row
+            : (sql.exec<{ value: number }>("SELECT value FROM bot_counters WHERE name = ?", name).toArray()[0]?.value ??
+              0),
       }),
     );
   }
 
   // Check-in test mode: {until, by} while on, else null. An expired row reads as off.
   checkinTest(now = Date.now()) {
-    const row = this.ctx.storage.sql.exec("SELECT until, by_name FROM checkin_test WHERE id = 1").toArray()[0];
+    const row = this.ctx.storage.sql
+      .exec<{ until: number; by_name: string }>("SELECT until, by_name FROM checkin_test WHERE id = 1")
+      .toArray()[0];
     return row && row.until > now ? { until: row.until, by: row.by_name } : null;
   }
 
   // The channel's live stream {id, startedAt} or null. Twitch's answer is kept for a minute; a failed lookup throws.
-  async currentStream(channel, now) {
+  async currentStream(channel: string, now: number): Promise<{ id: string; startedAt: number } | null> {
     if (this.env?.DEV_TOOLS_TOKEN) {
-      const dev = this.ctx.storage.sql.exec("SELECT stream_id, started_at FROM dev_live WHERE id = 1").toArray()[0];
+      const dev = this.ctx.storage.sql
+        .exec<{ stream_id: string; started_at: number }>("SELECT stream_id, started_at FROM dev_live WHERE id = 1")
+        .toArray()[0];
       if (dev) return dev.stream_id ? { id: dev.stream_id, startedAt: dev.started_at } : null;
     }
     if (this.liveCache && now - this.liveCache.at < LIVE_CACHE_MS) return this.liveCache.stream;
@@ -2562,13 +2930,16 @@ export class ChannelRoom extends DurableObject {
   }
 
   // A saved fighter's Twitch account age, asked once (again after ACCOUNT_RETRY_MS while Twitch doesn't answer).
-  async checkAccountAge(userId) {
+  async checkAccountAge(userId: unknown): Promise<void> {
     const id = validUserId(userId),
       sql = this.ctx.storage.sql,
       now = Date.now();
     if (!id || !this.env?.TWITCH_CLIENT_ID) return;
     const row = sql
-      .exec("SELECT account_created_at, account_checked_at FROM profiles WHERE user_id = ?", id)
+      .exec<Pick<ProfileTable, "account_created_at" | "account_checked_at">>(
+        "SELECT account_created_at, account_checked_at FROM profiles WHERE user_id = ?",
+        id,
+      )
       .toArray()[0];
     if (!row || row.account_created_at > 0 || now - row.account_checked_at < ACCOUNT_RETRY_MS) return;
     sql.exec("UPDATE profiles SET account_checked_at = ? WHERE user_id = ?", now, id);
@@ -2576,22 +2947,28 @@ export class ChannelRoom extends DurableObject {
       const at = await this.lookupAccount(id);
       if (at > 0) sql.exec("UPDATE profiles SET account_created_at = ? WHERE user_id = ?", at, id);
     } catch (error) {
-      logRoomEvent(this, "warn", `account age lookup failed: ${String(error?.message || error).slice(0, 80)}`, {
-        userId: id,
-      });
+      // anything can be thrown
+      logRoomEvent(
+        this,
+        "warn",
+        `account age lookup failed: ${String((error as Thrown)?.message || error).slice(0, 80)}`,
+        {
+          userId: id,
+        },
+      );
     }
   }
 
-  lookupAccount(userId) {
+  lookupAccount(userId: string): Promise<number> {
     return accountCreatedAt(this.env, userId);
   }
 
   // Of these user ids, the ones whose Twitch account is younger than NEW_ACCOUNT_MS. Unknown ages count as old.
-  newAccounts(ids, now) {
+  newAccounts(ids: unknown[], now: number): string[] {
     const list = [...new Set(ids.map(validUserId).filter(Boolean))];
     if (!list.length) return [];
     return this.ctx.storage.sql
-      .exec(
+      .exec<{ user_id: string }>(
         `SELECT user_id FROM profiles WHERE account_created_at > ? AND user_id IN (${list.map(() => "?").join(", ")})`,
         now - NEW_ACCOUNT_MS,
         ...list,
@@ -2601,13 +2978,16 @@ export class ChannelRoom extends DurableObject {
   }
 
   // After a finished duel the stored profiles must match the game state, or the next command undoes the result.
-  checkSavedProfiles(state, duelId) {
+  checkSavedProfiles(state: GameState, duelId: string | undefined): void {
     const duel = state.duels.find((d) => d.id === duelId);
     for (const id of duel ? [duel.a, duel.b] : []) {
       const p = state.players.find((x) => x.userId === id);
       if (!p?.registered) continue;
       const row = this.ctx.storage.sql
-        .exec("SELECT elo, wins, losses FROM profiles WHERE user_id = ?", id)
+        .exec<Pick<ProfileTable, "elo" | "wins" | "losses">>(
+          "SELECT elo, wins, losses FROM profiles WHERE user_id = ?",
+          id,
+        )
         .toArray()[0];
       if (!row || row.elo !== p.elo || row.wins !== p.wins || row.losses !== p.losses) {
         logRoomEvent(this, "warn", `profile for ${p.username} not saved after ${duelId}`, {
@@ -2622,22 +3002,27 @@ export class ChannelRoom extends DurableObject {
 
   // One channel.chat.message: a presence update, plus a game command when the text parses as one.
   // No chat replies; rejected commands are logged to the room event list.
-  processChatMessage(channel, msg, now) {
-    const ev = msg.event && typeof msg.event === "object" ? msg.event : {};
+  processChatMessage(channel: string, msg: BotMessage, now: number): ChatOutcome {
+    const ev: Partial<ChatEvent> = msg.event && typeof msg.event === "object" ? msg.event : {};
     const userId = validUserId(ev.chatter_user_id);
     const username = normalizeUsername(ev.chatter_user_login);
     const displayName = String(ev.chatter_user_name || username)
       .trim()
       .slice(0, 48);
     const textValue = String(ev.message?.text || "").slice(0, 512);
-    const color = /^#[0-9a-f]{6}$/i.test(ev.color || "") ? ev.color.toUpperCase() : "";
+    const color = /^#[0-9a-f]{6}$/i.test(ev.color || "") ? ev.color!.toUpperCase() : ""; // test() passed, so it is set
     const subscriptionId = String(msg.subscription?.id || "");
-    return this.ctx.storage.transactionSync(() => {
+    return this.ctx.storage.transactionSync((): ChatOutcome => {
       let state = this.readState(channel);
-      const none = (reason) => ({ state, result: { ok: false, reason }, changed: false, visible: false });
+      const none = (reason: string): ChatOutcome => ({
+        state,
+        result: { ok: false, reason },
+        changed: false,
+        visible: false,
+      });
       if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) return none("unknown_subscription");
-      const steps = [];
-      const step = (event) => {
+      const steps: ReduceOutput[] = [];
+      const step = (event: GameEvent) => {
         const r = reduceGame(state, event, now);
         state = r.state;
         steps.push(r);
@@ -2645,7 +3030,7 @@ export class ChannelRoom extends DurableObject {
       };
       // Twitch only notifies enabled subscriptions, so a notification also confirms a pending one.
       if (!state.chat.connected) step({ type: "chat_verified", subscriptionId });
-      let main = null;
+      let main: { result: GameResult } | null = null;
       if (!userId || !/^[a-z0-9_]{1,25}$/.test(username) || !displayName)
         main = { result: { ok: false, reason: "invalid_event" } };
       else if (CHAT_BOTS.has(username)) main = { result: { ok: false, reason: "chat_bot" } };
@@ -2708,7 +3093,7 @@ export class ChannelRoom extends DurableObject {
           this.upsertProfile(updated);
         if (main?.result?.reason === "duel_completed" || main?.result?.reason === "quick_duel") {
           // save Elo, wins and losses
-          const duel = state.duels.find((item) => item.id === main.result.duelId);
+          const duel = state.duels.find((item) => item.id === main!.result.duelId); // checked in the condition above
           for (const id of duel ? [duel.a, duel.b] : []) {
             const participant = state.players.find((item) => item.userId === id);
             if (participant?.registered) this.upsertProfile(participant);
@@ -2730,14 +3115,14 @@ export class ChannelRoom extends DurableObject {
     });
   }
 
-  async webSocketError(ws) {
+  async webSocketError(ws: WebSocket): Promise<void> {
     try {
       ws.close(1011, "Socket error");
     } catch {}
   }
 
-  broadcast(state) {
-    const message = JSON.stringify(this.publicState(state));
+  broadcast(state: GameState): void {
+    const message = JSON.stringify(this.publicState(state) satisfies LiveMessage);
     for (const ws of this.ctx.getWebSockets("live")) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       try {
@@ -2746,21 +3131,22 @@ export class ChannelRoom extends DurableObject {
     }
   }
 
-  async scheduleAlarm(state) {
-    const due = [];
+  async scheduleAlarm(state: GameState): Promise<void> {
+    const due: number[] = [];
     const chatDue = chatCheckDue(state);
     if (chatDue !== null) due.push(chatDue);
     for (const duel of state.duels) {
       if (duel.status === "pending") due.push(duel.expiresAt + 1);
       else if (duel.status === "active")
-        due.push(duel.lastActionAt + (duel.rules?.inactivityMs || state.config.inactivityMs) + 1);
+        due.push(duel.lastActionAt! + (duel.rules?.inactivityMs || state.config.inactivityMs) + 1); // set when a duel starts
     }
     for (const profile of state.players) if (profile.respawnAt > 0) due.push(profile.respawnAt);
     for (const lock of state.rematchLocks) due.push(lock.until);
     // a bot channel announces each duel's result once the stream has played it
     if (this.botSource(state) && state.config.botEnabled !== false)
       for (const duel of state.duels)
-        if (duel.status === "completed" && duel.revealAt > Date.now()) due.push(duel.revealAt + 1);
+        // revealAt! : set when a duel completes
+        if (duel.status === "completed" && duel.revealAt! > Date.now()) due.push(duel.revealAt! + 1);
     if (this.dueResults(state, Date.now()).length) due.push(Date.now() + RESULT_RETRY_MS); // one that couldn't go out yet
     const reminder = this.reminderDue(state);
     if (reminder) due.push(reminder);
@@ -2769,7 +3155,7 @@ export class ChannelRoom extends DurableObject {
   }
 
   // Errors are logged (owner diagnostics) and the next alarm is always set, so one failure can't stall result lines.
-  async alarm() {
+  async alarm(): Promise<void> {
     const row = this.readStoredState();
     if (!row) return;
     const channel = normalizeChannel(row.channel);
@@ -2782,7 +3168,7 @@ export class ChannelRoom extends DurableObject {
     await this.scheduleAlarm(this.readState(channel));
   }
 
-  async alarmTasks(channel) {
+  async alarmTasks(channel: string): Promise<void> {
     const since = this.readState(channel).revision;
     let result = this.advance(channel, { type: "tick" }, Date.now());
     if (result.changed) this.broadcast(result.state);
@@ -2794,7 +3180,7 @@ export class ChannelRoom extends DurableObject {
       const status = await checkChatSubscription(this.env, state.chat.subscriptionId);
       if (this.readState(channel).chat.subscriptionId === state.chat.subscriptionId) {
         const subscriptionId = state.chat.subscriptionId;
-        const event =
+        const event: GameEvent =
           !status || status === "webhook_callback_verification_pending"
             ? { type: "chat_checked" }
             : status === "enabled"
@@ -2818,26 +3204,34 @@ export class ChannelRoom extends DurableObject {
 
   // "Challenge expired" lines for challenges that ran out after revision `since`, on a channel the bot reads. Each is said
   // once: the alarm and a later command can both notice the same one.
-  expiredLines(state, since) {
+  expiredLines(state: GameState, since: number): string[] {
     if (!this.botSource(state)) return [];
     this.expiredSaid ||= new Set();
     const names = botNames(this.seSettings().names),
-      lines = [];
-    const name = (id) => {
+      lines: string[] = [];
+    const name = (id: string) => {
       const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config);
       return p?.displayName || p?.username || "someone";
     };
     for (const e of state.events) {
       if (e.type !== "challenge_expired" || Number(e.id) <= since || this.expiredSaid.has(e.id)) continue;
       this.expiredSaid.add(e.id);
-      lines.push(seExpiredText({ a: name(e.a), b: name(e.b), timeoutMs: state.config.challengeTimeoutMs, names }));
+      // a challenge_expired event names both fighters' ids
+      lines.push(
+        seExpiredText({
+          a: name(e.a as string),
+          b: name(e.b as string),
+          timeoutMs: state.config.challengeTimeoutMs,
+          names,
+        }),
+      );
     }
     if (this.expiredSaid.size > 200) this.expiredSaid = new Set([...this.expiredSaid].slice(-100));
     return lines;
   }
 
   // Posts the expired-challenge lines from the alarm as the bot (there is no chat line to answer), under the reply cap.
-  async postExpired(channel, since) {
+  async postExpired(channel: string, since: number): Promise<void> {
     await this.postBotLines(channel, this.expiredLines(this.readState(channel), since));
   }
 
@@ -2845,7 +3239,7 @@ export class ChannelRoom extends DurableObject {
   // The "Fight on" reply says to watch the stream; this line follows the replay, so chat never spoils it.
   // A line held back by the reply cap or refused by Twitch stays due and is tried again (the alarm wakes every
   // RESULT_RETRY_MS) until it is 2 minutes old. A bot command also posts due results first, in case the alarm missed one.
-  async postResults(channel, now) {
+  async postResults(channel: string, now: number): Promise<void> {
     if (this.postingResults) return this.postingResults; // the alarm and a command at once: post each line once
     this.postingResults = this.postResultsOnce(channel, now).finally(() => {
       this.postingResults = null;
@@ -2853,17 +3247,18 @@ export class ChannelRoom extends DurableObject {
     return this.postingResults;
   }
 
-  dueResults(state, now) {
+  dueResults(state: GameState, now: number): DueDuel[] {
     if (!this.botSource(state)) return [];
     const sql = this.ctx.storage.sql,
-      row = sql.exec("SELECT results_through FROM bot_reminder WHERE id = 1").toArray()[0];
+      row = sql.exec<{ results_through: number }>("SELECT results_through FROM bot_reminder WHERE id = 1").toArray()[0];
     if (!row) return [];
     // With the bot off, results are skipped for good, so turning it back on doesn't post a backlog.
     if (state.config.botEnabled === false) {
       if (row.results_through < now) sql.exec("UPDATE bot_reminder SET results_through = ? WHERE id = 1", now);
       return [];
     }
-    return state.duels
+    // read as due: the filter drops a duel without ratings, and one without revealAt compares false
+    return (state.duels as DueDuel[])
       .filter(
         (d) =>
           d.status === "completed" &&
@@ -2875,14 +3270,18 @@ export class ChannelRoom extends DurableObject {
       .sort((x, y) => x.revealAt - y.revealAt);
   }
 
-  async postResultsOnce(channel, now) {
+  async postResultsOnce(channel: string, now: number): Promise<void> {
     const state = this.readState(channel),
       due = this.dueResults(state, now);
     if (!due.length) return;
     const sql = this.ctx.storage.sql,
-      row = sql.exec("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1").toArray()[0];
+      row = sql
+        .exec<{ broadcaster_id: string; bot_id: string }>(
+          "SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1",
+        )
+        .toArray()[0];
     if (!row?.broadcaster_id || !row?.bot_id) return;
-    const name = (id) => {
+    const name = (id: string) => {
       const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config);
       return p?.displayName || p?.username || "someone";
     };
@@ -2890,28 +3289,28 @@ export class ChannelRoom extends DurableObject {
       // in reveal order; one that can't go out now stops the rest, so chat keeps the order
       const loser = d.winnerId === d.a ? d.b : d.a;
       const line = seResultText({
-        winner: name(d.winnerId),
+        winner: name(d.winnerId as string), // a completed duel has a winner
         loser: name(loser),
-        w: d.ratings[d.winnerId],
+        w: d.ratings[d.winnerId as string], // as above
         l: d.ratings[loser],
         decision: d.decision,
         flawless: d.flawless,
         unrated: d.unrated,
       });
-      const { replies } = await this.sendBotLines([line], channel, { system: 1 }).json();
+      const { replies } = await this.sendBotLines([line], channel, { system: 1 }).json<{ replies: string[] }>(); // sendBotLines's answer
       if (!replies.length) return;
       // A failed call (network, Twitch 5xx or 429 after its retries) is tried again; a line Twitch read and dropped
       // (AutoMod, chat settings) would be dropped again, so it counts as done.
-      let out,
+      let out: SendResult,
         failed = false;
       try {
         out = await sendChatMessage(this.env, {
           broadcasterId: row.broadcaster_id,
           senderId: row.bot_id,
-          message: replies[0],
+          message: replies[0]!, // checked non-empty above
         });
       } catch (error) {
-        out = { sent: false, reason: String(error?.message || error) };
+        out = { sent: false, reason: String((error as Thrown)?.message || error) }; // anything can be thrown
         failed = true;
       }
       this.noteBotSent(channel, [out]);
@@ -2921,29 +3320,35 @@ export class ChannelRoom extends DurableObject {
   }
 
   // Lines the bot posts on its own (no chat line to answer), under the reply cap.
-  async postBotLines(channel, lines) {
+  async postBotLines(channel: string, lines: string[]): Promise<void> {
     if (!lines.length || this.readState(channel).config.botEnabled === false) return;
-    const row = this.ctx.storage.sql.exec("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1").toArray()[0];
+    const row = this.ctx.storage.sql
+      .exec<{ broadcaster_id: string; bot_id: string }>("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1")
+      .toArray()[0];
     if (!row?.broadcaster_id || !row?.bot_id) return;
-    const { replies } = await this.sendBotLines(lines, channel, { system: lines.length }).json();
+    const { replies } = await this.sendBotLines(lines, channel, { system: lines.length }).json<{ replies: string[] }>(); // sendBotLines's answer
     for (const message of replies) {
       try {
         this.noteBotSent(channel, [
           await sendChatMessage(this.env, { broadcasterId: row.broadcaster_id, senderId: row.bot_id, message }),
         ]);
       } catch (error) {
-        this.noteBotSent(channel, [{ sent: false, reason: String(error?.message || error) }]);
+        this.noteBotSent(channel, [{ sent: false, reason: String((error as Thrown)?.message || error) }]); // anything can be thrown
       }
     }
   }
 
   // Saves who the reminder posts as (the bot) and in which channel, from a bot command. Writes only when something changed.
-  rememberReminder(broadcasterId, botId, origin) {
+  rememberReminder(broadcasterId: unknown, botId: string, origin: unknown): void {
     broadcasterId = validUserId(broadcasterId);
     if (!broadcasterId || !botId) return;
     origin = String(origin || "").slice(0, 200);
     const sql = this.ctx.storage.sql,
-      row = sql.exec("SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1").toArray()[0];
+      row = sql
+        .exec<{ broadcaster_id: string; bot_id: string; origin: string }>(
+          "SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1",
+        )
+        .toArray()[0];
     if (row && row.broadcaster_id === broadcasterId && row.bot_id === botId && row.origin === origin) return;
     sql.exec(
       "INSERT INTO bot_reminder (id, broadcaster_id, bot_id, origin) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET broadcaster_id = excluded.broadcaster_id, bot_id = excluded.bot_id, origin = excluded.origin",
@@ -2955,10 +3360,10 @@ export class ChannelRoom extends DurableObject {
 
   // When the next !fray reminder is due, or 0: only with the bot connected, a known bot account, the bot on and config.reminderMin > 0.
   // The first one comes a full interval after the reminder is turned on (or the room first sees the bot).
-  reminderDue(state, now = Date.now()) {
+  reminderDue(state: GameState, now = Date.now()): number {
     const every = Number(state.config.reminderMin) || 0,
       sql = this.ctx.storage.sql;
-    const row = sql.exec("SELECT next_at FROM bot_reminder WHERE id = 1").toArray()[0];
+    const row = sql.exec<{ next_at: number }>("SELECT next_at FROM bot_reminder WHERE id = 1").toArray()[0];
     if (!row) return 0;
     if (!every || !this.botSource(state) || state.config.botEnabled === false) {
       if (row.next_at) sql.exec("UPDATE bot_reminder SET next_at = 0 WHERE id = 1");
@@ -2973,12 +3378,16 @@ export class ChannelRoom extends DurableObject {
   }
 
   // Posts the reminder as the bot when it's due and Twitch says the channel is live. Offline, it just waits another interval.
-  async postReminder(channel, now) {
+  async postReminder(channel: string, now: number): Promise<void> {
     const state = this.readState(channel),
       due = this.reminderDue(state, now);
     if (!due || now < due) return;
     const sql = this.ctx.storage.sql,
-      row = sql.exec("SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1").toArray()[0];
+      row = sql
+        .exec<{ broadcaster_id: string; bot_id: string; origin: string }>(
+          "SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1",
+        )
+        .toArray()[0]!; // reminderDue answers 0 without the row
     sql.exec("UPDATE bot_reminder SET next_at = ? WHERE id = 1", now + state.config.reminderMin * 60000);
     try {
       if (!(await this.currentStream(channel, now))) return;
@@ -2990,20 +3399,20 @@ export class ChannelRoom extends DurableObject {
       if (out.sent) logRoomEvent(this, "command", "bot reminder sent", { channel, via: "reminder" });
       this.noteBotSent(channel, [out], "reminder");
     } catch (error) {
-      this.noteBotSent(channel, [{ sent: false, reason: String(error?.message || error) }], "reminder");
+      this.noteBotSent(channel, [{ sent: false, reason: String((error as Thrown)?.message || error) }], "reminder"); // anything can be thrown
     }
   }
 }
 
 // Next Helix check time, or null: hourly while connected, every few minutes while a subscription awaits verification.
-function chatCheckDue(state) {
+function chatCheckDue(state: GameState): number | null {
   const id = state.chat?.subscriptionId;
   if (!id || id.startsWith("local-") || id === SE_SUBSCRIPTION_ID) return null;
   return (Number(state.chat.checkedAt) || 0) + (state.chat.connected ? CHAT_CHECK_MS : CHAT_PENDING_CHECK_MS);
 }
 
 // "45 s", "12 min", "3 h", "2 d": how long ago (or until) for the bot's one-line status.
-function agoText(ms) {
+function agoText(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   return s < 90
     ? s + " s"

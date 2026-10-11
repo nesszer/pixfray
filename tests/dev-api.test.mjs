@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../server/worker.js";
 import { digest } from "../server/auth.ts";
-import { ChannelRoom } from "../server/channel.js";
+import { ChannelRoom } from "../server/channel.ts";
 import { validPath, usage, logRoomEvent } from "../server/developer.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz";

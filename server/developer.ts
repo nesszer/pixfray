@@ -8,7 +8,7 @@ import { BACKUP_DAYS, backupChannels, backupDay, listBackups, readBackup, writeB
 import type { TwitchUser } from "./auth.ts";
 import type { Env } from "./env.ts";
 import type { GameState } from "./model.ts";
-// Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
+// Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.ts only call the exports below;
 // keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
 //   GitHub (code editor + deploy flow): secret GITHUB_TOKEN, text GITHUB_REPO ("owner/name"),

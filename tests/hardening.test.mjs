@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../server/worker.js";
-import { ChannelRoom } from "../server/channel.js";
+import { ChannelRoom } from "../server/channel.ts";
 import { digest, seal, unseal, isOwner, access } from "../server/auth.ts";
 import { forgetRefused, seKeyHash, WRONG_KEY_TEXT, LOST_TEXT, OFF_TEXT, SE_KEY } from "../server/streamelements.ts";
 import { forgetChannel } from "../server/channels.ts";

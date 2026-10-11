@@ -2,7 +2,7 @@
 
 PixFray is a Twitch overlay and chat game: chatters walk on stream as pixel fighters and duel through chat
 commands answered by the PixFray bot. One Cloudflare Worker (`server/worker.js`) serves the pages and API, and each
-channel is a SQLite Durable Object (`ChannelRoom` in `server/channel.js`). Pages build with Vite from `src/`.
+channel is a SQLite Durable Object (`ChannelRoom` in `server/channel.ts`). Pages build with Vite from `src/`.
 
 IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning. Twitch EventSub, the `cf` deploy CLI and
 this codebase change faster than model training data. Explore the code first, then read the doc from the index below
@@ -51,14 +51,14 @@ It is not wrangler: never `wrangler deploy` or `--env`.
 
 - **Channel setting (mods change it on the admin page):** `DEFAULT_CONFIG` and the type list in
   `validateConfigPatch` in `server/game.ts`; a field in a `GROUPS` entry in `src/admin.js`; the reads in
-  `server/channel.js`; a test with a valid patch and an `invalid_config_<key>` rejection; `docs/CONTRACTS.md` §7.
-- **Bot chat command:** `botCommand` in `server/channel.js`; command names and reply texts in
+  `server/channel.ts`; a test with a valid patch and an `invalid_config_<key>` rejection; `docs/CONTRACTS.md` §7.
+- **Bot chat command:** `botCommand` in `server/channel.ts`; command names and reply texts in
   `server/streamelements.ts` (`botNames()`, `DEFAULT_SE_NAMES`, `se*Text`). Mods' own text commands are
   `server/botcommands.ts`.
 - **Who is a mod in chat:** `ev.mod`, set once from the badges (`MOD_BADGES`: broadcaster, moderator,
   lead_moderator) in `slimEvent` in `server/eventsub.ts`.
   Don't read badges anywhere else. Admin-page access is a separate Helix check in `server/auth.ts`.
-- **Refusing the bot as a target:** the single `BOT_TARGET_ACTIONS` check in `server/channel.js`. Keep it one check;
+- **Refusing the bot as a target:** the single `BOT_TARGET_ACTIONS` check in `server/channel.ts`. Keep it one check;
   the bot may become a co-op boss later.
 
 ## Known failure patterns

@@ -1,4 +1,4 @@
-import { ChannelRoom } from "./channel.js";
+import { ChannelRoom } from "./channel.ts";
 import site from "../site.config.js";
 import {
   AuthStore,

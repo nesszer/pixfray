@@ -208,7 +208,7 @@ Deduplicate events by `id`. All `ms` times are server clock. `src/served/arena-c
 sees them, so a streaming PC whose clock is off still plays fresh events (the overlay drops events
 older than 10 s).
 
-Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.js`):
+Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.ts`):
 
 ```
 Looks = {type:"looks", looks:{[login]: Look|null}, reset?:true}
@@ -492,7 +492,7 @@ subset of fields. Versioning works like this:
 
 | Lane | Owns | Contract |
 |---|---|---|
-| A (backend core) | `server/worker.js`, `server/channel.js`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
+| A (backend core) | `server/worker.js`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
 | B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.js` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.ts`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
 | E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.js` | The signatures below |

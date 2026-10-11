@@ -38,6 +38,7 @@
     "server/eventsub.ts",
     "server/backups.ts",
     "server/accounts.ts",
-    "server/developer.ts"
+    "server/developer.ts",
+    "server/channel.ts"
   ]
 }
