@@ -3,6 +3,7 @@
 //   channel:<login> = { id, login, enabledAt, pausedAt?, pausedBy?, review? }   kept ~20 years; paused keeps fighters and ranks
 //   review = { reasons, at }: sign-up didn't pass the streamer check and waits, off, for the owner to turn it on.
 import { record, CHANNELS } from "./auth.ts";
+import { parseChannelRows } from "./parse.ts";
 import type { TwitchUser, HelixUser } from "./auth.ts";
 import type { Env } from "./env.ts";
 
@@ -69,7 +70,11 @@ export async function listRecords(env: Env, prefix: string): Promise<ChannelRow[
     headers: { "X-Mini-Internal": env.INTERNAL_SECRET },
   });
   if (!r.ok) throw new Error("Auth storage unavailable");
-  return r.json<ChannelRow[]>(); // AuthStore lists only the channel: prefix
+  // AuthStore lists only the channel: prefix; a record of the wrong shape is left out and logged, the rest still list
+  const parsed = parseChannelRows(await r.json<unknown>().catch(() => undefined));
+  if (!parsed.ok) throw new Error("Auth storage unavailable");
+  if (parsed.value.skipped.length) console.warn("registry records skipped", parsed.value.skipped.join(","));
+  return parsed.value.rows;
 }
 
 // Public: the logins a viewer can pick on the /play/ picker (built-in channels first, then by sign-up). Cached a minute.
@@ -103,9 +108,9 @@ export async function reviewReasons(
   now = Date.now(),
 ): Promise<string[]> {
   const reasons: string[] = [],
-    created = Date.parse(identity?.created_at) || 0;
+    created = Date.parse(identity?.created_at || "") || 0;
   if (!created || now - created < STREAMER_MIN_AGE_MS) reasons.push("young");
-  if (!["affiliate", "partner"].includes(identity?.broadcaster_type)) {
+  if (!["affiliate", "partner"].includes(identity?.broadcaster_type || "")) {
     const streamed = await helix("/videos?type=archive&first=1&user_id=" + encodeURIComponent(identity.id)).then(
       (d) => (d?.data?.length as number) > 0, // as: undefined > 0 is false, the intended answer
       () => null,

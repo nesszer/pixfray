@@ -6,7 +6,10 @@
 
 import { CHANNELS } from "./auth.ts";
 import { listRecords } from "./channels.ts";
+import { parseBackupExport } from "./parse.ts";
 import type { Env } from "./env.ts";
+import type { Parsed } from "./parse.ts";
+import type { BackupExport } from "./model.ts";
 
 /** One channel's outcome in a backup run. */
 export type BackupResult =
@@ -14,17 +17,6 @@ export type BackupResult =
   | { channel: string; ok: false; reason: string };
 /** A stored day, newest first in listBackups. */
 export type BackupRow = { day: string; at: number; bytes: number };
-/**
- * A channel room's export, as stored (the owner page's download). Only the fields developer.ts reads are named;
- * the room's export code is the full shape.
- */
-export type BackupExport = {
-  exportedAt: number;
-  profiles: { userId: string; username: string }[];
-  purchases: { userId: string }[];
-  builds: { userId: string }[];
-  [key: string]: unknown;
-};
 /** What a room answers to POST /dev/backup. */
 type BackupReply = { bytes?: number; reason?: string; error?: string };
 
@@ -100,15 +92,21 @@ export async function listBackups(db: D1Database, channel: string): Promise<Back
   return results;
 }
 
-/** The stored export for that day, or null. */
-export async function readBackup(db: D1Database, channel: string, day: string): Promise<BackupExport | null> {
+/** The stored export for that day, refused as invalid_backup when it does not unpack to one (parseBackupExport), or null. */
+export async function readBackup(db: D1Database, channel: string, day: string): Promise<Parsed<BackupExport> | null> {
   await db.prepare(SCHEMA).run();
   const row = await db
     .prepare("SELECT data FROM backups WHERE channel = ? AND day = ?")
     .bind(channel, day)
     .first<{ data: number[] }>();
   if (!row) return null;
-  // D1 returns a BLOB as an array of numbers.
-  const bytes = new Uint8Array(row.data);
-  return JSON.parse(await through(new Blob([bytes]).stream(), new DecompressionStream("gzip")).text());
+  let text = "";
+  try {
+    // D1 returns a BLOB as an array of numbers.
+    const bytes = new Uint8Array(row.data);
+    text = await through(new Blob([bytes]).stream(), new DecompressionStream("gzip")).text();
+  } catch {
+    // not gzip: the empty text is refused below like any other unreadable backup
+  }
+  return parseBackupExport(text);
 }

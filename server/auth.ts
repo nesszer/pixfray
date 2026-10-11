@@ -3,8 +3,10 @@ import site from "../site.config.js";
 import { channelState, signUp, isBroadcaster, reviewReasons } from "./channels.ts";
 import { authOrigin } from "./hosts.ts";
 import { hit } from "./ratelimit.ts";
+import { parseHelixPage, parseHelixUsers, parseModerators, parseTwitchTokens, parseTwitchValidation } from "./parse.ts";
 import type { HelixPage } from "./channels.ts";
 import type { Env } from "./env.ts";
+import type { TwitchTokens } from "./parse.ts";
 
 /** A signed-in Twitch account: the immutable id, the login and the display name Twitch gave at sign-in. */
 export type TwitchUser = { id: string; login: string; displayName: string };
@@ -33,19 +35,15 @@ export type OAuthPending = {
   connectBot?: boolean;
   next?: string;
 };
-/** Twitch's OAuth token response. */
-type TwitchTokens = { access_token: string; refresh_token: string; expires_in?: number; scope?: string[] };
-/** The broadcaster token as it is sealed in broadcaster:<login>. */
+/** The broadcaster token as it is sealed in broadcaster:<login>: Twitch's token answer plus the account and check. */
 type BroadcasterToken = TwitchTokens & { userId: string; validatedAt: number };
-/** Twitch's /oauth2/validate response. */
-type Validation = { client_id?: string; user_id?: string; scopes?: string[] };
-/** A Helix /users row (the fields read here and in reviewReasons). */
+/** A Helix /users row (the fields read here and in reviewReasons), as parseHelixUsers answers it. */
 export type HelixUser = {
   id: string;
   login: string;
   display_name: string;
-  created_at: string;
-  broadcaster_type: string;
+  created_at?: string | undefined;
+  broadcaster_type?: string | undefined;
 };
 type EntryRow = { value: string; expires: number };
 
@@ -371,8 +369,9 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
       redirect_uri: callback,
     }),
   });
-  if (!tokenRes.ok) return Response.json({ error: "Twitch token exchange failed" }, { status: 502 });
-  const tokens = await tokenRes.json<TwitchTokens>(),
+  const answer = tokenRes.ok ? parseTwitchTokens(await tokenRes.json<unknown>().catch(() => undefined)) : null;
+  if (!answer?.ok) return Response.json({ error: "Twitch token exchange failed" }, { status: 502 });
+  const tokens = answer.value,
     headers = { "Client-Id": env.TWITCH_CLIENT_ID, Authorization: "Bearer " + tokens.access_token };
   const [identityRes, validationRes] = await Promise.all([
     fetch("https://api.twitch.tv/helix/users", { headers }),
@@ -380,8 +379,12 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   ]);
   if (!identityRes.ok || !validationRes.ok)
     return Response.json({ error: "Twitch identity validation failed" }, { status: 502 });
-  const identity = (await identityRes.json<{ data?: HelixUser[] }>()).data?.[0],
-    validation = await validationRes.json<Validation>();
+  const identities = parseHelixUsers(await identityRes.json<unknown>().catch(() => undefined)),
+    validated = parseTwitchValidation(await validationRes.json<unknown>().catch(() => undefined));
+  if (!identities.ok || !validated.ok)
+    return Response.json({ error: "Twitch identity validation failed" }, { status: 502 });
+  const identity = identities.value[0],
+    validation = validated.value;
   if (!identity || validation.client_id !== env.TWITCH_CLIENT_ID || validation.user_id !== identity.id)
     return Response.json({ error: "Twitch identity mismatch" }, { status: 403 });
   const user = { id: identity.id, login: identity.login, displayName: identity.display_name };
@@ -390,7 +393,8 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   const ownerRes = await fetch("https://api.twitch.tv/helix/users?login=" + site.owner.login, { headers }).catch(
     (): null => null, // typed: the loose worker program would widen a bare null to any
   );
-  const owner = ownerRes?.ok ? (await ownerRes.json<{ data?: { id: string }[] }>()).data?.[0] : null;
+  const owners = ownerRes?.ok ? parseHelixUsers(await ownerRes.json<unknown>().catch(() => undefined)) : null;
+  const owner = owners?.ok ? owners.value[0] : null; // an unreadable answer counts as a failed lookup
   if (owner) {
     if (env.OWNER_TWITCH_ID && env.OWNER_TWITCH_ID !== owner.id)
       return Response.json({ error: "Owner configuration mismatch" }, { status: 403 });
@@ -441,7 +445,9 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
     const helix = async (p: string): Promise<HelixPage> => {
       const r = await fetch("https://api.twitch.tv/helix" + p, { headers });
       if (!r.ok) throw new Error("helix " + r.status);
-      return r.json<HelixPage>();
+      const page = parseHelixPage(await r.json<unknown>().catch(() => undefined));
+      if (!page.ok) throw new Error("helix " + page.error); // reviewReasons reads a throw as 'unchecked'
+      return page.value;
     };
     try {
       pending.channel = await signUp(env, user, () => reviewReasons(identity, helix));
@@ -541,8 +547,9 @@ export async function access(env: Env, user: TwitchUser | null | undefined, chan
         client_secret: env.TWITCH_CLIENT_SECRET,
       }),
     });
-    if (!r.ok) throw new Error("Broadcaster must reconnect Twitch");
-    token = { ...token, ...(await r.json<TwitchTokens>()), validatedAt: 0 };
+    const renewed = r.ok ? parseTwitchTokens(await r.json<unknown>().catch(() => undefined)) : null;
+    if (!renewed?.ok) throw new Error("Broadcaster must reconnect Twitch");
+    token = { ...token, ...renewed.value, validatedAt: 0 };
   };
   if (Date.now() - token.validatedAt > 3600000) {
     let r = await fetch("https://id.twitch.tv/oauth2/validate", {
@@ -554,8 +561,9 @@ export async function access(env: Env, user: TwitchUser | null | undefined, chan
         headers: { Authorization: "OAuth " + token.access_token },
       });
     }
-    if (!r.ok) throw new Error("Twitch authorization unavailable");
-    const v = await r.json<Validation>();
+    const validated = r.ok ? parseTwitchValidation(await r.json<unknown>().catch(() => undefined)) : null;
+    if (!validated?.ok) throw new Error("Twitch authorization unavailable");
+    const v = validated.value;
     if (v.user_id !== token.userId || v.client_id !== env.TWITCH_CLIENT_ID || !v.scopes?.includes("moderation:read"))
       throw new Error("Broadcaster authorization is invalid");
     token.validatedAt = Date.now();
@@ -575,9 +583,9 @@ export async function access(env: Env, user: TwitchUser | null | undefined, chan
     await keepBroadcaster(env, channel, await seal(env, token));
     r = await checkMod();
   }
-  if (!r.ok) throw new Error("Current moderator role cannot be verified");
-  const moderator =
-    (await r.json<{ data?: { user_id: string }[] }>()).data?.some((x) => x.user_id === user.id) || false;
+  const mods = r.ok ? parseModerators(await r.json<unknown>().catch(() => undefined)) : null;
+  if (!mods?.ok) throw new Error("Current moderator role cannot be verified");
+  const moderator = mods.value.includes(user.id);
   await record(env, cacheKey, moderator, Date.now() + 60000);
   return verdict(moderator);
 }
