@@ -509,8 +509,15 @@ async function init() {
   ($("#dev-link") as HTMLAnchorElement).hidden = ($("#dev-section") as HTMLElement).hidden = !S.access.owner;
   // element type from the page HTML
   ($("#owner-chat") as HTMLDivElement).hidden = !S.access.owner || CHANNEL !== site.defaultChannel;
-  await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets(), loadSprites()]);
-  if (S.admin?.channelState !== "paused") connectLive();
+  const [loaded] = await Promise.all([load(), loadLeaderboard(), loadCustom(), loadPets(), loadSprites()]);
+  // every control reads S.admin, so without the arena the gate stays up (load already gated a 401 or 403)
+  if (!S.admin)
+    return loaded === false
+      ? gate("Couldn't load the arena right now. Try again in a minute.", [
+          h("button", { class: "btn btn-primary", type: "button", onclick: () => location.reload() }, "Try again"),
+        ])
+      : undefined;
+  if (S.admin.channelState !== "paused") connectLive();
   // Back from "Connect mod access" (/auth/login?connect=mods)
   const mods = new URLSearchParams(location.search).get("mods");
   const MODS: Record<string, string | undefined> = {
@@ -606,7 +613,7 @@ async function act(
 }
 // element type from the page HTML
 ($("#toggle-duels") as HTMLButtonElement).addEventListener("click", (e) => {
-  // S.admin!: throws as before if load() failed (reported)
+  // S.admin!: init() keeps the gate up until load() fills S.admin, and a failed reload keeps the old value
   const enabled = !S.admin!.config.enabled;
   // as above
   const open = S.admin!.duels.filter((d) => OPEN.has(d.status)).length;
@@ -640,7 +647,7 @@ async function act(
       action: "config",
       payload: {
         patch: { announce: select.value },
-        // S.admin!: throws as before if load() failed (reported)
+        // S.admin!: init() keeps the gate up until load() fills S.admin, and a failed reload keeps the old value
         baseVersion: S.admin!.configVersion,
         note: "announcements " + select.value,
       },
@@ -672,7 +679,7 @@ async function act(
     value = Number(input.value);
   if (!Number.isInteger(value) || value < 15 || value > 100) {
     setStatus(status, "Pick a whole number from 15 to 100.", "error");
-    // S.admin!: throws as before if load() failed (reported); the DOM turns the number into text, as before
+    // S.admin!: init() keeps the gate up until load() fills S.admin, and a failed reload keeps the old value; the DOM turns the number into text, as before
     input.value = (S.admin!.config.maxOnStream || 50) as unknown as string;
     return;
   }
@@ -1349,7 +1356,7 @@ const mergeConfig = (base: Config, patch: Partial<Config>) => ({
     setStatus(
       configStatus,
       "Not saved: someone else saved version " +
-        // S.admin!: throws as before if that load() failed (reported)
+        // S.admin!: init() keeps the gate up until load() fills S.admin, and a failed reload keeps the old value
         S.admin!.configVersion +
         " first. The form now shows the current values. Your change was: " +
         mine +
@@ -1841,7 +1848,7 @@ async function mountUploads() {
     root.classList.remove("mount"); // the uploader brings its own frame
     await mod.mountUpload(root, {
       channel: CHANNEL,
-      // S.admin!: throws into the catch below as before if load() failed (reported)
+      // S.admin!: init() keeps the gate up until load() fills S.admin, and a failed reload keeps the old value
       usage: S.admin!.customUsage,
       limits: customLimits || LIMITS,
       items: customItems || [],
@@ -2162,7 +2169,7 @@ async function seAct(body: Record<string, unknown>, button: HTMLButtonElement, d
 }
 // element type from the page HTML
 ($("#use-se") as HTMLButtonElement).addEventListener("click", (e) => {
-  // S.admin!: throws as before if load() failed (reported)
+  // S.admin!: init() keeps the gate up until load() fills S.admin, and a failed reload keeps the old value
   const c: ChatStatus = S.admin!.chatStatus || {};
   if (
     c.connected &&
@@ -2527,7 +2534,7 @@ function renderCheckinTest() {
 }
 // element type from the page HTML
 ($("#checkin-test-toggle") as HTMLButtonElement).addEventListener("click", async (e) => {
-  // the listener sits on this button; S.admin!: throws as before if load() failed (reported)
+  // the listener sits on this button; S.admin!: init() keeps the gate up until load() fills S.admin, and a failed reload keeps the old value
   const button = e.currentTarget as HTMLButtonElement,
     // as above
     on = !(S.admin!.checkinTest && S.admin!.checkinTest.until > Date.now());

@@ -137,6 +137,8 @@ The same answers are under "If something doesn't work" at the bottom of Stream s
 - **The bot answers only every other command:** type `/mod pixfray` in your chat.
 - **Two bots answer the same command:** the StreamElements Duel module is still on.
 - **A command answers "wrong key":** copy that row's reply again and replace the old one.
+- **The mod page says "Couldn't load the arena":** the controls stay hidden until the arena loads.
+  Click **Try again** in a minute.
 - **Mod access expired:** your moderators can't open the mod controls. Click **Reconnect mod
   access** under **Let your moderators help** while signed in to Twitch as yourself.
 

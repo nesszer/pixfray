@@ -853,17 +853,18 @@ function renderBuilds() {
         h("span", { class: "muted small" }, on ? "On stream" : b ? entry?.label || b.avatar : "Not saved yet"),
       );
     }),
-    price
-      ? buyButton(
-          "slot",
-          "",
-          "build slot " + (slots + 1),
-          price,
-          $("#status-slot") as HTMLParagraphElement, // element type from the page HTML
-          "Add build " + (slots + 1) + " for $" + price,
-        )
-      : // null!: when no slot is for sale the DOM writes this null as the text "null" (kept as in the .js)
-        null!,
+    ...(price
+      ? [
+          buyButton(
+            "slot",
+            "",
+            "build slot " + (slots + 1),
+            price,
+            $("#status-slot") as HTMLParagraphElement, // element type from the page HTML
+            "Add build " + (slots + 1) + " for $" + price,
+          ),
+        ]
+      : []),
   );
   // element type from the page HTML
   ($("#build-note") as HTMLSpanElement).textContent = "(" + slots + " of " + (state.shop?.slots?.max || 5) + ")";

@@ -806,6 +806,23 @@ try {
     await context.close();
   }
 
+  // 4b. A moderator whose arena fails to load gets a gate with a retry, not controls that have no arena behind them.
+  {
+    const { context, page } = await newPage(sizes[1]);
+    await page.route("**/api/session", (r) =>
+      json(r, { user: mod, owner: false, configured: true, channels: ["nesszerra"], productionEnabled: false }),
+    );
+    await page.route("**/api/access/nesszerra", (r) => json(r, { owner: false, moderator: true, canManage: true }));
+    await page.route("**/api/admin/nesszerra", (r) => json(r, { error: "room error" }, 500));
+    await page.goto(base + "/admin/?channel=nesszerra");
+    await page.waitForFunction(() =>
+      document.querySelector("#gate-text").textContent.includes("Couldn't load the arena"),
+    );
+    assert.equal(await page.locator("#app").isHidden(), true);
+    assert.equal(await page.locator("#gate-actions button").textContent(), "Try again");
+    await context.close();
+  }
+
   // 5. Moderator admin (fully stubbed). Covers toggle, cancel, resets, config save, 409 conflict and revert.
   for (const s of sizes)
     for (const role of ["mod", "owner"]) {
@@ -2275,6 +2292,36 @@ try {
       await noOverflow(page, "viewer paused signed-in");
       await page.screenshot({ path: shots + "/viewer-paused-signed-in-1280.png" });
     }
+    await context.close();
+  }
+  // 13. Every build slot bought: nothing is for sale, so the list holds the five builds and no stray text after them.
+  {
+    const { context, page } = await newPage(sizes[1]);
+    const profile = {
+      ...board[1],
+      avatar: "player",
+      color: "#60a5fa",
+      stats: { power: 0, guard: 0, luck: 0 },
+      hp: 100,
+      registered: true,
+      respawnAt: 0,
+      lastSeen: Date.now(),
+      bonus: 0,
+      dollars: 500,
+      build: 0,
+      owned: { pets: [], hats: [], slots: 5 },
+      builds: [{ avatar: "player", color: "#60a5fa" }],
+    };
+    await page.route("**/api/session", (r) =>
+      json(r, { user, owner: false, configured: true, channels: ["nesszerra"], productionEnabled: false }),
+    );
+    await page.route("**/api/access/nesszerra", (r) => json(r, { owner: false, moderator: false, canManage: false }));
+    await page.route("**/api/profile/nesszerra", (r) => json(r, profile));
+    await page.goto(base + "/?channel=nesszerra");
+    await page.waitForSelector("#build-list button.build");
+    assert.equal(await page.locator("#build-list > *").count(), 5, "five builds and no buy button");
+    assert.doesNotMatch(await page.locator("#build-list").textContent(), /null/, "no slot for sale leaves no text");
+    assert.equal(await page.locator("#build-note").textContent(), "(5 of 5)");
     await context.close();
   }
   // /start: the sign-in line sits below the copy (beside the demo on wide screens), never over it.
