@@ -41,6 +41,12 @@
       // Test doubles pass methods around and spread ASCII test strings.
       "files": ["tests/**"],
       "rules": { "typescript/unbound-method": "off", "typescript/no-misused-spread": "off" }
+    },
+    {
+      // The live chat test rebuilds lineText inside the Twitch page with `(0, eval)(src)`: page callbacks only take
+      // serializable arguments. A rule override instead of a directive comment, since strict files take none.
+      "files": ["scripts/live-chat-e2e.*"],
+      "rules": { "no-eval": "off" }
     }
   ]
 }

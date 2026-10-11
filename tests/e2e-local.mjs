@@ -22,6 +22,9 @@ const DUEL_BALANCE = {
   heal: { amount: 15, cooldownMs: 10000 },
 };
 
+// The scripts named in the setup errors below, each its own literal so a rename can follow it.
+const TEST_ALL = "scripts/test-all.mjs";
+const SEED_LOCAL = "tests/seed-local.mjs";
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const ch = "nesszerra";
 const shots = fileURLToPath(new URL("../screenshots", import.meta.url));
@@ -61,7 +64,7 @@ async function until(fn, label, ms = 8000) {
 // Twitch EventSub stand-in: signs exactly like Twitch (HMAC-SHA256 over id + timestamp + body) with the secret
 // the Worker derives from AUTH_SECRET. The secret only lives in this process's memory.
 if (!process.env.MINI_AUTH_SECRET)
-  throw new Error("MINI_AUTH_SECRET is required (scripts/test-all.mjs passes it from .dev.vars)");
+  throw new Error("MINI_AUTH_SECRET is required (" + TEST_ALL + " passes it from .dev.vars)");
 const eventsubSecret = createHmac("sha256", process.env.MINI_AUTH_SECRET).update("mini-chat:eventsub:v1").digest("hex");
 let seq = 0,
   subscriptionId = "";
@@ -140,7 +143,7 @@ const browser = await chromium.launch(chromeOptions(["--disable-features=LocalNe
 try {
   // 0. Seeded sessions: owner and three viewers.
   const sess = await api("/api/session", { cookie: cookies.owner });
-  assert.equal(sess.data.owner, true, "seeded owner session must be the owner (run tests/seed-local.mjs first)");
+  assert.equal(sess.data.owner, true, "seeded owner session must be the owner (run " + SEED_LOCAL + " first)");
   for (const action of ["disconnectChat", "resetAll", "resetAllRanks"]) {
     // reruns start offline, from a clean arena and 1000 Elo
     const r = await api("/api/admin/" + ch, { cookie: cookies.owner, method: "POST", body: { action } });

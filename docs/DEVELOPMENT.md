@@ -170,7 +170,8 @@ A port pull request changes types only, from a `port/<name>` branch:
    - Comparing code. Both versions are stripped to JavaScript with oxc, with comments removed
      except bundler annotations that start the comment, which stay: `#__NAME__` and `@__NAME__`
      (`/*#__PURE__*/`, `/* @__NO_SIDE_EFFECTS__ */`), `@vite-ignore`, `webpack...:`
-     (`webpackChunkName:`) and `turbopackIgnore:`. A relative import path at head is read as the
+     (`webpackChunkName:`) and `turbopackIgnore:`. A hashbang (`#!/usr/bin/env node`) is removed
+     like a comment in both, since oxc reports it as one only in JavaScript. A relative import path at head is read as the
      path the base file would write to reach the base version of the same target, so a moved
      importer or a renamed target is not a difference, while `./b.mjs` changed to `./b.js` is.
    - Strings in code that doesn't ship. In `tests/`, `scripts/`, `cloudflare.config.ts` and

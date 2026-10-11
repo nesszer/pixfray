@@ -14,6 +14,9 @@ import {
 } from "../scripts/release.mjs";
 import type { Loose } from "./fakes.ts";
 
+// The release script deploy.yml runs, as its own literal so a rename can follow it.
+const RELEASE = "scripts/release.mjs";
+
 // scripts/release.mjs is untyped JavaScript; these are the shapes the tests read back from it.
 type ReleaseOpts = { command: string; target: string; tag: string; percentage: number; message: string };
 type RunResult = {
@@ -250,8 +253,8 @@ test("deploy workflow parses and exposes the inputs /api/dev dispatches", () => 
       if (step.run) assert.doesNotMatch(step.run, /\$\{\{/, step.name || step.run);
     }
   const src = readFileSync(".github/workflows/deploy.yml", "utf8");
-  assert.match(src, /node scripts\/release\.mjs deploy/);
-  assert.match(src, /node scripts\/release\.mjs rollback/);
+  assert.ok(src.includes("node " + RELEASE + " deploy"), "deploy.yml runs " + RELEASE + " deploy");
+  assert.ok(src.includes("node " + RELEASE + " rollback"), "deploy.yml runs " + RELEASE + " rollback");
 });
 
 test("deploy workflow keeps the Cloudflare token out of check and deploys the commit check verified", () => {

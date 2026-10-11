@@ -296,6 +296,20 @@ describe("port-check", { concurrency: true }, () => {
     assert.deepEqual(await portCheck(dir), { status: 0, stdout: "1 files compared, 0 different\n", stderr: "" });
   });
 
+  test("a script with a hashbang ported from .mjs to .ts is identical: oxc parses the hashbang apart only in .ts", async () => {
+    const dir = await repo({
+      "tsconfig.strict.json": strictList("tool.ts"),
+      "tool.mjs":
+        '#!/usr/bin/env node\n// Prints its arguments.\nimport { argv } from "node:process";\nconsole.log(argv);\n',
+    });
+    await git(dir, "mv", "tool.mjs", "tool.ts");
+    write(dir, {
+      "tool.ts":
+        '#!/usr/bin/env node\n// Prints its arguments.\nimport { argv } from "node:process";\nconsole.log(argv as string[]);\n',
+    });
+    assert.deepEqual(await portCheck(dir), { status: 0, stdout: "1 files compared, 0 different\n", stderr: "" });
+  });
+
   test("an added typeof check is a runtime difference, reported at its source lines", async () => {
     const dir = await repo({
       "tsconfig.strict.json": strictList("num.ts"),
