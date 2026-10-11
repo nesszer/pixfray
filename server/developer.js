@@ -1,10 +1,10 @@
-import { chatStatus } from "./game.js";
+import { chatStatus } from "./game.ts";
 import site from "../site.config.js";
-import { CHANNELS, record } from "./auth.js";
-import { channelState, overview, listRecords, setPaused, LOGIN } from "./channels.js";
-import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.js";
-import { rankHistory } from "./ranklog.js";
-import { BACKUP_DAYS, backupChannels, backupDay, listBackups, readBackup, writeBackup } from "./backups.js";
+import { CHANNELS, record } from "./auth.ts";
+import { channelState, overview, listRecords, setPaused, LOGIN } from "./channels.ts";
+import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.ts";
+import { rankHistory } from "./ranklog.ts";
+import { BACKUP_DAYS, backupChannels, backupDay, listBackups, readBackup, writeBackup } from "./backups.ts";
 // Live-fix space (/api/dev/*). Owned by Lane E. worker.js and channel.js only call the exports below;
 // keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
 // configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
@@ -209,7 +209,7 @@ const exportHead = (/** @type {number} */ at) => ({
   exportedAt: new Date(at).toISOString(),
 });
 
-// Daily backups (server/backups.js). GET ?channel= lists the days kept; &day= downloads that day's export; &user= (login
+// Daily backups (server/backups.ts). GET ?channel= lists the days kept; &day= downloads that day's export; &user= (login
 // or id) reads one fighter from it. POST {channel?} backs up one channel or all of them now.
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 async function backupsRead({ env, query }) {
@@ -946,7 +946,7 @@ export async function handleRoomDeveloper(room, request, { path, channel, url })
     });
   }
   if (path === "/dev/export" && method === "GET") return json(roomExport(room, channel));
-  // Daily backup (server/backups.js): this room's export, written by the room itself so the cron run stays small.
+  // Daily backup (server/backups.ts): this room's export, written by the room itself so the cron run stays small.
   if (path === "/dev/backup" && method === "POST") {
     if (!room.env.BACKUPS) return json({ error: "No BACKUPS database is bound", reason: "backups_unavailable" }, 501);
     const { at, status } = await request.json().catch(() => ({}));

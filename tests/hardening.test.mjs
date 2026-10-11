@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../server/worker.js";
 import { ChannelRoom } from "../server/channel.js";
-import { digest, seal, unseal, isOwner, access } from "../server/auth.js";
-import { forgetRefused, seKeyHash, WRONG_KEY_TEXT, LOST_TEXT, OFF_TEXT, SE_KEY } from "../server/streamelements.js";
-import { forgetChannel } from "../server/channels.js";
+import { digest, seal, unseal, isOwner, access } from "../server/auth.ts";
+import { forgetRefused, seKeyHash, WRONG_KEY_TEXT, LOST_TEXT, OFF_TEXT, SE_KEY } from "../server/streamelements.ts";
+import { forgetChannel } from "../server/channels.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz",
   DAY = 86400000,
@@ -364,7 +364,7 @@ test("connecting mod access writes the non-expiring modsconnected marker next to
 });
 
 test("the AuthStore accepts ~20-year expiry for modsconnected markers but caps other keys at 100 days", async () => {
-  const { AuthStore } = await import("../server/auth.js");
+  const { AuthStore } = await import("../server/auth.ts");
   const db = new DatabaseSync(":memory:");
   const ctx = {
     storage: {

@@ -36,7 +36,7 @@ export const API_CSP = "default-src 'none'; script-src 'none'; base-uri 'none'; 
 
 // A copy of the response with the headers added (Worker, Durable Object and redirect responses have immutable headers).
 // csp: the policy for this response, or '' for none. WebSocket upgrades pass through untouched.
-export function secure(response, url, csp = "") {
+export function secure(response: Response, url: URL, csp: string = ""): Response {
   if (response.status === 101 || response.webSocket) return response;
   const out = new Response(response.body, response);
   if (url.protocol === "https:") out.headers.set("Strict-Transport-Security", HSTS);

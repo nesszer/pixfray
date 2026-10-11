@@ -22,7 +22,7 @@ import {
   DEFAULT_COLOR,
   applyChannel,
 } from "./ui.js";
-import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.js";
+import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.ts";
 import { CHARACTER_GROUPS } from "./character-groups.js";
 import { skyBackdrop } from "./scrub.js";
 import { initSpriteMaker } from "./sprite-maker.js";
@@ -36,7 +36,7 @@ const form = $("#profile-form"),
   saveSignin = $("#save-signin"),
   status = $("#save-status");
 const colorInput = $("#color");
-// Cosmetic kinds (server/cosmetics.js): the profile field that wears each, how its tiles look, and its words.
+// Cosmetic kinds (server/cosmetics.ts): the profile field that wears each, how its tiles look, and its words.
 const KINDS = {
   recolor: { field: "recolor", look: "char", none: "Original colors", noun: "recolor" },
   petcolor: { field: "petColor", look: "pet", none: "Original colors", noun: "pet color" },
@@ -788,7 +788,7 @@ function renderUpgrades() {
 // Characters: search by name, filter by group; unfiltered, the list starts with 12 (plus the picked one).
 const groupsOf = (entry) =>
   entry.custom ? ["custom"] : CHARACTER_GROUPS.filter((g) => g.ids.includes(entry.id)).map((g) => g.id);
-// A viewer's approved sprite (server/sprites.js) is only for them; state.catalog keeps everyone's for the ranks.
+// A viewer's approved sprite (server/sprites.ts) is only for them; state.catalog keeps everyone's for the ranks.
 const pickable = () => state.catalog.filter((e) => !e.owner || e.owner === state.session?.user?.id);
 function renderCharacters() {
   const box = $("#characters"),
@@ -1498,7 +1498,7 @@ form.addEventListener("submit", async (event) => {
   loadLeaderboard();
 });
 
-// The channel is turned off (paused) or was never set up (server/channels.js).
+// The channel is turned off (paused) or was never set up (server/channels.ts).
 function showOff(off) {
   const note = $("#off-note");
   note.hidden = false;

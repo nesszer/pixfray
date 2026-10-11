@@ -1,14 +1,14 @@
-// Security headers, the trimmed public health check, and the per-user write limit (server/security.js, server/ratelimit.js).
+// Security headers, the trimmed public health check, and the per-user write limit (server/security.ts, server/ratelimit.ts).
 // AuthStore runs for real on node:sqlite (the limit counts in it); rooms are a fake that echoes and records.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import worker from "../server/worker.js";
-import { AuthStore, digest, record } from "../server/auth.js";
-import { hit, WRITE_LIMIT } from "../server/ratelimit.js";
-import { secure, PAGE_CSP, OVERLAY_CSP, API_CSP, HSTS } from "../server/security.js";
-import { forgetChannel } from "../server/channels.js";
+import { AuthStore, digest, record } from "../server/auth.ts";
+import { hit, WRITE_LIMIT } from "../server/ratelimit.ts";
+import { secure, PAGE_CSP, OVERLAY_CSP, API_CSP, HSTS } from "../server/security.ts";
+import { forgetChannel } from "../server/channels.ts";
 
 const ORIGIN = "https://chat.miolaf.xyz",
   SECRET = "test-only-internal-key",

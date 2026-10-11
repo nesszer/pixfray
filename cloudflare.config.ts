@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
     throw new Error("MINI_LOCAL_TEST is only allowed with cf dev");
   const origin = localTest ? "http://127.0.0.1:" + (Number(process.env.MINI_PORT) || 5173) : site.origins[environment];
   // Channel domains open their configured channel, and pages for other channels move to the main site.
-  // The API and the overlay still answer there, so older OBS and StreamElements links keep working (server/hosts.js).
+  // The API and the overlay still answer there, so older OBS and StreamElements links keep working (server/hosts.ts).
   const channelDomains: Record<string, string> = site.channelDomains[environment] || {};
   const channelOrigins = Object.fromEntries(
     Object.entries(channelDomains).map(([channel, domain]) => [channel, "https://" + domain]),
@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
       compatibilityDate: "2026-09-25",
       entrypoint: "./server/worker.js",
       domains: [new URL(origin).hostname, ...Object.values(channelDomains)],
-      // Daily backup of every channel into the BACKUPS D1 database at 09:00 UTC (server/backups.js).
+      // Daily backup of every channel into the BACKUPS D1 database at 09:00 UTC (server/backups.ts).
       ...(localTest ? {} : { triggers: [triggers.scheduled({ schedule: "0 9 * * *" })] }),
       // The pages go through the Worker too, so a channel domain can send other channels' pages to the main site.
       assets: {
@@ -59,7 +59,7 @@ export default defineConfig(({ mode }) => {
         ASSETS: bindings.assets(),
         ROOMS: bindings.durableObject({ worker: name, exportName: "ChannelRoom" }),
         AUTH: bindings.durableObject({ worker: name, exportName: "AuthStore" }),
-        // Daily backups, kept 90 days (server/backups.js). One D1 database per Worker, named after it. A local server goes
+        // Daily backups, kept 90 days (server/backups.ts). One D1 database per Worker, named after it. A local server goes
         // without, and the owner routes answer backups_unavailable.
         ...(localTest || process.argv.includes("dev") ? {} : { BACKUPS: bindings.d1({ name: name + "-backups" }) }),
         AUTH_SECRET: bindings.secret(),
@@ -86,7 +86,7 @@ export default defineConfig(({ mode }) => {
               ...(testing ? { BOT_DEBUG: bindings.text("1") } : {}),
             }
           : {}),
-        // Workers AI for the optional sprite redraw (server/sprites.js); a local server goes without it.
+        // Workers AI for the optional sprite redraw (server/sprites.ts); a local server goes without it.
         ...(localTest || process.argv.includes("dev") ? {} : { AI: bindings.ai() }),
         ...(localTest ? { MINI_LOCAL_TEST: bindings.text("1") } : {}),
       },

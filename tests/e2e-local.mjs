@@ -12,7 +12,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cookies, users } from "./seed-local.mjs";
 import { enforceCsp } from "./csp-helper.mjs";
-import { defaultConfig } from "../server/game.js";
+import { defaultConfig } from "../server/game.ts";
 
 // The duel script below counts hits for the first preset (strike 10 every 3 s, heavy 25 every 8 s, heal 15 every 10 s).
 // Step 2 pins it: with the shipped defaults (strike 20, heavy 35) the first !attack ends the duel, and the loop expects a second.

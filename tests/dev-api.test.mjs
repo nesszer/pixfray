@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../server/worker.js";
-import { digest } from "../server/auth.js";
+import { digest } from "../server/auth.ts";
 import { ChannelRoom } from "../server/channel.js";
 import { validPath, usage, logRoomEvent } from "../server/developer.js";
 

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../server/worker.js";
-import { digest, seal, unseal, openState, safeNext, CONNECT_SCOPES } from "../server/auth.js";
+import { digest, seal, unseal, openState, safeNext, CONNECT_SCOPES } from "../server/auth.ts";
 
 function environment() {
   const entries = new Map(),

@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../server/worker.js";
-import { hostChannel, siteOrigin, authOrigin, channelPageRedirect } from "../server/hosts.js";
-import { PAGE_CSP } from "../server/security.js";
+import { hostChannel, siteOrigin, authOrigin, channelPageRedirect } from "../server/hosts.ts";
+import { PAGE_CSP } from "../server/security.ts";
 
 const MAIN = "https://pixfray.xyz",
   MIOLAF = "https://chat.miolaf.xyz";

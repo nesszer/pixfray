@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import site from "../site.config.js";
-import { CHANNELS } from "../server/auth.js";
+import { CHANNELS } from "../server/auth.ts";
 
 test("site config keeps the deployment defaults and built-in channel identity", () => {
   assert.deepEqual(site, {

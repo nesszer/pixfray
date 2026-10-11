@@ -10,13 +10,13 @@ import {
   parseGameCommand,
   reduceGame,
   shownProfile,
-} from "./game.js";
-import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.js";
-import { ensureRankLogSchema, rankBefore } from "./ranklog.js";
+} from "./game.ts";
+import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.ts";
+import { ensureRankLogSchema, rankBefore } from "./ranklog.ts";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.js";
-import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.js";
-import { accountCreatedAt } from "./accounts.js";
-import { EVENTSUB_DEDUPE_MS, claimMessage, releaseMessage } from "./dedupe.js";
+import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.ts";
+import { accountCreatedAt } from "./accounts.ts";
+import { EVENTSUB_DEDUPE_MS, claimMessage, releaseMessage } from "./dedupe.ts";
 import {
   cleanStats,
   emptyStats,
@@ -27,9 +27,9 @@ import {
   pointsFor,
   MAX_POINTS,
   HATS,
-} from "./upgrades.js";
-import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.js";
-import { ensureSpriteSchema, handleRoomSprites, spriteCatalog } from "./sprites.js";
+} from "./upgrades.ts";
+import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.ts";
+import { ensureSpriteSchema, handleRoomSprites, spriteCatalog } from "./sprites.ts";
 import {
   COSMETIC_KINDS,
   COSMETIC_FIELDS,
@@ -40,7 +40,7 @@ import {
   slotPrice,
   buildOf,
   MAX_BUILDS,
-} from "./cosmetics.js";
+} from "./cosmetics.ts";
 import {
   MAX_BOT_COMMANDS,
   MAX_COMMAND_REPLY,
@@ -55,7 +55,7 @@ import {
   replyWorstCase,
   fitChatLine,
   MAX_CHAT_LINE,
-} from "./botcommands.js";
+} from "./botcommands.ts";
 import {
   SE_ACTIONS,
   SE_READ_ACTIONS,
@@ -78,7 +78,7 @@ import {
   seResultText,
   seKeyHash,
   botNames,
-} from "./streamelements.js";
+} from "./streamelements.ts";
 
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
@@ -199,7 +199,7 @@ function normalizeUsername(value) {
     .slice(0, 25);
 }
 
-// Stage 4 cosmetics: profile field -> profiles column (server/cosmetics.js).
+// Stage 4 cosmetics: profile field -> profiles column (server/cosmetics.ts).
 const COSMETIC_COLUMNS = {
   recolor: "recolor",
   petColor: "pet_color",
@@ -262,7 +262,7 @@ function normalizeProfileRow(row, config) {
   };
 }
 
-// The active pet (server/pets.js): its id, tier and boost; none when it's gone (a deleted upload).
+// The active pet (server/pets.ts): its id, tier and boost; none when it's gone (a deleted upload).
 function petFieldsOf(row) {
   const pet = petOf(row.pet, row.pet_custom);
   return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };
@@ -308,7 +308,7 @@ export class ChannelRoom extends DurableObject {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT NOT NULL, avatar TEXT NOT NULL, color TEXT NOT NULL, default_ability TEXT NOT NULL, elo INTEGER NOT NULL, wins INTEGER NOT NULL, losses INTEGER NOT NULL, last_seen INTEGER NOT NULL DEFAULT 0)",
     );
-    // v2.5: upgrade points spent from wins (server/upgrades.js) and the chosen hat.
+    // v2.5: upgrade points spent from wins (server/upgrades.ts) and the chosen hat.
     const profileColumns = sql
       .exec("PRAGMA table_info(profiles)")
       .toArray()
@@ -331,12 +331,12 @@ export class ChannelRoom extends DurableObject {
         sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("give_stream"))
       sql.exec("ALTER TABLE profiles ADD COLUMN give_stream TEXT NOT NULL DEFAULT ''");
-    // v2.8: the active pet, plus bought items and uploaded pets (server/pets.js). PROFILE_COLUMNS reads custom_pets.
+    // v2.8: the active pet, plus bought items and uploaded pets (server/pets.ts). PROFILE_COLUMNS reads custom_pets.
     if (!profileColumns.includes("pet")) sql.exec("ALTER TABLE profiles ADD COLUMN pet TEXT NOT NULL DEFAULT ''");
     ensurePetSchema(sql);
-    // v3.1: sprites viewers made from their own images, waiting for a mod or approved (server/sprites.js).
+    // v3.1: sprites viewers made from their own images, waiting for a mod or approved (server/sprites.ts).
     ensureSpriteSchema(sql);
-    // v2.9: cosmetics worn (server/cosmetics.js) and the active build slot. Each slot's loadout is a JSON row in builds;
+    // v2.9: cosmetics worn (server/cosmetics.ts) and the active build slot. Each slot's loadout is a JSON row in builds;
     // the profile columns always hold the active one. Bought build slots are owned_items rows of kind "slot".
     for (const column of ["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"])
       if (!profileColumns.includes(column))
@@ -372,7 +372,7 @@ export class ChannelRoom extends DurableObject {
         .some((c) => c.name === "results_through")
     )
       sql.exec("ALTER TABLE bot_reminder ADD COLUMN results_through INTEGER NOT NULL DEFAULT 0");
-    // The bot's own text commands (admin page, Chat commands) and the counters their replies use (server/botcommands.js).
+    // The bot's own text commands (admin page, Chat commands) and the counters their replies use (server/botcommands.ts).
     sql.exec(
       "CREATE TABLE IF NOT EXISTS bot_commands (name TEXT PRIMARY KEY, reply TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '')",
     );
@@ -384,7 +384,7 @@ export class ChannelRoom extends DurableObject {
     );
     sql.exec("INSERT OR IGNORE INTO bot_status (id) VALUES (1)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
-    // v3.2: rank history, written by triggers on profiles (server/ranklog.js).
+    // v3.2: rank history, written by triggers on profiles (server/ranklog.ts).
     ensureRankLogSchema(sql, Date.now());
     sql.exec(
       "CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')",
@@ -717,7 +717,7 @@ export class ChannelRoom extends DurableObject {
         payload = { patch: { ...defaultConfig(), ...safeJsonParse(row.config, {}) } };
         note = "rollback to v" + version;
       }
-      // restoreRank {userId, before}: the fighter's last recorded rank before that time (server/ranklog.js).
+      // restoreRank {userId, before}: the fighter's last recorded rank before that time (server/ranklog.ts).
       if (action === "restoreRank" && Number.isInteger(payload.before)) {
         const rank = rankBefore(this.ctx.storage.sql, validUserId(payload.userId) || "", payload.before);
         if (!rank) return json({ ok: false, reason: "no_rank_history", error: "no_rank_history" }, 404);
@@ -1477,7 +1477,7 @@ export class ChannelRoom extends DurableObject {
     }
     const kind = String(msg.messageType || "");
     // Commands (and every bot message, which the Worker only sends for commands) are deduped durably in SQLite, so a
-    // redelivery after a restart or to another isolate is ignored too; other lines only in memory (server/dedupe.js).
+    // redelivery after a restart or to another isolate is ignored too; other lines only in memory (server/dedupe.ts).
     const durable =
       kind === "notification" && (msg.bot === true || /^\s*!/.test(String(msg.event?.message?.text || "")));
     if (kind !== "webhook_callback_verification") {
@@ -2343,7 +2343,7 @@ export class ChannelRoom extends DurableObject {
     };
   }
 
-  // Dollars for finished duels: game.js finishDuel sets duel.payout, and this adds it to the saved profiles once
+  // Dollars for finished duels: game.ts finishDuel sets duel.payout, and this adds it to the saved profiles once
   // (duel.paid). Called inside the transaction that wrote the result; returns true when the state needs writing.
   payDuels(state) {
     let paid = false;

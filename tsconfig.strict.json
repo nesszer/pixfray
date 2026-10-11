@@ -17,6 +17,26 @@
     "scripts/lib/port.ts",
     "scripts/port-check.ts",
     "scripts/port-rename.ts",
-    "scripts/lib/served.ts"
+    "scripts/lib/served.ts",
+    "server/env.ts",
+    "server/model.ts",
+    "server/upgrades.ts",
+    "server/uploads.ts",
+    "server/cosmetics.ts",
+    "server/botcommands.ts",
+    "server/dedupe.ts",
+    "server/hosts.ts",
+    "server/ranklog.ts",
+    "server/ratelimit.ts",
+    "server/security.ts",
+    "server/pets.ts",
+    "server/sprites.ts",
+    "server/game.ts",
+    "server/streamelements.ts",
+    "server/auth.ts",
+    "server/channels.ts",
+    "server/eventsub.ts",
+    "server/backups.ts",
+    "server/accounts.ts"
   ]
 }

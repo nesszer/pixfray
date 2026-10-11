@@ -1,8 +1,28 @@
-// Channel registry. CHANNELS (server/auth.js) are built in and always on; any other streamer signs up on /start and
+// Channel registry. CHANNELS (server/auth.ts) are built in and always on; any other streamer signs up on /start and
 // their channel lives in AuthStore:
 //   channel:<login> = { id, login, enabledAt, pausedAt?, pausedBy?, review? }   kept ~20 years; paused keeps fighters and ranks
 //   review = { reasons, at }: sign-up didn't pass the streamer check and waits, off, for the owner to turn it on.
-import { record, CHANNELS } from "./auth.js";
+import { record, CHANNELS } from "./auth.ts";
+import type { TwitchUser, HelixUser } from "./auth.ts";
+import type { Env } from "./env.ts";
+
+/** Who turned a channel off. */
+export type PausedBy = "owner" | "broadcaster";
+/** channel:<login> in AuthStore (see the header comment). */
+export type ChannelRecord = {
+  id: string;
+  login: string;
+  enabledAt: number;
+  pausedAt?: number;
+  pausedBy?: PausedBy;
+  review?: { reasons: string[]; at: number };
+};
+/** One live row from listRecords. */
+export type ChannelRow = { key: string; value: ChannelRecord };
+/** 'builtin' | 'on' | 'paused' | null (never set up). */
+export type ChannelState = "builtin" | "on" | "paused" | null;
+/** A Helix list response; only `data` is read. */
+export type HelixPage = { data?: unknown[] };
 
 export const MAX_CHANNELS = 200;
 export const CHANNEL_MS = 20 * 365 * 86400000;
@@ -11,50 +31,50 @@ export const STREAMER_MIN_AGE_MS = 30 * 86400000;
 
 // Per-isolate cache, so a page load or a chat command doesn't read AuthStore every time. Another isolate can serve
 // a just-paused channel for up to a minute.
-const cache = new Map();
+const cache = new Map<string, { state: ChannelState; at: number }>();
 const HIT_MS = 60000,
   MISS_MS = 10000;
-export function forgetChannel(channel) {
+export function forgetChannel(channel?: string): void {
   if (channel) cache.delete(channel);
   else cache.clear();
 }
 
 // 'builtin' | 'on' | 'paused' | null (never set up)
-export async function channelState(env, channel) {
+export async function channelState(env: Env, channel: string): Promise<ChannelState> {
   if (CHANNELS.includes(channel)) return "builtin";
   if (!LOGIN.test(channel || "")) return null;
   const hit = cache.get(channel),
     now = Date.now();
   if (hit && now - hit.at < (hit.state ? HIT_MS : MISS_MS)) return hit.state;
-  const rec = await record(env, "channel:" + channel);
+  const rec = await record<ChannelRecord | null>(env, "channel:" + channel);
   const state = !rec ? null : rec.pausedAt ? "paused" : "on";
   if (cache.size > 1000) cache.clear();
   cache.set(channel, { state, at: now });
   return state;
 }
-export const isOn = (state) => state === "builtin" || state === "on";
-export async function enabledChannel(env, channel) {
+export const isOn = (state: ChannelState): boolean => state === "builtin" || state === "on";
+export async function enabledChannel(env: Env, channel: string): Promise<boolean> {
   return isOn(await channelState(env, channel));
 }
 // The refusal for a channel that is off: 403 with off = 'paused' | 'not_enabled'.
-export const offError = (state) =>
+export const offError = (state: ChannelState): { error: string; off: "paused" | "not_enabled" } =>
   state === "paused"
     ? { error: "PixFray is off on this channel right now", off: "paused" }
     : { error: "PixFray is not enabled for this channel", off: "not_enabled" };
 
 // Live rows under a prefix ('channel:'), at most 500.
-export async function listRecords(env, prefix) {
+export async function listRecords(env: Env, prefix: string): Promise<ChannelRow[]> {
   const stub = env.AUTH.get(env.AUTH.idFromName("auth"));
   const r = await stub.fetch("https://auth/list?key=" + encodeURIComponent(prefix), {
     headers: { "X-Mini-Internal": env.INTERNAL_SECRET },
   });
   if (!r.ok) throw new Error("Auth storage unavailable");
-  return r.json();
+  return r.json<ChannelRow[]>(); // AuthStore lists only the channel: prefix
 }
 
 // Public: the logins a viewer can pick on the /play/ picker (built-in channels first, then by sign-up). Cached a minute.
-let channelList = null;
-export async function publicChannels(env) {
+let channelList: { logins: string[]; at: number } | null = null;
+export async function publicChannels(env: Env): Promise<string[]> {
   if (channelList && Date.now() - channelList.at < HIT_MS) return channelList.logins;
   const rows = (await listRecords(env, "channel:"))
     .map((r) => r.value)
@@ -64,25 +84,30 @@ export async function publicChannels(env) {
   return logins;
 }
 
-const saveChannel = (env, rec) => {
+const saveChannel = (env: Env, rec: ChannelRecord): Promise<unknown> => {
   forgetChannel(rec.login);
   return record(env, "channel:" + rec.login, rec, Date.now() + CHANNEL_MS);
 };
-const enabledCount = (rows) => rows.filter((r) => !r.value.pausedAt).length;
+const enabledCount = (rows: ChannelRow[]): number => rows.filter((r) => !r.value.pausedAt).length;
 // No room for another channel that is on: sign-up says 'full', and the /play/ search stops inviting streamers here.
-export const isFull = async (env) => enabledCount(await listRecords(env, "channel:")) >= MAX_CHANNELS;
-const fail = (status, error, reason) => Object.assign(new Error(error), { status, reason });
+export const isFull = async (env: Env): Promise<boolean> =>
+  enabledCount(await listRecords(env, "channel:")) >= MAX_CHANNELS;
+const fail = (status: number, error: string, reason: string) => Object.assign(new Error(error), { status, reason });
 
 // The streamer check for a new sign-up, from the signed-in Helix user: why it needs the owner's approval, [] when it
 // doesn't. 'young': the account is under 30 days old. 'never_streamed': not Affiliate or Partner and no past broadcast
 // saved. 'unchecked': the past-broadcast lookup failed. helix(path) returns the parsed JSON or throws.
-export async function reviewReasons(identity, helix, now = Date.now()) {
-  const reasons = [],
+export async function reviewReasons(
+  identity: HelixUser,
+  helix: (path: string) => Promise<HelixPage | null | undefined>,
+  now = Date.now(),
+): Promise<string[]> {
+  const reasons: string[] = [],
     created = Date.parse(identity?.created_at) || 0;
   if (!created || now - created < STREAMER_MIN_AGE_MS) reasons.push("young");
   if (!["affiliate", "partner"].includes(identity?.broadcaster_type)) {
     const streamed = await helix("/videos?type=archive&first=1&user_id=" + encodeURIComponent(identity.id)).then(
-      (d) => d?.data?.length > 0,
+      (d) => (d?.data?.length as number) > 0, // as: undefined > 0 is false, the intended answer
       () => null,
     );
     if (!streamed) reasons.push(streamed === null ? "unchecked" : "never_streamed");
@@ -93,11 +118,11 @@ export async function reviewReasons(identity, helix, now = Date.now()) {
 // Sign-up from /start: the signed-in Twitch account turns on its own channel, never anyone else's. Signing up again
 // is a no-op (a channel turned off stays off; its broadcaster turns it back on from Stream setup). A new channel that
 // fails check() is saved off with a review note for the owner, and sign-up stops with 'review'.
-export async function signUp(env, user, check = async () => []) {
+export async function signUp(env: Env, user: TwitchUser, check = async (): Promise<string[]> => []): Promise<string> {
   const login = String(user.login || "").toLowerCase();
   if (!LOGIN.test(login)) throw fail(400, "This Twitch account name is not supported", "failed");
   if (CHANNELS.includes(login)) return login;
-  const existing = await record(env, "channel:" + login);
+  const existing = await record<ChannelRecord | null>(env, "channel:" + login);
   // A Twitch name can pass to a new account after a rename; the channel stays with the account that set it up.
   if (existing?.id && existing.id !== user.id)
     throw fail(403, "This channel name was set up by another Twitch account", "taken");
@@ -123,25 +148,30 @@ export async function signUp(env, user, check = async () => []) {
 
 // The signed-in account is this channel's broadcaster: same login and, for a signed-up channel, the same Twitch id it
 // signed up with (a new holder of a renamed account's old name gets nothing). Built-in channels match on login.
-export async function isBroadcaster(env, user, channel) {
+export async function isBroadcaster(env: Env, user: TwitchUser | null | undefined, channel: string): Promise<boolean> {
   if (!user || String(user.login || "").toLowerCase() !== channel) return false;
   if (CHANNELS.includes(channel)) return true;
-  const rec = await record(env, "channel:" + channel);
+  const rec = await record<ChannelRecord | null>(env, "channel:" + channel);
   return !rec?.id || rec.id === user.id;
 }
 
 // Off and back on. by = 'owner' | 'broadcaster'. A channel the owner turned off stays off until the owner turns it
 // back on; that's the owner's switch for a channel that misuses open sign-up.
-export async function setPaused(env, login, paused, by = "owner") {
+export async function setPaused(
+  env: Env,
+  login: string,
+  paused: boolean,
+  by: PausedBy = "owner",
+): Promise<ChannelRecord> {
   if (CHANNELS.includes(login)) throw fail(400, login + " is built in and always on", "builtin");
-  const rec = await record(env, "channel:" + login);
+  const rec = await record<ChannelRecord | null>(env, "channel:" + login);
   if (!rec) throw fail(404, login + " is not set up", "not_found");
   if (!paused && rec.pausedBy === "owner" && by !== "owner")
     throw fail(403, "The site owner turned PixFray off for this channel", "owner_off");
   if (!paused && rec.pausedAt && (await isFull(env))) throw fail(403, "PixFray is full right now", "full");
   // turning it on approves a channel waiting for review
   const { pausedAt, pausedBy, review, ...rest } = rec;
-  const next = paused
+  const next: ChannelRecord = paused
     ? {
         ...rest,
         pausedAt: pausedAt || Date.now(),
@@ -154,7 +184,7 @@ export async function setPaused(env, login, paused, by = "owner") {
 }
 
 // Owner view for /admin/dev: live channels, newest first.
-export async function overview(env) {
+export async function overview(env: Env) {
   const channels = await listRecords(env, "channel:");
   return {
     builtin: CHANNELS,

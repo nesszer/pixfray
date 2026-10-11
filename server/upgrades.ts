@@ -6,12 +6,18 @@
 //   luck:  4% per point that a miss still lands as a hit
 // Hats are cosmetic; some unlock at a number of wins. The overlay draws them (src/served/hats.js).
 
-export const STATS = ["power", "guard", "luck"];
+export const STATS = ["power", "guard", "luck"] as const; // const: each stat a literal, so Stat names them
+export type Stat = (typeof STATS)[number];
+/** Points in each stat. */
+export type Stats = Record<Stat, number>;
+/** Stat-shaped input from storage, a request or a pet boost: any value per stat, cleaned before use. */
+export type LooseStats = Partial<Record<Stat, unknown>>;
 export const MAX_PER_STAT = 8;
 export const MAX_POINTS = 20;
 export const STAT_STEP = 0.04;
 
-export const HATS = [
+export type Hat = { id: string; label: string; wins: number };
+export const HATS: Hat[] = [
   { id: "", label: "No hat", wins: 0 },
   { id: "cap", label: "Cap", wins: 0 },
   { id: "bandana", label: "Bandana", wins: 0 },
@@ -24,19 +30,21 @@ export const HATS = [
 ];
 const HAT_WINS = new Map(HATS.map((h) => [h.id, h.wins]));
 
-const whole = (n) => (Number.isInteger(n) && n > 0 ? n : 0);
+const whole = (n: unknown): number => (Number.isInteger(n) && n > 0 ? n : 0);
 // Points from wins plus check-in (bonus) points, capped at MAX_POINTS.
-export const pointsFor = (wins, bonus = 0) => Math.min(MAX_POINTS, whole(wins) + whole(bonus));
+export const pointsFor = (wins: unknown, bonus: unknown = 0): number =>
+  Math.min(MAX_POINTS, whole(wins) + whole(bonus));
 
-export function emptyStats() {
+export function emptyStats(): Stats {
   return { power: 0, guard: 0, luck: 0 };
 }
 
 // Any input -> whole numbers within 0..MAX_PER_STAT for each stat.
-export function cleanStats(input) {
+export function cleanStats(input?: unknown): Stats {
   const out = emptyStats();
   for (const key of STATS) {
-    const v = Number(input?.[key]);
+    // Any value: ?. reads undefined from null or undefined, and Number() turns whatever it reads into a number
+    const v = Number((input as LooseStats | null | undefined)?.[key]);
     out[key] = Number.isInteger(v) ? Math.max(0, Math.min(MAX_PER_STAT, v)) : 0;
   }
   return out;
@@ -44,11 +52,17 @@ export function cleanStats(input) {
 
 // Stats the fighter can use with these points. A rank reset lowers the points; the excess comes off
 // luck first, then guard, then power, so a stored build never counts for more than the points allow.
-// boost (the active pet's, server/pets.js) is added after the cap, so it may take a stat past MAX_PER_STAT.
-export function effectiveStats(stats, wins, bonus = 0, boost = null) {
+// boost (the active pet's, server/pets.ts) is added after the cap, so it may take a stat past MAX_PER_STAT.
+export function effectiveStats(
+  stats: unknown,
+  wins: unknown,
+  bonus: unknown = 0,
+  boost: LooseStats | null = null,
+): Stats {
   const out = cleanStats(stats);
   let extra = STATS.reduce((sum, key) => sum + out[key], 0) - pointsFor(wins, bonus);
-  for (const key of ["luck", "guard", "power"]) {
+  // const: each key a Stat, so out[key] type-checks
+  for (const key of ["luck", "guard", "power"] as const) {
     const cut = Math.min(out[key], Math.max(0, extra));
     out[key] -= cut;
     extra -= cut;
@@ -58,29 +72,48 @@ export function effectiveStats(stats, wins, bonus = 0, boost = null) {
 }
 
 // For saving: null when the build spends more points than the fighter has or breaks a stat cap.
-export function validStats(input, wins, bonus = 0) {
+export function validStats(input: unknown, wins: unknown, bonus: unknown = 0): Stats | null {
   if (input === undefined || input === null) return emptyStats();
   if (typeof input !== "object" || Array.isArray(input)) return null;
   const out = emptyStats();
   for (const key of STATS) {
-    const v = input[key] ?? 0;
+    // A non-array object (checked above); each value is checked below
+    const v = (input as LooseStats)[key] ?? 0;
     if (!Number.isInteger(v) || v < 0 || v > MAX_PER_STAT) return null;
     out[key] = v;
   }
   return STATS.reduce((sum, key) => sum + out[key], 0) <= pointsFor(wins, bonus) ? out : null;
 }
 
-export const knownHat = (id) => HAT_WINS.has(typeof id === "string" ? id : "");
-export const hatUnlocked = (id, wins) => knownHat(id) && (Number.isInteger(wins) ? wins : 0) >= HAT_WINS.get(id);
+export const knownHat = (id: unknown): boolean => HAT_WINS.has(typeof id === "string" ? id : "");
+export const hatUnlocked = (id: unknown, wins: unknown): boolean =>
+  // knownHat(id) is true only for a string id that HAT_WINS holds, so the cast holds and get() finds it
+  knownHat(id) && (Number.isInteger(wins) ? wins : 0) >= HAT_WINS.get(id as string)!;
 
 // Damage after the dealer's power and the target's guard; at least 1 so a blow always counts.
-export function scaledDamage(base, dealerStats, targetStats) {
+export function scaledDamage(
+  base: number,
+  dealerStats?: Partial<Stats> | null,
+  targetStats?: Partial<Stats> | null,
+): number {
   const factor = (1 + STAT_STEP * (dealerStats?.power || 0)) * (1 - STAT_STEP * (targetStats?.guard || 0));
   return Math.max(1, Math.round(base * factor));
 }
 
+/** The rules upgradeRules sends to the dashboard. */
+export type UpgradeRules = {
+  stats: typeof STATS;
+  maxPerStat: number;
+  maxPoints: number;
+  points: number;
+  fromWins: number;
+  fromCheckins: number;
+  step: number;
+  hats: (Hat & { unlocked: boolean })[];
+};
+
 // Rules for the dashboard, sent with the profile so the page never hard-codes them.
-export function upgradeRules(wins, bonus = 0) {
+export function upgradeRules(wins: unknown, bonus: unknown = 0): UpgradeRules {
   return {
     stats: STATS,
     maxPerStat: MAX_PER_STAT,

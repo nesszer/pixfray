@@ -1,9 +1,28 @@
 import site from "../site.config.js";
-import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, STAT_STEP } from "./upgrades.js";
-import { cleanBoost, TIERS } from "./pets.js";
-import { cleanCosmetics } from "./cosmetics.js";
+import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, STAT_STEP } from "./upgrades.ts";
+import { cleanBoost, TIERS } from "./pets.ts";
+import { cleanCosmetics } from "./cosmetics.ts";
+import type { Stats } from "./upgrades.ts";
+import type {
+  Abilities,
+  AbilityName,
+  AdminEvent,
+  CommandEvent,
+  Config,
+  Cooldowns,
+  Duel,
+  GameEvent,
+  GameResult,
+  GameState,
+  Player,
+  ProfileInput,
+  RankSet,
+  ReduceOutput,
+  Swing,
+  Untrusted,
+} from "./model.ts";
 
-const DEFAULT_CONFIG = {
+const DEFAULT_CONFIG: Config = {
   enabled: true,
   // Quick duels: accepting settles the duel at once with a d6 exchange (hit, counter or miss).
   // Off = the HP fight with !attack/!strike/!heavy/!heal. StreamElements has no attack commands, so its duels
@@ -39,7 +58,7 @@ const DEFAULT_CONFIG = {
   // The PixFray bot as a whole (!fray off / !fray on, or the admin page). Off: it ignores every command and posts nothing
   // (no replies, results, expired challenges or reminders); chatters still walk on the overlay.
   botEnabled: true,
-  // Shop (server/pets.js): pet prices by tier, and hats before their wins at wins needed x hatPricePerWin (0 = off).
+  // Shop (server/pets.ts): pet prices by tier, and hats before their wins at wins needed x hatPricePerWin (0 = off).
   // A duel pays about $4, so a common pet is ~3 duels, a recolor ~5 and a legendary pet ~75 (prices cut to a third on 2026-10-06).
   petPriceCommon: 10,
   petPriceUncommon: 25,
@@ -47,7 +66,7 @@ const DEFAULT_CONFIG = {
   petPriceEpic: 140,
   petPriceLegendary: 300,
   hatPricePerWin: 3,
-  // Stage 4 (server/cosmetics.js): each cosmetic kind has one price, and build slots cost 60 for the 2nd, then 120 each.
+  // Stage 4 (server/cosmetics.ts): each cosmetic kind has one price, and build slots cost 60 for the 2nd, then 120 each.
   recolorPrice: 20,
   petColorPrice: 15,
   accessoryPrice: 25,
@@ -94,8 +113,9 @@ const LEGACY_CONFIG = {
   },
 };
 
-const ANNOUNCE = ["off", "top", "bottom"];
-const ON_STREAM = [15, 100];
+// unknown[] so includes() can test values nobody has checked yet.
+const ANNOUNCE: readonly unknown[] = ["off", "top", "bottom"];
+const ON_STREAM: [number, number] = [15, 100];
 const MAX_ACTIVE_PLAYERS = 100;
 const MAX_RECENT_EVENTS = 100;
 const MAX_APPLIED_MESSAGE_IDS = 1_000;
@@ -106,25 +126,26 @@ const ACTIVE_TTL_MS = 10 * 60_000;
 export const PAIR_RATED_PER_DAY = 5;
 export const NEW_ACCOUNT_MS = 7 * 86_400_000;
 const PAIR_WINDOW_MS = 86_400_000;
-const ABILITIES = new Set(["strike", "heavy", "heal"]);
+// Set<unknown> so has() can test values nobody has checked yet.
+const ABILITIES = new Set<unknown>(["strike", "heavy", "heal"]);
 
-function clone(value) {
+function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-function safeString(value, maxLength = 64) {
+function safeString(value: unknown, maxLength = 64): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
-function normalizeUsername(value) {
+function normalizeUsername(value: unknown): string {
   return safeString(value, 25).replace(/^@/, "").toLowerCase();
 }
 
-function normalizeUserId(value) {
+function normalizeUserId(value: unknown): string {
   return safeString(String(value ?? ""), 64);
 }
 
-function defaultProfile(userId, config, now) {
+function defaultProfile(userId: string, config: Config, now: number): Player {
   return {
     userId,
     username: "",
@@ -142,20 +163,20 @@ function defaultProfile(userId, config, now) {
     stats: emptyStats(),
     hat: "",
     bonus: 0, // check-in points (server/channel.js checkin), added to the wins for upgrades
-    pet: "", // the active pet's id (server/pets.js), its tier for the overlay, and its stat boost
+    pet: "", // the active pet's id (server/pets.ts), its tier for the overlay, and its stat boost
     petTier: "",
     petBoost: emptyStats(),
-    ...cleanCosmetics(null), // recolor, petColor, accessory, trail, winEffect, taunt, title (server/cosmetics.js)
+    ...cleanCosmetics(null), // recolor, petColor, accessory, trail, winEffect, taunt, title (server/cosmetics.ts)
   };
 }
 
-function boundedInt(value, min, max) {
+function boundedInt(value: unknown, min: number, max: number): number | null {
   if (!Number.isInteger(value) || value < min || value > max) return null;
   return value;
 }
 
-function normalizeConfig(config) {
-  const merged = {
+function normalizeConfig(config: { [key: string]: unknown } | null | undefined): Config {
+  const merged: { [key: string]: unknown; abilities: { [name: string]: { [key: string]: unknown } } } = {
     ...clone(DEFAULT_CONFIG),
     ...(config && typeof config === "object" ? config : {}),
     abilities: {
@@ -175,14 +196,16 @@ function normalizeConfig(config) {
     const candidate = merged.abilities[name] ?? {};
     merged.abilities[name] = {};
     for (const [key, value] of Object.entries(defaults)) {
-      merged.abilities[name][key] = Number.isInteger(candidate[key]) ? candidate[key] : value;
+      // set to {} just above
+      merged.abilities[name]![key] = Number.isInteger(candidate[key]) ? candidate[key] : value;
     }
   }
   delete merged.relayLeaseMs;
-  return merged;
+  // every field was checked above, or reset to its default
+  return merged as Config;
 }
 
-export function createInitialState(channel = site.defaultChannel) {
+export function createInitialState(channel: unknown = site.defaultChannel): GameState {
   return {
     channel: safeString(channel, 25).toLowerCase() || site.defaultChannel,
     revision: 0,
@@ -210,7 +233,7 @@ export function createInitialState(channel = site.defaultChannel) {
   };
 }
 
-function addEvent(state, type, now, details = {}) {
+function addEvent(state: GameState, type: string, now: number, details: { [field: string]: unknown } = {}): void {
   state.revision += 1;
   state.events.push({ id: String(state.revision), type, at: now, ...details });
   if (state.events.length > MAX_RECENT_EVENTS) {
@@ -218,27 +241,31 @@ function addEvent(state, type, now, details = {}) {
   }
 }
 
-function openDuels(state) {
+function openDuels(state: GameState): Duel[] {
   return state.duels.filter((duel) => duel.status === "pending" || duel.status === "active");
 }
 
-function player(state, userId) {
+function player(state: GameState, userId: unknown): Player | undefined {
   return state.players.find((item) => item.userId === userId);
 }
 
-function duelHasUser(duel, userId) {
+function duelHasUser(duel: Duel, userId: string): boolean {
   return duel.a === userId || duel.b === userId;
 }
 
-function hasOpenDuel(state, userId) {
+function hasOpenDuel(state: GameState, userId: string): boolean {
   return openDuels(state).some((duel) => duelHasUser(duel, userId));
 }
 
-function pairKey(a, b) {
+function pairKey(a: string, b: string): string {
   return [a, b].sort().join(":");
 }
 
-function recentProfile(state, profile, now) {
+function recentProfile(
+  state: GameState,
+  profile: ProfileInput | null | undefined,
+  now: number,
+): Player | null | undefined {
   if (!profile || !profile.userId) return null;
   const userId = normalizeUserId(profile.userId);
   if (!userId) return null;
@@ -247,11 +274,13 @@ function recentProfile(state, profile, now) {
   const username = normalizeUsername(profile.username);
   const displayName = safeString(profile.displayName || username || base.displayName, 48);
   const avatar = safeString(profile.avatar || base.avatar || "player", 64);
-  const color = /^#[0-9a-f]{6}$/i.test(profile.color || "") ? profile.color.toUpperCase() : base.color || "#A78BFA";
+  // profile.color! : the regex matched it, so it is a string
+  const color = /^#[0-9a-f]{6}$/i.test(profile.color || "") ? profile.color!.toUpperCase() : base.color || "#A78BFA";
+  // defaultAbility! : has() was true, so it is one of the three names
   const defaultAbility = ABILITIES.has(profile.defaultAbility)
-    ? profile.defaultAbility
+    ? profile.defaultAbility!
     : base.defaultAbility || "strike";
-  const merged = {
+  const merged: Player = {
     ...base,
     username: username || base.username,
     displayName: displayName || username || base.displayName || userId,
@@ -284,7 +313,8 @@ function recentProfile(state, profile, now) {
         .filter((item) => !hasOpenDuel(state, item.userId))
         .sort((a, b) => a.lastSeen - b.lastSeen);
       if (!candidates.length) return null;
-      state.players.splice(state.players.indexOf(candidates[0]), 1);
+      // candidates is not empty (checked on the line above)
+      state.players.splice(state.players.indexOf(candidates[0]!), 1);
     }
     state.players.push(merged);
   }
@@ -292,7 +322,7 @@ function recentProfile(state, profile, now) {
 }
 
 // Cancelled duels are unscored: no Elo, no wins/losses, no KO. Fighters are restored to full health.
-function cancelDuel(state, duel, now, reason) {
+function cancelDuel(state: GameState, duel: Duel, now: number, reason: string): boolean {
   if (duel.status !== "pending" && duel.status !== "active") return false;
   const wasActive = duel.status === "active";
   duel.status = "cancelled";
@@ -312,7 +342,7 @@ function cancelDuel(state, duel, now, reason) {
   return true;
 }
 
-function isTerminal(duel) {
+function isTerminal(duel: Duel): boolean {
   return (
     duel.status === "completed" ||
     duel.status === "cancelled" ||
@@ -321,7 +351,7 @@ function isTerminal(duel) {
   );
 }
 
-function expireState(state, now) {
+function expireState(state: GameState, now: number): boolean {
   let changed = false;
   state.config = normalizeConfig(state.config);
 
@@ -331,7 +361,8 @@ function expireState(state, now) {
       duel.endedAt = now;
       addEvent(state, "challenge_expired", now, { duelId: duel.id, a: duel.a, b: duel.b });
       changed = true;
-    } else if (duel.status === "active" && now - duel.lastActionAt >= state.config.inactivityMs) {
+      // an active duel has lastActionAt (beginDuel sets it)
+    } else if (duel.status === "active" && now - duel.lastActionAt! >= state.config.inactivityMs) {
       cancelDuel(state, duel, now, "inactivity");
       changed = true;
     }
@@ -366,7 +397,11 @@ function expireState(state, now) {
   return changed;
 }
 
-function addRecent(state, event) {
+// reason?: undefined on the ok side lets the loose JS program (no strictNullChecks) read dedupe.reason.
+function addRecent(
+  state: GameState,
+  event: CommandEvent,
+): { ok: true; id: string; reason?: undefined } | { ok: false; reason: string } {
   const id = normalizeUserId(event.messageId || event.id);
   if (!id) return { ok: false, reason: "missing_message_id" };
   if (state.appliedMessageIds.includes(id)) return { ok: false, reason: "duplicate" };
@@ -377,7 +412,12 @@ function addRecent(state, event) {
   return { ok: true, id };
 }
 
-function findTargetProfile(state, event, targetUsername, now) {
+function findTargetProfile(
+  state: GameState,
+  event: CommandEvent,
+  targetUsername: string,
+  now: number,
+): Player | null | undefined {
   const existing = state.players.find((item) => item.username === targetUsername);
   if (existing) return existing;
   if (event.targetProfile && normalizeUsername(event.targetProfile.username) === targetUsername) {
@@ -386,13 +426,13 @@ function findTargetProfile(state, event, targetUsername, now) {
   return null;
 }
 
-function registeredPlayer(state, userId, event, now) {
+function registeredPlayer(state: GameState, userId: string, event: CommandEvent, now: number): Player | null {
   const p = recentProfile(state, event.profile, now) || player(state, userId);
   if (!p) return null;
   return p.userId === userId && p.registered ? p : null;
 }
 
-function createChallenge(state, actor, target, now) {
+function createChallenge(state: GameState, actor: Player, target: Player, now: number): GameResult {
   if (!state.config.enabled) return { ok: false, reason: "duels_disabled" };
   if (!actor.registered || !target.registered) return { ok: false, reason: "ranked_sign_in_required" };
   if (actor.userId === target.userId) return { ok: false, reason: "self_duel" };
@@ -409,7 +449,7 @@ function createChallenge(state, actor, target, now) {
   if (down) return { ok: false, reason: "respawning", userId: down.userId, retryAt: down.respawnAt }; // name who is knocked out, not who asked
   if (openDuels(state).length >= state.config.maxDuels) return { ok: false, reason: "channel_full" };
   if (lock) return { ok: false, reason: "rematch_cooldown", retryAt: lock.until };
-  const duel = {
+  const duel: Duel = {
     id: "duel-" + state.nextDuelId++,
     a: actor.userId,
     b: target.userId,
@@ -429,7 +469,7 @@ function createChallenge(state, actor, target, now) {
   return { ok: true, duelId: duel.id };
 }
 
-function beginDuel(state, duel, now, event = {}) {
+function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccounts?: unknown } = {}): GameResult {
   const a = player(state, duel.a);
   const b = player(state, duel.b);
   if (!a?.registered || !b?.registered) return { ok: false, reason: "ranked_sign_in_required" };
@@ -474,7 +514,7 @@ function beginDuel(state, duel, now, event = {}) {
 // 6 is a crit (50% of max HP), 5 a hit (34%), 3-4 a miss, 1-2 the other fighter counters (34%).
 // First to 0 HP loses. After QUICK_MAX_ROLLS rolls the fighter with more HP wins; equal HP goes to
 // sudden death, where the next hit or counter knocks out. A winner who took no damage is flawless (+3 Elo).
-// Upgrades (server/upgrades.js): power and guard scale each blow; luck can turn a miss into a hit, using a
+// Upgrades (server/upgrades.ts): power and guard scale each blow; luck can turn a miss into a hit, using a
 // second roll at LUCK_ROLLS + i.
 // rolls are numbers in [0, 1) from the room; missing ones come from a hash so the reducer stays pure.
 const QUICK_MAX_ROLLS = 12;
@@ -486,16 +526,18 @@ const QUICK_MAX_ROLLS = 12;
 const REPLAY_WALK_MS = 2200,
   REPLAY_ROLL_MS = 1800,
   REPLAY_SLACK_MS = 500;
-export const replayMs = (rolls) => REPLAY_WALK_MS + REPLAY_ROLL_MS * Math.max(1, rolls) + REPLAY_SLACK_MS;
+export const replayMs = (rolls: number): number =>
+  REPLAY_WALK_MS + REPLAY_ROLL_MS * Math.max(1, rolls) + REPLAY_SLACK_MS;
 const QUICK_FLAWLESS_BONUS = 3;
 const LUCK_ROLLS = 24;
-function settleQuickDuel(state, duel, rolls, now) {
+function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: number): GameResult {
   const list = Array.isArray(rolls) ? rolls : [];
-  const rollAt = (i) =>
+  const rollAt = (i: number): number =>
     Number.isFinite(list[i]) && list[i] >= 0 && list[i] < 1 ? list[i] : hashRoll(duel.id + ":" + now + ":" + i);
-  const maxHp = duel.rules.maxHp;
+  // the duel has started, so beginDuel set its rules
+  const maxHp = duel.rules!.maxHp;
   const blow = { hit: Math.round(maxHp * 0.34), crit: Math.round(maxHp * 0.5), counter: Math.round(maxHp * 0.34) };
-  const look = (id) => player(state, id)?.defaultAbility || "strike"; // cosmetic: picks the attack effect on the overlay
+  const look = (id: string): string => player(state, id)?.defaultAbility || "strike"; // cosmetic: picks the attack effect on the overlay
   const stats = Object.fromEntries(
     [duel.a, duel.b].map((id) => [
       id,
@@ -507,7 +549,7 @@ function settleQuickDuel(state, duel, rolls, now) {
       ),
     ]),
   );
-  const swings = [];
+  const swings: Swing[] = [];
   let attacker = duel.a,
     defender = duel.b,
     winnerId = "",
@@ -518,17 +560,19 @@ function settleQuickDuel(state, duel, rolls, now) {
     if (i === QUICK_MAX_ROLLS) {
       if (duel.hp[duel.a] !== duel.hp[duel.b]) {
         decision = "hp";
-        winnerId = duel.hp[duel.a] > duel.hp[duel.b] ? duel.a : duel.b;
+        // beginDuel gave both fighters an hp entry
+        winnerId = duel.hp[duel.a]! > duel.hp[duel.b]! ? duel.a : duel.b;
         loserId = winnerId === duel.a ? duel.b : duel.a;
         break;
       }
       decision = "sudden_death";
     }
     const die = 1 + Math.floor(rollAt(i) * 6);
-    let outcome = die === 6 ? "crit" : die === 5 ? "hit" : die <= 2 ? "counter" : "miss";
-    const lucky = outcome === "miss" && rollAt(LUCK_ROLLS + i) < STAT_STEP * stats[attacker].luck;
+    let outcome: Swing["outcome"] = die === 6 ? "crit" : die === 5 ? "hit" : die <= 2 ? "counter" : "miss";
+    // stats has an entry for both fighters (built from [duel.a, duel.b] above)
+    const lucky = outcome === "miss" && rollAt(LUCK_ROLLS + i) < STAT_STEP * stats[attacker]!.luck;
     if (lucky) outcome = "hit";
-    const swing = {
+    const swing: Swing = {
       attackerId: attacker,
       defenderId: defender,
       die,
@@ -551,12 +595,13 @@ function settleQuickDuel(state, duel, rolls, now) {
     } else {
       const dealer = outcome === "counter" ? defender : attacker,
         target = outcome === "counter" ? attacker : defender;
+      // hp[target]! (four times, to `finisher`): beginDuel gave both fighters an hp entry
       const amount = suddenDeath
-        ? duel.hp[target]
-        : Math.min(duel.hp[target], scaledDamage(blow[outcome], stats[dealer], stats[target]));
-      duel.hp[target] -= amount;
+        ? duel.hp[target]!
+        : Math.min(duel.hp[target]!, scaledDamage(blow[outcome], stats[dealer], stats[target]));
+      duel.hp[target]! -= amount;
       swing.damage = amount;
-      const finisher = duel.hp[target] <= 0;
+      const finisher = duel.hp[target]! <= 0;
       addEvent(state, "duel_action", now, {
         duelId: duel.id,
         userId: dealer,
@@ -593,13 +638,19 @@ function settleQuickDuel(state, duel, rolls, now) {
   };
 }
 
-function hashRoll(text) {
+function hashRoll(text: string): number {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
   return (h >>> 0) / 4294967296;
 }
 
-function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } = {}) {
+function finishDuel(
+  state: GameState,
+  duel: Duel,
+  winnerId: string,
+  now: number,
+  { decision = "ko", bonus = 0 }: { decision?: string; bonus?: number } = {},
+): void {
   const a = player(state, duel.a);
   const b = player(state, duel.b);
   if (!a || !b) return;
@@ -632,7 +683,8 @@ function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } =
   winner.hp = state.config.maxHp;
   winner.respawnAt = 0;
   loser.hp = 0;
-  loser.respawnAt = now + duel.rules.respawnMs;
+  // finishDuel runs on a started duel, which has rules
+  loser.respawnAt = now + duel.rules!.respawnMs;
   a.lastOpponentId = b.userId;
   b.lastOpponentId = a.userId;
   duel.status = "completed";
@@ -643,18 +695,20 @@ function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } =
     [duel.b]: { before: ratingB, after: nextB, delta: nextB - ratingB },
   };
   if (bonus) {
-    duel.ratings[winnerId].bonus = bonus;
+    // ratings has an entry for both fighters, and winnerId is one of them
+    duel.ratings[winnerId]!.bonus = bonus;
     duel.flawless = true;
   }
   // Dollars for saved fighters; the room adds them to the profiles once (server/channel.js payDuels).
-  const payout = {};
+  const payout: Record<string, number> = {};
   if (rated && winner.registered && state.config.winDollars > 0) payout[winner.userId] = state.config.winDollars;
   if (rated && loser.registered && state.config.lossDollars > 0) payout[loser.userId] = state.config.lossDollars;
   if (Object.keys(payout).length) duel.payout = payout;
   if (decision !== "ko") duel.decision = decision;
   state.rematchLocks.push({
     pair: pairKey(duel.a, duel.b),
-    until: now + duel.rules.rematchDelayMs,
+    // a started duel has rules
+    until: now + duel.rules!.rematchDelayMs,
   });
   addEvent(state, "duel_completed", now, {
     duelId: duel.id,
@@ -670,41 +724,48 @@ function finishDuel(state, duel, winnerId, now, { decision = "ko", bonus = 0 } =
   });
 }
 
-function applyAbility(state, duel, actor, abilityName, now) {
+function applyAbility(state: GameState, duel: Duel, actor: Player, abilityName: string, now: number): GameResult {
   if (!ABILITIES.has(abilityName)) return { ok: false, reason: "invalid_ability" };
-  const ability = duel.rules.abilities[abilityName];
+  // rules! and cooldowns! : applyCommand only picks an active duel, and beginDuel set both
+  // abilityName passed ABILITIES above
+  const ability = duel.rules!.abilities[abilityName as AbilityName];
   if (!ability) return { ok: false, reason: "invalid_ability" };
-  const cooldown = duel.cooldowns[actor.userId];
+  const cooldown = duel.cooldowns![actor.userId];
   if (!cooldown) return { ok: false, reason: "not_in_duel" };
   const abilityUntilKey = abilityName + "Until";
-  const availableAt = Math.max(cooldown.sharedUntil, cooldown[abilityUntilKey] || 0);
+  // the key is strikeUntil, heavyUntil or healUntil: abilityName passed ABILITIES above
+  const availableAt = Math.max(cooldown.sharedUntil, cooldown[abilityUntilKey as keyof Cooldowns] || 0);
   if (now < availableAt) return { ok: false, reason: "cooldown", retryAt: availableAt };
-  if (duel.hp[actor.userId] <= 0) return { ok: false, reason: "respawning" };
+  // hp! and rules! from here to the end of the function: an active duel has an hp entry for both fighters, and rules
+  if (duel.hp[actor.userId]! <= 0) return { ok: false, reason: "respawning" };
 
   const targetId = actor.userId === duel.a ? duel.b : duel.a;
   let amount = 0;
   if (abilityName === "heal") {
-    const before = duel.hp[actor.userId];
-    duel.hp[actor.userId] = Math.min(duel.rules.maxHp, before + ability.amount);
-    amount = duel.hp[actor.userId] - before;
+    const before = duel.hp[actor.userId]!;
+    // the heal branch, so ability is abilities.heal
+    duel.hp[actor.userId] = Math.min(duel.rules!.maxHp, before + (ability as Abilities["heal"]).amount);
+    amount = duel.hp[actor.userId]! - before;
   } else {
-    const before = duel.hp[targetId];
+    const before = duel.hp[targetId]!;
     const foe = player(state, targetId);
     const damage = scaledDamage(
-      ability.damage,
+      // not the heal branch, so ability is abilities.strike or abilities.heavy
+      (ability as Abilities["strike"]).damage,
       effectiveStats(actor.stats, actor.wins, actor.bonus, actor.petBoost),
       effectiveStats(foe?.stats, foe?.wins, foe?.bonus, foe?.petBoost),
     );
     duel.hp[targetId] = Math.max(0, before - damage);
     amount = before - duel.hp[targetId];
   }
-  cooldown.sharedUntil = now + duel.rules.sharedCooldownMs;
-  cooldown[abilityUntilKey] = now + ability.cooldownMs;
+  cooldown.sharedUntil = now + duel.rules!.sharedCooldownMs;
+  // same key as above (ABILITIES checked abilityName)
+  cooldown[abilityUntilKey as keyof Cooldowns] = now + ability.cooldownMs;
   duel.lastActionAt = now;
   actor.lastSeen = now;
-  actor.hp = duel.hp[actor.userId];
+  actor.hp = duel.hp[actor.userId]!;
   const target = player(state, targetId);
-  if (target) target.hp = duel.hp[targetId];
+  if (target) target.hp = duel.hp[targetId]!;
 
   addEvent(state, "duel_action", now, {
     duelId: duel.id,
@@ -714,7 +775,7 @@ function applyAbility(state, duel, actor, abilityName, now) {
     amount,
     hp: clone(duel.hp),
   });
-  if (duel.hp[targetId] <= 0) {
+  if (duel.hp[targetId]! <= 0) {
     finishDuel(state, duel, actor.userId, now);
     return {
       ok: true,
@@ -728,7 +789,7 @@ function applyAbility(state, duel, actor, abilityName, now) {
   return { ok: true, reason: "action_applied", duelId: duel.id, ability: abilityName, amount };
 }
 
-function applyCommand(state, event, now) {
+function applyCommand(state: GameState, event: CommandEvent, now: number): GameResult {
   const parsed = parseGameCommand(event.text);
   if (!parsed) return { ok: false, reason: "not_game_command" };
   const userId = normalizeUserId(event.userId);
@@ -800,10 +861,12 @@ function applyCommand(state, event, now) {
   return applyAbility(state, duel, actor, abilityName, now);
 }
 
-function validateConfigPatch(patch) {
+/** A config change as validateConfigPatch passes it on: known keys only, each in range. */
+type ConfigPatch = { [key: string]: unknown; abilities?: { [name: string]: { [field: string]: number } } };
+function validateConfigPatch(patch: Untrusted): { ok: true; patch: ConfigPatch } | { ok: false; reason: string } {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { ok: false, reason: "invalid_config" };
-  const out = {};
-  const ranges = {
+  const out: ConfigPatch = {};
+  const ranges: Record<string, [number, number]> = {
     maxHp: [1, 1_000],
     maxDuels: [1, 5],
     challengeTimeoutMs: [5_000, 300_000],
@@ -860,7 +923,7 @@ function validateConfigPatch(patch) {
     } else if (key === "abilities") {
       if (!patch.abilities || typeof patch.abilities !== "object" || Array.isArray(patch.abilities))
         return { ok: false, reason: "invalid_config_abilities" };
-      const abilities = {};
+      const abilities: { [name: string]: { [field: string]: number } } = {};
       for (const [name, spec] of Object.entries(patch.abilities)) {
         if (!ABILITIES.has(name) || !spec || typeof spec !== "object" || Array.isArray(spec))
           return { ok: false, reason: "invalid_config_ability" };
@@ -871,7 +934,8 @@ function validateConfigPatch(patch) {
           const [min, max] = field === "cooldownMs" ? [250, 600_000] : [1, 1_000];
           const valid = boundedInt(value, min, max);
           if (valid === null) return { ok: false, reason: "invalid_config_ability_value" };
-          abilities[name][field] = valid;
+          // set to {} above this loop
+          abilities[name]![field] = valid;
         }
       }
       out.abilities = abilities;
@@ -880,13 +944,13 @@ function validateConfigPatch(patch) {
   return { ok: true, patch: out };
 }
 
-function applyAdmin(state, event, now) {
+function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResult {
   const actorId = normalizeUserId(event.actorId);
   if (!actorId) return { ok: false, reason: "unauthorized" };
   const action = safeString(event.action, 32);
   const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
-  const dirtyProfileIds = [];
-  const deletedProfileIds = [];
+  const dirtyProfileIds: string[] = [];
+  const deletedProfileIds: string[] = [];
 
   if (action === "config") {
     if (payload.baseVersion !== undefined && payload.baseVersion !== state.configVersion) {
@@ -894,11 +958,14 @@ function applyAdmin(state, event, now) {
     }
     const patchResult = validateConfigPatch(payload.patch || payload.config);
     if (!patchResult.ok) return patchResult;
-    const config = { ...state.config };
+    const config: { [key: string]: unknown; abilities: { [name: string]: { [field: string]: number } } } = {
+      ...state.config,
+    };
     for (const [key, value] of Object.entries(patchResult.patch)) {
       if (key === "abilities") {
         config.abilities = { ...config.abilities };
-        for (const [name, spec] of Object.entries(value))
+        // validateConfigPatch built abilities as name -> { field: number }
+        for (const [name, spec] of Object.entries(value as { [name: string]: { [field: string]: number } }))
           config.abilities[name] = { ...config.abilities[name], ...spec };
       } else config[key] = value;
     }
@@ -936,10 +1003,11 @@ function applyAdmin(state, event, now) {
     for (const duel of state.duels) {
       if (duel.status !== "active") continue;
       for (const userId of [duel.a, duel.b]) {
-        duel.hp[userId] = duel.rules.maxHp;
+        // rules! (twice): an active duel has rules
+        duel.hp[userId] = duel.rules!.maxHp;
         const p = player(state, userId);
         if (p) {
-          p.hp = duel.rules.maxHp;
+          p.hp = duel.rules!.maxHp;
           p.respawnAt = 0;
         }
       }
@@ -978,12 +1046,19 @@ function applyAdmin(state, event, now) {
     const stored = event.targetProfile?.userId === userId && event.targetProfile?.registered;
     if (!userId || (!p?.registered && !stored)) return { ok: false, reason: "profile_not_found" };
     const rank = { elo: payload.elo, wins: payload.wins, losses: payload.losses };
-    const fits = (value, max) => Number.isInteger(value) && value >= 0 && value <= max;
+    const fits = (value: unknown, max: number): boolean => Number.isInteger(value) && value >= 0 && value <= max;
     if (!fits(rank.elo, 10_000) || !fits(rank.wins, 1_000_000) || !fits(rank.losses, 1_000_000))
       return { ok: false, reason: "invalid_rank" };
     if (p) Object.assign(p, rank);
     addEvent(state, "rank_restored", now, { actorId, userId, ...rank });
-    return { ok: true, reason: "rank_restored", dirtyProfileIds, deletedProfileIds, rankSet: { userId, ...rank } };
+    return {
+      ok: true,
+      reason: "rank_restored",
+      dirtyProfileIds,
+      deletedProfileIds,
+      // as RankSet: fits() checked elo, wins and losses above
+      rankSet: { userId, ...rank } as RankSet,
+    };
   }
 
   if (action === "resetAllRanks") {
@@ -1030,10 +1105,13 @@ function applyAdmin(state, event, now) {
 }
 
 // Results the stream hasn't shown yet: userId -> { elo before the first hidden duel, hidden wins, losses and dollars }.
-export function hiddenResults(state, now) {
-  const out = new Map();
+/** What the stream hasn't shown yet for one fighter. */
+export type HiddenResult = { elo: number | undefined; wins: number; losses: number; dollars: number };
+export function hiddenResults(state: GameState, now: number): Map<string, HiddenResult> {
+  const out = new Map<string, HiddenResult>();
   for (const duel of state.duels) {
-    if (duel.status !== "completed" || !(duel.revealAt > now) || !duel.ratings) continue;
+    // revealAt! : an HP duel has none, and undefined > now is false, so its result counts as shown
+    if (duel.status !== "completed" || !(duel.revealAt! > now) || !duel.ratings) continue;
     for (const id of [duel.a, duel.b]) {
       const h = out.get(id) || { elo: duel.ratings[id]?.before, wins: 0, losses: 0, dollars: 0 }; // duels are in order, so the first is the pre-fight Elo
       if (!duel.unrated) {
@@ -1048,7 +1126,10 @@ export function hiddenResults(state, now) {
 }
 
 // A profile as the stream has shown it so far.
-export function shownProfile(profile, hidden) {
+export function shownProfile<P extends { userId: string; wins: number; losses: number; dollars?: unknown }>(
+  profile: P,
+  hidden: Map<string, HiddenResult>,
+): P {
   const h = profile && hidden.get(profile.userId);
   if (!h || !Number.isInteger(h.elo)) return profile;
   const shown = {
@@ -1061,7 +1142,7 @@ export function shownProfile(profile, hidden) {
   return shown;
 }
 
-export function parseGameCommand(text) {
+export function parseGameCommand(text: unknown): { action: string; target: string } | null {
   if (typeof text !== "string") return null;
   // Chat clients append invisible characters (U+E0000 tag chars, U+034F, zero-width spaces) to repeated messages.
   const clean = text.replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF]/gu, "").trim();
@@ -1070,7 +1151,8 @@ export function parseGameCommand(text) {
       clean,
     );
   if (!match) return null;
-  let action = match[1].toLowerCase();
+  // group 1 is not optional in the regex
+  let action = match[1]!.toLowerCase();
   if (action === "challenge") action = "duel";
   if (action === "fight") action = "accept";
   const target = match[2] && action !== "rematch" ? normalizeUsername(match[2]) : ""; // !rematch always means the last opponent
@@ -1079,23 +1161,29 @@ export function parseGameCommand(text) {
 }
 
 // The pet fields a saved profile carries (channel.js normalizeProfileRow works them out from the pet id).
-function petFields(profile) {
+function petFields(profile: ProfileInput | null | undefined): { pet: string; petTier: string; petBoost: Stats } {
   const pet = safeString(profile?.pet, 48);
   return {
     pet,
-    petTier: pet && TIERS.includes(profile?.petTier) ? profile.petTier : "",
+    // includes() only compares, and when it is true the profile exists and petTier is one of TIERS
+    petTier: pet && TIERS.includes(profile?.petTier as string) ? (profile!.petTier as string) : "",
     petBoost: pet ? cleanBoost(profile?.petBoost) : emptyStats(),
   };
 }
 
-export function applyProfile(state, profile, now) {
+export function applyProfile(
+  state: GameState,
+  profile: ProfileInput,
+  now: number,
+): { ok: true; profile: Player } | { ok: false; reason: string } {
   const normalized = {
     ...profile,
     userId: normalizeUserId(profile?.userId),
     username: normalizeUsername(profile?.username),
     displayName: safeString(profile?.displayName || profile?.username, 48),
     avatar: safeString(profile?.avatar || "player", 64),
-    color: /^#[0-9a-f]{6}$/i.test(profile?.color || "") ? profile.color.toUpperCase() : "#A78BFA",
+    // profile.color! : the regex matched it, so it is a string
+    color: /^#[0-9a-f]{6}$/i.test(profile?.color || "") ? profile.color!.toUpperCase() : "#A78BFA",
     defaultAbility: ABILITIES.has(profile?.defaultAbility) ? profile.defaultAbility : "strike",
     stats: cleanStats(profile?.stats),
     hat: knownHat(profile?.hat) ? profile.hat : "",
@@ -1108,11 +1196,13 @@ export function applyProfile(state, profile, now) {
   const p = existing || defaultProfile(normalized.userId, state.config, now);
   // A fighter who left the arena comes back with the rank and record saved in its profile.
   if (!existing) {
-    for (const key of ["elo", "wins", "losses"]) if (Number.isInteger(profile?.[key])) p[key] = profile[key];
+    // as const: the three keys are the Player number fields named here
+    for (const key of ["elo", "wins", "losses"] as const) if (Number.isInteger(profile?.[key])) p[key] = profile[key];
     if (normalizeUserId(profile?.lastOpponentId)) p.lastOpponentId = normalizeUserId(profile.lastOpponentId);
   }
   // No respec while a challenge or duel is open: the build counts from when the duel starts to its end.
-  const build = (x) => JSON.stringify([cleanStats(x.stats), cleanBoost(x.petBoost)]);
+  const build = (x: { stats?: unknown; petBoost?: unknown }): string =>
+    JSON.stringify([cleanStats(x.stats), cleanBoost(x.petBoost)]);
   if (existing && hasOpenDuel(state, p.userId) && build(p) !== build(normalized))
     return { ok: false, reason: "in_duel" };
   Object.assign(p, {
@@ -1137,20 +1227,23 @@ export function applyProfile(state, profile, now) {
       .filter((item) => !hasOpenDuel(state, item.userId))
       .sort((a, b) => a.lastSeen - b.lastSeen);
     if (!candidates.length) return { ok: false, reason: "active_player_cap" };
-    state.players.splice(state.players.indexOf(candidates[0]), 1);
+    // candidates is not empty (checked on the line above)
+    state.players.splice(state.players.indexOf(candidates[0]!), 1);
   }
   state.players.push(p);
   return { ok: true, profile: p };
 }
 
-export function reduceGame(inputState, event, now = Date.now()) {
+// R, but compiles only when T is never: reduceGame's last branch uses it so a GameEvent type without a branch fails tsc.
+type Exhaustive<T extends never, R> = [T] extends [never] ? R : never;
+export function reduceGame(inputState: StoredState, event: GameEvent, now: number = Date.now()): ReduceOutput {
   const state = normalizeState(inputState);
-  const dirtyProfileIds = [];
-  const deletedProfileIds = [];
-  const rankResetIds = [];
+  const dirtyProfileIds: string[] = [];
+  const deletedProfileIds: string[] = [];
+  const rankResetIds: string[] = [];
   let resetAllRanks = false;
   let touched = false;
-  let result;
+  let result: GameResult;
   const beforeRevision = state.revision;
   const didExpire = expireState(state, now);
 
@@ -1286,7 +1379,8 @@ export function reduceGame(inputState, event, now = Date.now()) {
   } else if (event?.type === "tick") {
     result = { ok: true, reason: didExpire ? "state_advanced" : "no_change" };
   } else {
-    result = { ok: false, reason: "unknown_event" };
+    // Untyped callers (tests, old stored events) can still get here; typed ones can't, since event is never here.
+    result = { ok: false, reason: "unknown_event" } satisfies Exhaustive<typeof event, GameResult>;
   }
 
   // changed: state must be persisted. visible: overlays should receive a new snapshot.
@@ -1304,7 +1398,9 @@ export function reduceGame(inputState, event, now = Date.now()) {
   };
 }
 
-function normalizeState(input) {
+/** A stored game state as read back from storage: any field may be missing or out of date. */
+type StoredState = { [key: string]: unknown } | null | undefined;
+function normalizeState(input: StoredState): GameState {
   const initial = createInitialState(input?.channel || site.defaultChannel);
   // Deep copy so the reducer never mutates its input.
   const state = { ...initial, ...(input && typeof input === "object" ? clone(input) : {}) };
@@ -1316,7 +1412,8 @@ function normalizeState(input) {
   if (state.configVersion === 1 && JSON.stringify(state.config) === JSON.stringify(normalizeConfig(LEGACY_CONFIG)))
     state.config = clone(DEFAULT_CONFIG);
   if (state.priceSchema !== 2) {
-    for (const [key, old] of Object.entries(OLD_PRICES))
+    // OLD_PRICES only has Config price keys
+    for (const [key, old] of Object.entries(OLD_PRICES) as [keyof typeof OLD_PRICES, number][])
       if (state.config[key] === old) state.config[key] = DEFAULT_CONFIG[key];
     state.priceSchema = 2;
   }
@@ -1337,16 +1434,27 @@ function normalizeState(input) {
 }
 
 // Stored state as the reducer sees it (defaults filled in, old presets migrated), for read-only views.
-export function normalizeGameState(input) {
+export function normalizeGameState(input: StoredState): GameState {
   return normalizeState(input);
 }
 
-export function defaultConfig() {
+export function defaultConfig(): Config {
   return clone(DEFAULT_CONFIG);
 }
 
 // Admin and diagnostics view of the chat source (see docs/CONTRACTS.md, chatStatus).
-export function chatStatus(state) {
+/** The admin and diagnostics view of the chat source. */
+export type ChatStatus = {
+  connected: boolean;
+  source: "streamelements" | "twitch" | "";
+  status: string;
+  subscriptionId: string;
+  createdAt: number;
+  lastNotificationAt: number;
+  lastRevocationReason: string;
+  checkedAt: number;
+};
+export function chatStatus(state: { chat?: Partial<GameState["chat"]> | null | undefined }): ChatStatus {
   const chat = state.chat || {};
   return {
     connected: Boolean(chat.connected),

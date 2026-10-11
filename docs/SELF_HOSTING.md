@@ -62,6 +62,6 @@ from `site.config.js`.
 - Dollars show only to mods and the owner, and the public `/health` says only ok.
 - Pages send HSTS and a Content-Security-Policy that allows Cloudflare's analytics beacon; the
   overlay's allows only the Twitch chat socket. Adding a script or embed means changing
-  `server/security.js`.
+  `server/security.ts`.
 - The owner page's tools are in [DEVTOOLS.md](DEVTOOLS.md) and [LIVE_FIX.md](LIVE_FIX.md). The test
   site's dev token can't deploy to production or save build files.

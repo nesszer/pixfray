@@ -9,6 +9,36 @@
 //   atlas_dimensions, 413 atlas_too_large, 415 not_png, 409 custom_limit_reached.
 // DELETE /api/assets/:channel/:id (canManage) -> {ok:true, id, usage} or 404 {reason:"not_found"}.
 // The same validation runs in the Worker (cheap rejection) and again in the ChannelRoom before the insert.
+import type { Env } from "./env.ts";
+import type { PetsContext } from "./pets.ts";
+
+/** One frame of the atlas, in pixels. */
+export type Frame = { x: number; y: number; w: number; h: number };
+/** The meta JSON stored with a custom character (custom_characters.meta). */
+export type UploadMeta = {
+  label: string;
+  mode: "single" | "frames";
+  fps: number;
+  frames: Frame[];
+  animations: { [name: string]: Frame[] };
+  anchor: { x: number; y: number };
+  license: string;
+  source: string;
+  combatFallback?: string;
+};
+/** A checked upload: validateUpload's result. */
+export type CheckedUpload = { meta: UploadMeta; bytes: Uint8Array<ArrayBuffer>; png: PngSize };
+/** A PNG's size from its IHDR chunk. */
+export type PngSize = { width: number; height: number };
+/** A catalog entry: the stored meta plus the id and URL (the room's /catalog). */
+export type CatalogEntry = { [field: string]: unknown; id: string; url: string; custom: boolean };
+/** Custom character usage shown on /admin. */
+export type CustomUsage = { count: number; limit: number; bytes: number };
+/** The Worker's request context for /api/assets (server/worker.js): the pets one plus a few unused fields. */
+export type UploadsContext = PetsContext & { owner?: unknown; channel?: string; url?: URL };
+/** What bodyJson throws: an Error with the HTTP status to answer. */
+type HttpError = Error & { status?: number };
+
 export const UPLOAD_LIMITS = Object.freeze({
   maxFrames: 24,
   frameSize: 128,
@@ -24,22 +54,25 @@ export const ANIMATIONS = Object.freeze(["idle", "walk", "attack", "ko", "jump",
 export const UPLOAD_BODY_LIMIT = Math.ceil(UPLOAD_LIMITS.maxAtlasBytes / 3) * 4 + 64_000;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const UPLOAD_LICENSE = "Uploaded by channel staff";
-const json = (data, status = 200) =>
+const json = (data: unknown, status: number = 200): Response =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
-const fail = (status, reason, error) => json({ ok: false, reason, error }, status);
+const fail = (status: number, reason: string, error: string): Response => json({ ok: false, reason, error }, status);
 class UploadError extends Error {
-  constructor(status, reason, message) {
+  declare status: number;
+  declare reason: string;
+  constructor(status: number, reason: string, message: string) {
     super(message);
     this.status = status;
     this.reason = reason;
   }
 }
-const reject = (status, reason, message) => {
+// Annotated on the const so a call narrows like a throw
+const reject: (status: number, reason: string, message: string) => never = (status, reason, message) => {
   throw new UploadError(status, reason, message);
 };
 
 // Worker side. c = { user, owner, channel, id, url, access(): Promise<{canManage,reason}>, roomFetch(path, init?), bodyJson(request, limit) }
-export async function handleUploads(request, env, c) {
+export async function handleUploads(request: Request, env: Env, c: UploadsContext): Promise<Response> {
   // Public: atlas PNG bytes, used by overlays and the dashboard preview.
   if (request.method === "GET" && c.id) return c.roomFetch("/asset/" + c.id);
   const roles = await c.access();
@@ -50,9 +83,11 @@ export async function handleUploads(request, env, c) {
     try {
       body = await c.bodyJson(request, UPLOAD_BODY_LIMIT);
     } catch (error) {
-      return error.status === 413
+      // bodyJson throws an HttpError (status 400 or 413)
+      return (error as HttpError).status === 413
         ? fail(413, "atlas_too_large", "Upload is larger than the 1.5 MB atlas limit")
-        : fail(error.status || 400, "invalid_upload", error.message || "Invalid JSON");
+        : // bodyJson throws an HttpError, as above
+          fail((error as HttpError).status || 400, "invalid_upload", (error as HttpError).message || "Invalid JSON");
     }
     try {
       validateUpload(body);
@@ -63,7 +98,8 @@ export async function handleUploads(request, env, c) {
     return c.roomFetch("/asset", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body, createdBy: c.user.id }),
+      // canManage (checked above) is only true for a signed-in user
+      body: JSON.stringify({ ...body, createdBy: c.user!.id }),
     });
   }
   if (request.method === "DELETE" && c.id) {
@@ -74,19 +110,25 @@ export async function handleUploads(request, env, c) {
 }
 
 // Durable Object side (ChannelRoom). Handles GET /catalog and everything under /asset.
-export async function handleRoomAssets(room, request, { path, channel }) {
+export async function handleRoomAssets(
+  room: { ctx: DurableObjectState },
+  request: Request,
+  { path, channel }: { path: string; channel: string },
+): Promise<Response> {
   const sql = room.ctx.storage.sql;
   if (path === "/catalog" && request.method === "GET") {
     return json(
       sql
-        .exec("SELECT id, meta FROM custom_characters ORDER BY created_at, id")
+        .exec<{ id: string; meta: string }>("SELECT id, meta FROM custom_characters ORDER BY created_at, id")
         .toArray()
         .map((row) => catalogEntry(channel, row)),
     );
   }
   if (path === "/asset" && request.method === "GET") {
     const items = sql
-      .exec("SELECT id, meta, bytes, created_by, created_at FROM custom_characters ORDER BY created_at, id")
+      .exec<{ id: string; meta: string; bytes: number; created_by: string; created_at: number }>(
+        "SELECT id, meta, bytes, created_by, created_at FROM custom_characters ORDER BY created_at, id",
+      )
       .toArray()
       .map((row) => ({
         ...catalogEntry(channel, row),
@@ -99,7 +141,8 @@ export async function handleRoomAssets(room, request, { path, channel }) {
   if (path === "/asset" && request.method === "POST") {
     let body;
     try {
-      body = await request.json();
+      // Any JSON: validateUpload refuses anything but an object, and createdBy is checked with typeof below
+      body = await request.json<{ [field: string]: unknown }>();
     } catch {
       return fail(400, "invalid_upload", "Invalid JSON");
     }
@@ -115,7 +158,8 @@ export async function handleRoomAssets(room, request, { path, channel }) {
       now = Date.now();
     // Count and insert in one transaction so two moderators can't both take the last slot.
     const inserted = room.ctx.storage.transactionSync(() => {
-      const [{ count }] = sql.exec("SELECT COUNT(*) AS count FROM custom_characters").toArray();
+      // COUNT(*) always returns one row
+      const [{ count }] = sql.exec("SELECT COUNT(*) AS count FROM custom_characters").toArray() as [{ count: number }];
       if (count >= UPLOAD_LIMITS.maxCharacters) return false;
       sql.exec(
         "INSERT INTO custom_characters (id, meta, atlas, bytes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -151,7 +195,7 @@ export async function handleRoomAssets(room, request, { path, channel }) {
   const id = path.startsWith("/asset/") ? path.slice(7) : "";
   if (id && request.method === "GET") {
     if (!CUSTOM_ID.test(id)) return json({ error: "Not found" }, 404);
-    const row = sql.exec("SELECT atlas FROM custom_characters WHERE id = ?", id).toArray()[0];
+    const row = sql.exec<{ atlas: ArrayBuffer }>("SELECT atlas FROM custom_characters WHERE id = ?", id).toArray()[0];
     if (!row) return json({ error: "Not found" }, 404);
     return new Response(row.atlas, {
       headers: {
@@ -172,22 +216,23 @@ export async function handleRoomAssets(room, request, { path, channel }) {
 }
 
 // Called from ChannelRoom's constructor.
-export function ensureUploadSchema(sql) {
+export function ensureUploadSchema(sql: SqlStorage): void {
   sql.exec(
     "CREATE TABLE IF NOT EXISTS custom_characters (id TEXT PRIMARY KEY, meta TEXT NOT NULL, atlas BLOB NOT NULL, bytes INTEGER NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL)",
   );
 }
 
 // Shown on /admin. { count, limit, bytes }
-export function customUsage(room) {
+export function customUsage(room: { ctx: DurableObjectState }): CustomUsage {
   const [row] = room.ctx.storage.sql
     .exec("SELECT COUNT(*) AS count, COALESCE(SUM(bytes), 0) AS bytes FROM custom_characters")
-    .toArray();
+    // COUNT(*) and COALESCE(SUM) always return one row of numbers
+    .toArray() as [{ count: number; bytes: number }];
   return { count: row.count, limit: UPLOAD_LIMITS.maxCharacters, bytes: row.bytes };
 }
 
 // Validates an upload body. Returns {meta, bytes:Uint8Array, png:{width,height}} or throws UploadError.
-export function validateUpload(body) {
+export function validateUpload(body: { [field: string]: unknown } | null | undefined): CheckedUpload {
   if (!body || typeof body !== "object" || Array.isArray(body)) reject(400, "invalid_upload", "JSON object required");
   const label = typeof body.label === "string" ? body.label.replace(/[\u0000-\u001f\u007f]/g, "").trim() : "";
   if (!label || label.length > UPLOAD_LIMITS.maxLabel)
@@ -200,8 +245,8 @@ export function validateUpload(body) {
   const png = readPng(bytes);
   if (png.width > UPLOAD_LIMITS.maxAtlasSide || png.height > UPLOAD_LIMITS.maxAtlasSide)
     reject(400, "atlas_dimensions", "Atlas must be at most " + UPLOAD_LIMITS.maxAtlasSide + " px on each side");
-  const unique = new Set();
-  const rects = (list, name) => {
+  const unique = new Set<string>();
+  const rects = (list: unknown, name: string): Frame[] => {
     if (!Array.isArray(list) || !list.length || list.length > UPLOAD_LIMITS.maxFrames)
       reject(400, "invalid_frames", name + " must list 1 to " + UPLOAD_LIMITS.maxFrames + " frames");
     return list.map((f) => {
@@ -224,7 +269,7 @@ export function validateUpload(body) {
     });
   };
   const frames = rects(body.frames, "frames");
-  const animations = {};
+  const animations: { [name: string]: Frame[] } = {};
   const anims = body.animations === undefined ? {} : body.animations;
   if (!anims || typeof anims !== "object" || Array.isArray(anims))
     reject(400, "invalid_animation", "animations must be an object");
@@ -243,7 +288,7 @@ export function validateUpload(body) {
       "too_many_frames",
       "At most " + UPLOAD_LIMITS.maxFrames + " frames per character (got " + unique.size + ")",
     );
-  const meta = {
+  const meta: UploadMeta = {
     label,
     mode,
     fps,
@@ -257,12 +302,12 @@ export function validateUpload(body) {
   return { meta, bytes, png };
 }
 
-function decodeAtlas(value) {
+function decodeAtlas(value: unknown): Uint8Array<ArrayBuffer> {
   if (typeof value !== "string" || !value) reject(400, "invalid_upload", "atlas must be a base64 PNG");
   const b64 = value.replace(/^data:[^,]*;base64,/, "");
   if (b64.length > Math.ceil(UPLOAD_LIMITS.maxAtlasBytes / 3) * 4)
     reject(413, "atlas_too_large", "Atlas is larger than 1.5 MB");
-  let binary;
+  let binary: string;
   try {
     binary = atob(b64);
   } catch {
@@ -275,20 +320,28 @@ function decodeAtlas(value) {
 }
 
 // Checks the PNG signature, the IHDR chunk (with CRC) and the chunk layout through IEND. Returns {width, height}.
-export function readPng(bytes) {
-  const notPng = (why) => reject(415, "not_png", "Only PNG images are accepted (" + why + ")");
+// bytes may be anything: the instanceof check below refuses what isn't a Uint8Array.
+export function readPng(bytes: unknown): PngSize {
+  // Annotated on the const so a call narrows like a throw
+  const notPng: (why: string) => never = (why) => reject(415, "not_png", "Only PNG images are accepted (" + why + ")");
   if (!(bytes instanceof Uint8Array) || bytes.length < 57) notPng("file too short");
   for (let i = 0; i < 8; i++) if (bytes[i] !== PNG_SIGNATURE[i]) notPng("bad signature");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const type = (at) => String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
+  // Called at offsets the length checks keep inside bytes (12, and a chunk start at least 12 bytes from the end)
+  const type = (at: number) => String.fromCharCode(bytes[at]!, bytes[at + 1]!, bytes[at + 2]!, bytes[at + 3]!);
   if (view.getUint32(8) !== 13 || type(12) !== "IHDR") notPng("IHDR must be the first chunk");
   if (crc32(bytes, 12, 29) !== view.getUint32(29)) notPng("IHDR checksum mismatch");
   const width = view.getUint32(16),
     height = view.getUint32(20),
-    depth = bytes[24],
-    color = bytes[25];
-  const depths = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] }[color];
-  if (!width || !height || !depths || !depths.includes(depth) || bytes[26] !== 0 || bytes[27] !== 0 || bytes[28] > 1)
+    // bytes is at least 57 long (checked above), so offsets 24 to 28 exist
+    depth = bytes[24]!,
+    color = bytes[25]!;
+  // Indexed by any color byte; an unknown color reads undefined, refused below
+  const depths = (
+    { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] } as Record<number, number[]>
+  )[color];
+  // Offset 28 exists, as above
+  if (!width || !height || !depths || !depths.includes(depth) || bytes[26] !== 0 || bytes[27] !== 0 || bytes[28]! > 1)
     notPng("invalid IHDR");
   let at = 33,
     idat = false,
@@ -310,8 +363,8 @@ export function readPng(bytes) {
   return { width, height };
 }
 
-let crcTable;
-export function crc32(bytes, start = 0, end = bytes.length) {
+let crcTable: Uint32Array | undefined;
+export function crc32(bytes: Uint8Array, start: number = 0, end: number = bytes.length): number {
   if (!crcTable) {
     crcTable = new Uint32Array(256);
     for (let n = 0; n < 256; n++) {
@@ -321,11 +374,12 @@ export function crc32(bytes, start = 0, end = bytes.length) {
     }
   }
   let c = 0xffffffff;
-  for (let i = start; i < end; i++) c = crcTable[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  // i stays below end (at most bytes.length), and a byte-masked index is inside the 256-entry table
+  for (let i = start; i < end; i++) c = crcTable[(c ^ bytes[i]!) & 0xff]! ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function customId(label) {
+function customId(label: string): string {
   const slug =
     label
       .toLowerCase()
@@ -338,8 +392,8 @@ function customId(label) {
   return "c-" + slug + "-" + rand;
 }
 
-function catalogEntry(channel, row) {
-  let meta = {};
+function catalogEntry(channel: string, row: { id: string; meta: string }): CatalogEntry {
+  let meta: { [field: string]: unknown } = {};
   try {
     meta = JSON.parse(row.meta);
   } catch {}

@@ -4,12 +4,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { ChannelRoom } from "../server/channel.js";
-import { AuthStore } from "../server/auth.js";
+import { AuthStore } from "../server/auth.ts";
 import { logRoomError } from "../server/developer.js";
-import { createInitialState, defaultConfig } from "../server/game.js";
+import { createInitialState, defaultConfig } from "../server/game.ts";
 import { makePng, b64 } from "./upload-helpers.mjs";
-import { effectiveStats } from "../server/upgrades.js";
-import { tierBoost, petOf, PETS, boostText } from "../server/pets.js";
+import { effectiveStats } from "../server/upgrades.ts";
+import { tierBoost, petOf, PETS, boostText } from "../server/pets.ts";
 
 const SECRET = "test-only-internal-secret-0123456789";
 
@@ -2042,7 +2042,7 @@ test("profile saves land in the owner log: a save as a command row, a refusal wi
 });
 
 test("cosmetic ids: the overlay drawings (src/served/cosmetics.js) match the server lists", async () => {
-  const server = await import("../server/cosmetics.js");
+  const server = await import("../server/cosmetics.ts");
   const client = await import("../src/served/cosmetics.js");
   for (const kind of server.COSMETIC_KINDS) {
     const ids = server.COSMETICS[kind].map((x) => x.id);

@@ -111,7 +111,7 @@ const GROUPS = [
       { key: "reminderMin", label: "!fray reminder every (0 = off)", unit: "min", min: 0, max: 240 },
     ],
   },
-  // The shop (server/pets.js): pet prices by tier, and locked hats cost this much per win they need (0 = not for sale).
+  // The shop (server/pets.ts): pet prices by tier, and locked hats cost this much per win they need (0 = not for sale).
   {
     title: "Shop",
     fields: [
@@ -196,7 +196,7 @@ for (const t of TABS) {
 selectTab(document.getElementById("tab-" + location.hash.slice(1)) || TABS[0]);
 
 // ---------- loading and access ----------
-// Why the access check said no (server/auth.js access), in words for the person at the gate.
+// Why the access check said no (server/auth.ts access), in words for the person at the gate.
 const GATE_REASONS = {
   "Sign in with Twitch": () => "You're not signed in.",
   "Current Twitch moderator role required": () => "Your Twitch account isn't a moderator of " + CHANNEL + ".",
@@ -1186,7 +1186,7 @@ async function loadCustom() {
   );
 }
 // ---------- custom pets ----------
-// Uploaded pets join the shop at their tier's price (server/pets.js). Built-in pets are drawn in code and can't be removed.
+// Uploaded pets join the shop at their tier's price (server/pets.ts). Built-in pets are drawn in code and can't be removed.
 const TIER_LABELS = { common: "Common", uncommon: "Uncommon", rare: "Rare", epic: "Epic", legendary: "Legendary" };
 const boostLabel = (b) =>
   b?.power && b.power === b.guard && b.power === b.luck
@@ -1195,7 +1195,7 @@ const boostLabel = (b) =>
         .filter((k) => b?.[k])
         .map((k) => "+" + b[k] + " " + k)
         .join(", ");
-// Viewer sprites (server/sprites.js): approve or turn down what viewers sent; remove approved ones.
+// Viewer sprites (server/sprites.ts): approve or turn down what viewers sent; remove approved ones.
 async function loadSprites() {
   const r = await api("/api/sprites/" + CHANNEL),
     pendingBox = $("#sprite-pending"),
@@ -2054,7 +2054,7 @@ $("#checkin-test-toggle").addEventListener("click", async (e) => {
   );
 });
 
-// ---------- the bot's own text commands (server/botcommands.js), shown while the PixFray bot reads chat ----------
+// ---------- the bot's own text commands (server/botcommands.ts), shown while the PixFray bot reads chat ----------
 let editingCommand = "",
   shownCommands = "";
 const COMMAND_ERRORS = {

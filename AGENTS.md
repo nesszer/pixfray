@@ -50,14 +50,14 @@ It is not wrangler: never `wrangler deploy` or `--env`.
 ## Where things go
 
 - **Channel setting (mods change it on the admin page):** `DEFAULT_CONFIG` and the type list in
-  `validateConfigPatch` in `server/game.js`; a field in a `GROUPS` entry in `src/admin.js`; the reads in
+  `validateConfigPatch` in `server/game.ts`; a field in a `GROUPS` entry in `src/admin.js`; the reads in
   `server/channel.js`; a test with a valid patch and an `invalid_config_<key>` rejection; `docs/CONTRACTS.md` §7.
 - **Bot chat command:** `botCommand` in `server/channel.js`; command names and reply texts in
-  `server/streamelements.js` (`botNames()`, `DEFAULT_SE_NAMES`, `se*Text`). Mods' own text commands are
-  `server/botcommands.js`.
+  `server/streamelements.ts` (`botNames()`, `DEFAULT_SE_NAMES`, `se*Text`). Mods' own text commands are
+  `server/botcommands.ts`.
 - **Who is a mod in chat:** `ev.mod`, set once from the badges (`MOD_BADGES`: broadcaster, moderator,
-  lead_moderator) in `slimEvent` in `server/eventsub.js`.
-  Don't read badges anywhere else. Admin-page access is a separate Helix check in `server/auth.js`.
+  lead_moderator) in `slimEvent` in `server/eventsub.ts`.
+  Don't read badges anywhere else. Admin-page access is a separate Helix check in `server/auth.ts`.
 - **Refusing the bot as a target:** the single `BOT_TARGET_ACTIONS` check in `server/channel.js`. Keep it one check;
   the bot may become a co-op boss later.
 
@@ -95,7 +95,7 @@ Each one has happened here. Check for it by name before calling work done.
 |DEVTOOLS.md: test-site tools (bot fighters, scripted duels, alt account in real chat, OBS)
 |LIVE_FIX.md: release flow, owner page fix/deploy/rollback, backups
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
-[Code]|server/: worker.js routes, auth glue|channel.js ChannelRoom DO (state, bot commands, alarms, broadcast)|game.js rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.js webhooks, slimEvent, sendChat|auth.js sessions, Helix mod checks|channels.js registry|botcommands.js|streamelements.js|uploads.js|sprites.js|developer.js|security.js|ratelimit.js|dedupe.js|upgrades.js pets.js cosmetics.js
+[Code]|server/: worker.js routes, auth glue|channel.js ChannelRoom DO (state, bot commands, alarms, broadcast)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.js|security.ts|ratelimit.ts|dedupe.ts|upgrades.ts pets.ts cosmetics.ts
 |src/: admin.js mod page|dashboard.js channel page|start.js sign-up|setup.js|intro/ home page 3D|scrub.js|sprite-maker.js spritify.js|fighter3d.js voxthumb.js
 |src/served/: overlay.js|arena-client.js|chat.js IRC|public/: overlay.html|dashboard.css tokens
 |tests/: *.test.{mjs,ts} unit|port/ port tools|smoke.mjs|ui.mjs arena-browser.mjs|e2e-local.mjs|chrome.mjs
