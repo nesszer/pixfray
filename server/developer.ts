@@ -485,7 +485,8 @@ async function cf<T = unknown>(env: Env, path: string, init: RequestInit = {}): 
     headers: { Authorization: "Bearer " + env.CF_API_TOKEN, "Content-Type": "application/json" },
   });
   const data = await r.json<T & CfEnvelope>().catch(() => null); // REST shapes are parsed in TS19
-  // ok answers carry a JSON envelope; a bad body throws in the caller, which answers an error
+  // ok answers carry a JSON envelope; an ok answer with a bad body still has data null, and the caller's read of it
+  // throws, which answers an error
   return { ok: r.ok && data?.success !== false && !data?.errors?.length, status: r.status, data } as ApiResult<
     T & CfEnvelope
   >;
@@ -655,13 +656,15 @@ async function gh<T = unknown>(env: Env, g: GithubConfig, path: string, init: Re
     },
   });
   const data = r.status === 204 ? null : await r.json<T>().catch(() => null); // REST shapes are parsed in TS19
-  // ok answers carry JSON except 204 (dispatch reads no data); a bad body throws in the caller, which answers 503
+  // ok answers carry JSON except 204 (dispatch reads no data); an ok answer with a bad body still has data null, and
+  // the caller's read of it throws, which answers 503
   return { ok: r.ok, status: r.status, data } as ApiResult<T>;
 }
 function ghError(r: { status: number; data: unknown }, what: string): Response {
   const status = [404, 409, 422].includes(r.status) ? (r.status === 422 ? 409 : r.status) : 502;
   return fail(
     status,
+    // GitHub error bodies are { message } or unreadable (null); clean() reads anything through String()
     `${what}: GitHub ${r.status} ${clean((r.data as { message?: string } | null)?.message || "", 200)}`.trim(),
     "github_error",
     {

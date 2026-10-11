@@ -159,7 +159,8 @@ async function fightersElsewhere(request: Request, env: Env, user: TwitchUser, c
 }
 function internal(request: Request, env: Env, channel: string, path: string, body?: JsonObject) {
   const h: { [name: string]: string } = {};
-  // callers pass both ids as Twitch id strings
+  // a Twitch id string from the session or a checked profile; /admin spreads the client's data first, so a userId
+  // there is whatever the page sent, and the room reads actorId instead
   if (body?.userId) h["X-Mini-User-Id"] = body.userId as string;
   else if (body?.actorId) h["X-Mini-User-Id"] = body.actorId as string; // as above
   if (body !== undefined) h["Content-Type"] = "application/json";
@@ -844,7 +845,8 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
     }
     return internal(request, env, channel, "/" + route);
   } catch (error) {
-    // each `as HttpError` below: what bodyJson, setPaused and chatAction throw; anything else a bug threw has no status
+    // each `as HttpError` below: what bodyJson, setPaused and chatAction throw; another Error has no status (a thrown
+    // null or undefined would fail here, as it does on main)
     if (!(error as HttpError).status) ctx?.waitUntil?.(logWorkerError(env, error, { path }));
     return json(
       {
