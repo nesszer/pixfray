@@ -1184,6 +1184,7 @@ test("chat bot: drop reasons read as words", () => {
   assert.match(botDropText("Twitch send chat message failed (403)"), /may not chat here \(403\)/);
   assert.equal(botDropText("Twitch send chat message failed (500)"), "Twitch send chat message failed (500)");
   assert.equal(botDropText(""), "unknown");
+  for (const key of ["constructor", "__proto__", "toString"]) assert.equal(botDropText(key), key);
 });
 
 test("chat bot: a signed-up channel gets its verification, and the bot answers on its own channel", async (t) => {

@@ -328,8 +328,12 @@ export function parseCosmeticSettings(text: string | null): Parsed<CosmeticSetti
       out[login] = { avatar: entry.avatar, color: entry.color };
   return ok(out);
 }
-/** The site page that embeds the demo overlay posts { demoPaused } while it scrolls the demo out of view. */
-export function parseDemoMessage(value: unknown): Parsed<{ demoPaused: boolean }> {
-  if (!isObject(value) || typeof value.demoPaused !== "boolean") return bad("demo message has no demoPaused switch");
+/**
+ * The site page that embeds the demo overlay posts { demoPaused } while it scrolls the demo out of view. Answers null
+ * for a message without a demoPaused field: browser extensions post their own messages to the page.
+ */
+export function parseDemoMessage(value: unknown): Parsed<{ demoPaused: boolean }> | null {
+  if (!isObject(value) || !("demoPaused" in value)) return null;
+  if (typeof value.demoPaused !== "boolean") return bad("demo message has no demoPaused switch");
   return ok({ demoPaused: value.demoPaused });
 }

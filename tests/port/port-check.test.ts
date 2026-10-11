@@ -1370,6 +1370,25 @@ describe("port-check", { concurrency: true }, () => {
     });
   });
 
+  test("vite.config.ts may update a string naming a ported file, like vite.config.js", async () => {
+    const dir = await repo({
+      "tsconfig.worker.json": strictList(),
+      "src/ui.js": "export const ui = 1;\n",
+      "vite.config.ts": 'export const SERVED: string[] = ["src/ui.js"];\nexport default {};\n',
+    });
+    await git(dir, "mv", "src/ui.js", "src/ui.ts");
+    write(dir, {
+      "src/ui.ts": "export const ui: number = 1;\n",
+      "vite.config.ts": 'export const SERVED: string[] = ["src/ui.ts"];\nexport default {};\n',
+      "tsconfig.worker.json": strictList("src/ui.ts", "vite.config.ts"),
+    });
+    assert.deepEqual(await portCheck(dir), {
+      status: 0,
+      stdout: "allowed: tsconfig.worker.json (no build config reads it)\n2 files compared, 0 different\n",
+      stderr: "",
+    });
+  });
+
   test("a test string that named the .ts path before the port passes unchanged", async () => {
     const dir = await repo({
       "tsconfig.worker.json": strictList(),

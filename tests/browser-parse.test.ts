@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   UNREADABLE,
+  acceptedUnreadable,
   parseAccess,
   parseAdmin,
   parseAdminSnapshot,
@@ -144,6 +145,8 @@ test("overlay looks push, saved chat looks and demo messages", (t) => {
     ok: false,
     error: "demo message has no demoPaused switch",
   });
+  for (const other of ["hello", { source: "react-devtools-content-script" }, null, [true]])
+    assert.equal(parseDemoMessage(other), null, "a message that isn't the demo's is ignored: " + JSON.stringify(other));
 });
 
 test("parseAnswer: an ok body that fails turns into a failed answer; a failed answer keeps its body", (t) => {
@@ -164,6 +167,21 @@ test("parseAnswer: an ok body that fails turns into a failed answer; a failed an
     status: 403,
     data: { off: "paused" },
   });
+});
+
+test("acceptedUnreadable: only a 2xx answer whose body failed may have gone through", (t) => {
+  t.mock.method(console, "warn", () => {});
+  const save = (r: { ok: boolean; status: number; data: unknown }) =>
+    acceptedUnreadable(parseAnswer(r, parseProfileSaved, "the saved profile"));
+  assert.equal(save({ ok: true, status: 200, data: null }), true, "the save went through, the body didn't parse");
+  assert.equal(save({ ok: true, status: 200, data: { profile: "x" } }), true);
+  assert.equal(
+    save({ ok: true, status: 200, data: { profile: { wins: 0, losses: 0, elo: 1000, dollars: 0 } } }),
+    false,
+    "a save read in full",
+  );
+  assert.equal(save({ ok: false, status: 400, data: { error: "invalid_profile" } }), false, "a refused save");
+  assert.equal(save({ ok: false, status: 0, data: { error: "Network error" } }), false, "no answer at all");
 });
 
 test("session and access", () => {

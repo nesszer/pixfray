@@ -464,23 +464,26 @@ export function botMessage(message: unknown): string {
 }
 // Twitch's reason for a line the bot couldn't post, in words for the owner log, the admin page and "!fray debug".
 // reason is a drop_reason code from Helix, or the error sendChatMessage threw ("... failed (403)").
-const DROP_TEXT: Record<string, string> = {
-  msg_duplicate: "the same line twice within 30 s",
-  msg_rejected: "held by AutoMod",
-  msg_rejected_mandatory: "blocked by AutoMod or blocked terms",
-  msg_banned: "the bot is banned in this channel",
-  msg_timedout: "the bot is timed out",
-  msg_ratelimit: "Twitch rate limit",
-  msg_followersonly: "followers-only chat",
-  msg_subsonly: "subscriber-only chat",
-  msg_slowmode: "slow mode",
-  msg_emoteonly: "emote-only chat",
-  msg_verified_email: "the bot account needs a verified email",
-  empty: "nothing to send",
-};
+const DROP_TEXT = new Map(
+  Object.entries({
+    msg_duplicate: "the same line twice within 30 s",
+    msg_rejected: "held by AutoMod",
+    msg_rejected_mandatory: "blocked by AutoMod or blocked terms",
+    msg_banned: "the bot is banned in this channel",
+    msg_timedout: "the bot is timed out",
+    msg_ratelimit: "Twitch rate limit",
+    msg_followersonly: "followers-only chat",
+    msg_subsonly: "subscriber-only chat",
+    msg_slowmode: "slow mode",
+    msg_emoteonly: "emote-only chat",
+    msg_verified_email: "the bot account needs a verified email",
+    empty: "nothing to send",
+  }),
+);
 export function botDropText(reason: string | null | undefined): string {
   reason = String(reason || "");
-  if (DROP_TEXT[reason]) return DROP_TEXT[reason] + " (" + reason + ")";
+  const text = DROP_TEXT.get(reason);
+  if (text) return text + " (" + reason + ")";
   const status = /\((\d{3})\)/.exec(reason)?.[1];
   if (status === "401") return "Twitch didn't accept the app token (401)";
   if (status === "403")

@@ -1,6 +1,6 @@
-// Custom character uploader (Lane D). Browser only; no build step needed (served as-is from public/).
+// Custom character uploader (Lane D). Browser only; vite.config.ts (servedBuild) serves it as /upload.js.
 //
-// Mount API, used by the /admin page (src/admin.js):
+// Mount API, used by the /admin page (src/admin.ts):
 //   const { mountUpload } = await import('/upload.js');
 //   const handle = await mountUpload(root, { channel, usage, limits, items, refresh });
 //     root     Element to render into (its children are replaced).

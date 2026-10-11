@@ -244,8 +244,11 @@ export const BOT_SCOPES = ["user:read:chat", "user:write:chat", "user:bot"];
 export function configured(env: Env): boolean {
   return !!(env.TWITCH_CLIENT_ID && env.TWITCH_CLIENT_SECRET && env.AUTH_SECRET && env.INTERNAL_SECRET);
 }
+// The raw mini_session cookie, matched at a cookie-name boundary so a cookie such as xmini_session isn't read as it.
+const sessionCookie = (request: Request) =>
+  request.headers.get("Cookie")?.match(/(?:^|;\s*)mini_session=([a-f0-9]{64})(?:;|$)/)?.[1];
 export async function session(request: Request, env: Env): Promise<Session | null> {
-  const raw = request.headers.get("Cookie")?.match(/(?:^|;\s*)mini_session=([a-f0-9]{64})(?:;|$)/)?.[1];
+  const raw = sessionCookie(request);
   return raw ? record<Session | null>(env, "session:" + (await digest(raw))) : null;
 }
 export async function isOwner(env: Env, user: TwitchUser | null | undefined): Promise<boolean> {
@@ -271,7 +274,7 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
     path = url.pathname;
   if (path === "/auth/logout") {
     if (request.method !== "POST") return new Response("Use POST", { status: 405 });
-    const raw = request.headers.get("Cookie")?.match(/mini_session=([a-f0-9]{64})/)?.[1];
+    const raw = sessionCookie(request);
     if (raw) await record(env, "session:" + (await digest(raw)), null);
     // the page reloads itself, so signing out stays on the same page and channel
     return Response.json({ ok: true }, { headers: { "Set-Cookie": cookie("mini_session", "", 0) } });

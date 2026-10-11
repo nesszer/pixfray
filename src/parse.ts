@@ -42,6 +42,9 @@ export function parseAnswer<T>(
   return { ok: false, status: r.status, data: { error: UNREADABLE } };
 }
 
+/** An answer the server accepted (2xx) whose body this page couldn't read, so the write it answers may have gone through. */
+export const acceptedUnreadable = (r: Answer<unknown>): boolean => !r.ok && r.status >= 200 && r.status < 300;
+
 // ---------- field checks ----------
 
 type Check = (v: unknown) => boolean;

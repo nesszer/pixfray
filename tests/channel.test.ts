@@ -426,7 +426,7 @@ test("the hourly alarm re-checks the Helix subscription and disconnects only on 
     return helix();
   });
   await r.connectChat();
-  assert.ok((r.ctx.storage.alarm ?? 0) <= Date.now() + 3_600_000 + 50, "the check is scheduled at most an hour out");
+  assert.ok(must(r.ctx.storage.alarm) <= Date.now() + 3_600_000 + 50, "the check is scheduled at most an hour out");
   await r.alarm();
   assert.equal(calls.length, 0, "not due yet: no Helix call");
   const age = () => {
@@ -474,7 +474,7 @@ test("a subscription stuck awaiting verification is re-checked within minutes an
   );
   await r.connectChat("sub-1", "webhook_callback_verification_pending");
   assert.ok(
-    (r.ctx.storage.alarm ?? 0) <= Date.now() + 5 * 60_000,
+    must(r.ctx.storage.alarm) <= Date.now() + 5 * 60_000,
     "a pending subscription is checked within minutes, not an hour",
   );
   const age = () => {
@@ -2415,7 +2415,7 @@ test("chat bot reminder: off by default; on, it posts the !fray line as the bot 
     const due = r.reminderDue(r.readState("nesszerra"));
     assert.ok(due > Date.now() + 29 * 60000 && due <= Date.now() + 30 * 60000, "first one a full interval out");
     await r.scheduleAlarm(r.readState("nesszerra"));
-    assert.ok((r.ctx.storage.alarm ?? 0) <= due);
+    assert.ok(must(r.ctx.storage.alarm) <= due);
     // Offline: nothing posted, and it waits another interval.
     await r.call("/dev-live", { method: "POST", body: { live: false } });
     await r.postReminder("nesszerra", due);
@@ -2490,7 +2490,7 @@ test("chat bot: after the stream has played a duel, the bot says who won and the
     const duel = must(r.readState("nesszerra").duels.find((d) => d.status === "completed")) as Revealed;
     assert.ok(duel.revealAt > Date.now());
     await r.scheduleAlarm(r.readState("nesszerra"));
-    assert.ok((r.ctx.storage.alarm ?? 0) <= duel.revealAt + 1, "the alarm wakes for the reveal");
+    assert.ok(must(r.ctx.storage.alarm) <= duel.revealAt + 1, "the alarm wakes for the reveal");
     await r.alarm();
     assert.equal(tw.sent.length, 0, "nothing before the stream has shown it");
     const s = r.readState("nesszerra");
@@ -2548,7 +2548,7 @@ test("chat bot: a result line survives a full reply cap, a Twitch outage, a miss
     await duel();
     await r.alarm();
     assert.equal(results(), 1);
-    assert.ok((r.ctx.storage.alarm ?? 0) <= Date.now() + 5000, "retried soon");
+    assert.ok(must(r.ctx.storage.alarm) <= Date.now() + 5000, "retried soon");
     tw.down = false;
     await r.alarm();
     assert.equal(results(), 2);

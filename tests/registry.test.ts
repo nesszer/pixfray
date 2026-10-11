@@ -113,6 +113,8 @@ function twitch(t: TestContext, as: Account, scopes: string[]) {
     if (u.endsWith("/oauth2/validate")) return Response.json({ client_id: "test-app", user_id: as.id, scopes });
     if (u.includes("login=nesszerra"))
       return Response.json({ data: [{ id: "1", login: "nesszerra", display_name: "nesszerra" }] });
+    // nobody here is a channel mod: the access checks in these tests turn on who owns the channel
+    if (u.includes("/helix/moderation/moderators")) return Response.json({ data: [] });
     if (u.includes("/helix/videos"))
       return as.videos === "fail"
         ? new Response("", { status: 503 })
