@@ -259,6 +259,12 @@ test("deploy workflow keeps the Cloudflare token out of check and deploys the co
   assert.deepEqual(release.steps.filter(restoresCache), [], "release restores no cache check or CI could write");
 });
 
+test("deploy workflow runs rollbacks only from the base branch, before any checkout", () => {
+  const { rollback } = loadYaml(".github/workflows/deploy.yml").jobs;
+  assert.equal(rollback.env.REF_NAME, "${{ github.ref_name }}");
+  assert.match(rollback.steps[0].run, /\[ "\$REF_NAME" = "\$BASE_BRANCH" \] \|\| \{[^}]*exit 1; \}/);
+});
+
 test("CI workflow checks every push to main, scans for secrets and never sees secrets", () => {
   const wf = loadYaml(".github/workflows/ci.yml");
   const on = wf.on;

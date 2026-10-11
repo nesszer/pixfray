@@ -169,7 +169,12 @@ jobs:
       TARGET: ${{ inputs.target }}
       VERSION_ID: ${{ inputs.version_id }}
       REASON: ${{ inputs.reason }}
+      REF_NAME: ${{ github.ref_name }}
     steps:
+      - name: Check rollbacks run from the base branch
+        run: |
+          [ "$REF_NAME" = "$BASE_BRANCH" ] || { echo "::error::Rollbacks run from $BASE_BRANCH, not $REF_NAME"; exit 1; }
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
