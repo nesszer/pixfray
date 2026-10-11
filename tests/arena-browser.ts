@@ -1,23 +1,83 @@
 // Overlay arena client against stubbed sockets: contract-shaped snapshots and events (docs/CONTRACTS.md section 3),
 // event dedupe, stale revisions, reconnect, transparent drawing and the local-only demo duel.
-// Usage: MINI_BASE_URL=http://127.0.0.1:5199 node tests/arena-browser.mjs
+// Usage: MINI_BASE_URL=http://127.0.0.1:5199 node tests/arena-browser.ts
 import { chromium } from "@playwright/test";
 import assert from "node:assert/strict";
 import { enforceCsp } from "./csp-helper.ts";
-import { chromeOptions } from "./chrome.mjs";
+import { chromeOptions } from "./chrome.ts";
+import type { Loose } from "./fakes.ts";
+
+/** The stub socket the init script puts in place of WebSocket; tests push frames through its handlers. */
+type FakeSocket = {
+  url: string;
+  readyState: number;
+  sent: unknown[];
+  onopen?: () => void;
+  onclose?: () => void;
+  onmessage?: (event: { data: string }) => void;
+  send(value: unknown): void;
+  close(): void;
+};
+// Loose: a fighter, duel or replay row from the overlay's ?debug=1 snapshot (src/served/overlay.ts); the test finds rows
+// and reads whichever fields it asserts on.
+type ArenaRow = Loose;
+/** One fighter's Elo change in a duel's ratings. */
+type Rating = { before: number; after: number; delta: number };
+/** The overlay's ?debug=1 snapshot, as far as this test reads it. */
+type ArenaDebug = {
+  revision: number;
+  profiles: number;
+  announce: string;
+  build: string;
+  cap: number;
+  staleBuild: boolean;
+  players: ArenaRow[];
+  duels: ArenaRow[];
+  replays: ArenaRow[];
+  results: { text: string }[];
+  banners: string[];
+  announcement: string;
+  meets: number[];
+  fx: string;
+  sparks: number;
+  glows: number;
+  push: boolean;
+};
+/**
+ * The page globals this test reads in browser callbacks: the hooks its init scripts add and the overlay's ?debug=1
+ * hooks. It shadows lib.dom's window in this module only; the overlay defines __arenaDebug by the time the test calls
+ * it without `?.` (the waits use `?.` while the page loads).
+ */
+type ArenaWindow = {
+  __arenaSockets: FakeSocket[];
+  __chatSockets: FakeSocket[];
+  __sendArena(index: number, payload: unknown): void;
+  __sendIrc(message: string): void;
+  __arenaDebug: () => ArenaDebug;
+  __arenaMove(userId: string, x: number): void;
+  __stageFilters: string[];
+  WebSocket: unknown; // replaced by the init script's FakeWebSocket
+};
+declare const window: ArenaWindow;
 
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const browser = await chromium.launch(chromeOptions());
-const errors = [];
-const apiReads = [];
+const errors: string[] = [];
+const apiReads: { path: string; method: string }[] = [];
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   await enforceCsp(context);
   await context.addInitScript(() => {
     window.__arenaSockets = [];
     window.__chatSockets = [];
-    class FakeWebSocket {
-      constructor(url) {
+    class FakeWebSocket implements FakeSocket {
+      declare url: string;
+      declare readyState: number;
+      declare sent: unknown[];
+      declare onopen?: () => void;
+      declare onclose?: () => void;
+      declare onmessage?: (event: { data: string }) => void;
+      constructor(url: string | URL) {
         this.url = String(url);
         this.readyState = 0;
         this.sent = [];
@@ -27,7 +87,7 @@ try {
           this.onopen?.();
         }, 0);
       }
-      send(value) {
+      send(value: unknown) {
         this.sent.push(value);
       }
       close() {
@@ -293,10 +353,12 @@ try {
   await page
     .waitForFunction(
       () => {
-        const c = document.querySelector("#stage"),
-          d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        // !: the overlay page always has the #stage canvas with a 2d context
+        const c = document.querySelector<HTMLCanvasElement>("#stage")!,
+          d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data; // !: a canvas gives a 2d context
         let painted = 0;
-        for (let i = 3; i < d.length; i += 4) if (d[i] > 0 && ++painted > 500) return true;
+        // !: i stays below the pixel data's length
+        for (let i = 3; i < d.length; i += 4) if (d[i]! > 0 && ++painted > 500) return true;
         return false;
       },
       null,
@@ -304,11 +366,13 @@ try {
     )
     .catch(() => {});
   const canvas = await page.evaluate(() => {
-    const canvas = document.querySelector("#stage");
-    const ctx = canvas.getContext("2d");
+    // !: the overlay page always has the #stage canvas with a 2d context
+    const canvas = document.querySelector<HTMLCanvasElement>("#stage")!;
+    const ctx = canvas.getContext("2d")!; // !: a canvas gives a 2d context
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     let painted = 0;
-    for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) painted++;
+    // !: i stays below the pixel data's length
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i]! > 0) painted++;
     return {
       width: canvas.width,
       height: canvas.height,
@@ -321,7 +385,7 @@ try {
   assert.equal(canvas.background, "rgba(0, 0, 0, 0)");
   assert.ok(canvas.painted > 500, "ranked characters and arena bars render onto a transparent canvas");
 
-  await page.evaluate(() => window.__arenaSockets[0].close());
+  await page.evaluate(() => window.__arenaSockets[0]!.close()); // !: the wait above saw this page's one arena socket
   await page.waitForFunction(() => window.__arenaSockets.length === 2, null, { timeout: 6000 });
   await page.evaluate(() =>
     window.__sendArena(1, {
@@ -371,7 +435,7 @@ try {
   assert.equal((await page.evaluate(() => window.__arenaDebug())).duels.find((x) => x.id === "duel-2").hp["101"], 41);
   assert.ok(apiReads.some((item) => item.path === "/api/state/nesszerra" && item.method === "GET"));
   assert.ok(apiReads.some((item) => item.path === "/api/catalog/nesszerra" && item.method === "GET"));
-  assert.deepEqual(errors, []);
+  assert.deepEqual<string[]>(errors, []);
   await page.close();
 
   // A quick duel is finished on the server before the overlay hears of it: the overlay replays it with HP bars
@@ -676,7 +740,7 @@ try {
   await crowd.waitForTimeout(3000);
   const c = await crowd.evaluate(() => window.__arenaDebug());
   const cy = c.players.find((p) => p.userId === "303").x,
-    meet = c.meets[0];
+    meet = c.meets[0]!; // !: the duel started above has a meeting point
   // fighters stand 95 px either side of the meeting point; nameplates are 20px bold text, so 'Aria Prime · 1720'
   // and 'Cy · 1000' need well over 64 px between their centers
   assert.ok(
@@ -695,7 +759,7 @@ try {
     if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text()))
       errors.push("CSP: " + m.text());
   });
-  const lookReads = [];
+  const lookReads: (string | null)[] = [];
   await looksPage.route("**/api/state/**", (route) =>
     route.fulfill({
       status: 200,
@@ -726,9 +790,9 @@ try {
   await looksPage.goto(base + "/overlay.html?arena=1&debug=1&cap=8&size=64");
   await looksPage.waitForFunction(() => window.__arenaSockets.length === 1 && window.__chatSockets.length === 1);
   const irc = (
-    login,
-    id,
-    text,
+    login: string,
+    id: string,
+    text: string,
   ) => `@id=${login}-${text.length};user-id=${id};display-name=${login};color=#ff0000 :${login}!${login}@${login}.tmi.twitch.tv PRIVMSG #nesszerra :${text}
 `;
   await looksPage.evaluate(
@@ -830,7 +894,7 @@ try {
     if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text()))
       errors.push("CSP: " + m.text());
   });
-  const demoApiReads = [];
+  const demoApiReads: string[] = [];
   await demoPage.route("**/api/**", async (route) => {
     demoApiReads.push(route.request().method() + " " + new URL(route.request().url()).pathname);
     await route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
@@ -838,19 +902,22 @@ try {
   // The stage canvas never draws with ctx.filter: a filter pass over the whole 1920x1080 canvas hitched the stream on hits.
   await demoPage.addInitScript(() => {
     window.__stageFilters = [];
-    const set = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, "filter").set;
+    // !: lib.dom's CanvasRenderingContext2D.prototype has the filter accessor with a getter and a setter (also below)
+    const set = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, "filter")!.set!;
     Object.defineProperty(CanvasRenderingContext2D.prototype, "filter", {
-      set(v) {
+      set(this: CanvasRenderingContext2D, v: string) {
         if (this.canvas.isConnected && v !== "none") window.__stageFilters.push(v);
         set.call(this, v);
       },
-      get: Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, "filter").get,
+      // !: filter is an accessor on the 2d context prototype
+      get: Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, "filter")!.get!,
     });
   });
   await demoPage.goto(base + "/overlay.html?arena=1&demo=1&debug=1");
-  await demoPage.waitForFunction(() => document.querySelector("#arena-mode")?.textContent.includes("not saved"));
+  // !: an element's textContent is a string; lib.dom types it nullable for documents and doctypes
+  await demoPage.waitForFunction(() => document.querySelector("#arena-mode")?.textContent!.includes("not saved"));
   await demoPage.waitForFunction(() =>
-    window.__arenaDebug?.().duels.some((duel) => Object.values(duel.hp || {}).some((hp) => hp < 100)),
+    window.__arenaDebug?.().duels.some((duel) => Object.values<number>(duel.hp || {}).some((hp) => hp < 100)),
   );
   // The demo plays quick duels like the channel: dice above the fighters, then the result once the replay ends.
   await demoPage.waitForFunction(() => window.__arenaDebug?.().players.some((p) => p.die >= 1 && p.die <= 6), null, {
@@ -859,7 +926,7 @@ try {
   const demoDuel = await demoPage.evaluate(() => window.__arenaDebug().duels[0]);
   assert.equal(demoDuel.status, "completed", "a demo duel arrives settled, like a real !fight");
   assert.ok(
-    Object.values(demoDuel.ratings).every((r) => r.after - r.before === r.delta),
+    Object.values<Rating>(demoDuel.ratings).every((r) => r.after - r.before === r.delta),
     "demo ratings carry before, after and delta",
   );
   // Landed blows flash and throw sparks; the knockout pushes the view in.
@@ -907,7 +974,7 @@ try {
   );
   await flatPage.goto(base + "/overlay.html?arena=1&demo=1&debug=1&fx=off&bubbles=0");
   await flatPage.waitForFunction(
-    () => window.__arenaDebug?.().duels.some((duel) => Object.values(duel.hp || {}).some((hp) => hp < 100)),
+    () => window.__arenaDebug?.().duels.some((duel) => Object.values<number>(duel.hp || {}).some((hp) => hp < 100)),
     null,
     { timeout: 20000 },
   );

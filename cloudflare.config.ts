@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const testing = mode === "test";
   const environment = testing ? "test" : "production";
   const name = site.workers[environment];
-  // MINI_LOCAL_TEST=1 is only for `cf dev` in scripts/test-all.mjs: chat can then be marked connected without Twitch,
+  // MINI_LOCAL_TEST=1 is only for `cf dev` in scripts/test-all.ts: chat can then be marked connected without Twitch,
   // and PUBLIC_ORIGIN is the loopback dev server. It can never reach a build or a deploy.
   const localTest = process.env.MINI_LOCAL_TEST === "1";
   if (localTest && (testing || process.argv.some((a) => /^(build|deploy|publish|versions)$/.test(a))))
@@ -73,9 +73,9 @@ export default defineConfig(({ mode }) => {
         ...(localTest ? {} : { CHANNEL_ORIGINS: bindings.text(JSON.stringify(channelOrigins)) }),
         // The configured owner's Twitch user id (public, not a secret): owner access no longer depends on the owner record,
         // which expires 90 days after the last sign-in. Sign-in still refreshes that record. Not declared for the local
-        // test server, whose seeded sessions use their own owner id (tests/seed-local.mjs).
+        // test server, whose seeded sessions use their own owner id (tests/seed-local.ts).
         ...(localTest ? {} : { OWNER_TWITCH_ID: bindings.text(site.owner.twitchId) }),
-        // Test site only: owner access for scripts/devtools.mjs (docs/DEVTOOLS.md). Production never declares it.
+        // Test site only: owner access for scripts/devtools.ts (docs/DEVTOOLS.md). Production never declares it.
         ...(testing ? { DEV_TOOLS_TOKEN: bindings.secret() } : {}),
         // When configured, the PixFray bot reads and answers chat as BOT_LOGIN (signed in once at /auth/login?bot=1).
         // BOT_DEBUG: on test, the bot also plays (sparring partner, !fray spar, !fray e2e; server/channel.ts botDebug).

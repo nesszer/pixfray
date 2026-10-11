@@ -5,6 +5,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import siteConfig from "../site.config.js";
+import type { Duel, Snapshot } from "../server/model.ts";
+
+/** A test bot or the alt, as the devtools routes take a chatter. */
+type Who = { userId: string; username: string; displayName: string };
+/** ~/.pixfray/secrets.test.json, as far as devtools reads it. */
+type Secrets = { DEV_TOOLS_TOKEN?: string; TWITCH_CLIENT_ID?: string; TWITCH_CLIENT_SECRET?: string };
+/** The alt account's tokens, saved by `login`. */
+type Alt = { access_token: string; refresh_token: string; expires_at: number; user_id: string; login: string };
+/** A Twitch OAuth token answer (a 200); a refused one carries only `message`. */
+type TokenReply = { access_token: string; refresh_token: string; expires_in: number; message?: string };
+/** Helix answers list their results under `data`. */
+type HelixList<T> = { data?: T[] };
 
 // Real secrets stay outside the repo folder, in ~/.pixfray/ (docs/SELF_HOSTING.md).
 const SECRETS = process.env.MINI_SECRETS || path.join(os.homedir(), ".pixfray", "secrets.test.json"); // DEV_TOOLS_TOKEN, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
@@ -13,24 +25,28 @@ const BASE = (process.env.MINI_DEVTOOLS_BASE || siteConfig.origins.test).replace
 const BOT_LETTERS = "abcd";
 
 const argv = process.argv.slice(2);
-const flags = {},
-  args = [];
+const flags: Record<string, string | true> = {},
+  args: string[] = [];
+// The loop reads argv[i] for i < argv.length, argv[i + 1] after checking it, and the regex's first group, which
+// always matches: each `!` in the loop marks one of those.
 for (let i = 0; i < argv.length; i++) {
-  const m = /^--([a-z-]+)(?:=(.*))?$/.exec(argv[i]);
-  if (!m) args.push(argv[i]);
-  else if (m[2] !== undefined) flags[m[1]] = m[2];
-  else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith("--")) flags[m[1]] = argv[++i];
-  else flags[m[1]] = true;
+  const m = /^--([a-z-]+)(?:=(.*))?$/.exec(argv[i]!); // !: i < argv.length
+  if (!m) args.push(argv[i]!); // !: i < argv.length
+  else if (m[2] !== undefined) flags[m[1]!] = m[2];
+  // !: argv[i + 1] is checked first, and group 1 always matches
+  else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith("--")) flags[m[1]!] = argv[++i]!;
+  else flags[m[1]!] = true;
 }
 const command = args.shift() || "help";
 const CHANNEL = String(flags.channel || siteConfig.defaultChannel).toLowerCase();
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function fail(message) {
+function fail(message: string): never {
   console.error("devtools: " + message);
   process.exit(1);
 }
-function readJson(file) {
+// JSON.parse is typed any; T names the shape of the file the caller reads.
+function readJson<T>(file: string): T | null {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch {
@@ -38,7 +54,7 @@ function readJson(file) {
   }
 }
 function secrets() {
-  const s = readJson(SECRETS) || {};
+  const s = readJson<Secrets>(SECRETS) || {};
   return { ...s, DEV_TOOLS_TOKEN: process.env.DEV_TOOLS_TOKEN || s.DEV_TOOLS_TOKEN };
 }
 if (
@@ -50,7 +66,10 @@ if (
   fail("refusing to run against production; devtools are test-site only");
 
 // ---- test site API (dev token) ----
-async function site(pathname, { method = "GET", body } = {}) {
+async function site<T = unknown>(
+  pathname: string,
+  { method = "GET", body }: { method?: string; body?: unknown } = {},
+): Promise<T> {
   const token = secrets().DEV_TOOLS_TOKEN;
   if (!token) fail(`DEV_TOOLS_TOKEN not found in ${path.basename(SECRETS)} or the environment`);
   const res = await fetch(BASE + pathname, {
@@ -62,7 +81,7 @@ async function site(pathname, { method = "GET", body } = {}) {
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   const text = await res.text();
-  let data;
+  let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
@@ -72,39 +91,46 @@ async function site(pathname, { method = "GET", body } = {}) {
     fail(
       `${method} ${pathname} -> ${res.status} ${typeof data === "string" ? data.slice(0, 200) : JSON.stringify(data)}`,
     );
-  return data;
+  return data as T; // the route's JSON answer; each caller names the fields it reads
 }
-const bot = (letter) => ({
+const bot = (letter: string): Who => ({
   userId: "testbot:" + letter,
   username: "testbot_" + letter,
   displayName: "testbot_" + letter,
 });
-function botByName(name) {
+function botByName(name: string | true | undefined) {
   const m = /^(?:@?testbot_)?([a-d])$/i.exec(String(name || ""));
   if (!m) fail(`unknown bot "${name}"; use testbot_a … testbot_d`);
-  return bot(m[1].toLowerCase());
+  return bot(m[1]!.toLowerCase()); // the group is not optional, so a match has it
 }
 async function state() {
-  return site(`/api/state/${CHANNEL}`);
+  return site<Snapshot>(`/api/state/${CHANNEL}`);
 }
 
 // One chat line as a bot. --via chat (default) runs it through the room like a Twitch message;
 // --via se goes through the public StreamElements route, exactly as the StreamElements bot calls it.
-async function say(who, line, via = flags.via || "chat") {
+async function say(who: Who, line: string, via = flags.via || "chat") {
   if (via === "se") return seCall(who, line);
-  const r = await site(`/api/devtools/${CHANNEL}/chat`, { method: "POST", body: { ...who, text: line } });
+  const r = await site<{ reply?: string; reason?: string }>(`/api/devtools/${CHANNEL}/chat`, {
+    method: "POST",
+    body: { ...who, text: line },
+  });
   return r.reply || r.reason || "";
 }
-let seKey = null;
-async function seCall(who, line) {
+let seKey: string | null | undefined = null;
+async function seCall(who: Who, line: string) {
   const m = /^!(\w+)(?:\s+(\S+))?(?:\s+(\S+))?/.exec(line.trim());
   if (!m) fail(`not a command: ${line}`);
   if (!seKey) {
-    const admin = await site(`/api/admin/${CHANNEL}`);
+    const admin = await site<{ streamelements?: { key?: string } }>(`/api/admin/${CHANNEL}`);
     seKey = admin.streamelements?.key;
     if (!seKey) fail("StreamElements is not set up on the test site for " + CHANNEL + "; use --via chat");
   }
-  const action = { duel: "challenge", fight: "accept", pay: "give" }[m[1].toLowerCase()] || m[1].toLowerCase();
+  // a lookup by any command name (unknown ones miss and fall back); the first group always matches (`!` twice)
+  const action =
+    // as Record: unknown names miss; !: group 1 always matches
+    ({ duel: "challenge", fight: "accept", pay: "give" } as Record<string, string | undefined>)[m[1]!.toLowerCase()] ||
+    m[1]!.toLowerCase(); // !: group 1 always matches
   const q = new URLSearchParams({
     k: seKey,
     id: who.userId,
@@ -114,18 +140,20 @@ async function seCall(who, line) {
     ...(action === "give" ? { a: m[3] || "" } : {}),
     m: "devtools-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
   });
-  const res = await fetch(`${BASE}/api/se/${CHANNEL}/${action}?${q}`);
+  // the template turns q into its query string; restrict-template-expressions flags this URLSearchParams (from the
+  // Workers and Node types), so the cast names it a string
+  const res = await fetch(`${BASE}/api/se/${CHANNEL}/${action}?${q as unknown as string}`);
   return (await res.text()).trim();
 }
 
 async function seed() {
   const n = Math.max(2, Math.min(4, Number(flags.bots) || 2));
-  const catalog = await site(`/api/catalog/${CHANNEL}`);
+  const catalog = await site<{ id: string }[] | { characters?: { id: string }[] }>(`/api/catalog/${CHANNEL}`);
   const avatars = (Array.isArray(catalog) ? catalog : catalog.characters || []).map((c) => c.id);
   const colors = ["#4FA3FF", "#FF7A45", "#5AD17A", "#C77DFF"],
     abilities = ["strike", "heavy", "heal", "strike"];
   for (let i = 0; i < n; i++) {
-    const b = bot(BOT_LETTERS[i]);
+    const b = bot(BOT_LETTERS[i]!); // i < n <= 4, the length of BOT_LETTERS
     await site(`/api/devtools/${CHANNEL}/profile`, {
       method: "POST",
       body: {
@@ -164,7 +192,7 @@ async function live() {
     mode === "real"
       ? { live: null }
       : { live: mode === "on", ...(flags.stream ? { streamId: String(flags.stream) } : {}) };
-  const r = await site(`/api/devtools/${CHANNEL}/live`, { method: "POST", body });
+  const r = await site<{ live: boolean; streamId?: string }>(`/api/devtools/${CHANNEL}/live`, { method: "POST", body });
   console.log(
     mode === "real"
       ? `${CHANNEL}: live check goes to Twitch again`
@@ -187,20 +215,21 @@ async function show() {
 
 // ---- alt account: Twitch device code sign-in and chat ----
 const TWITCH_SCOPES = "user:write:chat";
-async function twitchForm(url, params) {
+async function twitchForm<T>(url: string, params: Record<string, string>) {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params),
   });
-  return { status: res.status, data: await res.json().catch(() => ({})) };
+  // T is the answer's shape on a 200; an answer that isn't JSON reads as {}, and callers check the status first
+  return { status: res.status, data: await res.json<T>().catch(() => ({}) as T) };
 }
 function twitchApp() {
   const s = secrets();
   if (!s.TWITCH_CLIENT_ID) fail(`TWITCH_CLIENT_ID not found in ${path.basename(SECRETS)}`);
   return { id: s.TWITCH_CLIENT_ID, secret: s.TWITCH_CLIENT_SECRET };
 }
-async function helix(pathname, token, init = {}) {
+async function helix<T>(pathname: string, token: string, init: { method?: string; body?: string } = {}) {
   const res = await fetch("https://api.twitch.tv/helix" + pathname, {
     ...init,
     headers: {
@@ -209,15 +238,22 @@ async function helix(pathname, token, init = {}) {
       ...(init.body ? { "Content-Type": "application/json" } : {}),
     },
   });
-  return { status: res.status, data: await res.json().catch(() => ({})) };
+  // T is the answer's shape on a 200; an answer that isn't JSON reads as {}, and callers check the status first
+  return { status: res.status, data: await res.json<T>().catch(() => ({}) as T) };
 }
-function saveAlt(alt) {
+function saveAlt(alt: Alt) {
   fs.writeFileSync(ALT_FILE, JSON.stringify({ alt }, null, 2) + "\n");
 }
 
 async function login() {
   const app = twitchApp();
-  const start = await twitchForm("https://id.twitch.tv/oauth2/device", { client_id: app.id, scopes: TWITCH_SCOPES });
+  const start = await twitchForm<{
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    interval?: number;
+    expires_in?: number;
+  }>("https://id.twitch.tv/oauth2/device", { client_id: app.id, scopes: TWITCH_SCOPES });
   if (start.status !== 200) fail("device code request failed: " + JSON.stringify(start.data));
   const { device_code, user_code, verification_uri, interval = 5, expires_in = 1800 } = start.data;
   console.log(`Sign in with the ALT account (not your main):\n  ${verification_uri}\n  code: ${user_code}\nWaiting…`);
@@ -230,11 +266,12 @@ async function login() {
       scopes: TWITCH_SCOPES,
       device_code,
       grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-      ...(withSecret ? { client_secret: app.secret } : {}),
+      // withSecret turns on only when app.secret is set (below)
+      ...(withSecret ? { client_secret: app.secret! } : {}),
     };
-    const r = await twitchForm("https://id.twitch.tv/oauth2/token", params);
+    const r = await twitchForm<TokenReply>("https://id.twitch.tv/oauth2/token", params);
     if (r.status === 200) {
-      const me = await helix("/users", r.data.access_token);
+      const me = await helix<HelixList<{ id: string; login: string }>>("/users", r.data.access_token);
       const user = me.data.data?.[0];
       if (!user) fail("signed in, but could not read the account");
       saveAlt({
@@ -259,22 +296,22 @@ async function login() {
 }
 
 // This script's path for the messages that tell how to run it, as its own literal so a rename can follow it.
-const SELF = "scripts/devtools.mjs";
+const SELF = "scripts/devtools.ts";
 
 async function altToken() {
-  const file = readJson(ALT_FILE);
+  const file = readJson<{ alt?: Alt }>(ALT_FILE);
   if (!file?.alt) fail("no alt account yet; run `node " + SELF + " login` first");
   const alt = file.alt;
   if (alt.expires_at - Date.now() > 60_000) return alt;
   const app = twitchApp();
-  const r = await twitchForm("https://id.twitch.tv/oauth2/token", {
+  const r = await twitchForm<TokenReply>("https://id.twitch.tv/oauth2/token", {
     client_id: app.id,
     ...(app.secret ? { client_secret: app.secret } : {}),
     grant_type: "refresh_token",
     refresh_token: alt.refresh_token,
   });
   if (r.status !== 200) fail("refreshing the alt token failed (" + (r.data.message || r.status) + "); run login again");
-  const next = {
+  const next: Alt = {
     ...alt,
     access_token: r.data.access_token,
     refresh_token: r.data.refresh_token || alt.refresh_token,
@@ -285,21 +322,21 @@ async function altToken() {
 }
 
 // Refuses unless Twitch confirms the channel is offline; an unreadable answer counts as live.
-async function ensureOffline(token) {
-  const r = await helix("/streams?user_login=" + CHANNEL, token);
+async function ensureOffline(token: string) {
+  const r = await helix<HelixList<unknown>>("/streams?user_login=" + CHANNEL, token);
   if (r.status !== 200 || !Array.isArray(r.data.data))
     fail(`could not confirm ${CHANNEL} is offline (${r.status}); not posting`);
   if (r.data.data.length) fail(`${CHANNEL} is live; devtools never post in chat during a stream`);
 }
 
-async function chat(line) {
+async function chat(line: string) {
   if (!line) fail("usage: chat <message>");
   const alt = await altToken();
   await ensureOffline(alt.access_token);
-  const ch = await helix("/users?login=" + CHANNEL, alt.access_token);
+  const ch = await helix<HelixList<{ id: string }>>("/users?login=" + CHANNEL, alt.access_token);
   const broadcaster = ch.data.data?.[0]?.id;
   if (!broadcaster) fail("channel not found: " + CHANNEL);
-  const r = await helix("/chat/messages", alt.access_token, {
+  const r = await helix<HelixList<{ is_sent: boolean; drop_reason?: unknown }>>("/chat/messages", alt.access_token, {
     method: "POST",
     body: JSON.stringify({ broadcaster_id: broadcaster, sender_id: alt.user_id, message: line }),
   });
@@ -310,7 +347,7 @@ async function chat(line) {
 }
 
 async function altProfile() {
-  const alt = (readJson(ALT_FILE) || {}).alt;
+  const alt = (readJson<{ alt?: Alt }>(ALT_FILE) || {}).alt;
   if (!alt) fail("no alt account yet; run login first");
   await site(`/api/devtools/${CHANNEL}/profile`, {
     method: "POST",
@@ -330,12 +367,12 @@ async function altProfile() {
 // then the bot answers through the same StreamElements route (bots cannot type in Twitch chat).
 async function realDuel() {
   const target = botByName(flags.bot || "a");
-  const alt = (readJson(ALT_FILE) || {}).alt;
+  const alt = (readJson<{ alt?: Alt }>(ALT_FILE) || {}).alt;
   if (!alt) fail("no alt account yet; run login first");
   const before = await state();
   if (!before.players.some((p) => p.userId === target.userId)) await say(target, "hi", "chat");
   await chat("!challenge @" + target.username);
-  let pending = null;
+  let pending: Duel | null | undefined = null;
   for (let i = 0; i < 20 && !pending; i++) {
     await sleep(1000);
     const s = await state();
@@ -370,7 +407,7 @@ Alt account in real Twitch chat (posts only while the channel is offline)
   chat <message>              send one message as the alt
   real-duel [--bot a]         alt challenges a bot in chat; the bot answers via StreamElements`;
 
-const commands = {
+const commands: Record<string, () => Promise<unknown>> = {
   seed,
   clean,
   duel,
@@ -378,17 +415,23 @@ const commands = {
   state: show,
   buy: async () => {
     const b = botByName(args[0]);
-    const r = await site(`/api/devtools/${CHANNEL}/shop`, {
-      method: "POST",
-      body: { ...b, kind: args[1], id: args[2] || "" },
-    });
+    const r = await site<{ reason: string; kind?: string; id?: string; dollars: number }>(
+      `/api/devtools/${CHANNEL}/shop`,
+      {
+        method: "POST",
+        body: { ...b, kind: args[1], id: args[2] || "" },
+      },
+    );
     console.log(`${b.username}: ${r.reason} ${r.kind || args[1]} ${r.id || args[2]} -> $${r.dollars}`);
   },
   equip: async () => {
     const b = botByName(args[0]),
       p = (await state()).players.find((x) => x.userId === b.userId);
     if (!p) fail(b.username + " is not in the arena; run seed first");
-    const r = await site(`/api/devtools/${CHANNEL}/profile`, {
+    const r = await site<{
+      error?: string;
+      profile?: { pet?: string; petTier?: string; build?: number; [field: string]: string | number | undefined };
+    }>(`/api/devtools/${CHANNEL}/profile`, {
       method: "POST",
       body: {
         ...b,
@@ -409,13 +452,14 @@ const commands = {
       `${b.username}: pet ${r.profile?.pet || "none"} (${r.profile?.petTier || "-"})` +
         ["recolor", "petColor", "accessory", "trail", "winEffect", "taunt", "title"]
           .filter((k) => r.profile?.[k])
-          .map((k) => ` ${k}=${r.profile[k]}`)
+          // the filter above kept only fields r.profile has, so it is set here
+          .map((k) => ` ${k}=${r.profile![k]}`)
           .join("") +
         ` build=${r.profile?.build ?? 0}`,
     );
   },
   gift: async () => {
-    const r = await site(`/api/admin/${CHANNEL}`, {
+    const r = await site<{ username: string; amount: number; dollars: number }>(`/api/admin/${CHANNEL}`, {
       method: "POST",
       body: { action: "giftDollars", payload: { username: botByName(args[0]).username, amount: Number(args[1]) } },
     });
@@ -435,4 +479,4 @@ if (!commands[command]) {
   console.log(usage);
   process.exit(1);
 }
-await commands[command]();
+await commands[command]!(); // checked above: unknown commands exit

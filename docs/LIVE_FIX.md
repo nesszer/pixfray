@@ -104,7 +104,7 @@ rules apply to them. `check` has no environment, so its checks run before anyone
   Do the same for any release that adds a Durable Object migration. Version uploads can't apply
   DO migrations, so the workflow isn't the right tool for those.
 - `AUTH_SECRET`, `INTERNAL_SECRET` and the Twitch secrets must already be set on each Worker.
-  `scripts/release.mjs` checks that the uploaded version has `AUTH_SECRET` and `INTERNAL_SECRET`,
+  `scripts/release.ts` checks that the uploaded version has `AUTH_SECRET` and `INTERNAL_SECRET`,
   and refuses to move traffic if either is missing.
 - `.github/workflows/ci.yml` runs on pull requests to `main` and on pushes to `main`, `live-fix/`,
   `hotfix/` and `port/` branches: `bun run check`, `bun run test:port`, `bun run port-check` (on
@@ -134,10 +134,10 @@ rules apply to them. `check` has no environment, so its checks run before anyone
   SHA passes from `check` to it. That install runs the committed `package.json`'s lifecycle scripts before the token step, so a script added
   by a push from outside the editor could change the Cloudflare CLI before the upload step runs.
 - `rollback` refuses to run unless it was dispatched on the base branch, then checks out `github.sha`, the base
-  branch's head. So `scripts/release.mjs` from another ref never runs with the token through a rollback.
+  branch's head. So `scripts/release.ts` from another ref never runs with the token through a rollback.
 - Code on a `live-fix/` or `hotfix/` branch, such as a lint plugin in `.oxlintrc.json`, runs in `check` without
   secrets, so it can't reach the token. The commit that `release` deploys is still that branch's code:
-  `scripts/release.mjs` and the Cloudflare CLI run from it while the token is set. The token is scoped to Workers
+  `scripts/release.ts` and the Cloudflare CLI run from it while the token is set. The token is scoped to Workers
   Scripts Edit only, and the editor refuses the files those scripts read, so a branch can change them only with a push
   from outside the editor.
 - Workflow inputs reach shell steps only through `env`, never through `${{ }}` inside `run:`. The `check` job checks

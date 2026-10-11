@@ -62,6 +62,16 @@
     "tests/site-config.test.ts",
     "tests/upload.test.ts",
     "tests/worker.test.ts",
-    "tests/parse.test.ts"
+    "tests/parse.test.ts",
+    "vite.config.ts",
+    "scripts/install-hooks.ts",
+    "scripts/release.ts",
+    "scripts/devtools.ts",
+    "scripts/test-all.ts",
+    "tests/chrome.ts",
+    "tests/seed-local.ts",
+    "tests/build-versions.ts",
+    "tests/upload-workerd.ts",
+    "tests/port/port-check.test.ts"
   ]
 }

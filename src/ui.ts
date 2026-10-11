@@ -3,7 +3,7 @@
 // Without it the viewer page asks which stream the viewer watches (CHANNEL_PICKED false); the admin page uses the default.
 import site from "../site.config.js";
 import { channelParam } from "./channel-param.ts";
-// The pages' HTML names the default channel (%SITE_CHANNEL%, vite.config.js); applyChannel swaps it for the current one.
+// The pages' HTML names the default channel (%SITE_CHANNEL%, vite.config.ts); applyChannel swaps it for the current one.
 const TEMPLATE_CHANNEL = site.defaultChannel;
 const raw = new URLSearchParams(location.search).get("channel");
 const asked = channelParam(raw);
@@ -266,7 +266,7 @@ export const framesFor = (entry: Entry | null | undefined, anim: string) => {
         : a[anim] || a.idle || entry?.frames;
   return Array.isArray(list) && list.length ? list : [];
 };
-// Hats are drawn by src/served/hats.ts, the same module the overlay uses. It is served as /hats.js (vite.config.js),
+// Hats are drawn by src/served/hats.ts, the same module the overlay uses. It is served as /hats.js (vite.config.ts),
 // not bundled, so it loads at runtime.
 let hats: any = null; // src/served/hats.ts, loaded at runtime from its URL, so no types reach here
 const HATS_URL = new URL("/hats.js", location.href).href; // a full URL, so Vite leaves the import alone

@@ -42,7 +42,7 @@ It is not wrangler: never `wrangler deploy` or `--env`.
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
 - **Strict TypeScript.** New and ported code is `.ts` with `.ts` imports. A port PR changes no runtime code
   (`bun run port-check`). Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
-- **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.mjs`. Don't set `HEADLESS=1`.
+- **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.ts`. Don't set `HEADLESS=1`.
 - **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in
   `public/dashboard.css` (tokens, classes, one gold accent, lock-on selection) and the patterns reviews keep catching.
   Claude Code loads it here: @DESIGN.md
@@ -98,8 +98,8 @@ Each one has happened here. Check for it by name before calling work done.
 [Code]|server/: worker.ts routes, auth glue|channel.ts ChannelRoom DO (state, bot commands, alarms, broadcast)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|upgrades.ts pets.ts cosmetics.ts
 |src/: admin.ts mod page|dashboard.ts channel page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts|fighter3d.ts voxthumb.ts
 |src/served/: overlay.ts|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
-|tests/: *.test.ts unit|fakes.ts doubles|port/ port tools|smoke.mjs|ui.mjs arena-browser.mjs|e2e-local.mjs|chrome.mjs
-|scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.mjs|release.mjs|live-chat-e2e.mjs|test-all.mjs|configure-twitch.ps1
+|tests/: *.test.ts unit|fakes.ts doubles|port/ port tools|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
+|scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
 ```
 
 ## Changing this file

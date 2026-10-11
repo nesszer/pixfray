@@ -1,6 +1,6 @@
 # Test-site devtools
 
-`scripts/devtools.mjs` drives the **test site** (staging.pixfray.xyz) from a terminal: bot fighters,
+`scripts/devtools.ts` drives the **test site** (staging.pixfray.xyz) from a terminal: bot fighters,
 scripted duels, and an alt account that types in real Twitch chat. Production has none of this.
 
 ## How it is locked down
@@ -31,19 +31,19 @@ Bots are profiles with ids `testbot:a` … `testbot:d` (logins `testbot_a` …).
 real Twitch ids, which are numeric.
 
 ```bash
-node scripts/devtools.mjs seed --bots 2
-node scripts/devtools.mjs duel a b
-node scripts/devtools.mjs duel a b --via se
-node scripts/devtools.mjs state
-node scripts/devtools.mjs live on
-node scripts/devtools.mjs say a "!checkin" --via se
-node scripts/devtools.mjs say a "!wallet"
-node scripts/devtools.mjs say a "!pay @testbot_b 10" --via se
-node scripts/devtools.mjs gift a 300
-node scripts/devtools.mjs buy a pet fox
-node scripts/devtools.mjs equip a fox
-node scripts/devtools.mjs say a "!pet" --via se
-node scripts/devtools.mjs clean
+node scripts/devtools.ts seed --bots 2
+node scripts/devtools.ts duel a b
+node scripts/devtools.ts duel a b --via se
+node scripts/devtools.ts state
+node scripts/devtools.ts live on
+node scripts/devtools.ts say a "!checkin" --via se
+node scripts/devtools.ts say a "!wallet"
+node scripts/devtools.ts say a "!pay @testbot_b 10" --via se
+node scripts/devtools.ts gift a 300
+node scripts/devtools.ts buy a pet fox
+node scripts/devtools.ts equip a fox
+node scripts/devtools.ts say a "!pet" --via se
+node scripts/devtools.ts clean
 ```
 
 - `--via chat` (default) feeds the line through the room the way a Twitch chat message arrives.
@@ -67,9 +67,9 @@ Use a second Twitch account, never the main one. It signs in once with a device 
 (outside the repo) and refreshed automatically.
 
 ```bash
-node scripts/devtools.mjs login
-node scripts/devtools.mjs alt-profile
-node scripts/devtools.mjs real-duel --bot a
+node scripts/devtools.ts login
+node scripts/devtools.ts alt-profile
+node scripts/devtools.ts real-duel --bot a
 ```
 
 - `login`: open the printed twitch.tv/activate link signed in as the alt, then enter the code.

@@ -1,4 +1,4 @@
-// The served modules step (scripts/lib/served.ts, vite.config.js): import rewriting, the one ?v= hash, and the
+// The served modules step (scripts/lib/served.ts, vite.config.ts): import rewriting, the one ?v= hash, and the
 // .js / .ts sources in src/served/.
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";

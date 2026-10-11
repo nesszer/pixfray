@@ -12,7 +12,7 @@ MIT) is separate from these asset licenses.
 The artwork of the 15 launch characters is unchanged. Only the atlas layout changed: each pose was copied
 into a single-row atlas, bottom-centre aligned in a fixed cell, so the frame rectangles in
 `public/assets/characters.json` line up. The 24 v3 characters are built the same way by
-`scripts/build-characters.mjs` (`bun run build:characters`), which also resizes where noted below: the pzUH
+`scripts/build-characters.ts` (`bun run build:characters`), which also resizes where noted below: the pzUH
 art is scaled down to about 104 px tall (area average), pixel art is scaled up by a whole number with
 nearest-neighbour (no blur), and smooth art is scaled up 2x with bilinear filtering. CC0 permits modification.
 The script reads the original archives (listed below with their SHA-256 in the script), so the build is
@@ -122,7 +122,7 @@ repeatable.
 
 - Author: pzUH, https://opengameart.org/users/pzuh; license CC0-1.0 (each page lists "License(s): CC0", checked 2026-10-02)
 - The archives hold only images. The license record is `public/assets/OGA_PZUH_LICENSE.txt`, written for this project (it is not a copy of a file from the archives).
-- Archives are fetched by `node scripts/build-characters.mjs --download` into `.asset-src/` (not committed) and checked against the SHA-256 in the script. Frames are taken from each archive's `png/` folder and scaled down to about 104 px tall (area average).
+- Archives are fetched by `node scripts/build-characters.ts --download` into `.asset-src/` (not committed) and checked against the SHA-256 in the script. Frames are taken from each archive's `png/` folder and scaled down to about 104 px tall (area average).
 
 | Catalog id | Label | File | Source page | Archive | Cell | Walk / idle / attack / ko frames | Combat |
 |---|---|---|---|---|---|---|---|
@@ -161,7 +161,7 @@ repeatable.
 
 - Author: Sogomn, https://opengameart.org/users/sogomn; license CC0-1.0 (the page lists "License(s): CC0", checked 2026-10-02)
 - The source is one 128 x 32 sprite sheet with four 32 x 32 walk frames. The license record is `public/assets/OGA_SOGOMN_LICENSE.txt`, written for this project.
-- `node scripts/build-characters.mjs --download` fetches the sheet into `.asset-src/` and checks its SHA-256. Frames are scaled up 4x with nearest neighbour (pixel art).
+- `node scripts/build-characters.ts --download` fetches the sheet into `.asset-src/` and checks its SHA-256. Frames are scaled up 4x with nearest neighbour (pixel art).
 
 | Catalog id | Label | File | Source page | Archive | Cell | Walk / idle / attack / ko frames | Combat |
 |---|---|---|---|---|---|---|---|

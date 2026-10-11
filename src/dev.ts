@@ -64,7 +64,7 @@ const SITE = (({ siteOwner, siteChannel, siteOrigin, siteTestOrigin }) => ({
   origin: siteOrigin,
   testOrigin: siteTestOrigin,
 }))(
-  // the page's <html> carries all four data-site-* attributes (vite.config.js fills them from site.config.js)
+  // the page's <html> carries all four data-site-* attributes (vite.config.ts fills them from site.config.js)
   document.documentElement.dataset as {
     siteOwner: string;
     siteChannel: string;

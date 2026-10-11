@@ -1,5 +1,6 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig } from "vite";
+import type { Plugin } from "vite";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import site from "./site.config.js";
@@ -20,9 +21,9 @@ const siteTokens = {
   name: "site-tokens",
   transformIndexHtml: {
     order: "pre",
-    handler: (html) => html.replace(/%(SITE_[A-Z_]+)%/g, (m, k) => SITE_TOKENS[k] ?? m),
+    handler: (html) => html.replace(/%(SITE_[A-Z_]+)%/g, (m, k: keyof typeof SITE_TOKENS) => SITE_TOKENS[k] ?? m),
   },
-};
+} satisfies Plugin;
 // The overlay and the other modules loaded by a fixed URL (/overlay.js, /hats.js, /upload.js, ...) live in src/served/
 // as .js or .ts and are served as plain JavaScript at the site root under the same names (scripts/lib/served.ts).
 // Their URLs never change between deploys and OBS's browser keeps running cached code after a reload, so the build
@@ -53,7 +54,7 @@ const servedDev = {
       }
     });
   },
-};
+} satisfies Plugin;
 const servedBuild = {
   name: "served-modules",
   apply: "build",
@@ -75,7 +76,7 @@ const servedBuild = {
       writeFileSync(file, linkServed(readFileSync(file, "utf8"), names, v));
     }
   },
-};
+} satisfies Plugin;
 export default defineConfig({
   // MINI_PERSIST points local DO/KV state at another folder (tests/e2e use .cloudflare/e2e-state so they never share a dev server's state).
   plugins: [

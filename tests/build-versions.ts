@@ -1,4 +1,4 @@
-// After `cf build`: the served modules (src/served/, vite.config.js served-modules) are at the output root under their
+// After `cf build`: the served modules (src/served/, vite.config.ts served-modules) are at the output root under their
 // URL names and load each other, and overlay.html loads the overlay, with ?v=<one 10-hex hash>, so OBS's browser never
 // keeps an old overlay module after a deploy. The overlay reloads itself when that hash changes (src/served/overlay.ts).
 import assert from "node:assert/strict";
@@ -10,13 +10,14 @@ const names = servedSources().map((m) => m.name);
 for (const name of ["overlay", "chat", "arena-client", "hats", "pets", "cosmetics", "atlas", "upload"])
   assert.ok(names.includes(name), `src/served/ holds ${name}`);
 const files = [...names.map((name) => name + ".js"), ...fs.readdirSync("public").filter((f) => f.endsWith(".html"))];
-const refs = [];
+const refs: { f: string; name: string; v: string | undefined }[] = [];
 for (const f of files) {
   assert.ok(fs.existsSync(path.join(out, f)), `${f} is in the build output`);
   const text = fs.readFileSync(path.join(out, f), "utf8");
   assert.doesNotMatch(text, /["']\.\/[\w-]+\.ts["']/, `${f} names no .ts module`);
   for (const [, name, v] of text.matchAll(/["']\.\/([\w-]+)\.js(?:\?v=([^"']*))?["']/g))
-    if (names.includes(name)) refs.push({ f, name, v });
+    // !: group 1 is not optional, so every match has it
+    if (names.includes(name!)) refs.push({ f, name: name!, v });
 }
 assert.ok(
   refs.some((r) => r.f === "overlay.html" && r.name === "overlay"),
@@ -36,4 +37,5 @@ assert.deepEqual(
   "every served module reference carries ?v=<10 lowercase hex>",
 );
 assert.equal(new Set(refs.map((r) => r.v)).size, 1, "one version for all modules, so each loads once");
-console.log(`PASS: ${refs.length} served module references carry ${refs[0].v}.`);
+// !: the overlay.html assert above passed, so refs has an entry
+console.log(`PASS: ${refs.length} served module references carry ${refs[0]!.v}.`);

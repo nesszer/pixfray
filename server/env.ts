@@ -18,7 +18,7 @@ export type Env = {
   CHAT_BOT?: string; // "1" when the PixFray bot is configured
   BOT_LOGIN?: string;
   BOT_DEBUG?: string; // test site only
-  MINI_LOCAL_TEST?: string; // cf dev under scripts/test-all.mjs only
+  MINI_LOCAL_TEST?: string; // cf dev under scripts/test-all.ts only
   SE_ONLY?: string; // test site: chat comes only from StreamElements
   CHANNEL_NAME?: string;
   GITHUB_TOKEN?: string;

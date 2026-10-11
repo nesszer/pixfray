@@ -1,4 +1,4 @@
-// Deploy flow: scripts/release.mjs logic against a fake Cloudflare API, and the workflow YAML files.
+// Deploy flow: scripts/release.ts logic against a fake Cloudflare API, and the workflow YAML files.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -11,20 +11,13 @@ import {
   missingSecrets,
   mainVersion,
   run,
-} from "../scripts/release.mjs";
+} from "../scripts/release.ts";
 import type { Loose } from "./fakes.ts";
 
 // The release script deploy.yml runs, as its own literal so a rename can follow it.
-const RELEASE = "scripts/release.mjs";
+const RELEASE = "scripts/release.ts";
 
-// scripts/release.mjs is untyped JavaScript; these are the shapes the tests read back from it.
-type ReleaseOpts = { command: string; target: string; tag: string; percentage: number; message: string };
-type RunResult = {
-  previous: string | null;
-  target?: string | null;
-  versionId?: string;
-  versions?: { version_id: string; percentage: number }[];
-};
+// The init api() in scripts/release.ts passes to the fake fetch.
 type FakeInit = { method?: string; body?: string; headers: Record<string, string> };
 // A workflow step and job as the YAML tests read them.
 type Step = {
@@ -59,16 +52,8 @@ test("release arguments are validated", () => {
     percentage: 100,
     message: "",
   });
-  assert.equal(
-    // parseArgs builds its result by key in untyped JS, so its inferred type lists only `command`
-    (parseArgs(["deploy", "--target", "production", "--percentage", "25"]) as ReleaseOpts).percentage,
-    25,
-  );
-  assert.equal(
-    // same untyped parseArgs result as above
-    (parseArgs(["deploy", "--target", "production", "--tag", "x".repeat(40)]) as ReleaseOpts).tag.length,
-    25,
-  );
+  assert.equal(parseArgs(["deploy", "--target", "production", "--percentage", "25"]).percentage, 25);
+  assert.equal(parseArgs(["deploy", "--target", "production", "--tag", "x".repeat(40)]).tag.length, 25);
   for (const argv of [
     [],
     ["ship", "--target", "test"],
@@ -100,7 +85,7 @@ test("deploy and rollback plans pick the right versions", () => {
   assert.deepEqual(planDeploy([], V(4), 10).versions, [{ version_id: V(4), percentage: 100 }]);
   assert.deepEqual(planRollback(deployments), { previous: V(3), target: V(2) });
   assert.deepEqual(planRollback(deployments, V(1)), { previous: V(3), target: V(1) });
-  assert.equal(planRollback([deployments[0]]).target, null);
+  assert.equal(planRollback([deployments[0]!]).target, null); // the fixture list has three entries
   assert.equal(
     findVersionByTag(
       [
@@ -153,7 +138,7 @@ test("deploy uploads, verifies secrets, then moves traffic on the right Worker",
   const cf = fakeCloudflare(),
     uploads: unknown[] = [],
     logs: string[] = [];
-  const result: RunResult = await run(
+  const result = await run(
     parseArgs([
       "deploy",
       "--target",
@@ -201,7 +186,7 @@ test("deploy refuses to move traffic to a version without the Worker secrets", a
 
 test("rollback points all traffic at the previous version; dry run changes nothing", async () => {
   const cf = fakeCloudflare();
-  const plan: RunResult = await run(parseArgs(["rollback", "--target", "production", "--message", "bad deploy"]), ENV, {
+  const plan = await run(parseArgs(["rollback", "--target", "production", "--message", "bad deploy"]), ENV, {
     fetch: cf.fetch,
     summary() {},
   });

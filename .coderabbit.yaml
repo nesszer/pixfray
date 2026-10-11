@@ -45,12 +45,12 @@ reviews:
         any, as cast or ! assertion without a reason in a comment on that line or the line above.
     - path: "tests/**"
       instructions: >-
-        node:test unit tests. Browser tests must use chromeOptions() from tests/chrome.mjs (headed, GPU flags),
+        node:test unit tests. Browser tests must use chromeOptions() from tests/chrome.ts (headed, GPU flags),
         never HEADLESS=1. Tests must not need real secrets or post in real Twitch chat.
     - path: ".github/workflows/**"
       instructions: >-
         Workflow inputs reach shell only through env, never ${{ }} inside run. CI must never see repository
-        secrets; only deploy.yml uses the Cloudflare token. Deploys go through scripts/release.mjs (never wrangler).
+        secrets; only deploy.yml uses the Cloudflare token. Deploys go through scripts/release.ts (never wrangler).
     - path: "docs/**"
       instructions: >-
         Check the docs still match the code in this pull request: routes, admin actions and config keys in
