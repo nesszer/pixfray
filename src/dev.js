@@ -552,7 +552,7 @@ $("#save-config").addEventListener("click", (e) =>
   }),
 );
 
-// ---------- channels (server/channels.js) ----------
+// ---------- channels (server/channels.ts) ----------
 async function loadChannels() {
   const r = await api("/api/dev/channels");
   if (!r.ok) return rows("#channels", [], errorText(r, "Channels unavailable"), 7);
@@ -614,7 +614,7 @@ function chatCell(p) {
   if (p.rejectedAt > p.lastCommandAt) return h("span", { class: "badge warning" }, "Old key: copy replies again");
   return p.commandsWorking + " of " + p.commands + " commands working";
 }
-// Why a sign-up waits for approval (server/channels.js reviewReasons).
+// Why a sign-up waits for approval (server/channels.ts reviewReasons).
 const REVIEW = {
   young: "Twitch account under 30 days old",
   never_streamed: "no past broadcast, not Affiliate or Partner",
