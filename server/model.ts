@@ -266,7 +266,12 @@ export type Swing = {
   die: number;
   outcome: "crit" | "hit" | "counter" | "miss";
   damage: number;
+  /** Luck turned a miss into a hit. */
   lucky?: true;
+  /** The crit stat turned a hit into a crit. */
+  luckyCrit?: true;
+  /** The defender's dodge turned a hit or crit into a miss (a counter may follow). */
+  dodged?: true;
 };
 
 export type RankSet = { userId: string; elo: number; wins: number; losses: number };

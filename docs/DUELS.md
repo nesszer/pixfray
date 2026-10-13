@@ -35,7 +35,19 @@ The duel is rolled at once, the moment the challenge is accepted.
 
 ## Upgrades, hats and check-ins
 
-- Each win earns an upgrade point (power, guard, luck) and unlocks hats. Points have no cap.
+- Each win earns an upgrade point and unlocks hats. Points have no cap. Points buy levels in six stats:
+
+  | Stat | Each level (levels 1-8) | Ceiling |
+  |---|---|---|
+  | Power | +4% damage dealt | 60% |
+  | Guard | -4% damage taken | 60% |
+  | Luck | 4% of your misses still hit | 50% |
+  | Crit | 4% of your hits become crits (HP fights: a strike or heavy deals +50%) | 50% |
+  | Dodge | 4% of hits and crits on you miss | 50% |
+  | Counter | +2% counter damage, and 2% of a foe's misses become your counter | 60% damage, 50% chance |
+
+- Luck, dodge and counter work in quick duels only. A swing checks luck, then crit, then dodge, then
+  counter, so a dodged hit can still turn into your counter.
 - Levels 1-8 of a stat cost 1 point each; the cost doubles every 8 levels after that, and each level
   adds less as the stat nears its ceiling. Mods set the highest level that counts on their channel
   (16 by default); levels above it stay saved.

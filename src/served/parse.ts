@@ -184,6 +184,8 @@ export type ArenaEvent = {
   ability?: string | undefined;
   amount?: number | undefined;
   crit?: boolean | undefined;
+  luckyCrit?: boolean | undefined;
+  dodged?: boolean | undefined;
   finisher?: boolean | undefined;
   winnerId?: string | undefined;
   loserId?: string | undefined;
@@ -212,7 +214,7 @@ const EVENT_STRINGS = [
   "reason",
 ] as const;
 const EVENT_NUMBERS = ["at", "round", "die", "amount", "respawnAt"] as const;
-const EVENT_BOOLEANS = ["counter", "miss", "crit", "finisher", "flawless"] as const;
+const EVENT_BOOLEANS = ["counter", "miss", "crit", "luckyCrit", "dodged", "finisher", "flawless"] as const;
 const isEvent = (v: unknown): v is ArenaEvent =>
   isObject(v) &&
   typeof v.type === "string" &&

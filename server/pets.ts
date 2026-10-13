@@ -6,7 +6,7 @@
 // GET    /api/pets/:channel/:id    public: an uploaded pet's PNG
 // POST   /api/pets/:channel        canManage: { label, tier, stat, stat2?, image:"<base64 PNG>" } -> 201 {ok, item}
 // DELETE /api/pets/:channel/:id    canManage -> {ok, id}; owners lose it and fighters using it go back to no pet
-import { STATS, emptyStats } from "./upgrades.ts";
+import { emptyStats } from "./upgrades.ts";
 import { readPng } from "./uploads.ts";
 import type { Stat, Stats } from "./upgrades.ts";
 import type { Config } from "./model.ts";
@@ -104,12 +104,14 @@ export const PRICE_KEYS: Record<string, keyof PetPriceConfig> = {
   epic: "petPriceEpic",
   legendary: "petPriceLegendary",
 };
+// Pets boost power, guard and luck only; crit, dodge and counter come from upgrade points.
+export const PET_STATS = ["power", "guard", "luck"] as const satisfies readonly Stat[];
 export const MAX_BOOST = 2; // per stat, on top of the upgrade points (it may go past the channel's maxStatLevel)
 export const CUSTOM_PET_ID = /^p-[a-z0-9-]{1,40}$/;
 export const PET_LIMITS = Object.freeze({ maxPets: 24, maxBytes: 65_536, maxSide: 64, maxLabel: 24 });
 const BODY_LIMIT = Math.ceil(PET_LIMITS.maxBytes / 3) * 4 + 4_000;
 
-// Built-in pets: the stat (and second stat for epic) the tier boost goes to. Legendary boosts every stat.
+// Built-in pets: the stat (and second stat for epic) the tier boost goes to. Legendary boosts each of PET_STATS.
 export const PETS: BuiltinPet[] = [
   { id: "mouse", label: "Mouse", tier: "common", stat: "power" },
   { id: "chick", label: "Chick", tier: "common", stat: "luck" },
@@ -134,21 +136,21 @@ const BUILTIN = new Map(PETS.map((p) => [p.id, p]));
 export function tierBoost(tier: string, stat: string | undefined, stat2?: string): Stats {
   const out = emptyStats();
   if (tier === "legendary") {
-    for (const key of STATS) out[key] = 1;
+    for (const key of PET_STATS) out[key] = 1;
     return out;
   }
   // Widened so any string can be looked up
-  if (!(STATS as readonly unknown[]).includes(stat)) return out;
-  // A Stat: STATS.includes(stat) above
+  if (!(PET_STATS as readonly unknown[]).includes(stat)) return out;
+  // A Stat: PET_STATS.includes(stat) above
   out[stat as Stat] = tier === "rare" || tier === "epic" ? 2 : TIERS.includes(tier) ? 1 : 0;
-  // Widened for the lookup; the index is a Stat because STATS includes it
-  if (tier === "epic" && (STATS as readonly unknown[]).includes(stat2) && stat2 !== stat) out[stat2 as Stat] = 1;
+  // Widened for the lookup; the index is a Stat because PET_STATS includes it
+  if (tier === "epic" && (PET_STATS as readonly unknown[]).includes(stat2) && stat2 !== stat) out[stat2 as Stat] = 1;
   return out;
 }
 
 export function cleanBoost(input?: unknown): Stats {
   const out = emptyStats();
-  for (const key of STATS) {
+  for (const key of PET_STATS) {
     // Any value: ?. reads undefined from null or undefined, and Number() turns whatever it reads into a number
     const v = Number((input as Partial<Record<Stat, unknown>> | null | undefined)?.[key]);
     out[key] = Number.isInteger(v) ? Math.max(0, Math.min(MAX_BOOST, v)) : 0;
@@ -170,12 +172,12 @@ export function petOf(id: string, custom: unknown = ""): PetRef | null {
   return TIERS.includes(tier!) ? { id, tier: tier!, boost: tierBoost(tier!, stat, stat2) } : null;
 }
 
-// "+2 power" / "+2 power, +1 guard" / "+1 to all stats" (same wording as the viewer page)
+// "+2 power" / "+2 power, +1 guard" / "+1 power, guard and luck" (same wording as the viewer page)
 // Callers pass a pet's boost from petOf (always set); the ?. reads stay as in the JS.
 export const boostText = (boost: Stats): string =>
-  STATS.every((k) => boost?.[k] > 0 && boost[k] === boost.power)
-    ? `+${boost.power} to all stats`
-    : STATS.filter((k) => boost?.[k] > 0)
+  PET_STATS.every((k) => boost?.[k] > 0 && boost[k] === boost.power)
+    ? `+${boost.power} power, guard and luck`
+    : PET_STATS.filter((k) => boost?.[k] > 0)
         .map((k) => `+${boost[k]} ${k}`)
         .join(", ");
 
@@ -244,11 +246,11 @@ export function validatePetUpload(
   if (!TIERS.includes(tier)) return { status: 400, reason: "invalid_tier", error: "Pick a tier" };
   const stat = tier === "legendary" ? "" : String(body?.stat || "");
   // Widened so any string can be looked up
-  if (tier !== "legendary" && !(STATS as readonly string[]).includes(stat))
+  if (tier !== "legendary" && !(PET_STATS as readonly string[]).includes(stat))
     return { status: 400, reason: "invalid_stat", error: "Pick the stat it boosts" };
   const stat2 = tier === "epic" ? String(body?.stat2 || "") : "";
   // Widened so any string can be looked up
-  if (tier === "epic" && (!(STATS as readonly string[]).includes(stat2) || stat2 === stat))
+  if (tier === "epic" && (!(PET_STATS as readonly string[]).includes(stat2) || stat2 === stat))
     return { status: 400, reason: "invalid_stat", error: "Epic pets boost two different stats" };
   const b64 = String(body?.image || "").replace(/^data:[^,]*;base64,/, "");
   if (!b64) return { status: 400, reason: "invalid_image", error: "Choose a PNG image" };

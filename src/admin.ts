@@ -1425,7 +1425,7 @@ const TIER_LABELS: Record<string, string | undefined> = {
 };
 const boostLabel = (b: Record<string, number | undefined> | undefined) =>
   b?.power && b.power === b.guard && b.power === b.luck
-    ? "+" + b.power + " to all stats"
+    ? "+" + b.power + " power, guard and luck"
     : ["power", "guard", "luck"]
         .filter((k) => b?.[k])
         // b!: the filter kept only stats b has

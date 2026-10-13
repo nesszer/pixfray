@@ -1054,16 +1054,22 @@ async function start() {
           roller.whoosh = { start: t + 80, until: t + 480 };
         }
         if (other) other.anim = { kind: "dodge", start: t + 60, until: t + 600 };
-        floatText(other, "MISS", "#e2e8f0");
+        floatText(other, event.dodged ? "DODGE" : "MISS", "#e2e8f0");
         showHp();
         playSound("miss");
         return;
       }
       let swing = t;
       if (event.counter && dealer) {
-        dealer.parry = { start: t, until: t + 380 };
-        floatText(dealer, "COUNTER", "#fbbf24");
-        swing = t + 300;
+        // a dodge that turned into a counter shows the dodge first
+        const parry = event.dodged ? t + 300 : t;
+        if (event.dodged) {
+          dealer.anim = { kind: "dodge", start: t, until: t + 300 };
+          floatText(dealer, "DODGE", "#e2e8f0");
+        }
+        dealer.parry = { start: parry, until: parry + 380 };
+        setTimeout(() => floatText(dealer, "COUNTER", "#fbbf24"), parry - t);
+        swing = parry + 300;
         playSound("parry");
       }
       const heavy = look === "smash" || event.crit === true,
@@ -1086,7 +1092,11 @@ async function start() {
           const color = event.crit ? "#fde047" : look === "smash" ? "#f97316" : look === "glow" ? "#4ade80" : "#fb7185";
           burst(target, color, event.crit || event.finisher ? 22 : 10, false);
           landBlow(target, dealer, color, event.finisher ? 3 : heavy ? 2 : 1);
-          floatText(target, (event.crit ? "CRIT! " : "") + "-" + amount, event.crit ? "#fde047" : "#fb7185");
+          floatText(
+            target,
+            (event.luckyCrit ? "LUCKY CRIT " : event.crit ? "CRIT! " : "") + "-" + amount,
+            event.crit ? "#fde047" : "#fb7185",
+          );
           if (event.finisher && target) {
             knockout(target, at);
             if (!(target.koUntil > at)) target.koStart = at;
@@ -1218,7 +1228,11 @@ async function start() {
           }
           burst(target, event.ability === "heavy" ? "#f97316" : "#fb7185", event.ability === "heavy" ? 16 : 8, false);
           landBlow(target, actor, event.ability === "heavy" ? "#f97316" : "#fb7185", event.ability === "heavy" ? 2 : 1);
-          floatText(target, event.counter ? "COUNTER" : "-" + (Number(event.amount) || 0), "#fb7185");
+          floatText(
+            target,
+            event.counter ? "COUNTER" : (event.crit ? "CRIT! " : "") + "-" + (Number(event.amount) || 0),
+            event.crit ? "#fde047" : "#fb7185",
+          );
         }
         break;
       }

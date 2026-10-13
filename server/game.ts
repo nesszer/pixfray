@@ -1,5 +1,14 @@
 import site from "../site.config.js";
-import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, statValue } from "./upgrades.ts";
+import {
+  cleanStats,
+  counterChance,
+  effectiveStats,
+  emptyStats,
+  knownHat,
+  scaledDamage,
+  statValue,
+  HP_CRIT_BONUS,
+} from "./upgrades.ts";
 import { cleanBoost, TIERS } from "./pets.ts";
 import { cleanCosmetics } from "./cosmetics.ts";
 import type { Stats } from "./upgrades.ts";
@@ -517,8 +526,10 @@ function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccoun
 // 6 is a crit (50% of max HP), 5 a hit (34%), 3-4 a miss, 1-2 the other fighter counters (34%).
 // First to 0 HP loses. After QUICK_MAX_ROLLS rolls the fighter with more HP wins; equal HP goes to
 // sudden death, where the next hit or counter knocks out. A winner who took no damage is flawless (+3 Elo).
-// Upgrades (server/upgrades.ts): power and guard scale each blow; luck can turn a miss into a hit, using a
-// second roll at LUCK_ROLLS + i.
+// Upgrades (server/upgrades.ts) then change the swing in this order, each check with its own roll (slot k reads
+// rolls[k * SLOT_ROLLS + i]): the attacker's luck turns a miss into a hit, their crit turns a hit into a crit, the
+// defender's dodge turns a hit or crit into a miss, and the defender's counter turns a miss into their counter.
+// Power and guard scale each blow, and counter adds its damage bonus to the defender's counters.
 // rolls are numbers in [0, 1) from the room; missing ones come from a hash so the reducer stays pure.
 const QUICK_MAX_ROLLS = 12;
 // A quick duel is settled at once, but the overlay plays it out over seconds and viewers see the stream a few
@@ -532,11 +543,14 @@ const REPLAY_WALK_MS = 2200,
 export const replayMs = (rolls: number): number =>
   REPLAY_WALK_MS + REPLAY_ROLL_MS * Math.max(1, rolls) + REPLAY_SLACK_MS;
 const QUICK_FLAWLESS_BONUS = 3;
-const LUCK_ROLLS = 24;
+const SLOT_ROLLS = 24;
+const SLOT = { die: 0, luck: 1, crit: 2, dodge: 3, counter: 4 };
 function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: number): GameResult {
   const list = Array.isArray(rolls) ? rolls : [];
   const rollAt = (i: number): number =>
     Number.isFinite(list[i]) && list[i] >= 0 && list[i] < 1 ? list[i] : hashRoll(duel.id + ":" + now + ":" + i);
+  const check = (slot: number, i: number, chance: number): boolean =>
+    chance > 0 && rollAt(slot * SLOT_ROLLS + i) < chance;
   // the duel has started, so beginDuel set its rules
   const maxHp = duel.rules!.maxHp;
   const blow = { hit: Math.round(maxHp * 0.34), crit: Math.round(maxHp * 0.5), counter: Math.round(maxHp * 0.34) };
@@ -571,11 +585,19 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
       }
       decision = "sudden_death";
     }
-    const die = 1 + Math.floor(rollAt(i) * 6);
+    const die = 1 + Math.floor(rollAt(SLOT.die * SLOT_ROLLS + i) * 6);
     let outcome: Swing["outcome"] = die === 6 ? "crit" : die === 5 ? "hit" : die <= 2 ? "counter" : "miss";
     // stats has an entry for both fighters (built from [duel.a, duel.b] above)
-    const lucky = outcome === "miss" && rollAt(LUCK_ROLLS + i) < statValue("luck", stats[attacker]!.luck);
+    const mine = stats[attacker]!,
+      theirs = stats[defender]!;
+    const lucky = outcome === "miss" && check(SLOT.luck, i, statValue("luck", mine.luck));
     if (lucky) outcome = "hit";
+    const luckyCrit = outcome === "hit" && check(SLOT.crit, i, statValue("crit", mine.crit));
+    if (luckyCrit) outcome = "crit";
+    const dodged = (outcome === "hit" || outcome === "crit") && check(SLOT.dodge, i, statValue("dodge", theirs.dodge));
+    if (dodged) outcome = "miss";
+    const countered = outcome === "miss" && check(SLOT.counter, i, counterChance(theirs.counter));
+    if (countered) outcome = "counter";
     const swing: Swing = {
       attackerId: attacker,
       defenderId: defender,
@@ -583,6 +605,8 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
       outcome,
       damage: 0,
       ...(lucky ? { lucky: true } : {}),
+      ...(luckyCrit ? { luckyCrit: true } : {}),
+      ...(dodged ? { dodged: true } : {}),
     };
     swings.push(swing);
     if (outcome === "miss") {
@@ -595,14 +619,17 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
         hp: clone(duel.hp),
         miss: true,
         die,
+        ...(dodged ? { dodged: true } : {}),
       });
     } else {
       const dealer = outcome === "counter" ? defender : attacker,
         target = outcome === "counter" ? attacker : defender;
       // hp[target]! (four times, to `finisher`): beginDuel gave both fighters an hp entry
+      // a counter adds the dealer's counter bonus on top of power and guard
+      const bonus = outcome === "counter" ? 1 + statValue("counter", stats[dealer]!.counter) : 1;
       const amount = suddenDeath
         ? duel.hp[target]!
-        : Math.min(duel.hp[target]!, scaledDamage(blow[outcome], stats[dealer], stats[target]));
+        : Math.min(duel.hp[target]!, scaledDamage(Math.round(blow[outcome] * bonus), stats[dealer], stats[target]));
       duel.hp[target]! -= amount;
       swing.damage = amount;
       const finisher = duel.hp[target]! <= 0;
@@ -617,6 +644,8 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
         ...(outcome === "counter" ? { counter: true } : {}),
         ...(outcome === "crit" ? { crit: true } : {}),
         ...(lucky ? { lucky: true } : {}),
+        ...(luckyCrit ? { luckyCrit: true } : {}),
+        ...(dodged ? { dodged: true } : {}),
         ...(finisher ? { finisher: true } : {}),
       });
       if (finisher) {
@@ -728,7 +757,16 @@ function finishDuel(
   });
 }
 
-function applyAbility(state: GameState, duel: Duel, actor: Player, abilityName: string, now: number): GameResult {
+// An HP-fight strike or heavy crits (+HP_CRIT_BONUS damage) with the actor's crit chance, from the command's first
+// roll (or a hash, so the reducer stays pure).
+function applyAbility(
+  state: GameState,
+  duel: Duel,
+  actor: Player,
+  abilityName: string,
+  now: number,
+  rolls: unknown = [],
+): GameResult {
   if (!ABILITIES.has(abilityName)) return { ok: false, reason: "invalid_ability" };
   // rules! and cooldowns! : applyCommand only picks an active duel, and beginDuel set both
   // abilityName passed ABILITIES above
@@ -744,7 +782,8 @@ function applyAbility(state: GameState, duel: Duel, actor: Player, abilityName: 
   if (duel.hp[actor.userId]! <= 0) return { ok: false, reason: "respawning" };
 
   const targetId = actor.userId === duel.a ? duel.b : duel.a;
-  let amount = 0;
+  let amount = 0,
+    crit = false;
   if (abilityName === "heal") {
     const before = duel.hp[actor.userId]!;
     // the heal branch, so ability is abilities.heal
@@ -753,10 +792,17 @@ function applyAbility(state: GameState, duel: Duel, actor: Player, abilityName: 
   } else {
     const before = duel.hp[targetId]!;
     const foe = player(state, targetId);
+    const mine = effectiveStats(actor.stats, actor.wins, actor.bonus, actor.petBoost, state.config.maxStatLevel);
+    const first: unknown = Array.isArray(rolls) ? rolls[0] : undefined;
+    const roll =
+      typeof first === "number" && first >= 0 && first < 1
+        ? first
+        : hashRoll(duel.id + ":" + now + ":" + actor.userId + ":crit");
+    crit = roll < statValue("crit", mine.crit);
     const damage = scaledDamage(
       // not the heal branch, so ability is abilities.strike or abilities.heavy
-      (ability as Abilities["strike"]).damage,
-      effectiveStats(actor.stats, actor.wins, actor.bonus, actor.petBoost, state.config.maxStatLevel),
+      Math.round((ability as Abilities["strike"]).damage * (crit ? 1 + HP_CRIT_BONUS : 1)),
+      mine,
       effectiveStats(foe?.stats, foe?.wins, foe?.bonus, foe?.petBoost, state.config.maxStatLevel),
     );
     duel.hp[targetId] = Math.max(0, before - damage);
@@ -778,6 +824,7 @@ function applyAbility(state: GameState, duel: Duel, actor: Player, abilityName: 
     ability: abilityName,
     amount,
     hp: clone(duel.hp),
+    ...(crit ? { crit: true } : {}),
   });
   if (duel.hp[targetId]! <= 0) {
     finishDuel(state, duel, actor.userId, now);
@@ -862,7 +909,7 @@ function applyCommand(state: GameState, event: CommandEvent, now: number): GameR
     const opponentId = duel.a === actor.userId ? duel.b : duel.a;
     if (player(state, opponentId)?.username !== targetName) return { ok: false, reason: "wrong_opponent" };
   }
-  return applyAbility(state, duel, actor, abilityName, now);
+  return applyAbility(state, duel, actor, abilityName, now, event.rolls);
 }
 
 /** A config change as validateConfigPatch passes it on: known keys only, each in range. */
