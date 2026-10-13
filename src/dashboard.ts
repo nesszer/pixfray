@@ -930,7 +930,12 @@ function renderUpgrades() {
           {
             type: "button",
             class: "btn btn-small",
-            "aria-label": "Take a level out of " + t.label + ", refunds " + levelCost(n) + " points",
+            "aria-label":
+              "Take a level out of " +
+              t.label +
+              ", refunds " +
+              levelCost(n) +
+              (levelCost(n) === 1 ? " point" : " points"),
             disabled: !canEdit || n <= 0,
             onclick: step(-1),
           },
