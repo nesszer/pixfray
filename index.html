@@ -134,8 +134,9 @@
           </fieldset>
           <fieldset id="upgrades">
             <legend>Upgrades <span class="muted small" id="points-note"></span></legend>
-            <p class="muted small" id="upgrades-help">Each win and each stream check-in (!checkin in chat) gives a point, up to 20. Move points between stats whenever you're not in a duel.</p>
+            <p class="muted small" id="upgrades-help">Each win and each stream check-in (!checkin in chat) gives a point. Move points between stats whenever you're not in a duel.</p>
             <div class="upgrade-list" id="upgrade-list"></div>
+            <div class="filter-buttons" id="upgrade-presets" role="group" aria-label="Suggested builds" hidden></div>
           </fieldset>
         </div>
 
@@ -180,7 +181,7 @@
         <div class="form-stack" role="tabpanel" id="panel-pets" aria-labelledby="tab-pets" hidden>
           <fieldset id="pets">
             <legend>Pet <span class="muted small" id="pet-note"></span></legend>
-            <p class="muted small">A pet follows your fighter on stream and adds to its stats, on top of the upgrade limit. Buy pets with the PixFray dollars you earn in duels. You keep every pet you buy and bring one at a time.</p>
+            <p class="muted small">A pet follows your fighter on stream and adds to its stats, on top of the channel's level limit. Buy pets with the PixFray dollars you earn in duels. You keep every pet you buy and bring one at a time.</p>
             <div class="char-grid item-grid" id="pet-list" role="radiogroup" aria-label="Pet"></div>
             <p class="status" id="pet-status" role="status"></p>
           </fieldset>
@@ -223,7 +224,7 @@
             <tr><td><code>!fight</code></td><td>Accepts a challenge sent to you. The duel is rolled right away and plays out on stream.</td></tr>
             <tr><td><code>!decline</code></td><td>Turns a challenge down.</td></tr>
             <tr><td><code>!rematch</code></td><td>Challenges the last viewer you fought. If they type <code>!rematch</code> too, the duel starts. Rematches open 30 s after a duel.</td></tr>
-            <tr><td><code>!checkin</code></td><td>Once per stream, while it's live: <span id="cmd-checkin">+1 upgrade point</span>. Check in on streams in a row for +1 more at 3, 7, 14 and 30. One missed stream a week doesn't break the streak.</td></tr>
+            <tr><td><code>!checkin</code></td><td>Once per stream, while it's live: <span id="cmd-checkin">+1 upgrade point</span>. Check in on streams in a row for +1 more at 3, 7, 14 and 30, +2 at 60, +3 at 100, +5 at 200 and +10 at 365. One missed stream a week doesn't break the streak.</td></tr>
             <tr><td><code>!wallet</code></td><td>Posts your PixFray dollars, upgrade points and streak. Each finished duel pays <span id="cmd-dollars">$5 for a win and $3 for a loss</span>.</td></tr>
             <tr><td><code>!pay @viewer 10</code></td><td id="cmd-give">Gives dollars to another fighter while the stream is live: up to $100 per stream, after your first 5 duels.</td></tr>
             <tr><td><code>!pet</code></td><td>Posts the pet you bring and its boost. Add <code>@viewer</code> to see someone else's.</td></tr>

@@ -359,13 +359,15 @@ export type CheckinReply = {
   milestone?: boolean;
   freeMiss?: boolean;
   total?: number;
+  /** Points not spent on stats yet. */
+  unspent?: number;
   test?: boolean;
 };
-type SePointsOptions = { who?: string | undefined; maxPoints?: number | undefined } & SeLinkOptions;
+type SePointsOptions = { who?: string | undefined } & SeLinkOptions;
 
 export function seCheckinText(
   r: CheckinReply | null | undefined,
-  { who = "", origin = "", channel = "", maxPoints = 20 }: SePointsOptions = {},
+  { who = "", origin = "", channel = "" }: SePointsOptions = {},
 ): string {
   const me = short(who) || "you";
   switch (r?.reason) {
@@ -377,15 +379,12 @@ export function seCheckinText(
       ]
         .filter(Boolean)
         .join(", ");
-      const gain = r.points ? `+${r.points} upgrade point${r.points === 1 ? "" : "s"} (${extras})` : `${extras}`;
+      const gain = r.points ? `+${r.points} point${r.points === 1 ? "" : "s"} (${extras})` : `${extras}`;
       const link = siteLink(origin, channel, "#upgrades");
-      // total! : checkin always sends it with checked_in
-      const total =
-        r.total! >= maxPoints
-          ? `${maxPoints} of ${maxPoints} points, the most a fighter can hold.`
-          : `${r.total} of ${maxPoints} points.`;
+      const unspent = r.unspent || 0;
+      const total = `${r.total} point${r.total === 1 ? "" : "s"}, ${unspent ? unspent + " unspent." : "all spent."}`;
       if (r.test) return `[Test, not saved] @${me} would check in: ${gain}. ${total}`;
-      return `@${me} checked in: ${gain}. ${total}${r.points && link ? " Spend them at " + link : ""}`;
+      return `@${me} checked in: ${gain}. ${total}${unspent && link ? " Spend them at " + link : ""}`;
     }
     case "already_checked_in":
       return `@${me}, you already checked in this stream (${r.streak}-stream streak). Come back next stream!`;
@@ -400,11 +399,11 @@ export function seCheckinText(
 // !wallet: dollars, upgrade points and streak. w = ChannelRoom.wallet() or null (no fighter).
 export function seWalletText(
   w: { dollars: number; points: number; streak: number } | null | undefined,
-  { who = "", origin = "", channel = "", maxPoints = 20 }: SePointsOptions = {},
+  { who = "", origin = "", channel = "" }: SePointsOptions = {},
 ): string {
   const me = short(who) || "you";
   if (!w) return noFighter(me, true, origin, channel);
-  return `@${me}: $${w.dollars} PixFray dollars, ${w.points} of ${maxPoints} upgrade points, ${w.streak}-stream streak.`;
+  return `@${me}: $${w.dollars} PixFray dollars, ${w.points} upgrade point${w.points === 1 ? "" : "s"}, ${w.streak}-stream streak.`;
 }
 
 // !pet [@name]: p = ChannelRoom.petInfo() -> { name, pet: {label, tier, boost} | null }, or null (no fighter).

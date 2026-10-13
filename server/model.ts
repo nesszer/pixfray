@@ -45,6 +45,7 @@ export type Config = {
   eloK: number;
   checkinPoints: number;
   streakBonus: boolean;
+  maxStatLevel: number;
   winDollars: number;
   lossDollars: number;
   giveEnabled: boolean;

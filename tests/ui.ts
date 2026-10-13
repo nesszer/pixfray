@@ -41,6 +41,7 @@ const config = {
   eloK: 24,
   checkinPoints: 1,
   streakBonus: true,
+  maxStatLevel: 16,
   winDollars: 5,
   lossDollars: 3,
   giveEnabled: true,
@@ -566,11 +567,17 @@ try {
     await page.evaluate(() => scrollTo(0, 0));
     await page.screenshot({ path: shots + "/viewer-pets-" + s.name + ".png", fullPage: true });
     await page.locator("#tab-fighter").click();
-    await page.getByRole("button", { name: "Put a point into Power" }).click();
-    await page.getByRole("button", { name: "Put a point into Power" }).click();
-    await page.getByRole("button", { name: "Put a point into Luck" }).click();
+    assert.deepEqual(
+      await page.locator("#upgrade-presets button").allTextContents(),
+      ["Balanced", "Brawler", "Lucky striker", "Iron wall"],
+      "only presets for the stats this channel has",
+    );
+    assert.match((await page.locator("#upgrade-list").textContent())!, /Next level costs 1 point/); // element text, never null
+    await page.getByRole("button", { name: "Put a level into Power for 1 point" }).click();
+    await page.getByRole("button", { name: "Put a level into Power for 1 point" }).click();
+    await page.getByRole("button", { name: "Put a level into Luck for 1 point" }).click();
     assert.equal(
-      await page.getByRole("button", { name: "Put a point into Guard" }).isDisabled(),
+      await page.getByRole("button", { name: "Put a level into Guard for 1 point" }).isDisabled(),
       true,
       "no points left",
     );
@@ -597,7 +604,7 @@ try {
     }); // the saved ability is kept as is
     assert.match(
       (await page.locator("#upgrade-list").textContent())!, // element text, never null
-      /2 \/ 8 \+1/,
+      /2 \/ 16 \+1/,
       "the mouse adds +1 power past the points",
     );
     assert.match(

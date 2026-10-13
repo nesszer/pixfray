@@ -1211,16 +1211,16 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
   await live({ live: true, streamId: "s1" });
   assert.equal(
     await say("u1", "alice"),
-    "@alice checked in: +1 upgrade point (1-stream streak). 1 of 20 points. Spend them at https://test.example/?channel=nesszerra#upgrades",
+    "@alice checked in: +1 point (1-stream streak). 1 point, 1 unspent. Spend them at https://test.example/?channel=nesszerra#upgrades",
   );
   assert.equal(
     await say("u1", "alice"),
     "@alice, you already checked in this stream (1-stream streak). Come back next stream!",
   );
   await live({ live: true, streamId: "s2" });
-  assert.ok((await say("u1", "alice")).includes("+1 upgrade point (2-stream streak). 2 of 20"));
+  assert.ok((await say("u1", "alice")).includes("+1 point (2-stream streak). 2 points, 2 unspent."));
   await live({ live: true, streamId: "s3" });
-  assert.ok((await say("u1", "alice")).includes("+2 upgrade points (3-stream streak, streak bonus). 4 of 20"));
+  assert.ok((await say("u1", "alice")).includes("+2 points (3-stream streak, streak bonus). 4 points, 4 unspent."));
   // Alice misses s4: the free miss keeps her streak. Missing s6 too, within the week, starts it over.
   for (const [stream, who] of [
     ["s4", ["u2", "bob"]],
@@ -1230,8 +1230,8 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
   ] satisfies [string, [string, string]][]) {
     await live({ live: true, streamId: stream });
     const reply = await say(...who);
-    if (stream === "s5") assert.ok(reply.includes("+1 upgrade point (4-stream streak, free miss used). 5 of 20"));
-    if (stream === "s7") assert.ok(reply.includes("+1 upgrade point (1-stream streak). 6 of 20"));
+    if (stream === "s5") assert.ok(reply.includes("+1 point (4-stream streak, free miss used). 5 points, 5 unspent."));
+    if (stream === "s7") assert.ok(reply.includes("+1 point (1-stream streak). 6 points, 6 unspent."));
   }
   let p = (await r.call("/profile?userId=u1")).body;
   assert.deepEqual([p.bonus, p.checkins, p.streak, p.upgrades.points, p.upgrades.fromCheckins], [6, 5, 1, 6, 6]);
@@ -1256,7 +1256,26 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
   assert.equal((await cfg({ streakBonus: "yes" })).body.error, "invalid_config_streakBonus");
   assert.equal((await cfg({ checkinPoints: 0, streakBonus: false })).status, 200);
   await live({ live: true, streamId: "s8" });
-  assert.equal(await say("u1", "alice"), "@alice checked in: 2-stream streak. 6 of 20 points.");
+  assert.equal(await say("u1", "alice"), "@alice checked in: 2-stream streak. 6 points, all spent.");
+  // Long streaks give more at each milestone: +2 at 60 and +3 at 100.
+  assert.equal((await cfg({ streakBonus: true })).status, 200);
+  r.ctx.storage.sql.exec("UPDATE profiles SET streak = 59 WHERE user_id = 'u1'");
+  await live({ live: true, streamId: "s9" });
+  assert.equal(
+    await say("u1", "alice"),
+    "@alice checked in: +2 points (60-stream streak, streak bonus). 8 points, all spent.",
+  );
+  r.ctx.storage.sql.exec("UPDATE profiles SET streak = 99 WHERE user_id = 'u1'");
+  await live({ live: true, streamId: "s10" });
+  assert.equal(
+    await say("u1", "alice"),
+    "@alice checked in: +3 points (100-stream streak, streak bonus). 11 points, 2 unspent. Spend them at https://test.example/?channel=nesszerra#upgrades",
+  );
+  // maxStatLevel takes 1 to 200 levels.
+  assert.equal((await cfg({ maxStatLevel: 0 })).body.error, "invalid_config_maxStatLevel");
+  assert.equal((await cfg({ maxStatLevel: 2.5 })).body.error, "invalid_config_maxStatLevel");
+  assert.equal((await cfg({ maxStatLevel: 24 })).status, 200);
+  assert.equal((await r.call("/profile?userId=u1")).body.upgrades.maxLevel, 24);
   // A wrong key never reaches the check-in.
   assert.equal(
     (
@@ -1317,10 +1336,7 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
     "paid in the same transaction as the result",
   );
   // Until the stream has shown the fight, !wallet and the website show the old balance.
-  assert.equal(
-    await cmd("u1", "alice", "wallet"),
-    "@alice: $0 PixFray dollars, 0 of 20 upgrade points, 0-stream streak.",
-  );
+  assert.equal(await cmd("u1", "alice", "wallet"), "@alice: $0 PixFray dollars, 0 upgrade points, 0-stream streak.");
   assert.equal((await r.call("/profile?userId=u1")).body.dollars, 0);
   const winId = win === "alice" ? "u1" : "u2",
     point = { stats: { power: 1, guard: 0, luck: 0 } };
@@ -1335,7 +1351,7 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
     assert.equal((await r.save(winId, win, point)).body.profile.stats.power, 1, "the point is spendable once shown");
     assert.equal(
       await cmd(win === "alice" ? "u1" : "u2", win, "wallet"),
-      `@${win}: $5 PixFray dollars, 1 of 20 upgrade points, 0-stream streak.`,
+      `@${win}: $5 PixFray dollars, 1 upgrade point, 0-stream streak.`,
     );
     r.advance("nesszerra", { type: "tick" }, Date.now());
     assert.deepEqual([dollars()[win], dollars()[lose]], [5, 3], "never paid twice");
@@ -1407,7 +1423,7 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
   const dev = async (text: string) =>
     (await r.call("/dev-chat", { method: "POST", body: { userId: "u3", username: "cara", displayName: "cara", text } }))
       .body.reply;
-  assert.equal(await dev("!wallet"), "@cara: $140 PixFray dollars, 3 of 20 upgrade points, 0-stream streak.");
+  assert.equal(await dev("!wallet"), "@cara: $140 PixFray dollars, 3 upgrade points, 0-stream streak.");
   assert.equal(await dev("!pay @bob 5"), "@cara gave $5 to @bob. You have $135 left.");
   // A wallet at the $1,000,000 cap: a gift that wouldn't fit is refused, and nobody loses dollars.
   await live({ live: true, streamId: "s3" });
@@ -1471,7 +1487,7 @@ test("!checkin asks Twitch whether the channel is live, keeps the answer a minut
     "no pretend streams without the dev token",
   );
   helix = () => Response.json({ data: [{ id: "4242", type: "live", started_at: "2026-10-04T10:00:00Z" }] });
-  assert.ok((await say("u1", "alice")).includes("@alice checked in: +1 upgrade point"));
+  assert.ok((await say("u1", "alice")).includes("@alice checked in: +1 point"));
   assert.match(await say("u2", "bob"), /^@bob checked in/);
   assert.equal(
     calls.filter((u) => u.includes("/helix/streams?user_login=nesszerra")).length,
@@ -1546,7 +1562,7 @@ test("dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   await r.call("/dev-live", { method: "POST", body: { live: true, streamId: "s1" } });
   const checked = await say("b1", "testbot_a", "!checkin");
   assert.equal(checked.body.reason, "checked_in");
-  assert.ok(checked.body.reply.startsWith("@testbot_a checked in: +1 upgrade point"), checked.body.reply);
+  assert.ok(checked.body.reply.startsWith("@testbot_a checked in: +1 point"), checked.body.reply);
 });
 
 test("account age: looked up once per fighter; a duel with an account under 7 days old is just for fun", async () => {
@@ -2608,7 +2624,7 @@ test("!checkin does not count a win the stream has not shown yet", async () => {
   const winner: [string, string] = d.winnerId === "u1" ? ["u1", "alice"] : ["u2", "bob"];
   assert.match(
     (await r.say(winner[0], winner[1], "!checkin")).reply,
-    / 1 of 20 points\./,
+    / 1 point, 1 unspent\./,
     "the hidden win is not counted",
   );
 });
@@ -2703,7 +2719,7 @@ test("!checkin test mode: answers while offline with what a check-in would give,
   const test = (on: boolean) => r.call("/checkin-test", { method: "POST", body: { on, by: "ModMia" } });
   await r.save("u1", "alice");
   await live({ live: true, streamId: "s1" });
-  assert.match(await say("u1", "alice"), /^@alice checked in: \+1 upgrade point \(1-stream streak\)/);
+  assert.match(await say("u1", "alice"), /^@alice checked in: \+1 point \(1-stream streak\)/);
   await live({ live: false });
   assert.equal((await r.call("/admin")).body.checkinTest, null);
   const on = (await test(true)).body.checkinTest;
@@ -2711,7 +2727,7 @@ test("!checkin test mode: answers while offline with what a check-in would give,
   assert.ok(on.until > Date.now() + 14 * 60_000 && on.until <= Date.now() + 15 * 60_000);
   assert.deepEqual((await r.call("/admin")).body.checkinTest, on);
   const before = (await r.call("/profile?userId=u1")).body;
-  const reply = "[Test, not saved] @alice would check in: +1 upgrade point (2-stream streak). 2 of 20 points.";
+  const reply = "[Test, not saved] @alice would check in: +1 point (2-stream streak). 2 points, 2 unspent.";
   assert.equal(await say("u1", "alice"), reply, "the next stream continues the streak");
   assert.equal(await say("u1", "alice"), reply, "repeatable: nothing was saved");
   const after = (await r.call("/profile?userId=u1")).body;
@@ -2724,7 +2740,7 @@ test("!checkin test mode: answers while offline with what a check-in would give,
   assert.match(await say("u2", "bob"), /no fighter/, "a viewer without a fighter still hears how to get one");
   // live wins over test mode: a real check-in, saved
   await live({ live: true, streamId: "s2" });
-  assert.match(await say("u1", "alice"), /^@alice checked in: \+1 upgrade point \(2-stream streak\)/);
+  assert.match(await say("u1", "alice"), /^@alice checked in: \+1 point \(2-stream streak\)/);
   await live({ live: false });
   assert.equal((await test(false)).body.checkinTest, null);
   assert.equal(await say("u1", "alice"), "Check-ins open while nesszerra is live. See you next stream!");

@@ -1209,11 +1209,11 @@ test("the bot result line says how the duel was won", async () => {
 });
 
 // ---------- upgrades (server/upgrades.ts) ----------
-test("upgrade points: one per win plus check-in points, up to 20, at most 8 per stat; a rank reset trims luck, then guard, then power", async () => {
+test("upgrade points: one per win plus check-in points with no cap; a rank reset trims luck, then guard, then power", async () => {
   const u = await import("../server/upgrades.ts");
   assert.deepEqual(
-    [0, 3, 20, 40].map((w) => u.pointsFor(w)),
-    [0, 3, 20, 20],
+    [0, 3, 20, 400].map((w) => u.pointsFor(w)),
+    [0, 3, 20, 400],
   );
   assert.deepEqual(
     [
@@ -1223,7 +1223,7 @@ test("upgrade points: one per win plus check-in points, up to 20, at most 8 per 
       [-1, 4],
       [2, 1.5],
     ].map(([w, b]) => u.pointsFor(w, b)),
-    [5, 20, 20, 4, 2],
+    [5, 24, 25, 4, 2],
   );
   assert.deepEqual(u.validStats({ power: 2, guard: 1 }, 3), { power: 2, guard: 1, luck: 0 });
   assert.equal(u.validStats({ power: 2, guard: 2 }, 3), null, "more points than wins");
@@ -1232,8 +1232,10 @@ test("upgrade points: one per win plus check-in points, up to 20, at most 8 per 
     { power: 2, guard: 2, luck: 0 },
     "a check-in point covers the fourth",
   );
-  assert.deepEqual(u.validStats({ power: 8 }, 20), { power: 8, guard: 0, luck: 0 });
-  assert.equal(u.validStats({ power: 9 }, 20), null, "over the per-stat cap");
+  assert.deepEqual(u.validStats({ power: 8 }, 8), { power: 8, guard: 0, luck: 0 });
+  assert.equal(u.validStats({ power: 9 }, 9), null, "level 9 costs 2 points");
+  assert.deepEqual(u.validStats({ power: 9 }, 10), { power: 9, guard: 0, luck: 0 });
+  assert.equal(u.validStats({ power: 201 }, 1e12), null, "past the level limit");
   assert.equal(u.validStats({ power: 1.5 }, 10), null);
   assert.deepEqual(u.effectiveStats({ power: 3, guard: 3, luck: 3 }, 5), { power: 3, guard: 2, luck: 0 });
   assert.deepEqual(
@@ -1241,12 +1243,72 @@ test("upgrade points: one per win plus check-in points, up to 20, at most 8 per 
     { power: 3, guard: 3, luck: 1 },
     "check-in points survive a rank reset",
   );
-  const r = u.upgradeRules(4, 3);
-  assert.deepEqual([r.points, r.fromWins, r.fromCheckins, r.maxPoints, r.maxPerStat], [7, 4, 3, 20, 8]);
+  assert.deepEqual(
+    u.effectiveStats({ power: 10, guard: 0, luck: 0 }, 11),
+    { power: 9, guard: 0, luck: 0 },
+    "trimming refunds level 10 at 2 points",
+  );
+  const r = u.upgradeRules(4, 3, 16);
+  assert.deepEqual([r.points, r.fromWins, r.fromCheckins, r.maxLevel], [7, 4, 3, 16]);
   assert.equal(u.hatUnlocked("crown", 19), false);
   assert.equal(u.hatUnlocked("crown", 20), true);
   assert.equal(u.hatUnlocked("cap", 0), true);
   assert.equal(u.hatUnlocked("sombrero", 99), false);
+});
+
+test("upgrade levels: cost doubles every 8 levels and the effect closes in on each stat's ceiling", async () => {
+  const u = await import("../server/upgrades.ts");
+  assert.deepEqual(
+    [1, 8, 9, 16, 17, 24, 25].map((l) => u.levelCost(l)),
+    [1, 1, 2, 2, 4, 4, 8],
+  );
+  assert.deepEqual(
+    [0, 5, 8, 9, 16, 24, 32].map((l) => u.levelSpend(l)),
+    [0, 5, 8, 10, 24, 56, 120],
+  );
+  assert.equal(u.spentOn({ power: 16, guard: 8, luck: 1 }), 33);
+  assert.deepEqual(
+    [0, 1, 8].map((l) => u.statValue("power", l)),
+    [0, 0.04, 0.32],
+    "levels 1 to 8 keep 4% each",
+  );
+  const p9 = u.statValue("power", 9),
+    p16 = u.statValue("power", 16),
+    p200 = u.statValue("power", 200);
+  assert.ok(p9 > 0.32 && p9 < 0.34, "level 9 adds about half a step: " + p9);
+  assert.equal(Math.round(p16 * 1000) / 10, 44.2);
+  assert.equal(Math.round(u.statValue("power", 10) * 1000) / 10, 35.7, "a pet taking power 8 to 10");
+  assert.ok(p200 < 0.6 && p200 > 0.59, "power stays under its 60% ceiling: " + p200);
+  assert.ok(u.statValue("luck", 200) < 0.5, "luck stays under 50%");
+  assert.equal(u.scaledDamage(100, { power: 8 }, { guard: 8 }), 90, "1.32 * 0.68 of 100");
+});
+
+test("upgrade levels: a channel's maxStatLevel caps what counts, and a pet's boost goes on top", async () => {
+  const u = await import("../server/upgrades.ts");
+  assert.deepEqual(u.effectiveStats({ power: 20, guard: 2 }, 1000, 0, null, 16), { power: 16, guard: 2, luck: 0 });
+  assert.deepEqual(
+    u.effectiveStats({ power: 20 }, 1000, 0, { power: 2, luck: 1 }, 16),
+    { power: 18, guard: 0, luck: 1 },
+    "the boost lands after the cap",
+  );
+  assert.deepEqual(u.effectiveStats({ power: 20 }, 1000), { power: 20, guard: 0, luck: 0 }, "no cap given");
+});
+
+test("upgrade presets spread the points by weight within the channel's level cap", async () => {
+  const u = await import("../server/upgrades.ts");
+  const preset = (id: string) => u.PRESETS.find((p) => p.id === id)!; // each id is in PRESETS
+  assert.equal(u.PRESETS.length, 12);
+  assert.deepEqual(
+    u.PRESETS.filter(u.presetReady).map((p) => p.id),
+    ["balanced", "brawler", "lucky-striker", "iron-wall"],
+  );
+  assert.deepEqual(u.presetStats(preset("balanced"), 6), { power: 2, guard: 2, luck: 2 });
+  assert.deepEqual(u.presetStats(preset("balanced"), 7), { power: 3, guard: 2, luck: 2 });
+  assert.deepEqual(u.presetStats(preset("iron-wall"), 8), { power: 2, guard: 6, luck: 0 });
+  assert.deepEqual(u.presetStats(preset("brawler"), 1000, 16), { power: 16, guard: 16, luck: 0 }, "stops at the cap");
+  assert.deepEqual(u.presetStats(preset("brawler"), 0), { power: 0, guard: 0, luck: 0 });
+  const built = u.presetStats(preset("balanced"), 100, 32);
+  assert.ok(u.spentOn(built) <= 100 && u.validStats(built, 100) !== null);
 });
 
 function upgraded(stats: Record<string, Partial<Stats>>) {
