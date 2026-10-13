@@ -23,7 +23,7 @@ import type {
   Swing,
 } from "../server/model.ts";
 import type { Stats } from "../server/upgrades.ts";
-import { asEnv, must } from "./fakes.ts";
+import { asEnv, fullStats, must } from "./fakes.ts";
 import type { Loose } from "./fakes.ts";
 
 const T0 = 1_800_000_000_000;
@@ -1209,8 +1209,9 @@ test("the bot result line says how the duel was won", async () => {
 });
 
 // ---------- upgrades (server/upgrades.ts) ----------
-test("upgrade points: one per win plus check-in points with no cap; a rank reset trims luck, then guard, then power", async () => {
+test("upgrade points: one per win plus check-in points with no cap; a rank reset trims the last stats first", async () => {
   const u = await import("../server/upgrades.ts");
+  assert.deepEqual(u.effectiveStats({ power: 1, dodge: 1, counter: 2 }, 2), fullStats({ power: 1, dodge: 1 }));
   assert.deepEqual(
     [0, 3, 20, 400].map((w) => u.pointsFor(w)),
     [0, 3, 20, 400],
@@ -1225,27 +1226,30 @@ test("upgrade points: one per win plus check-in points with no cap; a rank reset
     ].map(([w, b]) => u.pointsFor(w, b)),
     [5, 24, 25, 4, 2],
   );
-  assert.deepEqual(u.validStats({ power: 2, guard: 1 }, 3), { power: 2, guard: 1, luck: 0 });
+  assert.deepEqual(u.validStats({ power: 2, guard: 1 }, 3), fullStats({ power: 2, guard: 1, luck: 0 }));
   assert.equal(u.validStats({ power: 2, guard: 2 }, 3), null, "more points than wins");
   assert.deepEqual(
     u.validStats({ power: 2, guard: 2 }, 3, 1),
-    { power: 2, guard: 2, luck: 0 },
+    fullStats({ power: 2, guard: 2, luck: 0 }),
     "a check-in point covers the fourth",
   );
-  assert.deepEqual(u.validStats({ power: 8 }, 8), { power: 8, guard: 0, luck: 0 });
+  assert.deepEqual(u.validStats({ power: 8 }, 8), fullStats({ power: 8, guard: 0, luck: 0 }));
   assert.equal(u.validStats({ power: 9 }, 9), null, "level 9 costs 2 points");
-  assert.deepEqual(u.validStats({ power: 9 }, 10), { power: 9, guard: 0, luck: 0 });
+  assert.deepEqual(u.validStats({ power: 9 }, 10), fullStats({ power: 9, guard: 0, luck: 0 }));
   assert.equal(u.validStats({ power: 201 }, 1e12), null, "past the level limit");
   assert.equal(u.validStats({ power: 1.5 }, 10), null);
-  assert.deepEqual(u.effectiveStats({ power: 3, guard: 3, luck: 3 }, 5), { power: 3, guard: 2, luck: 0 });
+  assert.deepEqual(
+    u.effectiveStats(fullStats({ power: 3, guard: 3, luck: 3 }), 5),
+    fullStats({ power: 3, guard: 2, luck: 0 }),
+  );
   assert.deepEqual(
     u.effectiveStats({ power: 3, guard: 3, luck: 3 }, 0, 7),
-    { power: 3, guard: 3, luck: 1 },
+    fullStats({ power: 3, guard: 3, luck: 1 }),
     "check-in points survive a rank reset",
   );
   assert.deepEqual(
     u.effectiveStats({ power: 10, guard: 0, luck: 0 }, 11),
-    { power: 9, guard: 0, luck: 0 },
+    fullStats({ power: 9, guard: 0, luck: 0 }),
     "trimming refunds level 10 at 2 points",
   );
   const r = u.upgradeRules(4, 3, 16);
@@ -1266,7 +1270,7 @@ test("upgrade levels: cost doubles every 8 levels and the effect closes in on ea
     [0, 5, 8, 9, 16, 24, 32].map((l) => u.levelSpend(l)),
     [0, 5, 8, 10, 24, 56, 120],
   );
-  assert.equal(u.spentOn({ power: 16, guard: 8, luck: 1 }), 33);
+  assert.equal(u.spentOn(fullStats({ power: 16, guard: 8, luck: 1 })), 33);
   assert.deepEqual(
     [0, 1, 8].map((l) => u.statValue("power", l)),
     [0, 0.04, 0.32],
@@ -1285,13 +1289,16 @@ test("upgrade levels: cost doubles every 8 levels and the effect closes in on ea
 
 test("upgrade levels: a channel's maxStatLevel caps what counts, and a pet's boost goes on top", async () => {
   const u = await import("../server/upgrades.ts");
-  assert.deepEqual(u.effectiveStats({ power: 20, guard: 2 }, 1000, 0, null, 16), { power: 16, guard: 2, luck: 0 });
+  assert.deepEqual(
+    u.effectiveStats({ power: 20, guard: 2 }, 1000, 0, null, 16),
+    fullStats({ power: 16, guard: 2, luck: 0 }),
+  );
   assert.deepEqual(
     u.effectiveStats({ power: 20 }, 1000, 0, { power: 2, luck: 1 }, 16),
-    { power: 18, guard: 0, luck: 1 },
+    fullStats({ power: 18, guard: 0, luck: 1 }),
     "the boost lands after the cap",
   );
-  assert.deepEqual(u.effectiveStats({ power: 20 }, 1000), { power: 20, guard: 0, luck: 0 }, "no cap given");
+  assert.deepEqual(u.effectiveStats({ power: 20 }, 1000), fullStats({ power: 20, guard: 0, luck: 0 }), "no cap given");
 });
 
 test("upgrade presets spread the points by weight within the channel's level cap", async () => {
@@ -1300,13 +1307,30 @@ test("upgrade presets spread the points by weight within the channel's level cap
   assert.equal(u.PRESETS.length, 12);
   assert.deepEqual(
     u.PRESETS.filter(u.presetReady).map((p) => p.id),
-    ["balanced", "brawler", "lucky-striker", "iron-wall"],
+    [
+      "balanced",
+      "brawler",
+      "lucky-striker",
+      "iron-wall",
+      "glass-cannon",
+      "counter-puncher",
+      "duelist",
+      "gambler",
+      "ghost",
+      "sharpshooter",
+    ],
+    "tank and bruiser wait for vitality",
   );
-  assert.deepEqual(u.presetStats(preset("balanced"), 6), { power: 2, guard: 2, luck: 2 });
-  assert.deepEqual(u.presetStats(preset("balanced"), 7), { power: 3, guard: 2, luck: 2 });
-  assert.deepEqual(u.presetStats(preset("iron-wall"), 8), { power: 2, guard: 6, luck: 0 });
-  assert.deepEqual(u.presetStats(preset("brawler"), 1000, 16), { power: 16, guard: 16, luck: 0 }, "stops at the cap");
-  assert.deepEqual(u.presetStats(preset("brawler"), 0), { power: 0, guard: 0, luck: 0 });
+  assert.deepEqual(u.presetStats(preset("glass-cannon"), 6), fullStats({ power: 3, crit: 2, luck: 1 }));
+  assert.deepEqual(u.presetStats(preset("balanced"), 6), fullStats({ power: 2, guard: 2, luck: 2 }));
+  assert.deepEqual(u.presetStats(preset("balanced"), 7), fullStats({ power: 3, guard: 2, luck: 2 }));
+  assert.deepEqual(u.presetStats(preset("iron-wall"), 8), fullStats({ power: 2, guard: 6, luck: 0 }));
+  assert.deepEqual(
+    u.presetStats(preset("brawler"), 1000, 16),
+    fullStats({ power: 16, guard: 16, luck: 0 }),
+    "stops at the cap",
+  );
+  assert.deepEqual(u.presetStats(preset("brawler"), 0), fullStats({ power: 0, guard: 0, luck: 0 }));
   const built = u.presetStats(preset("balanced"), 100, 32);
   assert.ok(u.spentOn(built) <= 100 && u.validStats(built, 100) !== null);
 });
@@ -1361,9 +1385,82 @@ test("quick duels: luck turns a miss into a hit with 4% per point, from a second
   assert.equal(must(quickWith(upgraded({ alice: { luck: 5 } }), rolls).swings[0]).outcome, "miss");
 });
 
+// Each check reads its own slot of 24 rolls: die 0, luck 24, crit 48, dodge 72, counter 96 (plus the swing index).
+const slots = (set: Record<number, number>) => Object.assign(Array<number>(120).fill(0.9), set);
+
+test("quick duels: crit turns a hit into a crit with 4% per level, from the third roll slot", () => {
+  const rolls = slots({ 0: 0.75, 48: 0.1 }); // alice rolls a 5 (a hit); 0.1 < 5 x 4%
+  const r = must(quickWith(upgraded({ alice: { crit: 5 } }), rolls).swings[0]);
+  assert.deepEqual([r.outcome, r.luckyCrit, r.damage], ["crit", true, 50]);
+  rolls[48] = 0.25;
+  const plain = must(quickWith(upgraded({ alice: { crit: 5 } }), rolls).swings[0]);
+  assert.deepEqual([plain.outcome, plain.luckyCrit, plain.damage], ["hit", undefined, 34]);
+});
+
+test("quick duels: luck then crit can turn a miss into a crit", () => {
+  const r = must(quickWith(upgraded({ alice: { luck: 5, crit: 5 } }), slots({ 0: 0.5, 24: 0.1, 48: 0.1 })).swings[0]);
+  assert.deepEqual([r.outcome, r.lucky, r.luckyCrit, r.damage], ["crit", true, true, 50]);
+});
+
+test("quick duels: dodge turns a hit or crit on you into a miss with 4% per level", () => {
+  const hit = must(quickWith(upgraded({ bob: { dodge: 5 } }), slots({ 0: 0.75, 72: 0.1 })).swings[0]);
+  assert.deepEqual([hit.outcome, hit.dodged, hit.damage], ["miss", true, 0]);
+  const crit = must(quickWith(upgraded({ bob: { dodge: 5 } }), slots({ 72: 0.1 })).swings[0]); // 0.9 rolls a 6
+  assert.deepEqual([crit.outcome, crit.dodged], ["miss", true]);
+  const missed = must(quickWith(upgraded({ bob: { dodge: 5 } }), slots({ 0: 0.75, 72: 0.25 })).swings[0]);
+  assert.deepEqual([missed.outcome, missed.dodged, missed.damage], ["hit", undefined, 34]);
+});
+
+test("quick duels: counter adds 2% counter damage per level and turns a foe's miss into a counter at 2% per level", () => {
+  // bob counters on alice's 1: 34 base, +10% from 5 levels
+  assert.equal(must(quickWith(upgraded({ bob: { counter: 5 } }), slots({ 0: 0.1 })).swings[0]).damage, 37);
+  assert.equal(must(quickWith(upgraded({}), slots({ 0: 0.1 })).swings[0]).damage, 34);
+  const turned = must(quickWith(upgraded({ bob: { counter: 5 } }), slots({ 0: 0.5, 96: 0.05 })).swings[0]);
+  assert.deepEqual([turned.outcome, turned.attackerId, turned.damage], ["counter", "id-alice", 37]);
+  const kept = must(quickWith(upgraded({ bob: { counter: 5 } }), slots({ 0: 0.5, 96: 0.15 })).swings[0]);
+  assert.equal(kept.outcome, "miss");
+});
+
+test("quick duels: a dodged hit can then become the defender's counter", () => {
+  const r = must(
+    quickWith(upgraded({ bob: { dodge: 5, counter: 5 } }), slots({ 0: 0.75, 72: 0.1, 96: 0.05 })).swings[0],
+  );
+  assert.deepEqual([r.outcome, r.dodged, r.damage], ["counter", true, 37]);
+});
+
+test("quick duels with the new stats stay pure: the same rolls give the same swings", () => {
+  const rolls = Array.from({ length: 120 }, (_, i) => ((i * 37) % 100) / 100);
+  const run = () => quickWith(upgraded({ alice: { crit: 4, luck: 2 }, bob: { dodge: 3, counter: 3 } }), rolls).swings;
+  assert.deepEqual(run(), run());
+});
+
+test("HP fights: crit makes a strike or heavy deal 50% more, from the command's first roll", () => {
+  const w = arena();
+  w.register("alice", { stats: { crit: 5 } });
+  w.player("alice").wins = 10;
+  w.fight("alice", "bob");
+  const strike = (roll: number) =>
+    w.apply({
+      type: "command",
+      messageId: "c" + ++seq,
+      userId: "id-alice",
+      username: "alice",
+      displayName: "alice",
+      text: "!strike",
+      timestamp: w.now,
+      rolls: [roll],
+    });
+  assert.equal(strike(0.1).amount, 30);
+  const lastHit = () => w.state.events.findLast((e) => e.type === "duel_action");
+  assert.equal(lastHit()?.crit, true);
+  w.now += 2000;
+  assert.equal(strike(0.5).amount, 20);
+  assert.equal(lastHit()?.crit, undefined);
+});
+
 test("upgrades and hat come from the saved profile; no respec while a challenge is open", () => {
   const w = upgraded({ alice: { power: 2 } });
-  assert.deepEqual(w.player("alice").stats, { power: 2, guard: 0, luck: 0 });
+  assert.deepEqual(w.player("alice").stats, fullStats({ power: 2, guard: 0, luck: 0 }));
   // A chat command carrying the stored profile keeps them.
   w.apply({
     type: "command",

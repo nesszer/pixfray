@@ -24,13 +24,16 @@ import {
 } from "./ui.ts";
 import {
   upgradeRules,
+  counterChance,
   effectiveStats,
+  emptyStats,
   levelCost,
   presetReady,
   presetStats,
   spentOn,
   statValue,
   PRESETS,
+  STATS,
 } from "../server/upgrades.ts";
 import { CHARACTER_GROUPS } from "./character-groups.ts";
 import { skyBackdrop } from "./scrub.ts";
@@ -239,6 +242,17 @@ const STAT_TEXT = {
   power: { label: "Power", effect: (n: number) => "+" + pct("power", n) + " damage dealt" },
   guard: { label: "Guard", effect: (n: number) => "−" + pct("guard", n) + " damage taken" },
   luck: { label: "Luck", effect: (n: number) => pct("luck", n) + " of misses still hit" },
+  crit: { label: "Crit", effect: (n: number) => pct("crit", n) + " of hits become crits" },
+  dodge: { label: "Dodge", effect: (n: number) => pct("dodge", n) + " of hits on you miss" },
+  counter: {
+    label: "Counter",
+    effect: (n: number) =>
+      "+" +
+      pct("counter", n) +
+      " counter damage, " +
+      Math.round(counterChance(n) * 1000) / 10 +
+      "% of foe misses countered",
+  },
 };
 const REASONS: Record<string, string> = {
   in_duel: "finish your open challenge or duel before moving upgrade points.",
@@ -256,7 +270,6 @@ const REASONS: Record<string, string> = {
   max_slots: "you already have the most builds (5).",
 };
 
-const STATS: Stat[] = ["power", "guard", "luck"];
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const rules = () => upgradeRules(state.profile?.wins || 0, state.profile?.bonus || 0, state.config?.maxStatLevel);
 // A saved build (or profile) as an editable loadout, with only ids this page knows.
@@ -294,7 +307,7 @@ const entryOf = (id: string | undefined) => state.catalog.find((x) => x.id === i
 const looks = (d = state.d) => Object.fromEntries(LOOK_FIELDS.map((f) => [f, d[f]]));
 const boostText = (b: Partial<Stats> | undefined) =>
   b?.power && b.power === b.guard && b.power === b.luck
-    ? "+" + b.power + " to all stats"
+    ? "+" + b.power + " power, guard and luck"
     : STATS.filter((k) => b?.[k])
         .map((k) => "+" + b![k] + " " + k) // b!: filter() kept only stats b has
         .join(", ");
@@ -877,7 +890,7 @@ function renderUpgrades() {
       from +
       " Move points between stats whenever you're not in a duel."
     : "Save your fighter, then each win and each stream check-in (!checkin in chat) gives an upgrade point.";
-  const shown = canEdit ? state.d.stats : { power: 0, guard: 0, luck: 0 };
+  const shown = canEdit ? state.d.stats : emptyStats();
   const link = $("#points-link") as HTMLAnchorElement; // element type from the page HTML
   link.hidden = !canEdit || left <= 0;
   link.textContent = left + (left === 1 ? " upgrade point" : " upgrade points") + " to spend";

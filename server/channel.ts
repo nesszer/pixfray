@@ -28,6 +28,7 @@ import {
   effectiveStats,
   spentOn,
   HATS,
+  STATS,
 } from "./upgrades.ts";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.ts";
 import { ensureSpriteSchema, handleRoomSprites, spriteCatalog } from "./sprites.ts";
@@ -128,6 +129,9 @@ type ProfileTable = {
   power: number;
   guard: number;
   luck: number;
+  crit: number;
+  dodge: number;
+  counter: number;
   hat: string;
   last_opponent: string;
   bonus_points: number;
@@ -363,7 +367,7 @@ const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 const MAX_GIFT = 10_000; // the most a mod can add or take back in one gift
 // Every query that builds a profile with normalizeProfileRow reads these columns.
 const PROFILE_COLUMNS =
-  "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, bonus_points, checkins, streak, dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom";
+  "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, hat, bonus_points, checkins, streak, dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom";
 
 function json(data: unknown, status = 200, headers: { [name: string]: string } = {}): Response {
   return new Response(JSON.stringify(data), {
@@ -452,7 +456,7 @@ function normalizeProfileRow(row: ProfileRow | null | undefined, config: Config)
     lastSeen: Number.isInteger(row.last_seen) ? row.last_seen : 0,
     registered: true,
     respawnAt: 0,
-    stats: cleanStats({ power: row.power, guard: row.guard, luck: row.luck }),
+    stats: cleanStats(row),
     hat: knownHat(row.hat) ? row.hat : "",
     bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0, // check-in points (checkin below)
     checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
@@ -545,7 +549,8 @@ export class ChannelRoom extends DurableObject<Env> {
       .exec<{ name: string }>("PRAGMA table_info(profiles)")
       .toArray()
       .map((c) => c.name);
-    for (const column of ["power", "guard", "luck"])
+    // v2.10: crit, dodge and counter join the upgrade stats.
+    for (const column of STATS)
       if (!profileColumns.includes(column))
         sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("hat")) sql.exec("ALTER TABLE profiles ADD COLUMN hat TEXT NOT NULL DEFAULT ''");
@@ -1496,9 +1501,9 @@ export class ChannelRoom extends DurableObject<Env> {
       profile.userId,
     );
     this.ctx.storage.sql.exec(
-      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, hat, last_opponent, pet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '')) " +
+      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, hat, last_opponent, pet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '')) " +
         "ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, avatar = excluded.avatar, color = excluded.color, default_ability = excluded.default_ability, elo = excluded.elo, wins = excluded.wins, losses = excluded.losses, last_seen = excluded.last_seen, " +
-        "power = excluded.power, guard = excluded.guard, luck = excluded.luck, hat = excluded.hat, " +
+        "power = excluded.power, guard = excluded.guard, luck = excluded.luck, crit = excluded.crit, dodge = excluded.dodge, counter = excluded.counter, hat = excluded.hat, " +
         // A game state player from before pets has no pet field; keep the stored one then.
         "pet = CASE WHEN ? IS NULL THEN profiles.pet ELSE excluded.pet END, " +
         // A website save carries no opponent; keep the stored one.
@@ -1513,7 +1518,9 @@ export class ChannelRoom extends DurableObject<Env> {
       profile.wins,
       profile.losses,
       Number.isInteger(profile.lastSeen) ? profile.lastSeen : 0,
-      ...(({ power, guard, luck }) => [power, guard, luck])(cleanStats(profile.stats)),
+      ...(({ power, guard, luck, crit, dodge, counter }) => [power, guard, luck, crit, dodge, counter])(
+        cleanStats(profile.stats),
+      ),
       knownHat(profile.hat) ? profile.hat : "",
       String(profile.lastOpponentId || "").slice(0, 32),
       typeof profile.pet === "string" ? profile.pet : null,
@@ -2420,9 +2427,12 @@ export class ChannelRoom extends DurableObject<Env> {
             | "power"
             | "guard"
             | "luck"
+            | "crit"
+            | "dodge"
+            | "counter"
           >
         >(
-          "SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck FROM profiles WHERE user_id = ?",
+          "SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck, crit, dodge, counter FROM profiles WHERE user_id = ?",
           userId,
         )
         .toArray()[0];
@@ -3083,7 +3093,7 @@ export class ChannelRoom extends DurableObject<Env> {
             targetProfile,
             newAccounts,
             quick: subscriptionId === SE_SUBSCRIPTION_ID || msg.quick === true,
-            rolls: Array.from({ length: 48 }, () => Math.random()),
+            rolls: Array.from({ length: 120 }, () => Math.random()), // 5 slots of 24 (settleQuickDuel)
           });
           if (!main.result.ok && main.result.reason !== "duplicate")
             step({

@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import type { Env } from "../server/env.ts";
+import { emptyStats } from "../server/upgrades.ts";
+import type { Stats } from "../server/upgrades.ts";
 
 // any: data a test reads by property and asserts on (JSON bodies, SQL rows, stub call records); the assertions check
 // the values, so a declared shape would only repeat them.
@@ -113,3 +115,6 @@ export function must<T>(value: T | null | undefined, message?: string): T {
   assert.ok(value !== undefined && value !== null, message ?? "expected a value");
   return value;
 }
+
+/** A whole build from the stats a test names; the rest are 0. */
+export const fullStats = (stats: Partial<Stats>): Stats => ({ ...emptyStats(), ...stats });
