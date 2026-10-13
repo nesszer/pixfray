@@ -2386,8 +2386,8 @@ export class ChannelRoom extends DurableObject<Env> {
   }
 
   // !checkin: once per stream, only while Twitch says the channel is live. Gives config.checkinPoints, plus the
-  // STREAK_MILESTONES extra when the streak reaches a milestone. A streak counts this channel's streams with check-ins (the streams table) in a row;
-  // one missed stream a week is forgiven. Points are stored apart from wins (bonus_points), so a rank reset keeps them.
+  // STREAK_MILESTONES extra when the streak reaches a milestone. A streak counts this channel's streams with
+  // check-ins (the streams table) in a row; one missed stream a week is forgiven. Points are stored apart from wins (bonus_points), so a rank reset keeps them.
   async checkin(channel: string, { userId }: { userId: string }, now = Date.now()): Promise<CheckinReply> {
     if (!userId || !this.getProfile(userId, this.readState(channel).config)) return { reason: "no_fighter" };
     let stream: { id: string; startedAt: number } | null;
