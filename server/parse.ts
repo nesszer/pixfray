@@ -142,8 +142,11 @@ export function parseProfileSave(body: JsonObject): Parsed<ProfileSave> {
 
 // ---------- Shop ----------
 
-/** Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.ts (the room checks the ids and prices). */
-export const SHOP_KINDS: readonly string[] = ["pet", "hat", "slot", ...COSMETIC_KINDS];
+/**
+ * Shop kinds: pets, hats, build slots and the cosmetics of server/cosmetics.ts (the room checks the ids and prices),
+ * plus "reroll", a legendary pet's free reroll (id = the pet).
+ */
+export const SHOP_KINDS: readonly string[] = ["pet", "hat", "slot", ...COSMETIC_KINDS, "reroll"];
 /** A purchase as the Worker forwards it. */
 export type ShopBuy = { kind: string; id: string; price: number | undefined };
 // POST /api/shop/<channel>: a known kind, an id up to 64 ("" for a slot), and optionally the price the buyer saw

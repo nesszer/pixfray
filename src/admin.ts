@@ -867,7 +867,7 @@ function drawDuels() {
   tbody.replaceChildren(
     ...open.map((d) => {
       // S.admin!: as above
-      const max = d.rules?.maxHp || S.admin!.config.maxHp;
+      const max = (id: string) => d.maxHp?.[id] || d.rules?.maxHp || S.admin!.config.maxHp;
       const left =
         d.status === "pending"
           ? Math.max(0, d.expiresAt - now)
@@ -893,8 +893,8 @@ function drawDuels() {
             ? h(
                 "div",
                 {},
-                h("div", {}, hp(d.hp?.[d.a] ?? max, max, nameOf(d.a))),
-                h("div", {}, hp(d.hp?.[d.b] ?? max, max, nameOf(d.b))),
+                h("div", {}, hp(d.hp?.[d.a] ?? max(d.a), max(d.a), nameOf(d.a))),
+                h("div", {}, hp(d.hp?.[d.b] ?? max(d.b), max(d.b), nameOf(d.b))),
               )
             : "—",
         ),
@@ -941,8 +941,9 @@ function drawPlayers() {
   // element type from the page HTML
   const tbody = $("#players tbody") as HTMLTableSectionElement,
     now = Date.now(),
-    // S.admin!: the table renders only after load() filled it
-    max = S.admin!.config.maxHp;
+    // S.admin!: the table renders only after load() filled it. A fighter in a duel has its vitality max HP there.
+    max = (userId: string) =>
+      S.admin!.duels.find((d) => OPEN.has(d.status) && d.maxHp?.[userId])?.maxHp?.[userId] || S.admin!.config.maxHp;
   // as above
   if (!S.admin!.players.length)
     return tbody.replaceChildren(
@@ -961,7 +962,11 @@ function drawPlayers() {
           p.displayName || p.username,
           p.registered ? null : h("span", { class: "muted" }, " (no profile)"),
         ),
-        h("td", {}, p.respawnAt > now ? h("span", { class: "badge negative" }, "Knocked out") : hp(p.hp, max)),
+        h(
+          "td",
+          {},
+          p.respawnAt > now ? h("span", { class: "badge negative" }, "Knocked out") : hp(p.hp, max(p.userId)),
+        ),
         h("td", { class: "num" }, p.elo),
         h("td", { class: "num" }, p.wins),
         h("td", { class: "num" }, p.losses),
@@ -1423,9 +1428,10 @@ const TIER_LABELS: Record<string, string | undefined> = {
   epic: "Epic",
   legendary: "Legendary",
 };
-const boostLabel = (b: Record<string, number | undefined> | undefined) =>
-  b?.power && b.power === b.guard && b.power === b.luck
-    ? "+" + b.power + " power, guard and luck"
+// A custom pet's boost. A legendary rolls its stats for each owner, so the table says so instead of a number.
+const boostLabel = (tier: string, b: Record<string, number | undefined> | undefined) =>
+  tier === "legendary"
+    ? "+1 to 4 random stats"
     : ["power", "guard", "luck"]
         .filter((k) => b?.[k])
         // b!: the filter kept only stats b has
@@ -1643,7 +1649,7 @@ async function loadPets() {
               {},
               h("td", {}, h("img", { class: "pet-thumb", src: p.url, alt: "", width: 32, height: 32 }), " " + p.label),
               h("td", {}, TIER_LABELS[p.tier] || p.tier),
-              h("td", {}, boostLabel(p.boost)),
+              h("td", {}, boostLabel(p.tier, p.boost)),
               h("td", { class: "num" }, p.price),
               h(
                 "td",
@@ -1932,6 +1938,7 @@ const SE_LABELS: Record<string, string | undefined> = {
   help: "How to play",
   look: "Link to change your look",
   pet: "Own pet, or @viewer's",
+  stats: "Own stats, or @viewer's",
   checkin: "Daily check-in",
   wallet: "Wallet",
   give: "Give dollars",

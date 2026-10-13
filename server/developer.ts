@@ -1272,6 +1272,7 @@ function roomExport(room: DevRoom, channel: string) {
       crit: p.crit,
       dodge: p.dodge,
       counter: p.counter,
+      vitality: p.vitality,
       hat: p.hat,
       lastOpponentId: p.last_opponent,
       bonus: p.bonus_points,

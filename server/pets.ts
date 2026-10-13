@@ -1,12 +1,13 @@
 // Pets (docs/PROGRESSION_PLAN.md, Stage 3): bought with PixFray dollars, one active per fighter, each with a small
 // stat boost by tier. Built-in pets are drawn in code (src/served/pets.ts, same ids); streamers can upload their own as
-// PNGs (custom_pets, ids "p-..."), picking the tier and the boosted stat.
+// PNGs (custom_pets, ids "p-..."), picking the tier and the boosted stat. A legendary pet boosts LEGENDARY_ROLL stats
+// rolled for each owner when they buy it (owned_items.roll), with one free reroll (owned_items.rerolled).
 //
 // GET    /api/pets/:channel        public: { pets:[{id,label,tier,boost,price,custom,url?}], hatPricePerWin }
 // GET    /api/pets/:channel/:id    public: an uploaded pet's PNG
 // POST   /api/pets/:channel        canManage: { label, tier, stat, stat2?, image:"<base64 PNG>" } -> 201 {ok, item}
 // DELETE /api/pets/:channel/:id    canManage -> {ok, id}; owners lose it and fighters using it go back to no pet
-import { emptyStats } from "./upgrades.ts";
+import { emptyStats, STATS } from "./upgrades.ts";
 import { readPng } from "./uploads.ts";
 import type { Stat, Stats } from "./upgrades.ts";
 import type { Config } from "./model.ts";
@@ -104,14 +105,15 @@ export const PRICE_KEYS: Record<string, keyof PetPriceConfig> = {
   epic: "petPriceEpic",
   legendary: "petPriceLegendary",
 };
-// Pets boost power, guard and luck only; crit, dodge and counter come from upgrade points.
+// Common to epic pets boost power, guard or luck; a legendary's rolled stats can be any of STATS.
 export const PET_STATS = ["power", "guard", "luck"] as const satisfies readonly Stat[];
 export const MAX_BOOST = 2; // per stat, on top of the upgrade points (it may go past the channel's maxStatLevel)
 export const CUSTOM_PET_ID = /^p-[a-z0-9-]{1,40}$/;
 export const PET_LIMITS = Object.freeze({ maxPets: 24, maxBytes: 65_536, maxSide: 64, maxLabel: 24 });
 const BODY_LIMIT = Math.ceil(PET_LIMITS.maxBytes / 3) * 4 + 4_000;
 
-// Built-in pets: the stat (and second stat for epic) the tier boost goes to. Legendary boosts each of PET_STATS.
+export const LEGENDARY_ROLL = 4;
+// Built-in pets: the stat (and second stat for epic) the tier boost goes to. A legendary's stat is unused (rolled).
 export const PETS: BuiltinPet[] = [
   { id: "mouse", label: "Mouse", tier: "common", stat: "power" },
   { id: "chick", label: "Chick", tier: "common", stat: "luck" },
@@ -130,13 +132,13 @@ export const PETS: BuiltinPet[] = [
 ];
 const BUILTIN = new Map(PETS.map((p) => [p.id, p]));
 
-// common/uncommon +1 to one stat, rare +2, epic +2 and +1 to a second stat, legendary +1 to every stat.
-// Uncommon is cheaper than rare and looks better than common; its boost matches common on purpose (the plan keeps
-// boosts small so a pet never decides a duel on its own).
-export function tierBoost(tier: string, stat: string | undefined, stat2?: string): Stats {
+// common/uncommon +1 to one stat, rare +2, epic +2 and +1 to a second stat, legendary +1 to each rolled stat (none
+// before an owner rolls it, as in the catalog). Uncommon is cheaper than rare and looks better than common; its boost
+// matches common on purpose (the plan keeps boosts small so a pet never decides a duel on its own).
+export function tierBoost(tier: string, stat: string | undefined, stat2?: string, roll: readonly Stat[] = []): Stats {
   const out = emptyStats();
   if (tier === "legendary") {
-    for (const key of PET_STATS) out[key] = 1;
+    for (const key of roll) out[key] = 1;
     return out;
   }
   // Widened so any string can be looked up
@@ -150,7 +152,7 @@ export function tierBoost(tier: string, stat: string | undefined, stat2?: string
 
 export function cleanBoost(input?: unknown): Stats {
   const out = emptyStats();
-  for (const key of PET_STATS) {
+  for (const key of STATS) {
     // Any value: ?. reads undefined from null or undefined, and Number() turns whatever it reads into a number
     const v = Number((input as Partial<Record<Stat, unknown>> | null | undefined)?.[key]);
     out[key] = Number.isInteger(v) ? Math.max(0, Math.min(MAX_BOOST, v)) : 0;
@@ -160,26 +162,45 @@ export function cleanBoost(input?: unknown): Stats {
 
 export const builtinPet = (id: string): BuiltinPet | null => BUILTIN.get(id) || null;
 
-// The pet a profile row points at: a built-in id, or a custom one with "tier:stat:stat2" read from custom_pets.
-// null when there's no pet or it no longer exists.
-export function petOf(id: string, custom: unknown = ""): PetRef | null {
+// A legendary roll: LEGENDARY_ROLL different stats in STATS order. A reroll never gives back the same set.
+export function rollLegendary(random: () => number = Math.random, not: readonly Stat[] = []): Stat[] {
+  for (;;) {
+    const pool: Stat[] = [...STATS],
+      picked = new Set<Stat>();
+    // pool keeps STATS.length - picked.size entries, so the index is always inside it
+    while (picked.size < LEGENDARY_ROLL) picked.add(pool.splice(Math.floor(random() * pool.length), 1)[0]!);
+    const roll = STATS.filter((s) => picked.has(s));
+    if (roll.join() !== not.join()) return roll;
+  }
+}
+// owned_items.roll ("crit,dodge,luck,vitality") -> the stats, or [] when it isn't a whole roll.
+export function parseRoll(text: unknown): Stat[] {
+  const words = String(text || "").split(",");
+  const roll = STATS.filter((s) => words.includes(s));
+  return roll.length === LEGENDARY_ROLL && words.length === LEGENDARY_ROLL ? roll : [];
+}
+
+// The pet a profile row points at: a built-in id, or a custom one with "tier:stat:stat2" read from custom_pets, with
+// the owner's roll for a legendary. null when there's no pet or it no longer exists.
+export function petOf(id: string, custom: unknown = "", roll: unknown = ""): PetRef | null {
   if (!id) return null;
   const pet = builtinPet(id);
-  if (pet) return { id, tier: pet.tier, boost: tierBoost(pet.tier, pet.stat, pet.stat2) };
+  if (pet) return { id, tier: pet.tier, boost: tierBoost(pet.tier, pet.stat, pet.stat2, parseRoll(roll)) };
   if (!CUSTOM_PET_ID.test(id) || !custom) return null;
   const [tier, stat, stat2] = String(custom).split(":");
   // split() always returns at least one element, so tier is a string
-  return TIERS.includes(tier!) ? { id, tier: tier!, boost: tierBoost(tier!, stat, stat2) } : null;
+  return TIERS.includes(tier!) ? { id, tier: tier!, boost: tierBoost(tier!, stat, stat2, parseRoll(roll)) } : null;
 }
 
-// "+2 power" / "+2 power, +1 guard" / "+1 power, guard and luck" (same wording as the viewer page)
-// Callers pass a pet's boost from petOf (always set); the ?. reads stay as in the JS.
-export const boostText = (boost: Stats): string =>
-  PET_STATS.every((k) => boost?.[k] > 0 && boost[k] === boost.power)
-    ? `+${boost.power} power, guard and luck`
-    : PET_STATS.filter((k) => boost?.[k] > 0)
-        .map((k) => `+${boost[k]} ${k}`)
-        .join(", ");
+// "+2 power" / "+2 power, +1 guard" / "+1 power, guard and luck" / "+1 guard, crit, dodge and vitality" (same wording
+// as the viewer page). Three or more stats with the same boost share one number.
+export function boostText(boost: Stats): string {
+  const keys = STATS.filter((k) => boost?.[k] > 0);
+  const first = keys[0];
+  if (first && keys.length >= 3 && keys.every((k) => boost[k] === boost[first]))
+    return `+${boost[first]} ${keys.slice(0, -1).join(", ")} and ${keys.at(-1)}`;
+  return keys.map((k) => `+${boost[k]} ${k}`).join(", ");
+}
 
 export const petPrice = (tier: string, config: PetPriceConfig | null | undefined): number | null =>
   // An unknown tier indexes with undefined, which reads undefined, so ?? gives null
@@ -191,7 +212,7 @@ export const hatPrice = (
 ): number | null => (hat && hat.wins > 0 && config?.hatPricePerWin > 0 ? hat.wins * config.hatPricePerWin : null);
 
 // Schema: called from ChannelRoom's constructor (before any profile query, which reads custom_pets).
-export function ensurePetSchema(sql: SqlStorage): void {
+export function ensurePetSchema(sql: SqlStorage): string[] {
   sql.exec(
     "CREATE TABLE IF NOT EXISTS custom_pets (id TEXT PRIMARY KEY, label TEXT NOT NULL, tier TEXT NOT NULL, stat TEXT NOT NULL, stat2 TEXT NOT NULL DEFAULT '', png BLOB NOT NULL, bytes INTEGER NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL)",
   );
@@ -199,6 +220,28 @@ export function ensurePetSchema(sql: SqlStorage): void {
   sql.exec(
     "CREATE TABLE IF NOT EXISTS owned_items (user_id TEXT NOT NULL, kind TEXT NOT NULL, item_id TEXT NOT NULL, price INTEGER NOT NULL, bought_at INTEGER NOT NULL, PRIMARY KEY (user_id, kind, item_id))",
   );
+  // v2.11: a legendary pet's rolled stats and whether its free reroll is used. Legendaries bought before roll here.
+  const columns = sql
+    .exec<{ name: string }>("PRAGMA table_info(owned_items)")
+    .toArray()
+    .map((c) => c.name);
+  if (!columns.includes("roll")) sql.exec("ALTER TABLE owned_items ADD COLUMN roll TEXT NOT NULL DEFAULT ''");
+  if (!columns.includes("rerolled")) sql.exec("ALTER TABLE owned_items ADD COLUMN rerolled INTEGER NOT NULL DEFAULT 0");
+  const legendary = PETS.filter((p) => p.tier === "legendary").map((p) => p.id);
+  const rolled = sql
+    .exec<{ user_id: string; item_id: string }>(
+      `SELECT user_id, item_id FROM owned_items WHERE kind = 'pet' AND roll = '' AND (item_id IN (${legendary.map(() => "?").join(", ")}) OR item_id IN (SELECT id FROM custom_pets WHERE tier = 'legendary'))`,
+      ...legendary,
+    )
+    .toArray();
+  for (const r of rolled)
+    sql.exec(
+      "UPDATE owned_items SET roll = ? WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
+      rollLegendary().join(","),
+      r.user_id,
+      r.item_id,
+    );
+  return rolled.map((r) => r.user_id);
 }
 
 // The channel's pet catalog with prices from its config: built-ins first, then uploads in upload order.

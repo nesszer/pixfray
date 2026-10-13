@@ -24,6 +24,7 @@ import {
 } from "./ui.ts";
 import {
   upgradeRules,
+  bonusHp,
   counterChance,
   effectiveStats,
   emptyStats,
@@ -143,6 +144,8 @@ const emptyOwned = () =>
     hats: [],
     ...Object.fromEntries(Object.keys(KINDS).map((k) => [k, []])),
     slots: 1,
+    rolls: {},
+    rerolled: [],
   }) as unknown as Owned; // the spread's keys are the KINDS keys (see above)
 const state: State = {
   session: null,
@@ -253,9 +256,11 @@ const STAT_TEXT = {
       Math.round(counterChance(n) * 1000) / 10 +
       "% of foe misses countered",
   },
+  vitality: { label: "Vitality", effect: (n: number) => "+" + bonusHp(n) + " max HP in duels" },
 };
 const REASONS: Record<string, string> = {
-  in_duel: "finish your open challenge or duel before moving upgrade points.",
+  in_duel: "finish your open challenge or duel first.",
+  rerolled: "you already used this pet's free reroll.",
   invalid_upgrades: "those upgrades need more wins.",
   hat_locked: "that hat needs more wins.",
   pet_locked: "buy that pet first.",
@@ -305,12 +310,28 @@ const edited = () =>
 const petById = (id: string) => state.shop?.pets.find((x) => x.id === id) || null;
 const entryOf = (id: string | undefined) => state.catalog.find((x) => x.id === id) || null;
 const looks = (d = state.d) => Object.fromEntries(LOOK_FIELDS.map((f) => [f, d[f]]));
-const boostText = (b: Partial<Stats> | undefined) =>
-  b?.power && b.power === b.guard && b.power === b.luck
-    ? "+" + b.power + " power, guard and luck"
-    : STATS.filter((k) => b?.[k])
-        .map((k) => "+" + b![k] + " " + k) // b!: filter() kept only stats b has
-        .join(", ");
+// "+2 power, +1 guard", or "+1 guard, crit, dodge and vitality" when three or more stats share one number (as
+// server/pets.ts boostText).
+function boostText(b: Partial<Stats> | undefined) {
+  const keys = STATS.filter((k) => b?.[k]);
+  const first = keys[0];
+  if (first && keys.length >= 3 && keys.every((k) => b![k] === b![first]))
+    // b!: filter() kept only stats b has
+    return "+" + b![first] + " " + keys.slice(0, -1).join(", ") + " and " + keys.at(-1); // b!: as above
+  return keys.map((k) => "+" + b![k] + " " + k).join(", "); // b!: as above
+}
+// A pet's boost for this fighter: an owned legendary gives +1 to each stat it rolled, other pets their catalog boost.
+function petBoost(pet: ShopPet | null): Partial<Stats> | undefined {
+  if (pet?.tier !== "legendary") return pet?.boost;
+  const roll = state.owned.rolls?.[pet.id] || [];
+  return Object.fromEntries(STATS.filter((k) => roll.includes(k)).map((k) => [k, 1]));
+}
+const petTag = (pet: ShopPet) =>
+  TIER_NAMES[pet.tier] +
+  ", " +
+  (pet.tier === "legendary" && !state.owned.rolls?.[pet.id]?.length
+    ? "+1 to 4 random stats"
+    : boostText(petBoost(pet)));
 const TIER_NAMES: Record<string, string> = {
   common: "Common",
   uncommon: "Uncommon",
@@ -457,6 +478,46 @@ function showShopPart(id: string | null) {
 showShopPart(null);
 
 // ---------- shop ----------
+// A legendary pet's one free reroll: confirm, then the server rolls 4 different stats.
+async function reroll(pet: ShopPet, btn: HTMLButtonElement, out: Element) {
+  if (btn.dataset.confirm !== "1") {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Confirm: reroll stats";
+    setTimeout(() => {
+      if (btn.isConnected && btn.dataset.confirm === "1") {
+        btn.dataset.confirm = "";
+        btn.textContent = "Reroll stats (free, once)";
+      }
+    }, 6000);
+    return;
+  }
+  btn.disabled = true;
+  setStatus(out, "Rerolling…");
+  const r = parseAnswer(
+    await api("/api/shop/" + CHANNEL, { method: "POST", body: { kind: "reroll", id: pet.id } }),
+    parseBought,
+    "a reroll",
+  );
+  if (!r.ok) {
+    btn.disabled = false;
+    btn.dataset.confirm = "";
+    btn.textContent = "Reroll stats (free, once)";
+    if (r.status === 401) {
+      state.session = { ...state.session, user: null };
+      renderSignedIn();
+    }
+    setStatus(
+      out,
+      "Not rerolled: " +
+        (r.status === 401 ? "your session expired. Sign in again." : REASONS[r.data?.error] || errorText(r)),
+      "error",
+    );
+    return;
+  }
+  state.owned = { ...emptyOwned(), ...(r.data.owned || state.owned) };
+  renderAll();
+  setStatus(out, "Rerolled " + pet.label + ": " + boostText(petBoost(pet)) + ".", "ok");
+}
 // The first click on a Buy button asks to confirm, the second spends the dollars. A bought item is worn right away;
 // Save brings it on stream. A bought build slot opens as a copy of the build being edited.
 async function buy(
@@ -798,7 +859,7 @@ function renderPets() {
         : h("span", { class: "thumb empty-slot", "aria-hidden": "true" }),
       price: pet?.price,
       out,
-      tag: pet ? TIER_NAMES[pet.tier] + ", " + boostText(pet.boost) : null,
+      tag: pet ? petTag(pet) : null,
       tier: pet?.tier,
       onPick: (id) => {
         state.d.pet = id;
@@ -807,7 +868,26 @@ function renderPets() {
       },
     });
   };
-  box.replaceChildren(option(null), ...state.shop.pets.map(option));
+  // An owned legendary keeps its free reroll button until it's used.
+  const withReroll = (pet: ShopPet) => {
+    const el = option(pet);
+    if (pet.tier === "legendary" && canShop() && owns("pet", pet.id) && !state.owned.rerolled?.includes(pet.id))
+      el.append(
+        h(
+          "button",
+          {
+            type: "button",
+            class: "btn btn-small reroll",
+            "aria-label": "Reroll " + pet.label + "'s stats, free, once",
+            // as: the handler sits on this button
+            onclick: (e: MouseEvent) => reroll(pet, e.currentTarget as HTMLButtonElement, out),
+          },
+          "Reroll stats (free, once)",
+        ),
+      );
+    return el;
+  };
+  box.replaceChildren(option(null), ...state.shop.pets.map(withReroll));
   checkPicked(box, "pet", state.d.pet);
   ($("#pet-note") as HTMLSpanElement).textContent = canShop() // element type from the page HTML
     ? "(you own " + state.owned.pets.length + ", you have " + money(state.profile!.dollars) + ")" // profile!: canShop() needs one
@@ -899,7 +979,7 @@ function renderUpgrades() {
       const t = STAT_TEXT[k],
         n = shown[k],
         counted = Math.min(n, r.maxLevel),
-        extra = petById(state.d.pet)?.boost?.[k] || 0,
+        extra = petBoost(petById(state.d.pet))?.[k] || 0,
         total = counted + extra,
         cost = levelCost(n + 1),
         atCap = n >= r.maxLevel;

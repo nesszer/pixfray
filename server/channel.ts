@@ -4,6 +4,7 @@ import {
   chatStatus,
   createInitialState,
   defaultConfig,
+  hasOpenDuel,
   hiddenResults,
   NEW_ACCOUNT_MS,
   normalizeGameState,
@@ -30,7 +31,7 @@ import {
   HATS,
   STATS,
 } from "./upgrades.ts";
-import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.ts";
+import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice, parseRoll, rollLegendary } from "./pets.ts";
 import { ensureSpriteSchema, handleRoomSprites, spriteCatalog } from "./sprites.ts";
 import {
   COSMETIC_KINDS,
@@ -73,6 +74,7 @@ import {
   seWalletText,
   seGiveText,
   sePetText,
+  seStatsText,
   seAmount,
   seTarget,
   seReminderText,
@@ -97,6 +99,7 @@ import type { SendResult } from "./model.ts";
 import type { SpriteRow } from "./sprites.ts";
 import type { CatalogEntry } from "./uploads.ts";
 import type { CosmeticKind } from "./cosmetics.ts";
+import type { Stat } from "./upgrades.ts";
 import type { Env } from "./env.ts";
 import type {
   AdminEvent,
@@ -132,6 +135,7 @@ type ProfileTable = {
   crit: number;
   dodge: number;
   counter: number;
+  vitality: number;
   hat: string;
   last_opponent: string;
   bonus_points: number;
@@ -166,7 +170,7 @@ type ProfileRow = Omit<
   | "give_stream"
   | "account_created_at"
   | "account_checked_at"
-> & { pet_custom: string | null; last_opponent?: string };
+> & { pet_custom: string | null; pet_roll: string | null; last_opponent?: string };
 /** A saved fighter as normalizeProfileRow builds it: the player plus the columns only the profile keeps. */
 type Profile = Player & { checkins: number; streak: number; dollars: number; build: number };
 /** A config_history row. */
@@ -227,7 +231,9 @@ type ChatOutcome = Pick<ReduceOutput, "state" | "result" | "changed" | "visible"
 /** A caught value: anything can be thrown, and an Error's message reads best. */
 type Thrown = { message?: unknown } | null | undefined;
 /** What a fighter bought (owned): ids per pet, hat and cosmetic kind, plus build slots. */
-type Owned = { pets: string[]; hats: string[]; slots: number } & { [kind in CosmeticKind]: string[] };
+type Owned = { pets: string[]; hats: string[]; slots: number; rolls: { [pet: string]: Stat[] }; rerolled: string[] } & {
+  [kind in CosmeticKind]: string[];
+};
 /** A duel whose result chat may now hear (dueResults): completed, rated and revealed. */
 type DueDuel = Duel & { ratings: NonNullable<Duel["ratings"]>; revealAt: number };
 /** How a bot command reached the room, for its replies and the command log. */
@@ -306,6 +312,7 @@ const E2E_STEPS: [who: "B" | "O", action: string, target: "" | "O", want: string
   ["B", "elo", "O", ["elo"]],
   ["B", "wallet", "", ["wallet"]],
   ["B", "pet", "", ["pet", "no_pet"]],
+  ["B", "stats", "", ["stats"]],
   ["B", "checkin", "", ["checked_in", "already_checked_in", "not_live"]],
   ["B", "challenge", "", ["target_required"]],
   ["B", "challenge", "O", ["challenge"], true],
@@ -367,7 +374,7 @@ const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 const MAX_GIFT = 10_000; // the most a mod can add or take back in one gift
 // Every query that builds a profile with normalizeProfileRow reads these columns.
 const PROFILE_COLUMNS =
-  "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, hat, bonus_points, checkins, streak, dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom";
+  "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, bonus_points, checkins, streak, dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom, (SELECT roll FROM owned_items o WHERE o.user_id = profiles.user_id AND o.kind = 'pet' AND o.item_id = profiles.pet) AS pet_roll";
 
 function json(data: unknown, status = 200, headers: { [name: string]: string } = {}): Response {
   return new Response(JSON.stringify(data), {
@@ -474,9 +481,10 @@ function normalizeProfileRow(row: ProfileRow | null | undefined, config: Config)
   };
 }
 
-// The active pet (server/pets.ts): its id, tier and boost; none when it's gone (a deleted upload).
-function petFieldsOf(row: { pet: string; pet_custom: string | null }) {
-  const pet = petOf(row.pet, row.pet_custom);
+// The active pet (server/pets.ts): its id, tier and boost (a legendary's from the owner's roll); none when it's gone
+// (a deleted upload).
+function petFieldsOf(row: { pet: string; pet_custom: string | null; pet_roll: string | null }) {
+  const pet = petOf(row.pet, row.pet_custom, row.pet_roll);
   return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };
 }
 
@@ -549,7 +557,7 @@ export class ChannelRoom extends DurableObject<Env> {
       .exec<{ name: string }>("PRAGMA table_info(profiles)")
       .toArray()
       .map((c) => c.name);
-    // v2.10: crit, dodge and counter join the upgrade stats.
+    // v2.10: crit, dodge and counter join the upgrade stats; v2.11: vitality.
     for (const column of STATS)
       if (!profileColumns.includes(column))
         sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
@@ -570,7 +578,7 @@ export class ChannelRoom extends DurableObject<Env> {
       sql.exec("ALTER TABLE profiles ADD COLUMN give_stream TEXT NOT NULL DEFAULT ''");
     // v2.8: the active pet, plus bought items and uploaded pets (server/pets.ts). PROFILE_COLUMNS reads custom_pets.
     if (!profileColumns.includes("pet")) sql.exec("ALTER TABLE profiles ADD COLUMN pet TEXT NOT NULL DEFAULT ''");
-    ensurePetSchema(sql);
+    const rolled = ensurePetSchema(sql);
     // v3.1: sprites viewers made from their own images, waiting for a mod or approved (server/sprites.ts).
     ensureSpriteSchema(sql);
     // v2.9: cosmetics worn (server/cosmetics.ts) and the active build slot. Each slot's loadout is a JSON row in builds;
@@ -655,6 +663,15 @@ export class ChannelRoom extends DurableObject<Env> {
     if (!seColumns.includes("duel_module_off"))
       sql.exec("ALTER TABLE se_settings ADD COLUMN duel_module_off INTEGER NOT NULL DEFAULT 0");
     this.seenMessages = new Map(); // EventSub Message-Id -> receivedAt; commands are also deduped durably by message_id
+    // Legendary pets ensurePetSchema just rolled: fighters on stage take their rolled boost.
+    const stored = rolled.length ? this.readStoredState() : null;
+    if (typeof stored?.channel === "string") {
+      const state = this.readState(stored.channel);
+      if (this.syncPetBoosts(state, rolled)) {
+        state.revision += 1;
+        this.writeState(state);
+      }
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -781,14 +798,19 @@ export class ChannelRoom extends DurableObject<Env> {
       const userId = validUserId(request.headers.get(USER_HEADER));
       if (!userId || userId !== validUserId(body.value.userId))
         return json({ error: "profile identity mismatch" }, 403);
-      const bought = this.buy(channel, userId, body.value);
+      // the Worker's parseShopBuy passed only a string id; a reroll looks it up and finds nothing else
+      const bought =
+        body.value.kind === "reroll"
+          ? this.reroll(channel, userId, String(body.value.id))
+          : this.buy(channel, userId, body.value);
+      if (bought.ok && "state" in bought && bought.state) this.broadcast(bought.state);
       return json(
         bought.ok ? bought : { ...bought, error: bought.reason },
         bought.ok
           ? 200
           : bought.reason === "no_fighter"
             ? 404
-            : ["not_enough", "owned", "max_slots", "price_changed"].includes(bought.reason)
+            : ["not_enough", "owned", "max_slots", "price_changed", "rerolled", "in_duel"].includes(bought.reason)
               ? 409
               : 400,
       );
@@ -1360,7 +1382,16 @@ export class ChannelRoom extends DurableObject<Env> {
             )
             .toArray()[0]?.c
         : "";
-      const pet = petId ? petOf(petId, custom) : null;
+      const roll = petId
+        ? this.ctx.storage.sql
+            .exec<{ roll: string }>(
+              "SELECT roll FROM owned_items WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
+              userId,
+              petId,
+            )
+            .toArray()[0]?.roll
+        : "";
+      const pet = petId ? petOf(petId, custom, roll) : null;
       if (petId && (!pet || !owns("pet", petId))) return { ok: false, reason: "pet_locked" };
       // Cosmetics: "" (none) or one the fighter bought. Left out = keep the saved one.
       const cosmetics: Partial<Cosmetics> = {};
@@ -1501,9 +1532,9 @@ export class ChannelRoom extends DurableObject<Env> {
       profile.userId,
     );
     this.ctx.storage.sql.exec(
-      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, hat, last_opponent, pet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '')) " +
+      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, last_opponent, pet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '')) " +
         "ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, avatar = excluded.avatar, color = excluded.color, default_ability = excluded.default_ability, elo = excluded.elo, wins = excluded.wins, losses = excluded.losses, last_seen = excluded.last_seen, " +
-        "power = excluded.power, guard = excluded.guard, luck = excluded.luck, crit = excluded.crit, dodge = excluded.dodge, counter = excluded.counter, hat = excluded.hat, " +
+        "power = excluded.power, guard = excluded.guard, luck = excluded.luck, crit = excluded.crit, dodge = excluded.dodge, counter = excluded.counter, vitality = excluded.vitality, hat = excluded.hat, " +
         // A game state player from before pets has no pet field; keep the stored one then.
         "pet = CASE WHEN ? IS NULL THEN profiles.pet ELSE excluded.pet END, " +
         // A website save carries no opponent; keep the stored one.
@@ -1518,9 +1549,15 @@ export class ChannelRoom extends DurableObject<Env> {
       profile.wins,
       profile.losses,
       Number.isInteger(profile.lastSeen) ? profile.lastSeen : 0,
-      ...(({ power, guard, luck, crit, dodge, counter }) => [power, guard, luck, crit, dodge, counter])(
-        cleanStats(profile.stats),
-      ),
+      ...(({ power, guard, luck, crit, dodge, counter, vitality }) => [
+        power,
+        guard,
+        luck,
+        crit,
+        dodge,
+        counter,
+        vitality,
+      ])(cleanStats(profile.stats)),
       knownHat(profile.hat) ? profile.hat : "",
       String(profile.lastOpponentId || "").slice(0, 32),
       typeof profile.pet === "string" ? profile.pet : null,
@@ -2277,6 +2314,21 @@ export class ChannelRoom extends DurableObject<Env> {
         info ? (info.pet ? "pet" : "no_pet") : "no_fighter",
       );
     }
+    if (action === "stats") {
+      // like !pet, it works while duels are paused
+      const self = !target || target === username,
+        info = this.statsInfo(channel, self ? { userId } : { username: target });
+      return done(
+        // the sender's name as sent; short() reads it through String()
+        seStatsText(info, {
+          who: (input.displayName as string) || username,
+          target: self ? "" : target,
+          origin,
+          channel,
+        }),
+        info ? "stats" : "no_fighter",
+      );
+    }
     if (action === "give") {
       const given = await this.give(channel, { userId, target, amount: seAmount(input.amount) }, now);
       return done(
@@ -2430,9 +2482,10 @@ export class ChannelRoom extends DurableObject<Env> {
             | "crit"
             | "dodge"
             | "counter"
+            | "vitality"
           >
         >(
-          "SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck, crit, dodge, counter FROM profiles WHERE user_id = ?",
+          "SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck, crit, dodge, counter, vitality FROM profiles WHERE user_id = ?",
           userId,
         )
         .toArray()[0];
@@ -2571,15 +2624,20 @@ export class ChannelRoom extends DurableObject<Env> {
         [kind in CosmeticKind]: string[];
       }),
       slots: 1,
+      rolls: {},
+      rerolled: [],
     };
     for (const r of this.ctx.storage.sql
-      .exec<{ kind: string; item_id: string }>(
-        "SELECT kind, item_id FROM owned_items WHERE user_id = ? ORDER BY bought_at",
+      .exec<{ kind: string; item_id: string; roll: string; rerolled: number }>(
+        "SELECT kind, item_id, roll, rerolled FROM owned_items WHERE user_id = ? ORDER BY bought_at",
         userId,
       )
       .toArray()) {
-      if (r.kind === "pet") out.pets.push(r.item_id);
-      else if (r.kind === "hat") out.hats.push(r.item_id);
+      if (r.kind === "pet") {
+        out.pets.push(r.item_id);
+        if (r.roll) out.rolls[r.item_id] = parseRoll(r.roll);
+        if (r.rerolled) out.rerolled.push(r.item_id);
+      } else if (r.kind === "hat") out.hats.push(r.item_id);
       else if (r.kind === "slot") out.slots += 1;
       // a cosmetic kind; any other reads undefined and is skipped
       else if (out[r.kind as CosmeticKind]) out[r.kind as CosmeticKind].push(r.item_id);
@@ -2632,7 +2690,8 @@ export class ChannelRoom extends DurableObject<Env> {
       if (!row) return { ok: false, reason: "no_fighter" };
       const h = hiddenResults(state, now).get(userId) || { wins: 0, dollars: 0 };
       let price: number | null = null;
-      if (kind === "pet") price = petCatalog(sql, channel, config).find((p) => p.id === id)?.price ?? null;
+      const pet = kind === "pet" ? petCatalog(sql, channel, config).find((p) => p.id === id) : undefined;
+      if (kind === "pet") price = pet?.price ?? null;
       else if (kind === "hat") {
         const hat = HATS.find((x) => x.id && x.id === id);
         if (hat && hatUnlocked(hat.id, row.wins - h.wins)) return { ok: false, reason: "already_unlocked" };
@@ -2658,12 +2717,13 @@ export class ChannelRoom extends DurableObject<Env> {
       if (price > dollars) return { ok: false, reason: "not_enough", price, dollars };
       sql.exec("UPDATE profiles SET dollars = dollars - ? WHERE user_id = ?", price, userId);
       sql.exec(
-        "INSERT INTO owned_items (user_id, kind, item_id, price, bought_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO owned_items (user_id, kind, item_id, price, bought_at, roll) VALUES (?, ?, ?, ?, ?, ?)",
         userId,
         kind,
         id,
         price,
         now,
+        pet?.tier === "legendary" ? rollLegendary().join(",") : "",
       );
       logRoomEvent(this, "command", userId + " bought " + kind + " " + id + " for " + price, {
         channel,
@@ -2677,7 +2737,92 @@ export class ChannelRoom extends DurableObject<Env> {
     });
   }
 
+  // A legendary pet's one free reroll (shop kind "reroll"): new rolled stats, never the same set. Refused while that pet
+  // is in an open duel, like a build change. state is the stage to broadcast when the pet is out.
+  reroll(channel: string, userId: string, id: string) {
+    return this.ctx.storage.transactionSync(() => {
+      const sql = this.ctx.storage.sql,
+        state = this.readState(channel);
+      const fighter = sql
+        .exec<Pick<ProfileTable, "dollars">>("SELECT dollars FROM profiles WHERE user_id = ?", userId)
+        .toArray()[0];
+      if (!fighter) return { ok: false, reason: "no_fighter" };
+      const pet = petCatalog(sql, channel, state.config).find((p) => p.id === id);
+      const row =
+        pet?.tier === "legendary"
+          ? sql
+              .exec<{ roll: string; rerolled: number }>(
+                "SELECT roll, rerolled FROM owned_items WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
+                userId,
+                id,
+              )
+              .toArray()[0]
+          : undefined;
+      if (!row) return { ok: false, reason: "unknown_item" };
+      if (row.rerolled) return { ok: false, reason: "rerolled" };
+      const out = state.players.some((p) => p.userId === userId && p.pet === id);
+      if (out && hasOpenDuel(state, userId)) return { ok: false, reason: "in_duel" };
+      const roll = rollLegendary(Math.random, parseRoll(row.roll));
+      sql.exec(
+        "UPDATE owned_items SET roll = ?, rerolled = 1 WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
+        roll.join(","),
+        userId,
+        id,
+      );
+      logRoomEvent(this, "command", userId + " rerolled pet " + id + " to " + roll.join(","), {
+        channel,
+        action: "reroll",
+        userId,
+        id,
+      });
+      const changed = out && this.syncPetBoosts(state, [userId]);
+      if (changed) {
+        state.revision += 1;
+        this.writeState(state);
+      }
+      const dollars = Math.max(0, fighter.dollars - (hiddenResults(state, Date.now()).get(userId)?.dollars || 0));
+      return {
+        ok: true,
+        reason: "rerolled",
+        kind: "reroll",
+        id,
+        dollars,
+        owned: this.owned(userId),
+        state: changed ? state : null,
+      };
+    });
+  }
+
+  // Fighters on stage whose active pet's stored roll differs from their boost take the stored one; true when any did.
+  syncPetBoosts(state: GameState, userIds: readonly string[]): boolean {
+    let changed = false;
+    for (const p of state.players) {
+      if (!p.pet || !userIds.includes(p.userId)) continue;
+      const saved = this.getProfile(p.userId, state.config);
+      if (saved?.pet !== p.pet || JSON.stringify(saved.petBoost) === JSON.stringify(p.petBoost)) continue;
+      p.petBoost = saved.petBoost;
+      changed = true;
+    }
+    return changed;
+  }
+
   // !pet [@name]: a saved fighter's active pet as the catalog names it, or null when there's no such fighter.
+  // !stats [@name]: the upgrade levels that count in duels, unspent points and the pet's boost, as the stream has shown
+  // them (a quick duel still playing doesn't give its win away, like !wallet).
+  statsInfo(channel: string, { userId = "", username = "" }: { userId?: string; username?: string }) {
+    const state = this.readState(channel);
+    const found = userId ? this.getProfile(userId, state.config) : this.getProfileByUsername(username, state.config);
+    if (!found) return null;
+    const profile = shownProfile(found, hiddenResults(state, Date.now()));
+    const own = effectiveStats(profile.stats, profile.wins, profile.bonus);
+    return {
+      name: profile.displayName || profile.username,
+      stats: effectiveStats(own, profile.wins, profile.bonus, null, state.config.maxStatLevel),
+      unspent: Math.max(0, pointsFor(profile.wins, profile.bonus) - spentOn(own)),
+      petBoost: profile.petBoost,
+    };
+  }
+
   petInfo(channel: string, { userId = "", username = "" }: { userId?: string; username?: string }) {
     const config = this.readState(channel).config;
     const profile = userId ? this.getProfile(userId, config) : this.getProfileByUsername(username, config);
@@ -2687,7 +2832,7 @@ export class ChannelRoom extends DurableObject<Env> {
       : null;
     return {
       name: profile.displayName || profile.username,
-      pet: item ? { label: item.label, tier: item.tier, boost: item.boost } : null,
+      pet: item ? { label: item.label, tier: item.tier, boost: profile.petBoost } : null, // a legendary's own roll
     };
   }
 
