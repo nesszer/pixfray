@@ -1,5 +1,5 @@
 import site from "../site.config.js";
-import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, STAT_STEP } from "./upgrades.ts";
+import { cleanStats, effectiveStats, emptyStats, knownHat, scaledDamage, statValue } from "./upgrades.ts";
 import { cleanBoost, TIERS } from "./pets.ts";
 import { cleanCosmetics } from "./cosmetics.ts";
 import type { Stats } from "./upgrades.ts";
@@ -43,9 +43,12 @@ const DEFAULT_CONFIG: Config = {
   sharedCooldownMs: 1_000,
   initialElo: 1_000,
   eloK: 24,
-  // !checkin: upgrade points per stream check-in, and +1 more at a streak of 3, 7, 14 and 30 streams.
+  // !checkin: upgrade points per stream check-in, and extra points at streak milestones (server/channel.ts
+  // STREAK_MILESTONES: +1 at 3, 7, 14 and 30 streams, +2 at 60, +3 at 100, +5 at 200, +10 at 365).
   checkinPoints: 1,
   streakBonus: true,
+  // The highest level of each upgrade stat that counts on this channel; levels above it stay saved.
+  maxStatLevel: 16,
   // PixFray dollars (server/channel.ts payDuels, give). Saved fighters earn them per finished duel.
   winDollars: 5,
   lossDollars: 3,
@@ -546,6 +549,7 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
         player(state, id)?.wins,
         player(state, id)?.bonus,
         player(state, id)?.petBoost,
+        state.config.maxStatLevel,
       ),
     ]),
   );
@@ -570,7 +574,7 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
     const die = 1 + Math.floor(rollAt(i) * 6);
     let outcome: Swing["outcome"] = die === 6 ? "crit" : die === 5 ? "hit" : die <= 2 ? "counter" : "miss";
     // stats has an entry for both fighters (built from [duel.a, duel.b] above)
-    const lucky = outcome === "miss" && rollAt(LUCK_ROLLS + i) < STAT_STEP * stats[attacker]!.luck;
+    const lucky = outcome === "miss" && rollAt(LUCK_ROLLS + i) < statValue("luck", stats[attacker]!.luck);
     if (lucky) outcome = "hit";
     const swing: Swing = {
       attackerId: attacker,
@@ -752,8 +756,8 @@ function applyAbility(state: GameState, duel: Duel, actor: Player, abilityName: 
     const damage = scaledDamage(
       // not the heal branch, so ability is abilities.strike or abilities.heavy
       (ability as Abilities["strike"]).damage,
-      effectiveStats(actor.stats, actor.wins, actor.bonus, actor.petBoost),
-      effectiveStats(foe?.stats, foe?.wins, foe?.bonus, foe?.petBoost),
+      effectiveStats(actor.stats, actor.wins, actor.bonus, actor.petBoost, state.config.maxStatLevel),
+      effectiveStats(foe?.stats, foe?.wins, foe?.bonus, foe?.petBoost, state.config.maxStatLevel),
     );
     duel.hp[targetId] = Math.max(0, before - damage);
     amount = before - duel.hp[targetId];
@@ -879,6 +883,7 @@ function validateConfigPatch(patch: Untrusted): { ok: true; patch: ConfigPatch }
     eloK: [1, 100],
     maxOnStream: ON_STREAM,
     checkinPoints: [0, 3],
+    maxStatLevel: [1, 200],
     winDollars: [0, 100],
     lossDollars: [0, 100],
     giveMaxPerStream: [0, 10_000],

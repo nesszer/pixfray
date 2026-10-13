@@ -118,7 +118,7 @@ const GROUPS: { title: string; visible?: (config: Config, admin: Admin) => boole
       { key: "eloK", label: "Elo K-factor", unit: "K", min: 1, max: 100 },
     ],
   },
-  // !checkin (server/channel.ts checkin). Wins and check-in points together are capped at 20.
+  // !checkin (server/channel.ts checkin) and how far upgrade levels count here (server/upgrades.ts effectiveStats).
   {
     title: "Check-ins",
     fields: [
@@ -127,8 +127,9 @@ const GROUPS: { title: string; visible?: (config: Config, admin: Admin) => boole
         key: "streakBonus",
         label: "Streak bonus",
         bool: true,
-        hint: "+1 point at a streak of 3, 7, 14 and 30 streams",
+        hint: "+1 point at a streak of 3, 7, 14 and 30 streams, +2 at 60, +3 at 100, +5 at 200, +10 at 365",
       },
+      { key: "maxStatLevel", label: "Highest stat level that counts", unit: "levels", min: 1, max: 200 },
     ],
   },
   // PixFray dollars (server/channel.ts payDuels and give). Mods gift dollars from the Players tab.

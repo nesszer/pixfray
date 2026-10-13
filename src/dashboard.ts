@@ -22,7 +22,16 @@ import {
   DEFAULT_COLOR,
   applyChannel,
 } from "./ui.ts";
-import { upgradeRules, effectiveStats, STAT_STEP } from "../server/upgrades.ts";
+import {
+  upgradeRules,
+  effectiveStats,
+  levelCost,
+  presetReady,
+  presetStats,
+  spentOn,
+  statValue,
+  PRESETS,
+} from "../server/upgrades.ts";
 import { CHARACTER_GROUPS } from "./character-groups.ts";
 import { skyBackdrop } from "./scrub.ts";
 import { initSpriteMaker } from "./sprite-maker.ts";
@@ -224,11 +233,12 @@ function peekOn(el: HTMLElement, field: keyof Loadout, value: string) {
     peekTimer = setTimeout(() => render3d(), 80);
   });
 }
-const pct = (n: number) => Math.round(n * STAT_STEP * 100) + "%";
+// A stat's effect at a level as a percentage, to one decimal above level 8 where the steps shrink.
+const pct = (k: Stat, n: number) => Math.round(statValue(k, n) * 1000) / 10 + "%";
 const STAT_TEXT = {
-  power: { label: "Power", effect: (n: number) => "+" + pct(n) + " damage dealt" },
-  guard: { label: "Guard", effect: (n: number) => "−" + pct(n) + " damage taken" },
-  luck: { label: "Luck", effect: (n: number) => pct(n) + " of misses still hit" },
+  power: { label: "Power", effect: (n: number) => "+" + pct("power", n) + " damage dealt" },
+  guard: { label: "Guard", effect: (n: number) => "−" + pct("guard", n) + " damage taken" },
+  luck: { label: "Luck", effect: (n: number) => pct("luck", n) + " of misses still hit" },
 };
 const REASONS: Record<string, string> = {
   in_duel: "finish your open challenge or duel before moving upgrade points.",
@@ -248,7 +258,7 @@ const REASONS: Record<string, string> = {
 
 const STATS: Stat[] = ["power", "guard", "luck"];
 const str = (v: unknown) => (typeof v === "string" ? v : "");
-const rules = () => upgradeRules(state.profile?.wins || 0, state.profile?.bonus || 0);
+const rules = () => upgradeRules(state.profile?.wins || 0, state.profile?.bonus || 0, state.config?.maxStatLevel);
 // A saved build (or profile) as an editable loadout, with only ids this page knows.
 function loadoutOf(b: Build | null | undefined): Loadout {
   const p = state.profile;
@@ -854,22 +864,19 @@ function renderUpgrades() {
   const r = rules(),
     list = $("#upgrade-list") as HTMLDivElement, // element type from the page HTML
     canEdit = canShop();
-  const used = r.stats.reduce((sum, k) => sum + state.d.stats[k], 0),
-    left = r.points - used;
+  const left = r.points - spentOn(state.d.stats);
   // element type from the page HTML
   ($("#points-note") as HTMLSpanElement).textContent = canEdit ? "(" + left + " of " + r.points + " points free)" : "";
   const from = r.fromCheckins
     ? " You have " + r.fromWins + " from wins and " + r.fromCheckins + " from check-ins."
     : "";
   ($("#upgrades-help") as HTMLParagraphElement).textContent = canEdit // element type from the page HTML
-    ? "Each win and each stream check-in (!checkin in chat) gives a point, up to " +
-      r.maxPoints +
-      "." +
+    ? "Each win and each stream check-in (!checkin in chat) gives a point. Levels 1 to 8 cost 1 point each, and the cost doubles every 8 levels after that. Levels above " +
+      r.maxLevel +
+      " don't count on this channel." +
       from +
       " Move points between stats whenever you're not in a duel."
-    : "Save your fighter, then each win and each stream check-in (!checkin in chat) gives an upgrade point, up to " +
-      r.maxPoints +
-      ".";
+    : "Save your fighter, then each win and each stream check-in (!checkin in chat) gives an upgrade point.";
   const shown = canEdit ? state.d.stats : { power: 0, guard: 0, luck: 0 };
   const link = $("#points-link") as HTMLAnchorElement; // element type from the page HTML
   link.hidden = !canEdit || left <= 0;
@@ -878,8 +885,11 @@ function renderUpgrades() {
     ...r.stats.map((k) => {
       const t = STAT_TEXT[k],
         n = shown[k],
+        counted = Math.min(n, r.maxLevel),
         extra = petById(state.d.pet)?.boost?.[k] || 0,
-        total = n + extra;
+        total = counted + extra,
+        cost = levelCost(n + 1),
+        atCap = n >= r.maxLevel;
       const step = (d: number) => () => {
         state.d.stats[k] += d;
         renderUpgrades();
@@ -888,7 +898,15 @@ function renderUpgrades() {
       // The plain effect of everything the fighter has in this stat, pet included.
       const effect = total
         ? t.effect(total) + (extra ? " (" + extra + " from your pet)" : "")
-        : t.effect(1) + " per point";
+        : t.effect(1) + " per level";
+      // Why "+" is off, or what it costs, in quiet text next to the stat.
+      const next = !canEdit
+        ? ""
+        : atCap
+          ? n > r.maxLevel
+            ? "Levels above " + r.maxLevel + " don't count here"
+            : "Highest level on this channel"
+          : "Next level costs " + cost + (cost === 1 ? " point" : " points");
       return h(
         "div",
         { class: "upgrade" },
@@ -897,12 +915,13 @@ function renderUpgrades() {
           { class: "upgrade-name" },
           h("strong", {}, t.label),
           h("span", { class: "muted small" }, effect),
-          // a segmented meter: one cell per point, the pet's bonus in a lighter tone after them
+          next ? h("span", { class: "muted small" }, next) : null,
+          // a segmented meter: one cell per level up to the channel's cap, the pet's bonus in a lighter tone after them
           h(
             "span",
             { class: "meter", "aria-hidden": "true" },
-            ...Array.from({ length: Math.max(r.maxPerStat, total) }, (_, i) =>
-              h("i", { class: i < n ? "on" : i < total ? "pet" : "" }),
+            ...Array.from({ length: Math.min(Math.max(r.maxLevel, total), 24) }, (_, i) =>
+              h("i", { class: i < counted ? "on" : i < total ? "pet" : "" }),
             ),
           ),
         ),
@@ -911,7 +930,7 @@ function renderUpgrades() {
           {
             type: "button",
             class: "btn btn-small",
-            "aria-label": "Take a point out of " + t.label,
+            "aria-label": "Take a level out of " + t.label + ", refunds " + levelCost(n) + " points",
             disabled: !canEdit || n <= 0,
             onclick: step(-1),
           },
@@ -920,21 +939,41 @@ function renderUpgrades() {
         h(
           "span",
           { class: "upgrade-value num", title: extra ? "+" + extra + " from your pet" : null },
-          n + " / " + r.maxPerStat + (extra ? " +" + extra : ""),
+          n + " / " + r.maxLevel + (extra ? " +" + extra : ""),
         ),
         h(
           "button",
           {
             type: "button",
             class: "btn btn-small",
-            "aria-label": "Put a point into " + t.label,
-            disabled: !canEdit || left <= 0 || n >= r.maxPerStat,
+            "aria-label": "Put a level into " + t.label + " for " + cost + (cost === 1 ? " point" : " points"),
+            disabled: !canEdit || cost > left || atCap,
             onclick: step(1),
           },
           "+",
         ),
       );
     }),
+  );
+  // Suggested builds: each spreads all the points by its weights; the viewer still presses Save profile.
+  const presets = $("#upgrade-presets") as HTMLDivElement; // element type from the page HTML
+  presets.hidden = !canEdit;
+  presets.replaceChildren(
+    ...PRESETS.filter(presetReady).map((preset) =>
+      h(
+        "button",
+        {
+          type: "button",
+          class: "btn btn-small",
+          onclick: () => {
+            state.d.stats = presetStats(preset, r.points, r.maxLevel);
+            renderUpgrades();
+            renderSave();
+          },
+        },
+        preset.label,
+      ),
+    ),
   );
 }
 

@@ -214,6 +214,7 @@ export type StateConfig = {
   challengeTimeoutMs: number;
   rematchDelayMs: number;
   checkinPoints?: number;
+  maxStatLevel?: number;
   winDollars?: number;
   lossDollars?: number;
   giveEnabled?: boolean;
@@ -226,6 +227,7 @@ const STATE_CONFIG: Spec = {
   challengeTimeoutMs: num,
   rematchDelayMs: num,
   checkinPoints: opt(num),
+  maxStatLevel: opt(num),
   winDollars: opt(num),
   lossDollars: opt(num),
   giveEnabled: opt(bool),

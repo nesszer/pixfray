@@ -35,8 +35,12 @@ The duel is rolled at once, the moment the challenge is accepted.
 
 ## Upgrades, hats and check-ins
 
-- Each win earns an upgrade point (power, guard, luck) and unlocks hats.
-- `!checkin`, once per live stream, adds a point too, with streak bonuses.
+- Each win earns an upgrade point (power, guard, luck) and unlocks hats. Points have no cap.
+- Levels 1-8 of a stat cost 1 point each; the cost doubles every 8 levels after that, and each level
+  adds less as the stat nears its ceiling. Mods set the highest level that counts on their channel
+  (16 by default); levels above it stay saved.
+- `!checkin`, once per live stream, adds a point too, with streak bonuses: +1 at 3, 7, 14 and 30
+  streams, +2 at 60, +3 at 100, +5 at 200 and +10 at 365.
 - `!pet` shows a fighter's pet.
 
 ## PixFray dollars

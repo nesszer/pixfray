@@ -104,7 +104,7 @@ export const PRICE_KEYS: Record<string, keyof PetPriceConfig> = {
   epic: "petPriceEpic",
   legendary: "petPriceLegendary",
 };
-export const MAX_BOOST = 2; // per stat, on top of the upgrade points (it may go past MAX_PER_STAT)
+export const MAX_BOOST = 2; // per stat, on top of the upgrade points (it may go past the channel's maxStatLevel)
 export const CUSTOM_PET_ID = /^p-[a-z0-9-]{1,40}$/;
 export const PET_LIMITS = Object.freeze({ maxPets: 24, maxBytes: 65_536, maxSide: 64, maxLabel: 24 });
 const BODY_LIMIT = Math.ceil(PET_LIMITS.maxBytes / 3) * 4 + 4_000;

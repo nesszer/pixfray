@@ -25,7 +25,8 @@ import {
   hatUnlocked,
   upgradeRules,
   pointsFor,
-  MAX_POINTS,
+  effectiveStats,
+  spentOn,
   HATS,
 } from "./upgrades.ts";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice } from "./pets.ts";
@@ -346,8 +347,18 @@ const CHAT_PENDING_CHECK_MS = 3 * 60_000; // a subscription still awaiting webho
 const ACCOUNT_RETRY_MS = 3_600_000; // a failed Twitch account-age lookup is retried after an hour
 const LIVE_CACHE_MS = 60_000; // !checkin asks Twitch whether the channel is live at most once a minute
 const FREE_MISS_MS = 7 * 24 * 60 * 60_000; // a streak survives one missed stream per week
-const STREAK_MILESTONES = [3, 7, 14, 30]; // +1 point when the streak reaches one of these (config.streakBonus)
-const MAX_BONUS = 1_000; // stored check-in points; only MAX_POINTS of wins + bonus ever count
+// Extra points when the streak reaches one of these streams (config.streakBonus).
+const STREAK_MILESTONES = new Map([
+  [3, 1],
+  [7, 1],
+  [14, 1],
+  [30, 1],
+  [60, 2],
+  [100, 3],
+  [200, 5],
+  [365, 10],
+]);
+const MAX_BONUS = 1_000_000; // stored check-in points; a sanity bound, far past any real streak
 const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 const MAX_GIFT = 10_000; // the most a mod can add or take back in one gift
 // Every query that builds a profile with normalizeProfileRow reads these columns.
@@ -855,7 +866,7 @@ export class ChannelRoom extends DurableObject<Env> {
       return json({
         ...profile,
         ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}),
-        upgrades: upgradeRules(profile.wins, profile.bonus),
+        upgrades: upgradeRules(profile.wins, profile.bonus, state.config.maxStatLevel),
         owned: this.owned(userId),
         builds: this.builds(profile),
       });
@@ -893,7 +904,7 @@ export class ChannelRoom extends DurableObject<Env> {
       return json({
         profile: {
           ...shown,
-          upgrades: upgradeRules(shown.wins, shown.bonus),
+          upgrades: upgradeRules(shown.wins, shown.bonus, result.state.config.maxStatLevel),
           owned: this.owned(actorId),
           builds: this.builds(shown),
         },
@@ -1094,7 +1105,7 @@ export class ChannelRoom extends DurableObject<Env> {
         }
         if (devGive[1].toLowerCase() === "wallet") {
           const wallet = this.wallet(channel, uid);
-          return json({ wallet, reply: seWalletText(wallet, { who, origin: "", channel, maxPoints: MAX_POINTS }) });
+          return json({ wallet, reply: seWalletText(wallet, { who, origin: "", channel }) });
         }
         const given = await this.give(channel, { userId: uid, target: devTarget, amount: seAmount(devGive[3]) }, now);
         return json({
@@ -1106,7 +1117,7 @@ export class ChannelRoom extends DurableObject<Env> {
         const checked = await this.checkin(channel, { userId: validUserId(userId) }, now);
         return json({
           ...checked,
-          reply: seCheckinText(checked, { who: displayName || username, origin: "", channel, maxPoints: MAX_POINTS }),
+          reply: seCheckinText(checked, { who: displayName || username, origin: "", channel }),
         });
       }
       const parsed = parseGameCommand(line); // the reply is the line a StreamElements bot would post
@@ -2226,7 +2237,6 @@ export class ChannelRoom extends DurableObject<Env> {
           who: (input.displayName as string) || username,
           origin,
           channel,
-          maxPoints: MAX_POINTS,
         }),
         checked.reason,
         checked.reason === "checked_in" ? { streak: checked.streak, points: checked.points } : {},
@@ -2241,7 +2251,6 @@ export class ChannelRoom extends DurableObject<Env> {
           who: (input.displayName as string) || username,
           origin,
           channel,
-          maxPoints: MAX_POINTS,
         }),
         wallet ? "wallet" : "no_fighter",
       );
@@ -2376,8 +2385,8 @@ export class ChannelRoom extends DurableObject<Env> {
     );
   }
 
-  // !checkin: once per stream, only while Twitch says the channel is live. Gives config.checkinPoints, plus 1 when the
-  // streak reaches a milestone. A streak counts this channel's streams with check-ins (the streams table) in a row;
+  // !checkin: once per stream, only while Twitch says the channel is live. Gives config.checkinPoints, plus the
+  // STREAK_MILESTONES extra when the streak reaches a milestone. A streak counts this channel's streams with check-ins (the streams table) in a row;
   // one missed stream a week is forgiven. Points are stored apart from wins (bonus_points), so a rank reset keeps them.
   async checkin(channel: string, { userId }: { userId: string }, now = Date.now()): Promise<CheckinReply> {
     if (!userId || !this.getProfile(userId, this.readState(channel).config)) return { reason: "no_fighter" };
@@ -2400,9 +2409,20 @@ export class ChannelRoom extends DurableObject<Env> {
         config = state.config;
       const row = sql
         .exec<
-          Pick<ProfileTable, "wins" | "bonus_points" | "streak" | "last_stream" | "last_stream_seq" | "free_miss_at">
+          Pick<
+            ProfileTable,
+            | "wins"
+            | "bonus_points"
+            | "streak"
+            | "last_stream"
+            | "last_stream_seq"
+            | "free_miss_at"
+            | "power"
+            | "guard"
+            | "luck"
+          >
         >(
-          "SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at FROM profiles WHERE user_id = ?",
+          "SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck FROM profiles WHERE user_id = ?",
           userId,
         )
         .toArray()[0];
@@ -2422,13 +2442,15 @@ export class ChannelRoom extends DurableObject<Env> {
       const missed = row.last_stream_seq > 0 ? seq - row.last_stream_seq - 1 : -1;
       const freeMiss = missed === 1 && now - row.free_miss_at >= FREE_MISS_MS;
       const streak = missed === 0 || freeMiss ? row.streak + 1 : 1;
-      const milestone = Boolean(config.streakBonus) && STREAK_MILESTONES.includes(streak);
-      const points = config.checkinPoints + (milestone ? 1 : 0);
+      const extra = config.streakBonus ? STREAK_MILESTONES.get(streak) || 0 : 0;
+      const milestone = extra > 0;
+      const points = config.checkinPoints + extra;
       const bonus = Math.min(MAX_BONUS, row.bonus_points + points);
       // The total counts only wins the stream has shown, like !wallet: a quick duel still playing doesn't give it away.
       const wins = row.wins - (hiddenResults(state, now).get(userId)?.wins || 0);
-      if (test)
-        return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total: pointsFor(wins, bonus) };
+      const total = pointsFor(wins, bonus),
+        unspent = Math.max(0, total - spentOn(effectiveStats(row, wins, bonus)));
+      if (test) return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total, unspent };
       sql.exec(
         "UPDATE profiles SET bonus_points = ?, checkins = checkins + 1, streak = ?, last_stream = ?, last_stream_seq = ?, free_miss_at = ? WHERE user_id = ?",
         bonus,
@@ -2443,7 +2465,7 @@ export class ChannelRoom extends DurableObject<Env> {
         active.bonus = bonus;
         this.writeState(state);
       } // the next duel counts the new points
-      return { reason: "checked_in", streak, points, milestone, freeMiss, total: pointsFor(wins, bonus) };
+      return { reason: "checked_in", streak, points, milestone, freeMiss, total, unspent };
     });
   }
 

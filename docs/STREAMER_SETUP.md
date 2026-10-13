@@ -59,6 +59,8 @@ once you allowed the bot or made it a moderator.
 it, click **Connect mod access** and approve the permission while signed in to Twitch as yourself.
 
 Moderators can edit chat commands, use Clear arena, change the balance and review viewer sprites.
+The Rules tab's Check-ins group has **Highest stat level that counts** (16 by default): fighters' upgrade levels above it
+stay saved but don't count in your channel's duels.
 Only you (or the site owner) can click **Reset all ranks**, **Turn PixFray off** or move chat from
 another site.
 
