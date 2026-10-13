@@ -146,6 +146,8 @@ export type Duel = {
   lastActionAt?: number;
   round?: number;
   rules?: DuelRules;
+  /** userId -> full health in this duel: rules.maxHp plus vitality (server/upgrades.ts bonusHp). */
+  maxHp?: Record<string, number>;
   cooldowns?: Record<string, Cooldowns>;
   /** Played out, but moves no Elo, wins, losses or dollars. */
   unrated?: "new_account" | "pair_cap";

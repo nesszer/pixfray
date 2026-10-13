@@ -35,7 +35,7 @@ The duel is rolled at once, the moment the challenge is accepted.
 
 ## Upgrades, hats and check-ins
 
-- Each win earns an upgrade point and unlocks hats. Points have no cap. Points buy levels in six stats:
+- Each win earns an upgrade point and unlocks hats. Points have no cap. Points buy levels in seven stats:
 
   | Stat | Each level (levels 1-8) | Ceiling |
   |---|---|---|
@@ -45,15 +45,18 @@ The duel is rolled at once, the moment the challenge is accepted.
   | Crit | 4% of your hits become crits (HP fights: a strike or heavy deals +50%) | 50% |
   | Dodge | 4% of hits and crits on you miss | 50% |
   | Counter | +2% counter damage, and 2% of a foe's misses become your counter | 60% damage, 50% chance |
+  | Vitality | +4 max HP | +60 HP |
 
-- Luck, dodge and counter work in quick duels only. A swing checks luck, then crit, then dodge, then
+- Luck, dodge and counter work in quick duels only. Vitality works in both: you start with more HP, heal up to it, and a flawless win needs all of it. A swing checks luck, then crit, then dodge, then
   counter, so a dodged hit can still turn into your counter.
 - Levels 1-8 of a stat cost 1 point each; the cost doubles every 8 levels after that, and each level
   adds less as the stat nears its ceiling. Mods set the highest level that counts on their channel
   (16 by default); levels above it stay saved.
 - `!checkin`, once per live stream, adds a point too, with streak bonuses: +1 at 3, 7, 14 and 30
   streams, +2 at 60, +3 at 100, +5 at 200 and +10 at 365.
-- `!pet` shows a fighter's pet.
+- `!pet` shows a fighter's pet. `!stats` (or `!stats @name`) shows the upgrade levels that count, unspent points and the pet's boost.
+- A legendary pet gives +1 to 4 different stats, rolled at random when you buy it. You can reroll them
+  once for free on the Fighter tab; the new set is always different. Not during a challenge or duel.
 
 ## PixFray dollars
 

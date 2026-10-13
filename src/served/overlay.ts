@@ -1177,6 +1177,7 @@ async function start() {
             b: String(event.b),
             status: "active",
             hp: { ...event.hp },
+            ...(event.maxHp ? { maxHp: { ...event.maxHp } } : {}),
             rules: { maxHp: Number(arenaConfig?.maxHp) || 100 },
           });
           const fa = findPlayer(String(event.a)),
@@ -1327,7 +1328,7 @@ async function start() {
     if (!duel || duel.status !== "active") return null;
     const current = Number(duel.hp?.[p.userId]);
     if (!Number.isFinite(current)) return null;
-    const max = Number(duel.rules?.maxHp ?? arenaConfig?.maxHp ?? 100);
+    const max = Number(duel.maxHp?.[p.userId] ?? duel.rules?.maxHp ?? arenaConfig?.maxHp ?? 100);
     return { current: Math.max(0, current), max: Math.max(1, Number.isFinite(max) ? max : 100) };
   }
   function onMessage(message: { [K in keyof ChatMessage]?: ChatMessage[K] | undefined }) {

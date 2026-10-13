@@ -7,11 +7,12 @@
 //   crit:  4% per level that a hit becomes a crit; in an HP fight, 4% that a strike or heavy deals +50%
 //   dodge: 4% per level that a hit or crit on you misses (quick duels)
 //   counter: +2% counter damage per level, and 2% per level that a foe's miss becomes your counter (quick duels)
+//   vitality: +4 max HP per level in a duel (both kinds), up to +60; blows stay sized on the channel's base max HP
 // Above level 8 each level adds half a step at first and the effect closes in on the stat's ceiling (statValue).
 // A channel's maxStatLevel (config) caps the levels that count there; levels above it stay saved.
 // Hats are cosmetic; some unlock at a number of wins. The overlay draws them (src/served/hats.ts).
 
-export const STATS = ["power", "guard", "luck", "crit", "dodge", "counter"] as const; // const: each stat a literal, so Stat names them
+export const STATS = ["power", "guard", "luck", "crit", "dodge", "counter", "vitality"] as const; // const: each stat a literal, so Stat names them
 export type Stat = (typeof STATS)[number];
 /** Levels in each stat. */
 export type Stats = Record<Stat, number>;
@@ -22,7 +23,7 @@ export const FULL_STEP_LEVELS = 8;
 /** A sanity bound on stored levels; reaching it would cost over 268 million points. */
 export const LEVEL_LIMIT = 200;
 export const STAT_STEP = 0.04;
-/** What one of the first 8 levels adds to each stat's effect, as a fraction. */
+/** What one of the first 8 levels adds to each stat's effect, as a fraction (vitality: in HP). */
 export const STAT_STEPS: Record<Stat, number> = {
   power: STAT_STEP,
   guard: STAT_STEP,
@@ -30,8 +31,9 @@ export const STAT_STEPS: Record<Stat, number> = {
   crit: STAT_STEP,
   dodge: STAT_STEP,
   counter: 0.02,
+  vitality: 4,
 };
-/** The most each stat's effect can reach, as a fraction (0.6 is 60%). */
+/** The most each stat's effect can reach, as a fraction (0.6 is 60%; vitality: in HP). */
 export const STAT_CEILING: Record<Stat, number> = {
   power: 0.6,
   guard: 0.6,
@@ -39,6 +41,7 @@ export const STAT_CEILING: Record<Stat, number> = {
   crit: 0.5,
   dodge: 0.5,
   counter: 0.6,
+  vitality: 60,
 };
 /** Counter's second effect: the chance a foe's miss becomes your counter. */
 const COUNTER_CHANCE = { step: 0.02, ceiling: 0.5 };
@@ -83,13 +86,15 @@ function effectAt(step: number, ceiling: number, level: number): number {
     room = ceiling - base;
   return base + room * (1 - Math.exp(-((step / 2) * (n - FULL_STEP_LEVELS)) / room));
 }
-// What a stat's levels do, as a fraction (for counter, the extra counter damage).
+// What a stat's levels do, as a fraction (for counter, the extra counter damage; for vitality, HP).
 export const statValue = (stat: Stat, level: number): number => effectAt(STAT_STEPS[stat], STAT_CEILING[stat], level);
 // The chance a foe's miss becomes this fighter's counter.
 export const counterChance = (level: number): number => effectAt(COUNTER_CHANCE.step, COUNTER_CHANCE.ceiling, level);
+// Whole extra max HP from vitality levels.
+export const bonusHp = (level: number): number => Math.round(statValue("vitality", level));
 
 export function emptyStats(): Stats {
-  return { power: 0, guard: 0, luck: 0, crit: 0, dodge: 0, counter: 0 };
+  return { power: 0, guard: 0, luck: 0, crit: 0, dodge: 0, counter: 0, vitality: 0 };
 }
 
 // Any input -> whole numbers within 0..LEVEL_LIMIT for each stat.
@@ -104,7 +109,7 @@ export function cleanStats(input?: unknown): Stats {
 }
 
 // Levels the fighter can use with these points. A rank reset lowers the points; levels come off the last stat in
-// STATS first (counter, dodge, crit, luck, guard, then power) until the build fits, so a stored build never counts
+// STATS first (vitality, counter, dodge, crit, luck, guard, then power) until the build fits, so a stored build never counts
 // for more than the points allow.
 // maxLevel (the channel's maxStatLevel) then caps each stat; levels above it stay saved but don't count.
 // boost (the active pet's, server/pets.ts) is added after both, so it may take a stat past the cap.

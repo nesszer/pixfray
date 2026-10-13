@@ -8,7 +8,7 @@ import { logRoomError } from "../server/developer.ts";
 import { createInitialState, defaultConfig } from "../server/game.ts";
 import { makePng, b64 } from "./upload-helpers.ts";
 import { effectiveStats } from "../server/upgrades.ts";
-import { tierBoost, petOf, PETS, boostText } from "../server/pets.ts";
+import { tierBoost, petOf, PETS, boostText, cleanBoost, parseRoll, rollLegendary } from "../server/pets.ts";
 import { asEnv, fakeCtx, fullStats, must } from "./fakes.ts";
 import type { FakeSocketLike, FakeState, Loose } from "./fakes.ts";
 import type { Env } from "../server/env.ts";
@@ -1735,7 +1735,11 @@ test("pets: tier boosts, added after the upgrade cap", () => {
     "an epic second stat must differ",
   );
   // as: tierBoost types its stat as required; the test checks the tier-only call (stat reads as undefined)
-  assert.deepEqual((tierBoost as TierBoostOneArg)("legendary"), fullStats({ power: 1, guard: 1, luck: 1 }));
+  assert.deepEqual((tierBoost as TierBoostOneArg)("legendary"), fullStats({}), "a legendary boosts what it rolled");
+  assert.deepEqual(
+    tierBoost("legendary", undefined, undefined, ["crit", "dodge", "luck", "vitality"]),
+    fullStats({ luck: 1, crit: 1, dodge: 1, vitality: 1 }),
+  );
   assert.deepEqual(tierBoost("mythic", "power"), fullStats({ power: 0, guard: 0, luck: 0 }));
   assert.equal(PETS.length, 14);
   assert.equal(petOf("p-gone", ""), null, "a deleted upload is no pet");
@@ -2120,9 +2124,12 @@ test("profile saves land in the owner log: a save as a command row, a refusal wi
   });
 });
 
-test('pet boost text: legendary pets read "+1 power, guard and luck", like the viewer page', () => {
-  // as: tierBoost types its stat as required; the test checks the tier-only call (stat reads as undefined)
-  assert.equal(boostText((tierBoost as TierBoostOneArg)("legendary")), "+1 power, guard and luck");
+test('pet boost text: a rolled legendary reads "+1 luck, crit, dodge and vitality", like the viewer page', () => {
+  assert.equal(
+    boostText(tierBoost("legendary", undefined, undefined, ["vitality", "crit", "dodge", "luck"])),
+    "+1 luck, crit, dodge and vitality",
+  );
+  assert.equal(boostText(fullStats({ power: 1, guard: 1, luck: 1 })), "+1 power, guard and luck");
   assert.equal(boostText(fullStats({ power: 2, guard: 1, luck: 0 })), "+2 power, +1 guard");
   assert.equal(boostText(fullStats({ power: 0, guard: 0, luck: 1 })), "+1 luck");
 });
@@ -2689,7 +2696,7 @@ test("debug bot: !fray e2e plays every command once against the asker and posts 
   await r.call("/dev-live", { method: "POST", body: { live: false } });
   assert.match((await r.say("u1", "alice", "!fray e2e")).reply, /only the broadcaster or a mod/);
   const run = await r.say("u1", "alice", "!fray e2e", { mod: true });
-  assert.match(run.replies[0], /^PixFray e2e, pixbot vs alice: 17 of 17 steps passed\.$/);
+  assert.match(run.replies[0], /^PixFray e2e, pixbot vs alice: 18 of 18 steps passed\.$/);
   const detail = run.replies.slice(1).join(" · ");
   assert.doesNotMatch(detail, /FAIL/);
   assert.match(detail, /checkin ok \(not_live\)/);
@@ -2941,4 +2948,156 @@ test('rooms answer the overlay "ping" with "pong" through the WebSocket auto-res
     if (had) workerGlobals.WebSocketRequestResponsePair = original;
     else delete workerGlobals.WebSocketRequestResponsePair;
   }
+});
+
+test("legendary pets: 4 stats rolled at purchase, one free reroll to a new set, refused mid-duel", async () => {
+  const r = room({}, { quick: true });
+  const se = (await r.call("/admin")).body.streamelements;
+  await r.call("/chat", {
+    method: "POST",
+    body: { action: "connected", subscriptionId: "se-streamelements", status: "enabled", createdAt: Date.now() },
+  });
+  await r.save("u1", "alice");
+  await r.save("u2", "bob");
+  await r.call("/admin", {
+    method: "POST",
+    body: { actorId: "mod1", action: "giftDollars", payload: { username: "alice", amount: 2000 } },
+  });
+  const shop = (userId: string, kind: string, id: string) =>
+    r.call("/shop", { method: "POST", userId, body: { userId, kind, id } });
+  const bought = (await shop("u1", "pet", "dragon")).body;
+  const roll: string[] = bought.owned.rolls.dragon;
+  assert.equal(roll.length, 4);
+  assert.equal(new Set(roll).size, 4, "4 different stats");
+  assert.deepEqual(
+    roll,
+    ["power", "guard", "luck", "crit", "dodge", "counter", "vitality"].filter((s) => roll.includes(s)),
+    "in STATS order",
+  );
+  assert.deepEqual(bought.owned.rerolled, []);
+  const saved = (await r.save("u1", "alice", { pet: "dragon" })).body.profile;
+  assert.deepEqual(saved.petBoost, fullStats(Object.fromEntries(roll.map((s) => [s, 1]))));
+  // Not a legendary, or not owned: nothing to reroll.
+  assert.deepEqual((({ status, body }) => [status, body.error])(await shop("u2", "reroll", "dragon")), [
+    400,
+    "unknown_item",
+  ]);
+  await shop("u1", "pet", "fox");
+  assert.equal((await shop("u1", "reroll", "fox")).body.error, "unknown_item");
+  // An open challenge with the dragon out blocks the reroll.
+  const challenge = await r.call("/se", {
+    method: "POST",
+    body: { key: se.secret, action: "challenge", userId: "u1", username: "alice", target: "bob", messageId: "c1" },
+  });
+  assert.equal(challenge.status, 200);
+  assert.deepEqual((({ status, body }) => [status, body.error])(await shop("u1", "reroll", "dragon")), [
+    409,
+    "in_duel",
+  ]);
+  await r.call("/admin", {
+    method: "POST",
+    body: { actorId: "mod1", action: "cancelDuel", payload: { duelId: must(r.readState("nesszerra").duels[0]).id } },
+  });
+  const again = (await shop("u1", "reroll", "dragon")).body;
+  assert.equal(again.ok, true, again.error);
+  assert.notDeepEqual(again.owned.rolls.dragon, roll, "a reroll never gives the same set");
+  assert.deepEqual(again.owned.rerolled, ["dragon"]);
+  const player = must(r.readState("nesszerra").players.find((p) => p.userId === "u1"));
+  assert.deepEqual(
+    player.petBoost,
+    fullStats(Object.fromEntries(again.owned.rolls.dragon.map((s: string) => [s, 1]))),
+    "the fighter on stage takes the new roll",
+  );
+  assert.deepEqual((({ status, body }) => [status, body.error])(await shop("u1", "reroll", "dragon")), [
+    409,
+    "rerolled",
+  ]);
+});
+
+test("legendary pets bought before rolls get one when the room starts", async () => {
+  const r = room();
+  await r.save("u1", "alice");
+  const sql = r.ctx.storage.sql;
+  sql.exec(
+    "INSERT INTO owned_items (user_id, kind, item_id, price, bought_at) VALUES ('u1', 'pet', 'phoenix', 900, 1), ('u1', 'pet', 'fox', 60, 2)",
+  );
+  // Env: a partial Env on purpose
+  new ChannelRoom(r.ctx, { INTERNAL_SECRET: SECRET } as Env);
+  const rows = Object.fromEntries(
+    sql
+      .exec<{ item_id: string; roll: string }>("SELECT item_id, roll FROM owned_items")
+      .toArray()
+      .map((x) => [x.item_id, x.roll]),
+  );
+  assert.equal(rows.fox, "", "only legendaries roll");
+  assert.equal(String(rows.phoenix).split(",").length, 4);
+});
+
+test("!stats: own levels that count, unspent points and the pet; @name for someone else", async () => {
+  const r = room({}, { quick: true });
+  const se = (await r.call("/admin")).body.streamelements;
+  assert.equal(se.names.stats, "!stats");
+  await r.save("u1", "alice");
+  await r.save("u2", "bob");
+  // Ten wins, in the database and in the live game state (duels keep the two in step).
+  r.ctx.storage.sql.exec("UPDATE profiles SET wins = 10 WHERE user_id = 'u1'");
+  const live = r.readState("nesszerra");
+  must(live.players.find((p) => p.userId === "u1")).wins = 10;
+  r.writeState(live);
+  const saved = await r.save("u1", "alice", { stats: { power: 2, vitality: 3 } });
+  assert.equal(saved.status, 200, saved.body.error);
+  assert.equal(
+    r.ctx.storage.sql.exec<{ vitality: number }>("SELECT vitality FROM profiles WHERE user_id = 'u1'").toArray()[0]
+      ?.vitality,
+    3,
+  );
+  let m = 0;
+  const stats = async (id: string, login: string, target = "") =>
+    (
+      await r.call("/se?origin=https%3A%2F%2Ftest.example", {
+        method: "POST",
+        body: {
+          key: se.secret,
+          action: "stats",
+          userId: id,
+          username: login,
+          displayName: login,
+          target,
+          messageId: "s" + ++m,
+        },
+      })
+    ).body.reply;
+  assert.equal(await stats("u1", "alice"), "@alice: Power 2, Vitality 3. 5 points unspent.");
+  assert.equal(await stats("u1", "alice", "bob"), "@bob: no upgrades yet. 0 points unspent.");
+  assert.match(await stats("u1", "alice", "nobody"), /nobody/);
+});
+
+test("legendary rolls: 4 different stats in STATS order, never the set it replaces; stored text parses back", () => {
+  let i = 0;
+  const seq = (values: number[]) => () => must(values[i++ % values.length]);
+  // always the first stat left in the pool
+  assert.deepEqual(rollLegendary(seq([0])), ["power", "guard", "luck", "crit"]);
+  i = 0;
+  // the same draw again is refused; the next draw (last stat each time) wins
+  assert.deepEqual(rollLegendary(seq([0, 0, 0, 0, 0.99, 0.99, 0.99, 0.99]), ["power", "guard", "luck", "crit"]), [
+    "crit",
+    "dodge",
+    "counter",
+    "vitality",
+  ]);
+  for (let n = 0; n < 50; n++) {
+    const roll = rollLegendary();
+    assert.equal(new Set(roll).size, 4);
+    assert.deepEqual(parseRoll(roll.join(",")), roll);
+  }
+  assert.deepEqual(parseRoll("vitality,crit,dodge,luck"), ["luck", "crit", "dodge", "vitality"]);
+  assert.deepEqual(parseRoll("crit,dodge,luck"), [], "3 stats is no roll");
+  assert.deepEqual(parseRoll("crit,dodge,luck,speed"), [], "an unknown stat is no roll");
+  assert.deepEqual(parseRoll(""), []);
+  assert.deepEqual(
+    petOf("dragon", "", "crit,dodge,luck,vitality")?.boost,
+    fullStats({ luck: 1, crit: 1, dodge: 1, vitality: 1 }),
+  );
+  assert.deepEqual(petOf("dragon")?.boost, fullStats({}), "an unrolled legendary boosts nothing");
+  assert.deepEqual(cleanBoost({ vitality: 1, counter: 5, crit: "x" }), fullStats({ vitality: 1, counter: 2 }));
 });

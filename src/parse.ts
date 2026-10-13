@@ -122,11 +122,27 @@ export const parseAccess = shape<Access>(
 export type Build = { avatar?: string; color?: string; defaultAbility?: string; [field: string]: unknown };
 const BUILD: Spec = { avatar: opt(str), color: opt(str), defaultAbility: opt(str) };
 const isBuild = fits(BUILD);
-/** What a fighter owns: pets, hats, each cosmetic kind's items and the number of build slots. */
-export type Owned = { pets: string[]; hats: string[]; slots: number } & Record<CosmeticKind, string[]>;
-// slots a number, every other list a list of ids
+/**
+ * What a fighter owns: pets, hats, each cosmetic kind's items and the number of build slots, plus each legendary pet's
+ * rolled stats and the legendaries whose free reroll is used.
+ */
+export type Owned = {
+  pets: string[];
+  hats: string[];
+  slots: number;
+  rolls: Record<string, string[]>;
+  rerolled: string[];
+} & Record<CosmeticKind, string[]>;
+// slots a number, rolls an object of stat lists, every other list a list of ids
 const isOwned: Check = (v) =>
-  isObject(v) && Object.entries(v).every(([kind, list]) => (kind === "slots" ? num(list) : strList(list)));
+  isObject(v) &&
+  Object.entries(v).every(([kind, list]) =>
+    kind === "slots"
+      ? num(list)
+      : kind === "rolls"
+        ? isObject(list) && Object.values(list).every(strList)
+        : strList(list),
+  );
 export type Profile = Build & {
   wins: number;
   losses: number;
@@ -337,6 +353,7 @@ export type AdminDuel = {
   b: string;
   status: string;
   rules?: { maxHp?: number };
+  maxHp?: Record<string, number>;
   expiresAt: number;
   startedAt?: number;
   lastActionAt?: number;
@@ -350,6 +367,7 @@ const parseAdminDuel = shape<AdminDuel>(
     b: str,
     status: str,
     rules: opt(fits({ maxHp: opt(num) })),
+    maxHp: opt(numMap),
     expiresAt: num,
     startedAt: opt(num),
     lastActionAt: opt(num),

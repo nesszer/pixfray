@@ -140,6 +140,8 @@ export type ArenaDuel = {
   b: string;
   status: string;
   hp: Record<string, number>;
+  /** userId -> full health with vitality; older duels have none and use rules.maxHp. */
+  maxHp?: Record<string, number> | undefined;
   rules?: { maxHp?: number | undefined; [field: string]: unknown } | undefined;
   ratings?: Record<string, Rating> | null | undefined;
   /** Rolls replayed so far (replays only). */
@@ -157,6 +159,7 @@ const isDuel = (v: unknown): v is ArenaDuel =>
   typeof v.b === "string" &&
   typeof v.status === "string" &&
   isNumberMap(v.hp) &&
+  (v.maxHp === undefined || isNumberMap(v.maxHp)) &&
   (v.rules === undefined || (isObject(v.rules) && optNumber(v.rules.maxHp))) &&
   isRatings(v.ratings) &&
   optNumber(v.round) &&
@@ -176,6 +179,7 @@ export type ArenaEvent = {
   declinedBy?: string | undefined;
   round?: number | undefined;
   hp?: Record<string, number> | undefined;
+  maxHp?: Record<string, number> | undefined;
   userId?: string | undefined;
   targetId?: string | undefined;
   die?: number | undefined;
@@ -223,6 +227,7 @@ const isEvent = (v: unknown): v is ArenaEvent =>
   !badField(v, EVENT_NUMBERS, optNumber) &&
   !badField(v, EVENT_BOOLEANS, optBoolean) &&
   (v.hp === undefined || isNumberMap(v.hp)) &&
+  (v.maxHp === undefined || isNumberMap(v.maxHp)) &&
   isRatings(v.ratings);
 export function parseArenaEvent(value: unknown): Parsed<ArenaEvent> {
   if (isEvent(value)) return ok(value);

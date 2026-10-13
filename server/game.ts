@@ -1,5 +1,6 @@
 import site from "../site.config.js";
 import {
+  bonusHp,
   cleanStats,
   counterChance,
   effectiveStats,
@@ -265,7 +266,7 @@ function duelHasUser(duel: Duel, userId: string): boolean {
   return duel.a === userId || duel.b === userId;
 }
 
-function hasOpenDuel(state: GameState, userId: string): boolean {
+export function hasOpenDuel(state: GameState, userId: string): boolean {
   return openDuels(state).some((duel) => duelHasUser(duel, userId));
 }
 
@@ -495,7 +496,14 @@ function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccoun
   duel.status = "active";
   duel.startedAt = now;
   duel.lastActionAt = now;
-  duel.hp = { [duel.a]: state.config.maxHp, [duel.b]: state.config.maxHp };
+  // Each fighter's max HP: the channel's plus their vitality.
+  const vitality = (p: Player): number =>
+    effectiveStats(p.stats, p.wins, p.bonus, p.petBoost, state.config.maxStatLevel).vitality;
+  duel.maxHp = {
+    [duel.a]: state.config.maxHp + bonusHp(vitality(a)),
+    [duel.b]: state.config.maxHp + bonusHp(vitality(b)),
+  };
+  duel.hp = clone(duel.maxHp);
   duel.rules = {
     maxHp: state.config.maxHp,
     inactivityMs: state.config.inactivityMs,
@@ -508,8 +516,8 @@ function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccoun
     [duel.a]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
     [duel.b]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
   };
-  a.hp = state.config.maxHp;
-  b.hp = state.config.maxHp;
+  a.hp = fullHp(duel, a.userId);
+  b.hp = fullHp(duel, b.userId);
   a.respawnAt = 0;
   b.respawnAt = 0;
   addEvent(state, "duel_started", now, {
@@ -518,12 +526,17 @@ function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccoun
     b: duel.b,
     round: duel.round,
     hp: clone(duel.hp),
+    maxHp: clone(duel.maxHp),
   });
   return { ok: true, duelId: duel.id };
 }
 
+// A fighter's full health in a started duel: their own max HP, or the rules' for a duel started before vitality.
+// rules!: only started duels reach here, and beginDuel sets rules
+const fullHp = (duel: Duel, userId: string): number => duel.maxHp?.[userId] ?? duel.rules!.maxHp;
+
 // Quick duel: a d6 exchange settled at once. Fighters take turns swinging, the challenger first:
-// 6 is a crit (50% of max HP), 5 a hit (34%), 3-4 a miss, 1-2 the other fighter counters (34%).
+// 6 is a crit (50% of the channel's max HP), 5 a hit (34%), 3-4 a miss, 1-2 the other fighter counters (34%).
 // First to 0 HP loses. After QUICK_MAX_ROLLS rolls the fighter with more HP wins; equal HP goes to
 // sudden death, where the next hit or counter knocks out. A winner who took no damage is flawless (+3 Elo).
 // Upgrades (server/upgrades.ts) then change the swing in this order, each check with its own roll (slot k reads
@@ -655,7 +668,7 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
     }
     [attacker, defender] = [defender, attacker];
   }
-  const flawless = duel.hp[winnerId] === maxHp;
+  const flawless = duel.hp[winnerId] === fullHp(duel, winnerId);
   finishDuel(state, duel, winnerId, now, { decision, bonus: flawless ? QUICK_FLAWLESS_BONUS : 0 });
   duel.revealAt = now + replayMs(swings.length) + state.config.streamDelayMs;
   return {
@@ -787,7 +800,7 @@ function applyAbility(
   if (abilityName === "heal") {
     const before = duel.hp[actor.userId]!;
     // the heal branch, so ability is abilities.heal
-    duel.hp[actor.userId] = Math.min(duel.rules!.maxHp, before + (ability as Abilities["heal"]).amount);
+    duel.hp[actor.userId] = Math.min(fullHp(duel, actor.userId), before + (ability as Abilities["heal"]).amount);
     amount = duel.hp[actor.userId]! - before;
   } else {
     const before = duel.hp[targetId]!;
@@ -1055,11 +1068,10 @@ function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResul
     for (const duel of state.duels) {
       if (duel.status !== "active") continue;
       for (const userId of [duel.a, duel.b]) {
-        // rules! (twice): an active duel has rules
-        duel.hp[userId] = duel.rules!.maxHp;
+        duel.hp[userId] = fullHp(duel, userId);
         const p = player(state, userId);
         if (p) {
-          p.hp = duel.rules!.maxHp;
+          p.hp = fullHp(duel, userId);
           p.respawnAt = 0;
         }
       }

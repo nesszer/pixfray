@@ -5,6 +5,7 @@ import { hiddenResults, PAIR_RATED_PER_DAY } from "./game.ts";
 import { boostText } from "./pets.ts";
 import type { Env } from "./env.ts";
 import type { GameResult, GameState, Player } from "./model.ts";
+import { STATS } from "./upgrades.ts";
 import type { Stats } from "./upgrades.ts";
 
 /** A channel's command names (se_settings.names), action -> trigger word; a missing one uses DEFAULT_SE_NAMES. */
@@ -26,6 +27,7 @@ export const SE_ACTIONS = [
   "wallet",
   "give",
   "pet",
+  "stats",
 ]; // quick duels need no attack commands
 export const SE_READ_ACTIONS = ["top", "elo", "help", "look"]; // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
@@ -42,6 +44,7 @@ export const DEFAULT_SE_NAMES = {
   wallet: "!wallet",
   give: "!pay",
   pet: "!pet",
+  stats: "!stats",
 }; // not !give: StreamElements' built-in !givepoints answers to that
 export const LOST_TEXT = "Lost in the arena? Type !fray";
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
@@ -424,6 +427,27 @@ export function sePetText(
     return `@${me}, you have no pet yet. Buy one with PixFray dollars${link ? " at " + link : " on the PixFray site."}`;
   }
   return `@${target ? short(p.name) : me}'s pet: ${p.pet.label} (${p.pet.tier}), ${boostText(p.pet.boost)}.`;
+}
+
+// !stats [@name]: s = ChannelRoom.statsInfo() -> { name, stats (levels that count in duels), unspent, petBoost }, or
+// null (no fighter). "@x: Power 10, Guard 8, Crit 4. 12 points unspent. Pet: +2 power."
+export function seStatsText(
+  s: { name: string; stats: Stats; unspent: number; petBoost: Stats } | null | undefined,
+  {
+    who = "",
+    target = "",
+    origin = "",
+    channel = "",
+  }: { who?: string | undefined; target?: string | undefined } & SeLinkOptions = {},
+): string {
+  const me = short(who) || "you";
+  if (!s) return target ? noFighter(target, false, origin, channel) : noFighter(me, true, origin, channel);
+  const levels = STATS.filter((k) => s.stats[k] > 0).map((k) => k[0]!.toUpperCase() + k.slice(1) + " " + s.stats[k]); // k[0]!: stat names aren't empty
+  const pet = boostText(s.petBoost);
+  return (
+    `@${target ? short(s.name) : me}: ${levels.length ? levels.join(", ") : "no upgrades yet"}. ` +
+    `${s.unspent} point${s.unspent === 1 ? "" : "s"} unspent.${pet ? " Pet: " + pet + "." : ""}`
+  );
 }
 
 // !give @name amount: one line per outcome of ChannelRoom.give (server/channel.ts).

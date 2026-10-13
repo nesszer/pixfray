@@ -1313,13 +1313,15 @@ test("upgrade presets spread the points by weight within the channel's level cap
       "lucky-striker",
       "iron-wall",
       "glass-cannon",
+      "tank",
       "counter-puncher",
       "duelist",
       "gambler",
       "ghost",
+      "bruiser",
       "sharpshooter",
     ],
-    "tank and bruiser wait for vitality",
+    "every preset is ready once vitality exists",
   );
   assert.deepEqual(u.presetStats(preset("glass-cannon"), 6), fullStats({ power: 3, crit: 2, luck: 1 }));
   assert.deepEqual(u.presetStats(preset("balanced"), 6), fullStats({ power: 2, guard: 2, luck: 2 }));
@@ -1567,4 +1569,50 @@ test("duels with an account younger than 7 days are unrated", () => {
   assert.equal(w.player("alice").wins + w.player("alice").losses, 0);
   const hidden = hiddenResults(w.state, w.now);
   assert.deepEqual(hidden.get("id-alice"), { elo: 1000, wins: 0, losses: 0, dollars: 0 }, "nothing hidden to undo");
+});
+
+test("vitality: +4 max HP per level, set per fighter when the duel starts and sent with duel_started", () => {
+  const w = upgraded({ alice: { vitality: 5 } });
+  w.state.config.quickDuel = false;
+  const id = w.fight("alice", "bob");
+  assert.deepEqual(w.duel(id).maxHp, { "id-alice": 120, "id-bob": 100 });
+  assert.deepEqual(w.duel(id).hp, { "id-alice": 120, "id-bob": 100 });
+  assert.equal(w.player("alice").hp, 120);
+  const started = must(w.state.events.findLast((e) => e.type === "duel_started"));
+  assert.deepEqual(started.maxHp, { "id-alice": 120, "id-bob": 100 });
+  assert.deepEqual(started.hp, { "id-alice": 120, "id-bob": 100 });
+});
+
+test("vitality: heal stops at the fighter's own max HP, and a mod's health reset refills to it", () => {
+  const w = upgraded({ alice: { vitality: 5 } });
+  w.state.config.quickDuel = false;
+  const id = w.fight("alice", "bob");
+  assert.equal(w.say("bob", "!strike").amount, 20);
+  assert.equal(w.duel(id).hp["id-alice"], 100);
+  assert.equal(w.say("alice", "!heal").amount, 15, "a heal above the channel's 100 still counts");
+  assert.equal(w.duel(id).hp["id-alice"], 115);
+  w.now += 20_000;
+  assert.equal(w.say("alice", "!heal").amount, 5, "capped at 120");
+  assert.equal(w.duel(id).hp["id-alice"], 120);
+  w.now += 1000;
+  w.say("bob", "!strike");
+  assert.equal(w.duel(id).hp["id-alice"], 100);
+  assert.equal(w.apply({ type: "admin", actorId: "mod", action: "resetHealth" }).ok, true);
+  assert.deepEqual(w.duel(id).hp, { "id-alice": 120, "id-bob": 100 });
+  assert.equal(w.player("alice").hp, 120);
+});
+
+test("vitality: a quick-duel winner at their own full HP is flawless; base blows stay the same size", () => {
+  const r = quickWith(upgraded({ alice: { vitality: 5 } }), [0.9, 0.5, 0.9]);
+  assert.deepEqual(
+    r.swings.map((s) => s.damage),
+    [50, 0, 50],
+  );
+  assert.equal(r.winnerHp, 120);
+  assert.equal(r.flawless, true);
+  // bob with 120 HP survives two crits and loses the flawless to one hit
+  const tough = quickWith(upgraded({ bob: { vitality: 5 } }), [0.9, 0.75, 0.9, 0.5, 0.9]);
+  assert.equal(tough.winnerId, "id-alice");
+  assert.equal(tough.winnerHp, 66);
+  assert.equal(tough.flawless, false);
 });

@@ -575,13 +575,15 @@ try {
         "Lucky striker",
         "Iron wall",
         "Glass cannon",
+        "Tank",
         "Counter-puncher",
         "Duelist",
         "Gambler",
         "Ghost",
+        "Bruiser",
         "Sharpshooter",
       ],
-      "only presets whose stats exist (Tank and Bruiser wait for vitality)",
+      "all twelve presets",
     );
     assert.match((await page.locator("#upgrade-list").textContent())!, /Next level costs 1 point/); // element text, never null
     await page.getByRole("button", { name: "Put a level into Power for 1 point" }).click();
@@ -601,7 +603,7 @@ try {
       avatar: "adventurer",
       color: "#34d399",
       defaultAbility: "heal",
-      stats: { power: 2, guard: 0, luck: 1, crit: 0, dodge: 0, counter: 0 },
+      stats: { power: 2, guard: 0, luck: 1, crit: 0, dodge: 0, counter: 0, vitality: 0 },
       hat: "cap",
       pet: "mouse",
       recolor: "",

@@ -109,6 +109,10 @@ test("shop and dev-tool parsers", async () => {
   assert.deepEqual(p.parseShopBuy({ kind: "hat", id: 5 }), no("invalid_item"));
   assert.deepEqual(p.parseShopBuy({ id: "crown" }), no("invalid_item"));
   assert.deepEqual(p.parseShopBuy({ kind: "slot", note: "x" }), yes({ kind: "slot", id: "", price: undefined }));
+  assert.deepEqual(
+    p.parseShopBuy({ kind: "reroll", id: "dragon" }),
+    yes({ kind: "reroll", id: "dragon", price: undefined }),
+  );
 
   assert.deepEqual(p.parseDevLive({ live: true, streamId: "s1" }), yes({ live: true, streamId: "s1" }));
   assert.deepEqual(p.parseDevLive({ live: 5 }), no("invalid_body"));
