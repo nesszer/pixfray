@@ -414,7 +414,9 @@ Custom characters:
 
 Viewer sprites (server/sprites.ts):
 - A signed-in viewer turns a picture into a sprite on the fighter page ("Your own sprite"). The browser always pixelates it
-  (src/spritify.ts: background removal, crop, 56 px tall, 14 colors, outline, doubled). An optional AI redraw goes
+  with no AI (src/spritify.ts): src/autosprite.ts finds the subject (a picture with no clear subject, such as a
+  landscape, keeps all of it; one that already has a cut-out keeps its own), then the page crops it to 56 px tall with
+  at most 14 Oklab colors, adds a shaded outline and doubles the pixels. An optional AI redraw goes
   through `/api/sprite/:channel/redraw` first. A mod approves it on `/admin/` (Characters tab).
 - Ids match `^v-[a-z0-9-]{1,48}$`; each approval makes a new id, so the overlay refetches the catalog. `url` is
   `/api/assets/<channel>/<id>`, cached for a day (`immutable`). Entries are `mode:"single"`, `combatFallback:"effects"`,

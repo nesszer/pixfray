@@ -1,19 +1,7 @@
 // The browser's picture-to-sprite steps (src/spritify.ts) on plain images, and the server checks they must pass.
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  fitSize,
-  hasCutout,
-  removeBackground,
-  contentBox,
-  palette,
-  quantize,
-  outline,
-  enlarge,
-  spritify,
-  SPRITE_MAX,
-  OUTLINE,
-} from "../src/spritify.ts";
+import { fitSize, hasCutout, removeBackground, contentBox, enlarge, spritify, SPRITE_MAX } from "../src/spritify.ts";
 import { validateSprite, validateRedrawImage, jpegSize, spriteDay, SPRITE_LIMITS } from "../server/sprites.ts";
 import type { Img } from "../src/spritify.ts";
 import { makePng, b64 } from "./upload-helpers.ts";
@@ -46,7 +34,7 @@ test("spritify: sizes, cut-outs and the background fill", () => {
   const cut = removeBackground(img);
   assert.equal(at(cut, 0, 0)[3], 0);
   assert.equal(at(cut, 150, 100)[3], 255);
-  assert.deepEqual(contentBox(cut), { x: 91, y: 41, width: 119, height: 119 });
+  assert.deepEqual(contentBox(cut), { x: 92, y: 41, width: 118, height: 120 });
   // A picture that is already cut out is left alone.
   const png = picture(20, 20, (x) => (x > 5 && x < 15 ? [0, 0, 0, 255] : [255, 255, 255, 0]));
   assert.equal(hasCutout(png), true);
@@ -57,24 +45,34 @@ test("spritify: sizes, cut-outs and the background fill", () => {
   assert.equal(at(kept, 50, 0)[3], 255);
   assert.equal(at(kept, 10, 50)[3], 0);
   assert.equal(contentBox(picture(4, 4, () => [0, 0, 0, 0])), null);
+  // A scene with no clear subject (sky over hills) keeps the whole picture instead of a random piece of it.
+  const scene = picture(120, 80, (x, y) =>
+    y < 24 + 6 * Math.sin(x / 9) ? [90 + y, 150 + y, 230, 255] : [40, 110 + ((x * 7 + y * 3) % 30), 50, 255],
+  );
+  const whole = removeBackground(scene);
+  assert.equal(at(whole, 0, 0)[3], 255);
+  assert.equal(at(whole, 119, 79)[3], 255);
+  assert.deepEqual(contentBox(whole), { x: 0, y: 0, width: 120, height: 80 });
 });
 
-test("spritify: palette, outline and pixel doubling", () => {
-  const stripes = picture(16, 4, (x) => [x * 16, 255 - x * 16, 0, 255]);
-  assert.ok(palette(stripes, 4).length <= 4);
-  const q = quantize(stripes, 4),
-    colors = new Set();
-  for (let i = 0; i < q.data.length; i += 4) colors.add(q.data.slice(i, i + 3).join());
-  assert.ok(colors.size <= 4);
-  const dot = picture(1, 1, () => [200, 0, 0, 255]),
-    ring = outline(dot);
-  assert.deepEqual([ring.width, ring.height], [3, 3]);
-  assert.deepEqual(at(ring, 1, 1), [200, 0, 0, 255]);
-  assert.deepEqual(at(ring, 1, 0), [...OUTLINE, 255]);
-  assert.equal(at(ring, 0, 0)[3], 0); // corners stay clear: a rounder outline
-  const big = enlarge(ring, 2);
-  assert.deepEqual([big.width, big.height], [6, 6]);
-  assert.deepEqual(at(big, 3, 3), [200, 0, 0, 255]);
+test("spritify: shaded outline and pixel doubling", () => {
+  // One red pixel: a dark red outline around it, corners clear (a rounder outline), then every pixel doubled.
+  const dot = must(
+    spritify(
+      picture(1, 1, () => [200, 0, 0, 255]),
+      { removeBg: false },
+    ),
+  );
+  assert.deepEqual([dot.width, dot.height], [6, 6]);
+  assert.deepEqual(at(dot, 2, 2), [209, 0, 0, 255]);
+  assert.deepEqual(at(dot, 2, 0), [47, 0, 0, 255]);
+  assert.equal(at(dot, 0, 0)[3], 0);
+  const big = enlarge(
+    picture(1, 1, () => [1, 2, 3, 255]),
+    2,
+  );
+  assert.deepEqual([big.width, big.height], [2, 2]);
+  assert.deepEqual(at(big, 1, 1), [1, 2, 3, 255]);
 });
 
 test("spritify: a photo becomes a small hard-edged sprite inside 128 px that the server accepts", () => {
