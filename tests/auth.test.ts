@@ -484,6 +484,20 @@ test("sign-out reads only the cookie named mini_session, not one that ends in it
   assert.equal(f.entries.has("session:" + (await digest("1".repeat(64)))), false, "the real session is gone");
   assert.equal(f.entries.has("session:" + (await digest(other))), true, "the look-alike cookie's session stays");
 });
+test("a room route whose room throws gets the Worker's error answer, not a rejected fetch", async () => {
+  const f = environment();
+  // Object.assign swaps in a throwing room without restating the binding's full type
+  Object.assign(f.env.ROOMS, {
+    get: () => ({
+      fetch: async () => {
+        throw new Error("room down");
+      },
+    }),
+  });
+  const r = await worker.fetch(req("/api/shop/nesszerra", "GET"), f.env);
+  assert.equal(r.status, 503);
+  assert.deepEqual(await r.json(), { error: "Service unavailable; check owner diagnostics" });
+});
 test("an auth route that throws gets the Worker's error answer, not a rejected fetch", async () => {
   const f = environment(),
     cookie = await signedIn(f);

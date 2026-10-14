@@ -564,6 +564,15 @@ async function buy(
     setStatus(out, "Not bought: your session expired. Sign in again to buy.", "error");
     return;
   }
+  if (acceptedUnreadable(r)) {
+    // The dollars may be spent already, so the button stays off: a second click could buy it twice.
+    setStatus(
+      out,
+      "Your purchase may have gone through, but this page couldn't read the answer. Reload the page to check.",
+      "error",
+    );
+    return;
+  }
   if (!r.ok) {
     btn.disabled = false;
     btn.dataset.confirm = "";

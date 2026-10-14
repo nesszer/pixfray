@@ -655,6 +655,40 @@ try {
     await context.close();
   }
 
+  // 3a. A purchase the server took but whose answer the page can't read: the page says it may have gone through and
+  // doesn't offer the same buy again.
+  {
+    const { context, page } = await newPage(sizes[0]);
+    let buys = 0;
+    await page.route("**/api/shop/nesszerra", async (r) => {
+      if (r.request().method() === "GET") return r.continue();
+      buys++;
+      return json(r, { ok: true, reason: "bought" }); // no dollars or owned: unreadable to the page
+    });
+    await page.route("**/api/session", (r) =>
+      json(r, { user, owner: false, configured: true, channels: ["nesszerra"], productionEnabled: false }),
+    );
+    await page.route("**/api/access/nesszerra", (r) => json(r, { owner: false, moderator: false, canManage: false }));
+    await page.route("**/api/leaderboard/nesszerra*", (r) => json(r, board));
+    await page.route("**/api/profile/nesszerra", (r) =>
+      json(r, { ...board[1], hp: 100, registered: true, respawnAt: 0, lastSeen: now, dollars: 12 }),
+    );
+    await page.goto(base + "/?channel=nesszerra");
+    await page.waitForSelector("#save:not([hidden])");
+    await page.locator("#tab-pets").click();
+    const buyMouse = page.getByRole("button", { name: "Buy Mouse for $10" });
+    await buyMouse.click();
+    await buyMouse.click();
+    await page.waitForFunction(() => /may have gone through/.test(document.querySelector("#pet-status")!.textContent)); // the page has this element
+    assert.equal(
+      await page.locator("#pet-status").textContent(),
+      "Your purchase may have gone through, but this page couldn't read the answer. Reload the page to check.",
+    );
+    assert.equal(await buyMouse.isDisabled(), true, "no second buy while the first may have gone through");
+    assert.equal(buys, 1);
+    await context.close();
+  }
+
   // 3b. First run: back from Twitch sign-in with no fighter, save one, then the next step until the first duel.
   for (const s of sizes) {
     const { context, page } = await newPage(s);
@@ -817,7 +851,7 @@ try {
 
   // 4. Signed in but not a moderator -> admin gate.
   {
-    const { context, page } = await newPage(sizes[1]);
+    const { context, page } = await newPage(sizes[0]);
     await page.route("**/api/session", (r) =>
       json(r, { user, owner: false, configured: true, channels: ["nesszerra"], productionEnabled: false }),
     );
@@ -845,7 +879,7 @@ try {
 
   // 4b. A moderator whose arena fails to load gets a gate with a retry, not controls that have no arena behind them.
   {
-    const { context, page } = await newPage(sizes[1]);
+    const { context, page } = await newPage(sizes[0]);
     await page.route("**/api/session", (r) =>
       json(r, { user: mod, owner: false, configured: true, channels: ["nesszerra"], productionEnabled: false }),
     );
@@ -2260,7 +2294,7 @@ try {
 
   // 10. The viewer page of a channel that is off, or was never set up.
   {
-    const { context, page } = await newPage(sizes[1]);
+    const { context, page } = await newPage(sizes[0]);
     let off = "paused";
     await page.route("**/api/state/*", (r) => json(r, { error: "off", off }, 403));
     await page.goto(base + "/?channel=newstreamer");
@@ -2355,7 +2389,7 @@ try {
   }
   // 13. Every build slot bought: nothing is for sale, so the list holds the five builds and no stray text after them.
   {
-    const { context, page } = await newPage(sizes[1]);
+    const { context, page } = await newPage(sizes[0]);
     const profile = {
       ...board[1],
       avatar: "player",
