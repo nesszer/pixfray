@@ -1,8 +1,9 @@
 // /play/ "Your own sprite": a picture becomes a pixel sprite in the browser (src/spritify.ts), optionally redrawn by
 // Workers AI first, and is sent to the mods (server/sprites.ts). Once approved it is in the viewer's character list.
 import { api, errorText, h, $, setStatus, CHANNEL } from "./ui.ts";
-import { decodeFile, decodeBase64, encode, fitSize, paint, spritify, REDRAW_MAX } from "./spritify.ts";
+import { decodeFile, decodeBase64, encode, fitSize, paint, REDRAW_MAX } from "./spritify.ts";
 import type { Img } from "./spritify.ts";
+import type { SpriteDone, SpriteJob } from "./sprite-worker.ts";
 
 // element types from the page HTML
 const box = $("#sprite-maker") as HTMLFieldSetElement,
@@ -63,15 +64,42 @@ function render() {
     : "";
 }
 
-function rebuild() {
-  const from = s.redrawn || s.source;
-  s.sprite = from ? spritify(from, { removeBg: Boolean(s.redrawn) || bgInput.checked }) : null;
-  if (from && !s.sprite)
+// Finding the subject can take a second, so the sprite is built in a worker and the page stays responsive. A newer
+// build replaces an older one still running: only the answer to the latest job is used.
+const worker = new Worker(new URL("./sprite-worker.ts", import.meta.url), { type: "module" });
+let job = 0;
+worker.onmessage = ({ data }: MessageEvent<SpriteDone>) => {
+  if (data.id !== job) return;
+  s.busy = false;
+  s.sprite = data.sprite;
+  if (!s.sprite)
     setStatus(
       status,
       "Nothing was left after removing the background. Untick Remove the background, or try another picture.",
       "warning",
     );
+  render();
+};
+worker.onerror = () => {
+  job++;
+  s.busy = false;
+  setStatus(status, "The sprite couldn't be made. Reload the page and try again.", "error");
+  render();
+};
+
+function rebuild() {
+  const from = s.redrawn || s.source,
+    id = ++job;
+  s.sprite = null;
+  s.busy = Boolean(from);
+  if (from) {
+    const { width, height, data } = from;
+    worker.postMessage({
+      id,
+      img: { width, height, data },
+      removeBg: Boolean(s.redrawn) || bgInput.checked,
+    } satisfies SpriteJob);
+  }
   render();
 }
 

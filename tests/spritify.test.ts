@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { fitSize, hasCutout, removeBackground, contentBox, enlarge, spritify, SPRITE_MAX } from "../src/spritify.ts";
 import { validateSprite, validateRedrawImage, jpegSize, spriteDay, SPRITE_LIMITS } from "../server/sprites.ts";
 import type { Img } from "../src/spritify.ts";
+import { dropEdgeLeak, labOf } from "../src/autosprite.ts";
 import { makePng, b64 } from "./upload-helpers.ts";
 import { must } from "./fakes.ts";
 
@@ -66,6 +67,43 @@ test("spritify: sizes, cut-outs and the background fill", () => {
   assert.deepEqual(
     [at(cutBust, 85, 5)[3], at(cutBust, 5, 5)[3], at(cutBust, 60, 45)[3], at(cutBust, 60, 110)[3]],
     [0, 0, 255, 255],
+  );
+});
+
+test("autosprite: background the cut kept stuck to the subject goes, the subject stays", () => {
+  // A cut that kept a pink cloud joined to the head and running off the top edge, plus a piece of the same cloud split
+  // off on the head's other side.
+  const shape = (x: number, y: number) =>
+    (x - 55) ** 2 + (y - 50) ** 2 < 26 ** 2
+      ? "head"
+      : y > 72 && Math.abs(x - 55) < 38 + (y - 72) / 2
+        ? "body"
+        : (y < 30 && x > 62 && x < 110 && y > (x - 62) / 4 - 6) || (y > 20 && y < 28 && x > 14 && x < 46)
+          ? "cloud"
+          : "sky";
+  const color = {
+    head: [240, 170, 40, 255],
+    body: [30, 30, 60, 255],
+    cloud: [235, 150, 205, 255],
+    sky: [80, 110, 210, 255],
+  };
+  const img = picture(120, 120, (x, y) => color[shape(x, y)]);
+  const fg = new Uint8Array(120 * 120).map((_, p) => (shape(p % 120, Math.floor(p / 120)) === "sky" ? 0 : 1));
+  dropEdgeLeak(fg, labOf(img), 120, 120);
+  const kept = (x: number, y: number) => fg[y * 120 + x];
+  assert.deepEqual(
+    [kept(95, 3), kept(70, 20), kept(20, 24), kept(55, 50), kept(30, 50), kept(55, 110)],
+    [0, 0, 0, 1, 1, 1],
+  );
+  // A subject that runs off the edge itself (a duck in ice) is left alone: taking the ice would take too much.
+  const ice = picture(60, 60, (x, y) =>
+    Math.abs(x - 30) < 10 && y > 10 && y < 30 ? [240, 170, 40, 255] : [235, 240, 250, 255],
+  );
+  const all = new Uint8Array(60 * 60).fill(1);
+  dropEdgeLeak(all, labOf(ice), 60, 60);
+  assert.equal(
+    all.reduce((s, v) => s + v, 0),
+    3600,
   );
 });
 

@@ -415,9 +415,12 @@ Custom characters:
 Viewer sprites (server/sprites.ts):
 - A signed-in viewer turns a picture into a sprite on the fighter page ("Your own sprite"). The browser always pixelates it
   with no AI (src/spritify.ts): src/autosprite.ts finds the subject (border colors on the top edge that stay off the
-  bottom edge count as sky; a picture with no clear subject, such as a landscape, keeps all of it; one that already has a cut-out keeps its own), then the page crops it to 56 px tall with
+  bottom edge count as sky; a picture with no clear subject, such as a landscape, keeps all of it; one that already has a cut-out keeps its own; sky the cut left stuck to the subject, such as a cloud
+  touching the top or side edge and the matching patches cut off beside the head, is dropped unless that would take more
+  than 35% of the subject), then the page crops it to 56 px tall with
   at most 14 Oklab colors, adds a shaded outline and doubles the pixels. An optional AI redraw goes
-  through `/api/sprite/:channel/redraw` first. A mod approves it on `/admin/` (Characters tab).
+  through `/api/sprite/:channel/redraw` first. The steps run in a Web Worker (src/sprite-worker.ts), so the page
+  stays responsive while a picture is turned into a sprite; only the latest build is shown. A mod approves it on `/admin/` (Characters tab).
 - Ids match `^v-[a-z0-9-]{1,48}$`; each approval makes a new id, so the overlay refetches the catalog. `url` is
   `/api/assets/<channel>/<id>`, cached for a day (`immutable`). Entries are `mode:"single"`, `combatFallback:"effects"`,
   `source:"viewer"`, `license:"Uploaded by <name>"` and carry `owner`. Only the owner may wear one; the page lists only
