@@ -415,7 +415,7 @@ async function handleDevtools(
 }
 async function staticCatalog(env: Env, url: URL): Promise<CatalogEntry[]> {
   const r = await env.ASSETS.fetch(new Request(url.origin + "/assets/characters.json"));
-  return r.ok ? await r.json<CatalogEntry[]>() : [];
+  return r.ok ? r.json<CatalogEntry[]>() : [];
 }
 // The /play/ channel picker in one request: each listed channel with its top three ranked fighters (and the uploaded
 // looks they wear, which only that channel's catalog has), plus the built-in catalog once, and whether this site is full
@@ -635,31 +635,32 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
       );
     // Shop: the public list with this channel's prices (GET), and a signed-in viewer buying with PixFray dollars (POST).
     if (route === "shop") {
-      if (request.method === "GET" && !id) return internal(request, env, channel, "/shop");
+      if (request.method === "GET" && !id) return await internal(request, env, channel, "/shop");
       if (request.method !== "POST" || id) return json({ error: "Use GET or POST" }, 405);
       if (!user) return json({ error: "Sign in to shop" }, 401);
       const item = parseShopBuy(await bodyJson(request, 1000));
       if (!item.ok) return json({ error: "Invalid item" }, 400);
-      return internal(request, env, channel, "/shop", { userId: user.id, ...item.value });
+      return await internal(request, env, channel, "/shop", { userId: user.id, ...item.value });
     }
     if (route === "profile") {
       if (!user) return json({ error: "Sign in to customize your profile" }, 401);
       if (id && (id !== "others" || request.method !== "GET")) return json({ error: "Not found" }, 404);
       if (id) return json({ fighters: await fightersElsewhere(request, env, user, channel) });
       if (request.method === "GET")
-        return internal(request, env, channel, "/profile?userId=" + encodeURIComponent(user.id));
+        return await internal(request, env, channel, "/profile?userId=" + encodeURIComponent(user.id));
       if (request.method !== "POST") return json({ error: "Use GET or POST" }, 405);
       // stats/hat are optional; the room checks them against the saved wins (server/upgrades.ts).
       const look = parseProfileSave(await bodyJson(request, 4000));
-      if (!look.ok) return refuseSave(request, env, channel, user, look.error, "Invalid profile fields", 400);
+      if (!look.ok) return await refuseSave(request, env, channel, user, look.error, "Invalid profile fields", 400);
       const { avatar, color, defaultAbility, stats, hat, pet, loadout } = look.value;
       const dynamicRes = await internal(request, env, channel, "/catalog");
       const dynamic = dynamicRes.ok ? await dynamicRes.json<CatalogEntry[]>() : [];
       const character = [...(await staticCatalog(env, url)), ...dynamic].find((x) => x.id === avatar);
-      if (!character) return refuseSave(request, env, channel, user, "unknown_character", "Unknown character", 400);
+      if (!character)
+        return await refuseSave(request, env, channel, user, "unknown_character", "Unknown character", 400);
       // An approved viewer sprite belongs to the viewer who made it.
       if (character.owner && character.owner !== user.id)
-        return refuseSave(
+        return await refuseSave(
           request,
           env,
           channel,
@@ -775,7 +776,7 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
         return json({ error: "This channel uses StreamElements for chat. Choose Use StreamElements." }, 400);
       if (action === "connectChat" || action === "disconnectChat" || action === "useStreamElements")
         return await chatAction(env, url, channel, action, { takeover });
-      return internal(request, env, channel, "/admin", {
+      return await internal(request, env, channel, "/admin", {
         ...admin.value.fields,
         actorId: user!.id, // canManage above means a signed-in user
         actorName: user!.displayName || user!.login, // as above
@@ -788,14 +789,14 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
     }
     // Saved looks for the overlay: public, the same fields the leaderboard shows.
     if (route === "live")
-      return internal(
+      return await internal(
         request,
         env,
         channel,
         url.searchParams.get("role") === "overlay" ? "/live?role=overlay" : "/live",
       );
     if (route === "looks")
-      return internal(
+      return await internal(
         request,
         env,
         channel,
@@ -805,9 +806,9 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
     if (route === "leaderboard" && url.searchParams.get("private") === "1") {
       if (!(await access(env, user, channel)).canManage)
         return json({ error: "Moderator role required" }, user ? 403 : 401);
-      return internal(request, env, channel, "/leaderboard?private=1");
+      return await internal(request, env, channel, "/leaderboard?private=1");
     }
-    return internal(request, env, channel, "/" + route);
+    return await internal(request, env, channel, "/" + route);
   } catch (error) {
     // each `as HttpError` below: what bodyJson, setPaused and chatAction throw; another Error has no status (a thrown
     // null or undefined would fail here, as it does on main)

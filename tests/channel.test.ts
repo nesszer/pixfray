@@ -2688,6 +2688,28 @@ test("debug bot: a challenge aimed at the bot is fought back, !fray spar challen
   assert.match((await plain.say("u1", "alice", "!fray spar")).reply, /gear up/i, "spar is just the help reply");
 });
 
+test("debug bot: the real bot login (pixfray, a known chat bot) still plays every e2e step on the test site", async () => {
+  const r = botRoom({ BOT_DEBUG: "1" });
+  await r.save("u1", "alice");
+  await r.save("u2", "bob");
+  await r.save("u9", "pixfray");
+  await r.connectChat("sub-bot");
+  await r.call("/dev-live", { method: "POST", body: { live: false } });
+  const run = await r.say("u1", "alice", "!fray e2e", { mod: true });
+  assert.match(run.replies[0], /^PixFray e2e, pixfray vs alice: 18 of 18 steps passed\.$/);
+  // Outside the bot's own commands, a chat line from pixfray is still ignored.
+  const open = () => r.readState("nesszerra").duels.filter((d) => d.status === "pending").length;
+  const before = open(),
+    realNow = Date.now;
+  Date.now = () => realNow() + 60_000; // past the reveal of the run's last fight
+  try {
+    await r.say("u9", "pixfray", "!challenge @bob");
+  } finally {
+    Date.now = realNow;
+  }
+  assert.equal(open(), before, "pixfray's own typed !challenge opens no duel");
+});
+
 test("debug bot: !fray e2e plays every command once against the asker and posts which steps passed", async () => {
   const r = botRoom({ BOT_DEBUG: "1" });
   await r.save("u1", "alice");

@@ -380,7 +380,9 @@ On a channel the PixFray bot reads, `!accept`, `!duel` and `!top` also work as h
 command names and custom commands win over them), and a target may carry extra `@`, trailing `,.!?;:` and invisible
 characters (`@@bob`, `bob!`). The bot account is not a valid target: `!challenge @bot` answers "The bot doesn't fight
 (yet)! Name a rival: !challenge @name" and `!give @bot` "The bot doesn't take dollars. Give them to a rival!" (not on
-the `BOT_DEBUG` test site).
+the `BOT_DEBUG` test site). Lines from known chat bots (StreamElements, Nightbot, the PixFray bot itself) are ignored
+with reason `chat_bot`; on the `BOT_DEBUG` test site the bot account's own `!fray e2e` and sparring moves still play,
+while its typed chat lines stay ignored.
 `challenge` is an alias of `duel`, `fight` is an alias of `accept`, and duel needs a target. `attack` uses the player's
 `defaultAbility`. The optional target is allowed on every command. `rematch` ignores it and challenges the opponent of the sender's last finished duel (`lastOpponentId` on the player, saved as `profiles.last_opponent`), with the same rules as a challenge; with no such duel the reason is `no_previous_opponent`. A rematch answered by `!rematch` is a mutual challenge, so the duel starts. If someone has challenged the sender and is waiting for an answer, `!rematch` answers that challenge instead, so it works even when the challenger was not the sender's last opponent.
 
@@ -564,6 +566,7 @@ export function parseArenaSnapshot(value), parseLooksMessage(value), parseLook(v
 // config, leaderboard and stored draft, the mod page's /api/admin and snapshots, the owner page's lists
 export function parseAnswer(r, parse, kind)  // an ok answer whose body fails -> {ok:false, data:{error: UNREADABLE}}
 export function acceptedUnreadable(r)        // true for that case (a 2xx it couldn't read): the write may have gone through
+// the fighter page's profile save and shop purchase then say so and keep the button off, so a purchase can't run twice
 ```
 
 `roomFetch` adds the internal secret and channel headers. `room.ctx.storage.sql` is the DO's SQLite.

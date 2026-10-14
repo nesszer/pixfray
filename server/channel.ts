@@ -208,6 +208,7 @@ type BotMessage = {
   bot?: unknown;
   timestamp?: unknown;
   quick?: unknown;
+  botPlays?: boolean; // set only by runCommand for the BOT_DEBUG bot account
   [field: string]: unknown;
 };
 /** What the overlay sockets get: the state, or the saved looks that changed. */
@@ -2094,7 +2095,9 @@ export class ChannelRoom extends DurableObject<Env> {
       targetRaw: target ? "@" + target : "",
       ...(amount !== undefined ? { amount: String(amount) } : {}),
     };
-    return (await this.runCommand(channel, input, origin, settings, { kind, subscriptionId })).json<CommandReply>(); // runCommand's answer
+    return (
+      await this.runCommand(channel, input, origin, settings, { kind, subscriptionId, botPlays: true })
+    ).json<CommandReply>(); // runCommand's answer
   }
 
   // Sparring partner (BOT_DEBUG): a challenge or rematch aimed at the bot is accepted, and dollars paid to it are paid back.
@@ -2215,7 +2218,7 @@ export class ChannelRoom extends DurableObject<Env> {
     input: CommandInput,
     origin: string,
     settings: SeSettings,
-    source: { kind: string; subscriptionId: string },
+    source: { kind: string; subscriptionId: string; botPlays?: boolean },
   ): Promise<Response> {
     // includes() is true only for one of those strings
     const action = SE_ACTIONS.includes(input.action as string) ? (input.action as string) : "";
@@ -2398,6 +2401,8 @@ export class ChannelRoom extends DurableObject<Env> {
       messageId,
       timestamp: now,
       quick: true,
+      // The test site's bot account plays its own commands although its login is a known chat bot.
+      ...(this.env?.BOT_DEBUG === "1" && source.botPlays ? { botPlays: true } : {}),
       subscription: { id: source.subscriptionId },
       event: {
         chatter_user_id: userId,
@@ -3206,7 +3211,7 @@ export class ChannelRoom extends DurableObject<Env> {
       let main: { result: GameResult } | null = null;
       if (!userId || !/^[a-z0-9_]{1,25}$/.test(username) || !displayName)
         main = { result: { ok: false, reason: "invalid_event" } };
-      else if (CHAT_BOTS.has(username)) main = { result: { ok: false, reason: "chat_bot" } };
+      else if (CHAT_BOTS.has(username) && msg.botPlays !== true) main = { result: { ok: false, reason: "chat_bot" } };
       else {
         const userProfile = this.getProfile(userId, state.config);
         // Registered players keep their saved look; other chatters take their Twitch name color.

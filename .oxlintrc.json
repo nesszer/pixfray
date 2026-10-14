@@ -35,7 +35,9 @@
     {
       // A promise the Worker drops can be cancelled when the response ends.
       "files": ["server/**/*.{js,ts}"],
-      "rules": { "typescript/no-floating-promises": "error" }
+      // A promise returned without await inside try skips its catch, so a failed room call escapes the Worker's
+      // error answer.
+      "rules": { "typescript/no-floating-promises": "error", "typescript/return-await": ["error", "in-try-catch"] }
     },
     {
       // Test doubles pass methods around and spread ASCII test strings.
