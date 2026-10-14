@@ -7,6 +7,13 @@
 import type { Img } from "./spritify.ts";
 
 const SEG_MAX = 160;
+// dropEdgeLeak: Lab distance to the edge colors, the share of max(w, h) that counts, the shortest edge run, the most
+// of the subject it may take, the share of a split-off patch that must border the background
+const LEAK_TAU = 0.06,
+  LEAK_MIN = 0.05,
+  LEAK_RUN = 3,
+  LEAK_MAX = 0.35,
+  LEAK_RIM = 0.3;
 
 // ---------- color: Oklab, so distances match what the eye sees ----------
 const lin = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -592,6 +599,7 @@ export function subjectMask(img: Img): Subject {
   // cut thin streaks (cloud wisps, light rays) loose so keepMain drops them, then fill small holes
   fg = open(fg, w, h, Math.max(1, Math.round(Math.min(w, h) / 80)));
   keepMain(fg, w, h);
+
   const area = fg.reduce((s, v) => s + v, 0),
     holes = components(fg, w, h, 0);
   for (let p = 0; p < n; p++) {
@@ -621,5 +629,60 @@ export function subjectMask(img: Img): Subject {
   for (let y = 0; y < 0.6 * h; y++) if (fg[y * w] && fg[y * w + w - 1]) wide++;
   cover /= n;
   const whole = cover < 0.04 || cover > 0.65 || top > 0.25 * w || wide > 0.09 * h || sep < 0.68;
-  return { mask: whole ? new Uint8Array(img.width * img.height).fill(1) : up(fg), whole };
+  if (whole) return { mask: new Uint8Array(img.width * img.height).fill(1), whole };
+  dropEdgeLeak(fg, lab, w, h);
+  return { mask: up(fg), whole };
+}
+
+// Background the cut kept stuck to the subject (a cloud touching the head). Foreground running along the top edge
+// or a side's upper part is background, so grow from those runs through pixels close to their colors; the subject's
+// own colors stop the growth. A bust is cut off at the bottom, so that edge never seeds. Patches of the same color
+// that the subject splits off (cloud on both sides of a head) go too when they sit no lower and are thin enough that
+// much of them borders the background. Skipped when it would take a big share of the subject (the subject itself
+// runs off the edge, like ice around a swimming duck).
+export function dropEdgeLeak(fg: Uint8Array, lab: Float32Array, w: number, h: number) {
+  const n = w * h,
+    side = [...Array(Math.ceil(0.6 * h)).keys()].map((y) => y * w),
+    edge: number[] = [];
+  for (const line of [[...Array(w).keys()], side, side.map((p) => p + w - 1)])
+    for (let i = 0; i < line.length;) {
+      let j = i;
+      while (j < line.length && fg[line[j]!]) j++;
+      if (j - i >= LEAK_RUN) edge.push(...line.slice(i, j));
+      i = j + 1;
+    }
+  if (edge.length < LEAK_MIN * Math.max(w, h)) return;
+  const near = (p: number) => edge.some((q) => d3(lab, p * 3, lab, q * 3) < LEAK_TAU),
+    around = (p: number) =>
+      [p % w ? p - 1 : -1, p % w < w - 1 ? p + 1 : -1, p - w, p + w].filter((r) => r >= 0 && r < n),
+    leak = new Uint8Array(n),
+    todo = [...edge];
+  for (const p of edge) leak[p] = 1;
+  let low = 0;
+  while (todo.length) {
+    const p = todo.pop()!; // the loop runs while todo has items
+    low = Math.max(low, Math.floor(p / w));
+    for (const r of around(p))
+      if (fg[r] && !leak[r] && near(r)) {
+        leak[r] = 1;
+        todo.push(r);
+      }
+  }
+  const { id, sizes, boxes } = components(
+      fg.map((v, p) => (v && !leak[p] && near(p) ? 1 : 0)),
+      w,
+      h,
+      1,
+    ),
+    rim = sizes.map(() => 0);
+  for (let p = 0; p < n; p++) if (id[p]! >= 0 && around(p).some((r) => !fg[r])) rim[id[p]!]!++;
+  for (let p = 0; p < n; p++) {
+    const c = id[p]!;
+    if (c >= 0 && sizes[c]! >= LEAK_MIN * Math.max(w, h) && boxes[c]![3] <= low && rim[c]! >= LEAK_RIM * sizes[c]!)
+      leak[p] = 1;
+  }
+  const area = (m: Uint8Array) => m.reduce((s, v) => s + v, 0),
+    kept = fg.map((v, p) => (leak[p] ? 0 : v));
+  keepMain(kept, w, h);
+  if (area(kept) >= (1 - LEAK_MAX) * area(fg)) fg.set(kept);
 }
