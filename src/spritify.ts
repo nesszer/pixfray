@@ -1,26 +1,22 @@
-// Turns any picture into a PixFray sprite in the browser: cut out the subject, shrink it to fighter size, cut the
-// colors to a small palette, add a dark outline and double the pixels. The result is a PNG of at most 128x128 that
-// server/sprites.ts accepts. The steps work on plain {width, height, data} images, so tests run them without a DOM.
+// Turns any picture into a PixFray sprite in the browser, with no AI: find the subject (src/autosprite.ts), shrink it
+// to fighter size with a small Oklab palette, add a dark outline in a shade of the colors it borders and double the
+// pixels. The result is a PNG of at most 128x128 that server/sprites.ts accepts. The steps work on plain {width, height, data} images, so tests run them without a DOM.
+import { subjectMask, labOf, kmeans, d3, toRgb } from "./autosprite.ts";
+
 export const SPRITE_MAX = 128;
 export const SOURCE_MAX = 512; // pictures are decoded at most this size before any step
 export const REDRAW_MAX = 504; // the AI model takes images under 512 px a side
 export const FILE_MAX = 10 * 1024 * 1024;
-/** A color as [red, green, blue], each 0-255. */
-export type RGB = [number, number, number];
 /** A plain RGBA image in ImageData's shape (4 bytes a pixel), so tests run the steps without a DOM. */
 export type Img = { width: number; height: number; data: Uint8ClampedArray };
 /** A rectangle inside an image, in pixels. */
 export type Box = { x: number; y: number; width: number; height: number };
-export const OUTLINE: RGB = [24, 18, 30];
 
 const image = (width: number, height: number): Img => ({
   width,
   height,
   data: new Uint8ClampedArray(width * height * 4),
 });
-// d[...]!: in range, i is the first byte of a pixel
-const dist2 = (d: Uint8ClampedArray, i: number, r: number, g: number, b: number) =>
-  (d[i]! - r) ** 2 + (d[i + 1]! - g) ** 2 + (d[i + 2]! - b) ** 2;
 
 // The largest size within max x max that keeps the aspect ratio (never enlarges).
 export function fitSize(width: number, height: number, max: number) {
@@ -48,65 +44,15 @@ export function hasCutout(img: Img) {
   return clear / n > 0.3;
 }
 
-// Clears the background: the border's main colors (each on at least 15% of the border) are the background, and a
-// flood fill from the border clears every connected pixel close to one of them. tolerance is a color distance
-// (0-441). Pictures that already have a cut-out keep theirs.
-export function removeBackground(img: Img, tolerance = 40) {
+// Clears the background: the subject finder in src/autosprite.ts decides what is subject, and everything else turns
+// see-through. A scene with no clear subject keeps the whole picture, and a picture that already has a cut-out keeps
+// its own.
+export function removeBackground(img: Img) {
   if (hasCutout(img)) return img;
-  const { width: w, height: h, data: src } = img,
-    d = new Uint8ClampedArray(src),
-    t2 = tolerance * tolerance;
-  const border: number[] = [];
-  for (let x = 0; x < w; x++) border.push(x, (h - 1) * w + x);
-  for (let y = 1; y < h - 1; y++) border.push(y * w, y * w + w - 1);
-  const ring = { width: border.length, height: 1, data: new Uint8ClampedArray(border.length * 4) };
-  border.forEach((p, k) => {
-    ring.data.set(src.subarray(p * 4, p * 4 + 3), k * 4);
-    ring.data[k * 4 + 3] = 255;
-  });
-  const pal = palette(ring, 4),
-    share = pal.map(() => 0);
-  const nearest = (i: number, data: Uint8ClampedArray) => {
-    let best = -1,
-      bd = t2;
-    pal.forEach((c, k) => {
-      const v = dist2(data, i, c[0], c[1], c[2]);
-      if (v <= bd) {
-        bd = v;
-        best = k;
-      }
-    });
-    return best;
-  };
-  for (let k = 0; k < border.length; k++) {
-    const n = nearest(k * 4, ring.data);
-    if (n >= 0) share[n]!++; // in range: n is a palette index
-  }
-  const keep = new Set(pal.map((_, k) => k).filter((k) => share[k]! >= border.length * 0.15)); // in range: k is a palette index
-  const background = (i: number) => src[i + 3]! < 128 || keep.has(nearest(i, src)); // in range: i is a pixel's first byte
-  const seen = new Uint8Array(w * h),
-    queue = new Int32Array(w * h);
-  let head = 0,
-    tail = 0;
-  const push = (p: number) => {
-    if (!seen[p]) {
-      seen[p] = 1;
-      queue[tail++] = p;
-    }
-  };
-  for (const p of border) push(p);
-  while (head < tail) {
-    const p = queue[head++]!, // in range: head < tail, the queue's filled length
-      i = p * 4;
-    if (!background(i)) continue; // the subject's edge
-    d[i + 3] = 0;
-    const x = p % w;
-    if (x > 0) push(p - 1);
-    if (x < w - 1) push(p + 1);
-    if (p >= w) push(p - w);
-    if (p < w * (h - 1)) push(p + w);
-  }
-  return { width: w, height: h, data: d };
+  const { mask } = subjectMask(img),
+    d = new Uint8ClampedArray(img.data);
+  for (let p = 0; p < mask.length; p++) if (!mask[p]) d[p * 4 + 3] = 0;
+  return { width: img.width, height: img.height, data: d };
 }
 
 // The smallest box around the solid pixels, or null when there are none.
@@ -128,140 +74,6 @@ export function contentBox(img: Img, alphaMin = 128): Box | null {
   return x1 < 0 ? null : { x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 };
 }
 
-export function crop(img: Img, box: Box) {
-  const out = image(box.width, box.height);
-  for (let y = 0; y < box.height; y++) {
-    const from = ((box.y + y) * img.width + box.x) * 4;
-    out.data.set(img.data.subarray(from, from + box.width * 4), y * box.width * 4);
-  }
-  return out;
-}
-
-// Area-average shrink to width x height. Colors are weighted by alpha so edges don't pick up the cleared background;
-// alpha ends up fully on or off (sprites have hard edges).
-export function shrink(img: Img, width: number, height: number) {
-  const out = image(width, height),
-    sx = img.width / width,
-    sy = img.height / height,
-    d = img.data;
-  for (let y = 0; y < height; y++)
-    for (let x = 0; x < width; x++) {
-      let r = 0,
-        g = 0,
-        b = 0,
-        a = 0,
-        n = 0;
-      const ya = Math.floor(y * sy),
-        yb = Math.max(ya + 1, Math.floor((y + 1) * sy)),
-        xa = Math.floor(x * sx),
-        xb = Math.max(xa + 1, Math.floor((x + 1) * sx));
-      for (let yy = ya; yy < yb && yy < img.height; yy++)
-        for (let xx = xa; xx < xb && xx < img.width; xx++) {
-          // d[...]!: in range, xx and yy stay inside the image
-          const i = (yy * img.width + xx) * 4,
-            w = d[i + 3]!;
-          r += d[i]! * w; // in range: as above
-          g += d[i + 1]! * w; // in range: as above
-          b += d[i + 2]! * w; // in range: as above
-          a += w;
-          n++;
-        }
-      const o = (y * width + x) * 4;
-      if (a / n >= 110) {
-        out.data[o] = r / a;
-        out.data[o + 1] = g / a;
-        out.data[o + 2] = b / a;
-        out.data[o + 3] = 255;
-      }
-    }
-  return out;
-}
-
-// Median cut: a palette of at most `colors` from the solid pixels.
-export function palette(img: Img, colors: number) {
-  const d = img.data,
-    px: RGB[] = [];
-  // d[...]!: in range, i is a pixel's first byte
-  for (let i = 0; i < d.length; i += 4) if (d[i + 3]) px.push([d[i]!, d[i + 1]!, d[i + 2]!]);
-  if (!px.length) return [];
-  const boxes = [px];
-  while (boxes.length < colors) {
-    let best = -1,
-      bestRange = 0,
-      bestCh = 0;
-    boxes.forEach((box, k) => {
-      if (box.length < 2) return;
-      for (let c = 0; c < 3; c++) {
-        let lo = 255,
-          hi = 0;
-        for (const p of box) {
-          if (p[c]! < lo) lo = p[c]!; // in range: c is a channel, 0-2
-          if (p[c]! > hi) hi = p[c]!; // in range: c is a channel, 0-2
-        }
-        if (hi - lo > bestRange) {
-          bestRange = hi - lo;
-          best = k;
-          bestCh = c;
-        }
-      }
-    });
-    if (best < 0 || bestRange < 6) break; // what's left is one color already
-    // in range: best is an index into boxes and bestCh a channel, 0-2
-    const box = boxes[best]!.sort((a, b) => a[bestCh]! - b[bestCh]!),
-      mid = box.length >> 1;
-    boxes.splice(best, 1, box.slice(0, mid), box.slice(mid));
-  }
-  // as RGB: the map keeps the three channels; p[c]!: c is a channel, 0-2
-  return boxes.map((box) => [0, 1, 2].map((c) => Math.round(box.reduce((s, p) => s + p[c]!, 0) / box.length)) as RGB);
-}
-
-export function quantize(img: Img, colors: number) {
-  const pal = palette(img, colors),
-    out = { width: img.width, height: img.height, data: new Uint8ClampedArray(img.data) },
-    d = out.data;
-  for (let i = 0; i < d.length; i += 4) {
-    if (!d[i + 3]) continue;
-    let best = pal[0]!, // this pixel is solid, so the palette has at least one color
-      bd = Infinity;
-    for (const p of pal) {
-      const v = dist2(d, i, p[0], p[1], p[2]);
-      if (v < bd) {
-        bd = v;
-        best = p;
-      }
-    }
-    d[i] = best[0];
-    d[i + 1] = best[1];
-    d[i + 2] = best[2];
-  }
-  return out;
-}
-
-// One pixel of dark outline around the solid pixels (the image grows by 1 on each side).
-export function outline(img: Img, color: RGB = OUTLINE) {
-  const w = img.width + 2,
-    h = img.height + 2,
-    out = image(w, h),
-    // in range: the bounds are checked before the read
-    solid = (x: number, y: number) =>
-      x >= 0 && y >= 0 && x < img.width && y < img.height && img.data[(y * img.width + x) * 4 + 3]! > 0;
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const o = (y * w + x) * 4;
-      if (solid(x - 1, y - 1)) {
-        out.data.set(img.data.subarray(((y - 1) * img.width + x - 1) * 4, ((y - 1) * img.width + x) * 4), o);
-        continue;
-      }
-      if (solid(x - 2, y - 1) || solid(x, y - 1) || solid(x - 1, y - 2) || solid(x - 1, y)) {
-        out.data[o] = color[0];
-        out.data[o + 1] = color[1];
-        out.data[o + 2] = color[2];
-        out.data[o + 3] = 255;
-      }
-    }
-  return out;
-}
-
 export function enlarge(img: Img, k: number) {
   if (k === 1) return img;
   const out = image(img.width * k, img.height * k);
@@ -273,33 +85,182 @@ export function enlarge(img: Img, k: number) {
   return out;
 }
 
+// The most common value in a non-empty list.
+function mode(v: number[]) {
+  const seen = new Map<number, number>();
+  let best = v[0]!, // the callers pass at least one value
+    bc = 0;
+  for (const x of v) {
+    const c = (seen.get(x) ?? 0) + 1;
+    seen.set(x, c);
+    if (c > bc) {
+      bc = c;
+      best = x;
+    }
+  }
+  return best;
+}
+
 // The whole recipe. height = the subject's height in sprite pixels before doubling (the overlay scales sprites to the
-// same bulk anyway). Returns null when nothing is left after the background goes.
+// same bulk anyway). Returns null when nothing is left after the background goes. Every `!` below reads a typed array
+// or list at an index its loop or bounds check keeps in range.
 export function spritify(
   img: Img,
   {
     removeBg = true,
-    tolerance = 40,
     height = 56,
     colors = 14,
     edge = true,
-  }: { removeBg?: boolean; tolerance?: number; height?: number; colors?: number; edge?: boolean } = {},
+  }: { removeBg?: boolean; height?: number; colors?: number; edge?: boolean } = {},
 ) {
-  const cut = removeBg ? removeBackground(img, tolerance) : img;
+  const cut = removeBg ? removeBackground(img) : img;
   const box = contentBox(cut);
   if (!box) return null;
-  const subject = crop(cut, box),
+  const W = cut.width,
+    solid = (p: number) => cut.data[p * 4 + 3]! >= 128,
     pad = edge ? 2 : 0,
-    room = SPRITE_MAX / 2 - pad;
-  const k = Math.min(height / subject.height, room / subject.width, room / subject.height, 1);
-  const small = shrink(
-    subject,
-    Math.max(1, Math.round(subject.width * k)),
-    Math.max(1, Math.round(subject.height * k)),
-  );
-  if (!contentBox(small)) return null;
-  const done = edge ? outline(quantize(small, colors)) : quantize(small, colors);
-  return enlarge(done, 2);
+    room = SPRITE_MAX / 2 - pad,
+    k = Math.min(height / box.height, room / box.width, room / box.height, 1),
+    ow = Math.max(1, Math.round(box.width * k)),
+    oh = Math.max(1, Math.round(box.height * k)),
+    x1 = box.x + box.width - 1,
+    y1 = box.y + box.height - 1;
+
+  // palette: k-means in Oklab over the subject's colors, binned to 5 bits a channel so it stays quick
+  const lab = labOf(cut),
+    binW = new Float32Array(32768),
+    binSum = new Float64Array(32768 * 3);
+  for (let y = box.y; y <= y1; y++)
+    for (let x = box.x; x <= x1; x++) {
+      const p = y * W + x,
+        i = p * 4;
+      if (!solid(p)) continue;
+      const b = ((cut.data[i]! >> 3) << 10) | ((cut.data[i + 1]! >> 3) << 5) | (cut.data[i + 2]! >> 3);
+      binW[b]!++;
+      for (let j = 0; j < 3; j++) binSum[b * 3 + j]! += lab[p * 3 + j]!;
+    }
+  const used: number[] = [];
+  for (let b = 0; b < 32768; b++) if (binW[b]) used.push(b);
+  const pts = new Float32Array(used.length * 3),
+    wts = new Float32Array(used.length);
+  used.forEach((b, i) => {
+    wts[i] = binW[b]!;
+    for (let j = 0; j < 3; j++) pts[i * 3 + j] = binSum[b * 3 + j]! / binW[b]!;
+  });
+  const { centers } = kmeans(pts, wts, colors),
+    K = centers.length / 3;
+  // a little more chroma: pixel art palettes read brighter than photos
+  for (let c = 0; c < K; c++) {
+    centers[c * 3 + 1]! *= 1.12;
+    centers[c * 3 + 2]! *= 1.12;
+  }
+  const nearest = (p: number) => {
+    let bk = 0,
+      bd = Infinity;
+    for (let c = 0; c < K; c++) {
+      const v = d3(lab, p * 3, centers, c * 3);
+      if (v < bd) {
+        bd = v;
+        bk = c;
+      }
+    }
+    return bk;
+  };
+
+  // each sprite cell at least 45% covered takes the palette color with the most pixels, boosted when its lightness
+  // stands out from the cell's (thin dark lines and bright eyes survive the shrink)
+  const cells = new Int32Array(ow * oh).fill(-1),
+    sx = box.width / ow,
+    sy = box.height / oh,
+    cnt = new Float64Array(K);
+  for (let y = 0; y < oh; y++)
+    for (let x = 0; x < ow; x++) {
+      cnt.fill(0);
+      let cover = 0,
+        tot = 0,
+        Lsum = 0;
+      const ya = box.y + Math.floor(y * sy),
+        yb = box.y + Math.max(Math.floor(y * sy) + 1, Math.floor((y + 1) * sy)),
+        xa = box.x + Math.floor(x * sx),
+        xb = box.x + Math.max(Math.floor(x * sx) + 1, Math.floor((x + 1) * sx));
+      for (let yy = ya; yy < yb && yy <= y1; yy++)
+        for (let xx = xa; xx < xb && xx <= x1; xx++) {
+          const p = yy * W + xx;
+          tot++;
+          if (!solid(p)) continue;
+          cover++;
+          cnt[nearest(p)]!++;
+          Lsum += lab[p * 3]!;
+        }
+      if (!tot || cover / tot < 0.45) continue;
+      const Lm = Lsum / cover;
+      let bk = 0,
+        bs = -1;
+      for (let c = 0; c < K; c++) {
+        const v = cnt[c]! * (1 + 4 * Math.abs(centers[c * 3]! - Lm));
+        if (v > bs) {
+          bs = v;
+          bk = c;
+        }
+      }
+      cells[y * ow + x] = bk;
+    }
+
+  // cleanup: drop lone pixels, fill pinholes, and give a pixel unlike every neighbor their color unless its
+  // lightness stands out (eyes, highlights)
+  const at = (x: number, y: number) => (x < 0 || y < 0 || x >= ow || y >= oh ? -1 : cells[y * ow + x]!);
+  const fixed = Int32Array.from(cells);
+  for (let y = 0; y < oh; y++)
+    for (let x = 0; x < ow; x++) {
+      const c = at(x, y),
+        nb = [at(x - 1, y), at(x + 1, y), at(x, y - 1), at(x, y + 1)],
+        solidN = nb.filter((v) => v >= 0).length;
+      if (c >= 0 && solidN <= 1 && ow * oh > 1) fixed[y * ow + x] = -1;
+      else if (c < 0 && solidN >= 3) fixed[y * ow + x] = mode(nb.filter((v) => v >= 0));
+      else if (c >= 0) {
+        const ring = [...nb, at(x - 1, y - 1), at(x + 1, y - 1), at(x - 1, y + 1), at(x + 1, y + 1)].filter(
+          (v) => v >= 0,
+        );
+        if (!ring.length || ring.includes(c)) continue;
+        const m = mode(ring);
+        if (Math.abs(centers[c * 3]! - centers[m * 3]!) < 0.18) fixed[y * ow + x] = m;
+      }
+    }
+  if (!fixed.some((c) => c >= 0)) return null;
+
+  // draw, with a one-pixel outline in a dark shade of the colors it borders (corners stay clear: a rounder outline)
+  const p0 = pad / 2,
+    OW = ow + pad,
+    OH = oh + pad,
+    out = image(OW, OH),
+    rgb = [...Array(K).keys()].map((c) => toRgb(centers[c * 3]!, centers[c * 3 + 1]!, centers[c * 3 + 2]!)),
+    get = (x: number, y: number) => (x < 0 || y < 0 || x >= ow || y >= oh ? -1 : fixed[y * ow + x]!);
+  for (let y = 0; y < OH; y++)
+    for (let x = 0; x < OW; x++) {
+      const o = (y * OW + x) * 4,
+        cx = x - p0,
+        cy = y - p0,
+        c = get(cx, cy);
+      if (c >= 0) {
+        out.data.set(rgb[c]!, o);
+        out.data[o + 3] = 255;
+        continue;
+      }
+      if (!edge) continue;
+      const nb = [get(cx - 1, cy), get(cx + 1, cy), get(cx, cy - 1), get(cx, cy + 1)].filter((v) => v >= 0);
+      if (!nb.length) continue;
+      let L = 0,
+        a = 0,
+        b = 0;
+      for (const v of nb) {
+        L += centers[v * 3]!;
+        a += centers[v * 3 + 1]!;
+        b += centers[v * 3 + 2]!;
+      }
+      out.data.set(toRgb(Math.min(0.22, (L / nb.length) * 0.3), (a / nb.length) * 0.5, (b / nb.length) * 0.5), o);
+      out.data[o + 3] = 255;
+    }
+  return enlarge(out, 2);
 }
 
 // ---- browser only below ----
