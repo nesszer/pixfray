@@ -413,9 +413,9 @@ export function subjectMask(img: Img): Subject {
     side.push(2, 3);
   }
 
-  // background colors: border clusters on the top edge that also reach a side or fill half the top, or on both side
-  // edges without filling the bottom edge (a bust's body fills the bottom and its corners, the sky or wall behind it
-  // fills the top; a head or a pole cut off by the top edge touches neither side)
+  // background colors: border clusters on the top edge that also reach a side, fill half the top or stay off the
+  // bottom edge, or on both side edges without filling the bottom edge (a bust's body fills the bottom and its
+  // corners, the sky or wall behind it fills the top)
   const bpts = new Float32Array(border.length * 3);
   border.forEach((p, i) => bpts.set(lab.subarray(p * 3, p * 3 + 3), i * 3));
   const { centers: bc, label: bl } = kmeans(bpts, new Float32Array(border.length).fill(1), 8);
@@ -430,7 +430,7 @@ export function subjectMask(img: Img): Subject {
   const hits = (c: number, s: number) => sideHits[c]![s]! / sideLen[s]!;
   const bg = [...Array(K).keys()].filter(
     (c) =>
-      (hits(c, 0) >= 0.05 && (hits(c, 2) >= 0.08 || hits(c, 3) >= 0.08 || hits(c, 0) >= 0.5)) ||
+      (hits(c, 0) >= 0.05 && (hits(c, 2) >= 0.08 || hits(c, 3) >= 0.08 || hits(c, 0) >= 0.5 || hits(c, 1) < 0.05)) ||
       (hits(c, 2) >= 0.08 && hits(c, 3) >= 0.08 && hits(c, 1) < 0.5),
   );
   if (!bg.length) bg.push([...Array(K).keys()].sort((a, b) => share[b]! - share[a]!)[0]!);

@@ -414,8 +414,8 @@ Custom characters:
 
 Viewer sprites (server/sprites.ts):
 - A signed-in viewer turns a picture into a sprite on the fighter page ("Your own sprite"). The browser always pixelates it
-  with no AI (src/spritify.ts): src/autosprite.ts finds the subject (a picture with no clear subject, such as a
-  landscape, keeps all of it; one that already has a cut-out keeps its own), then the page crops it to 56 px tall with
+  with no AI (src/spritify.ts): src/autosprite.ts finds the subject (border colors on the top edge that stay off the
+  bottom edge count as sky; a picture with no clear subject, such as a landscape, keeps all of it; one that already has a cut-out keeps its own), then the page crops it to 56 px tall with
   at most 14 Oklab colors, adds a shaded outline and doubles the pixels. An optional AI redraw goes
   through `/api/sprite/:channel/redraw` first. A mod approves it on `/admin/` (Characters tab).
 - Ids match `^v-[a-z0-9-]{1,48}$`; each approval makes a new id, so the overlay refetches the catalog. `url` is

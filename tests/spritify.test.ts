@@ -53,6 +53,20 @@ test("spritify: sizes, cut-outs and the background fill", () => {
   assert.equal(at(whole, 0, 0)[3], 255);
   assert.equal(at(whole, 119, 79)[3], 255);
   assert.deepEqual(contentBox(whole), { x: 0, y: 0, width: 120, height: 80 });
+  // A bust under a sky with a pink cloud that touches only the top edge and the head: the cloud goes with the sky.
+  const bust = picture(120, 120, (x, y) => {
+    const head = (x - 60) ** 2 + (y - 45) ** 2 < 28 ** 2,
+      body = y > 70 && Math.abs(x - 60) < 40 + (y - 70) / 2,
+      cloud = y < 18 && x > 64 && x < 100 + 4 * Math.sin(y);
+    if (head) return [240, 170, 40, 255];
+    if (body) return [30, 30, 60, 255];
+    return cloud ? [230, 120, 200, 255] : [80, 110, 200 + (y % 7), 255];
+  });
+  const cutBust = removeBackground(bust);
+  assert.deepEqual(
+    [at(cutBust, 85, 5)[3], at(cutBust, 5, 5)[3], at(cutBust, 60, 45)[3], at(cutBust, 60, 110)[3]],
+    [0, 0, 255, 255],
+  );
 });
 
 test("spritify: shaded outline and pixel doubling", () => {
