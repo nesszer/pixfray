@@ -63,7 +63,7 @@ const DEFAULT_CONFIG: Config = {
   winDollars: 5,
   lossDollars: 3,
   // Ranked duels per pair of fighters per live stream (0 = no limit). Past it they duel unrated for half the dollars.
-  pairRankedPerStream: 5,
+  pairRankedPerStream: 0,
   // !give @name amount: on/off, the most one viewer can give per stream, and the finished duels needed first.
   giveEnabled: true,
   giveMaxPerStream: 100,
@@ -136,7 +136,7 @@ const MAX_RECENT_EVENTS = 100;
 const MAX_APPLIED_MESSAGE_IDS = 1_000;
 const MAX_DUEL_HISTORY = 25;
 const ACTIVE_TTL_MS = 10 * 60_000;
-// Anti-farming: the same two fighters get config.pairRankedPerStream duels that count per live stream, and a Twitch
+// Anti-farming: mods may cap the ranked duels between two fighters per live stream (config.pairRankedPerStream), and a Twitch
 // account younger than NEW_ACCOUNT_MS (the room looks it up) can duel but doesn't move Elo, wins or dollars.
 export const NEW_ACCOUNT_MS = 7 * 86_400_000;
 const MAX_PAIR_PLAYS = 2_000;

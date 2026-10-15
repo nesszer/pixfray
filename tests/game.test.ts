@@ -1527,8 +1527,20 @@ test("the 2026-10-06 price cut moves prices still at the old defaults and keeps 
   assert.equal(later.config.petPriceCommon, 30);
 });
 
-test("a pair gets 5 ranked duels per stream; later ones are unrated, pay half, and count again next stream", () => {
+test("live duels have no pair limit by default", () => {
   const w = arena({ quick: true });
+  w.stream = { id: "s1", startedAt: T0 };
+  assert.equal(w.state.config.pairRankedPerStream, 0);
+  for (let i = 0; i < 7; i += 1) {
+    const d = w.duel(w.fight("alice", "bob"));
+    w.advance(120_000);
+    assert.deepEqual([d.unrated, d.lastRanked], [undefined, undefined], `duel ${i + 1} is ranked`);
+  }
+});
+
+test("with a limit of 5 a pair gets 5 ranked duels per stream; later ones are unrated, pay half, and count again next stream", () => {
+  const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 5;
   w.stream = { id: "s1", startedAt: T0 };
   const fight = () => {
     const d = w.duel(w.fight("alice", "bob"));
@@ -1590,6 +1602,7 @@ test("a pair gets 5 ranked duels per stream; later ones are unrated, pay half, a
 
 test("offline duels are unrated and pay nothing; a failed live check keeps the last answer", () => {
   const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 5;
   w.stream = null;
   const d = w.duel(w.fight("alice", "bob"));
   w.advance(120_000);
@@ -1602,6 +1615,7 @@ test("offline duels are unrated and pay nothing; a failed live check keeps the l
 
 test("before any live answer duels are ranked; plays from before stream ids count toward the stream they fall in", () => {
   const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 5;
   assert.equal(w.duel(w.fight("alice", "bob")).unrated, undefined, "never checked counts as live");
   w.advance(120_000);
   w.state.pairPlays = [
@@ -1630,6 +1644,7 @@ test("pairRankedPerStream 0 means no limit", () => {
 
 test("mods reset one pair's ranked count", () => {
   const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 5;
   w.state.pairPlays = [
     { pair: "id-alice:id-bob", at: T0, stream: "" },
     { pair: "id-alice:id-bob", at: T0, stream: "" },

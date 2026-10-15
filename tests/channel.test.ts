@@ -3090,6 +3090,10 @@ test("!stats: own levels that count, unspent points and the pet; @name for someo
       })
     ).body.reply;
   assert.equal(await stats("u1", "alice"), "@alice: Power 2, Vitality 3. 5 points unspent.");
+  assert.equal(await stats("u1", "alice", "bob"), "@bob: no upgrades yet. 0 points unspent.", "no limit by default");
+  const capped = r.readState("nesszerra");
+  capped.config.pairRankedPerStream = 5;
+  r.writeState(capped);
   assert.equal(
     await stats("u1", "alice", "bob"),
     "@bob: no upgrades yet. 0 points unspent. 5 ranked duels left between you this stream.",
@@ -3106,6 +3110,7 @@ test("!resetpair @a @b: mods start a pair's ranked count for this stream over; t
   const plays = (pair: string, n: number) => Array.from({ length: n }, (_, i) => ({ pair, at: 1 + i, stream: "" }));
   const seed = () => {
     const live = r.readState("nesszerra");
+    live.config.pairRankedPerStream = 5;
     live.pairPlays = [...plays("u1:u2", 5), ...plays("u1:u3", 2)];
     r.writeState(live);
   };

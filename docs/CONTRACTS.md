@@ -456,7 +456,7 @@ Viewer sprites (server/sprites.ts):
   `!fight` or `!rematch` and passes the answer as the command's `stream`; game.ts keeps it in `state.stream`
   (`{id, startedAt}` or `null`). If Twitch doesn't answer, the last answer stays; before any answer duels count as
   live. A duel while the channel is offline is `unrated:"offline"` and pays nothing. The same two fighters get
-  `pairRankedPerStream` (5; 0 = no limit) ranked duels per live stream; the next ones that stream are
+  `pairRankedPerStream` (0 = no limit, the default) ranked duels per live stream; the next ones that stream are
   `unrated:"pair_cap"` and pay half of `winDollars` and `lossDollars`, rounded down. Only ranked duels count
   (`pairPlays` `{pair, at, stream}`, at most 2000); a new stream id drops the old plays, and plays saved before stream
   ids count toward the stream they fall in (`at >= startedAt`). The pair's last ranked duel sets `duel.lastRanked`.
@@ -506,7 +506,7 @@ Viewer sprites (server/sprites.ts):
 | sharedCooldownMs | 1000 | 250 to 60000 |
 | initialElo | 1000 | 0 to 10000 |
 | eloK | 24 | 1 to 100 |
-| pairRankedPerStream | 5 | 0 to 50 (ranked duels per pair each live stream; 0 = no limit) |
+| pairRankedPerStream | 0 | 0 to 50 (ranked duels per pair each live stream; 0 = no limit) |
 | checkinPoints | 1 | 0 to 3 (upgrade points per check-in) |
 | streakBonus | true | boolean (+1 point at a streak of 3, 7, 14 and 30 streams, +2 at 60, +3 at 100, +5 at 200, +10 at 365) |
 | maxStatLevel | 16 | 1 to 200 (the highest level of each upgrade stat that counts in this channel's duels) |
