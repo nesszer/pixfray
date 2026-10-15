@@ -1,7 +1,7 @@
 // StreamElements chat source. Each game action is a StreamElements custom command whose reply is
 // $(customapi <url>): the bot GETs /api/se/<channel>/<action>?k=..&id=..&u=..&d=..&t=..&m=.. and posts our reply.
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
-import { hiddenResults, PAIR_RATED_PER_DAY } from "./game.ts";
+import { hiddenResults } from "./game.ts";
 import { boostText } from "./pets.ts";
 import type { Env } from "./env.ts";
 import type { GameResult, GameState, Player } from "./model.ts";
@@ -256,13 +256,16 @@ export function seExpiredText({
 
 // The bot's line once the stream has played a duel (duel.revealAt): who won, how, and both Elo changes. Never earlier, so
 // chat doesn't spoil the stream. On a bot channel this line is the winner announcement (the overlay shows no banner).
-// Why a duel counted for nothing (server/game.ts beginDuel).
-const UNRATED_TEXT: { [reason: string]: string } = {
-  new_account: "a Twitch account under 7 days old",
-  pair_cap: `${PAIR_RATED_PER_DAY} ranked duels between them in 24 h already`,
-};
+// Why a duel moved no rank (server/game.ts beginDuel), and what it still pays (finishDuel).
 export const unratedText = (reason: string): string =>
-  UNRATED_TEXT[reason] ? `Just for fun (${UNRATED_TEXT[reason]}): no Elo or dollars.` : "";
+  reason === "offline"
+    ? "Just for fun (stream offline): no rank or dollars."
+    : reason === "new_account"
+      ? "Just for fun (a Twitch account under 7 days old): no Elo or dollars."
+      : reason === "pair_cap"
+        ? "Just for fun (ranked limit for this pair reached): no Elo, pays half, ranked again next stream."
+        : "";
+export const LAST_RANKED_TEXT = "Last ranked duel between them this stream.";
 
 /** One fighter's Elo change, as in duel.ratings; missing fields print as "undefined" and +0. */
 type ResultRating = { after?: number | undefined; delta?: number | undefined };
@@ -275,6 +278,7 @@ export function seResultText({
   decision = "ko",
   flawless = false,
   unrated = "",
+  lastRanked = false,
 }: {
   winner?: string | undefined;
   loser?: string | undefined;
@@ -283,6 +287,7 @@ export function seResultText({
   decision?: string | undefined;
   flawless?: boolean | undefined;
   unrated?: string | undefined;
+  lastRanked?: boolean | undefined;
 } = {}): string {
   // x as number: undefined < 0 is false, so a missing delta prints as +0
   const d = (x: number | undefined) => ((x as number) < 0 ? "-" : "+") + Math.abs(Number(x) || 0);
@@ -290,7 +295,10 @@ export function seResultText({
     (decision === "hp" ? " on HP" : decision === "sudden_death" ? " in sudden death" : "") +
     (flawless ? ", flawless" : "");
   if (unrated) return `${winner} beat ${loser}${how}! ${unratedText(unrated)}`;
-  return `${winner} beat ${loser}${how}! ${winner} ${w.after} Elo (${d(w.delta)}), ${loser} ${l.after} Elo (${d(l.delta)}).`;
+  return (
+    `${winner} beat ${loser}${how}! ${winner} ${w.after} Elo (${d(w.delta)}), ${loser} ${l.after} Elo (${d(l.delta)}).` +
+    (lastRanked ? " " + LAST_RANKED_TEXT : "")
+  );
 }
 
 // A channel on the PixFray bot has no StreamElements in the way, so its give command is !give (unless mods renamed it).
@@ -430,9 +438,10 @@ export function sePetText(
 }
 
 // !stats [@name]: s = ChannelRoom.statsInfo() -> { name, stats (levels that count in duels), unspent, petBoost }, or
-// null (no fighter). "@x: Power 10, Guard 8, Crit 4. 12 points unspent. Pet: +2 power."
+// null (no fighter). "@x: Power 10, Guard 8, Crit 4. 12 points unspent. Pet: +2 power." For someone else, `rankedLeft`
+// (ranked duels left between the sender and them this stream; missing when the channel has no limit) is appended.
 export function seStatsText(
-  s: { name: string; stats: Stats; unspent: number; petBoost: Stats } | null | undefined,
+  s: { name: string; stats: Stats; unspent: number; petBoost: Stats; rankedLeft?: number | null } | null | undefined,
   {
     who = "",
     target = "",
@@ -446,7 +455,10 @@ export function seStatsText(
   const pet = boostText(s.petBoost);
   return (
     `@${target ? short(s.name) : me}: ${levels.length ? levels.join(", ") : "no upgrades yet"}. ` +
-    `${s.unspent} point${s.unspent === 1 ? "" : "s"} unspent.${pet ? " Pet: " + pet + "." : ""}`
+    `${s.unspent} point${s.unspent === 1 ? "" : "s"} unspent.${pet ? " Pet: " + pet + "." : ""}` +
+    (target && typeof s.rankedLeft === "number"
+      ? ` ${s.rankedLeft} ranked duel${s.rankedLeft === 1 ? "" : "s"} left between you this stream.`
+      : "")
   );
 }
 
@@ -550,7 +562,7 @@ export function seReplyText({
       const [a, b] = duel ? [duel.a, duel.b] : [actorId, other];
       return (
         `Fight on: ${nameOf(state, a)} vs ${nameOf(state, b)}! Watch the stream for the winner.` +
-        (duel?.unrated ? " " + unratedText(duel.unrated) : "")
+        (duel?.unrated ? " " + unratedText(duel.unrated) : duel?.lastRanked ? " " + LAST_RANKED_TEXT : "")
       );
     }
     if (!duel) return MISSED_TEXT; // ok but no duel = the text didn't parse as a command

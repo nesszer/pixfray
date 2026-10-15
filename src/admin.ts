@@ -116,6 +116,13 @@ const GROUPS: { title: string; visible?: (config: Config, admin: Admin) => boole
     fields: [
       { key: "initialElo", label: "Starting Elo", unit: "Elo", min: 0, max: 10000 },
       { key: "eloK", label: "Elo K-factor", unit: "K", min: 1, max: 100 },
+      {
+        key: "pairRankedPerStream",
+        label: "Ranked duels per pair each stream (0: no limit)",
+        unit: "duels",
+        min: 0,
+        max: 50,
+      },
     ],
   },
   // !checkin (server/channel.ts checkin) and how far upgrade levels count here (server/upgrades.ts effectiveStats).
@@ -667,6 +674,44 @@ async function act(
   // element type from the page HTML
   ($("#gift-amount") as HTMLInputElement).value = "";
   await loadLeaderboard();
+});
+// Pair reset: one pair's ranked duels this stream start over (server/channel.ts resetPair), like !resetpair in chat.
+// element type from the page HTML
+($("#pair-form") as HTMLFormElement).addEventListener("submit", async (e) => {
+  e.preventDefault();
+  // element type from the page HTML
+  const status = $("#pair-status") as HTMLParagraphElement,
+    // element type from the page HTML
+    a = ($("#pair-a") as HTMLInputElement).value.trim().replace(/^@/, ""),
+    // element type from the page HTML
+    b = ($("#pair-b") as HTMLInputElement).value.trim().replace(/^@/, "");
+  if (![a, b].every((name) => /^[a-z0-9_]{1,25}$/i.test(name)))
+    return setStatus(status, "Type both viewers' Twitch names.", "error");
+  if (a.toLowerCase() === b.toLowerCase()) return setStatus(status, "Pick two different viewers.", "error");
+  // element type from the page HTML
+  const button = $("#pair-send") as HTMLButtonElement;
+  button.disabled = true;
+  setStatus(status, "Saving…");
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action: "resetPair", payload: { a, b } } });
+  button.disabled = false;
+  if (!r.ok)
+    return setStatus(
+      status,
+      r.status === 404
+        ? (r.data?.missing || a + " or " + b) + " has no saved fighter on " + CHANNEL + "."
+        : "Couldn't reset: " + errorText(r) + ".",
+      "error",
+    );
+  setStatus(
+    status,
+    "Reset " +
+      r.data.a +
+      " and " +
+      r.data.b +
+      ": " +
+      (typeof r.data.left === "number" ? r.data.left + " ranked duels left this stream." : "no limit on this channel."),
+    "ok",
+  );
 });
 // element type from the page HTML
 ($("#reset-all-ranks") as HTMLButtonElement).addEventListener("click", (e) =>

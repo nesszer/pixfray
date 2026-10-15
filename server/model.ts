@@ -48,6 +48,7 @@ export type Config = {
   maxStatLevel: number;
   winDollars: number;
   lossDollars: number;
+  pairRankedPerStream: number;
   giveEnabled: boolean;
   giveMaxPerStream: number;
   giveMinDuels: number;
@@ -149,8 +150,10 @@ export type Duel = {
   /** userId -> full health in this duel: rules.maxHp plus vitality (server/upgrades.ts bonusHp). */
   maxHp?: Record<string, number>;
   cooldowns?: Record<string, Cooldowns>;
-  /** Played out, but moves no Elo, wins, losses or dollars. */
-  unrated?: "new_account" | "pair_cap";
+  /** Played out, but moves no Elo, wins or losses. Only "pair_cap" pays dollars, half (finishDuel). */
+  unrated?: "offline" | "new_account" | "pair_cap";
+  /** The pair's last ranked duel this stream (config.pairRankedPerStream). */
+  lastRanked?: boolean;
   endedAt?: number;
   cancelReason?: string;
   ratings?: Record<string, Rating>;
@@ -190,7 +193,10 @@ export type GameState = {
   players: Player[];
   duels: Duel[];
   rematchLocks: { pair: string; until: number }[];
-  pairPlays: { pair: string; at: number }[];
+  /** Ranked duels per pair; `stream` is the stream id ("" when never known, missing on entries from before 2026-10-15). */
+  pairPlays: { pair: string; at: number; stream?: string }[];
+  /** The channel's live stream as the room last saw it: null offline, missing before the first answer (counts as live). */
+  stream?: { id: string; startedAt: number } | null;
   events: GameLogEvent[];
   appliedMessageIds: string[];
   nextDuelId: number;
@@ -210,6 +216,9 @@ export type AdminPayload = {
   elo?: unknown;
   wins?: unknown;
   losses?: unknown;
+  /** resetPair: the two fighters' user ids. */
+  a?: unknown;
+  b?: unknown;
 };
 
 /** A chat command as the room hands it to the reducer (server/channel.ts processChatMessage). */
@@ -230,6 +239,8 @@ export type CommandEvent = {
   quick?: unknown;
   /** Numbers in [0, 1) for a quick duel; missing ones come from a hash. */
   rolls?: unknown;
+  /** The room's live check for commands that can start a duel: {id, startedAt}, null offline, undefined unknown. */
+  stream?: unknown;
 };
 
 export type AdminEvent = AdminPayload & {

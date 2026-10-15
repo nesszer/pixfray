@@ -62,6 +62,8 @@ const DEFAULT_CONFIG: Config = {
   // PixFray dollars (server/channel.ts payDuels, give). Saved fighters earn them per finished duel.
   winDollars: 5,
   lossDollars: 3,
+  // Ranked duels per pair of fighters per live stream (0 = no limit). Past it they duel unrated for half the dollars.
+  pairRankedPerStream: 0,
   // !give @name amount: on/off, the most one viewer can give per stream, and the finished duels needed first.
   giveEnabled: true,
   giveMaxPerStream: 100,
@@ -134,11 +136,10 @@ const MAX_RECENT_EVENTS = 100;
 const MAX_APPLIED_MESSAGE_IDS = 1_000;
 const MAX_DUEL_HISTORY = 25;
 const ACTIVE_TTL_MS = 10 * 60_000;
-// Anti-farming: the same two fighters get PAIR_RATED_PER_DAY duels that count per 24 h, and a Twitch account younger
-// than NEW_ACCOUNT_MS (the room looks it up) can duel but doesn't move Elo, wins or dollars.
-export const PAIR_RATED_PER_DAY = 5;
+// Anti-farming: mods may cap the ranked duels between two fighters per live stream (config.pairRankedPerStream), and a Twitch
+// account younger than NEW_ACCOUNT_MS (the room looks it up) can duel but doesn't move Elo, wins or dollars.
 export const NEW_ACCOUNT_MS = 7 * 86_400_000;
-const PAIR_WINDOW_MS = 86_400_000;
+const MAX_PAIR_PLAYS = 2_000;
 // Set<unknown> so has() can test values nobody has checked yet.
 const ABILITIES = new Set<unknown>(["strike", "heavy", "heal"]);
 
@@ -391,7 +392,6 @@ function expireState(state: GameState, now: number): boolean {
   }
 
   state.rematchLocks = state.rematchLocks.filter((lock) => lock.until > now);
-  state.pairPlays = state.pairPlays.filter((play) => now - play.at < PAIR_WINDOW_MS);
   const inDuel = new Set(openDuels(state).flatMap((duel) => [duel.a, duel.b]));
   const before = state.players.length;
   state.players = state.players.filter(
@@ -482,15 +482,45 @@ function createChallenge(state: GameState, actor: Player, target: Player, now: n
   return { ok: true, duelId: duel.id };
 }
 
+// The room's latest answer to "is the channel live?" (undefined: no answer this time, keep the last one). A new stream
+// drops the pair counts of earlier ones.
+function noteStream(state: GameState, news: unknown): void {
+  if (news === undefined) return;
+  const live =
+    news && typeof news === "object" && "id" in news && typeof news.id === "string" && news.id
+      ? { id: news.id, startedAt: "startedAt" in news && Number.isFinite(news.startedAt) ? Number(news.startedAt) : 0 }
+      : null;
+  if (live && state.stream?.id !== live.id) state.pairPlays = state.pairPlays.filter((play) => countsFor(play, live));
+  state.stream = live;
+}
+
+// Pair counts from before streams were tracked carry no stream id; they count for the stream they fall in.
+function countsFor(play: GameState["pairPlays"][number], stream: GameState["stream"]): boolean {
+  if (!stream) return !play.stream;
+  return play.stream === stream.id || (play.stream === undefined && play.at >= stream.startedAt);
+}
+
+/** Ranked duels these two fighters have left this stream, or null when the channel sets no limit. */
+export function pairRankedLeft(state: GameState, a: string, b: string): number | null {
+  const cap = state.config.pairRankedPerStream;
+  if (!(cap > 0)) return null;
+  const pair = pairKey(a, b);
+  return Math.max(
+    0,
+    cap - state.pairPlays.filter((play) => play.pair === pair && countsFor(play, state.stream)).length,
+  );
+}
+
 function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccounts?: unknown } = {}): GameResult {
   const a = player(state, duel.a);
   const b = player(state, duel.b);
   if (!a?.registered || !b?.registered) return { ok: false, reason: "ranked_sign_in_required" };
   const young = Array.isArray(event.newAccounts) ? event.newAccounts : [];
-  const pair = pairKey(duel.a, duel.b),
-    plays = state.pairPlays.filter((play) => play.pair === pair && now - play.at < PAIR_WINDOW_MS).length;
-  if (young.includes(duel.a) || young.includes(duel.b)) duel.unrated = "new_account";
-  else if (plays >= PAIR_RATED_PER_DAY) duel.unrated = "pair_cap";
+  const left = pairRankedLeft(state, duel.a, duel.b);
+  if (state.stream === null) duel.unrated = "offline";
+  else if (young.includes(duel.a) || young.includes(duel.b)) duel.unrated = "new_account";
+  else if (left === 0) duel.unrated = "pair_cap";
+  else if (left === 1) duel.lastRanked = true;
   state.round += 1;
   duel.round = state.round;
   duel.status = "active";
@@ -702,7 +732,7 @@ function finishDuel(
   if (!a || !b) return;
   const ratingA = a.elo;
   const ratingB = b.elo;
-  // An unrated duel (new account, or the pair's daily cap) is played out but changes no Elo, wins, losses or dollars.
+  // An unrated duel (offline, new account, or past the pair's limit) is played out but changes no Elo, wins or losses.
   const rated = !duel.unrated;
   if (!rated) bonus = 0;
   const expectedA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
@@ -722,7 +752,11 @@ function finishDuel(
     b.wins += 1;
     a.losses += 1;
   }
-  if (rated) state.pairPlays.push({ pair: pairKey(duel.a, duel.b), at: now });
+  if (rated && state.config.pairRankedPerStream > 0)
+    state.pairPlays = [
+      ...state.pairPlays,
+      { pair: pairKey(duel.a, duel.b), at: now, stream: state.stream?.id || "" },
+    ].slice(-MAX_PAIR_PLAYS);
   // The loser is knocked out (hp 0) and respawns at full health after respawnMs; the winner is healed at once.
   const winner = winnerId === duel.a ? a : b;
   const loser = winnerId === duel.a ? b : a;
@@ -745,10 +779,12 @@ function finishDuel(
     duel.ratings[winnerId]!.bonus = bonus;
     duel.flawless = true;
   }
-  // Dollars for saved fighters; the room adds them to the profiles once (server/channel.ts payDuels).
+  // Dollars for saved fighters; the room adds them to the profiles once (server/channel.ts payDuels). Past the pair's
+  // limit a duel pays half; offline and new-account duels pay nothing.
+  const pay = (amount: number): number => (rated ? amount : duel.unrated === "pair_cap" ? Math.floor(amount / 2) : 0);
   const payout: Record<string, number> = {};
-  if (rated && winner.registered && state.config.winDollars > 0) payout[winner.userId] = state.config.winDollars;
-  if (rated && loser.registered && state.config.lossDollars > 0) payout[loser.userId] = state.config.lossDollars;
+  if (winner.registered && pay(state.config.winDollars) > 0) payout[winner.userId] = pay(state.config.winDollars);
+  if (loser.registered && pay(state.config.lossDollars) > 0) payout[loser.userId] = pay(state.config.lossDollars);
   if (Object.keys(payout).length) duel.payout = payout;
   if (decision !== "ko") duel.decision = decision;
   state.rematchLocks.push({
@@ -946,6 +982,7 @@ function validateConfigPatch(patch: Untrusted): { ok: true; patch: ConfigPatch }
     maxStatLevel: [1, 200],
     winDollars: [0, 100],
     lossDollars: [0, 100],
+    pairRankedPerStream: [0, 50],
     giveMaxPerStream: [0, 10_000],
     giveMinDuels: [0, 1_000],
     reminderMin: [0, 240],
@@ -1133,10 +1170,22 @@ function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResul
       p.losses = 0;
       dirtyProfileIds.push(p.userId);
     }
-    // a fresh start for everyone, so the daily pair counts start over too
+    // a fresh start for everyone, so the pair counts start over too
     state.pairPlays = [];
     addEvent(state, "all_ranks_reset", now, { actorId });
     return { ok: true, reason: "all_ranks_reset", dirtyProfileIds, resetAllRanks: true, deletedProfileIds };
+  }
+
+  // Mods start one pair's ranked count for this stream over (the room resolves the two names to user ids).
+  if (action === "resetPair") {
+    const a = normalizeUserId(payload.a),
+      b = normalizeUserId(payload.b);
+    if (!a || !b || a === b) return { ok: false, reason: "invalid_pair" };
+    const pair = pairKey(a, b),
+      before = state.pairPlays.length;
+    state.pairPlays = state.pairPlays.filter((play) => play.pair !== pair);
+    addEvent(state, "pair_reset", now, { actorId, a, b });
+    return { ok: true, reason: "pair_reset", amount: before - state.pairPlays.length };
   }
 
   if (action === "resetAll") {
@@ -1398,6 +1447,7 @@ export function reduceGame(inputState: StoredState, event: GameEvent, now: numbe
     else if (!Number.isFinite(event.timestamp) || now - event.timestamp > 60_000 || event.timestamp - now > 10_000)
       result = { ok: false, reason: "stale_command" };
     else {
+      noteStream(state, event.stream);
       const userId = normalizeUserId(event.userId);
       const parsed = parseGameCommand(event.text);
       const actor = recentProfile(
@@ -1487,6 +1537,7 @@ function normalizeState(input: StoredState): GameState {
   state.duels = Array.isArray(state.duels) ? state.duels : [];
   state.rematchLocks = Array.isArray(state.rematchLocks) ? state.rematchLocks : [];
   state.pairPlays = Array.isArray(state.pairPlays) ? state.pairPlays : [];
+  if (state.stream && typeof state.stream.id !== "string") delete state.stream;
   state.events = Array.isArray(state.events) ? state.events.slice(-MAX_RECENT_EVENTS) : [];
   state.appliedMessageIds = Array.isArray(state.appliedMessageIds)
     ? state.appliedMessageIds.slice(-MAX_APPLIED_MESSAGE_IDS)

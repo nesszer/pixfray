@@ -9,6 +9,7 @@ import {
   shownProfile,
   replayMs,
   normalizeGameState,
+  pairRankedLeft,
 } from "../server/game.ts";
 import type {
   CommandEvent,
@@ -50,6 +51,8 @@ type Arena = {
   player(login: string): Player;
   duel(id: string | undefined): Duel;
   fight(a: string, b: string): string | undefined;
+  /** The room's live check sent with each command (CommandEvent.stream); undefined sends none. */
+  stream?: { id: string; startedAt: number } | null | undefined;
 };
 
 // Small harness: keeps state and clock, applies events through the pure reducer.
@@ -85,6 +88,7 @@ function arena({ chat = true, viewers = ["alice", "bob", "cara", "dan"], quick =
       displayName: login,
       text,
       timestamp: w.now,
+      ...(w.stream !== undefined ? { stream: w.stream } : {}),
     });
   w.register = (login, extra = {}) =>
     w.apply({
@@ -562,6 +566,12 @@ test("config edits are validated, versioned, and only affect new duels", () => {
   assert.equal(
     w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { maxDuels: 9 } } }).reason,
     "invalid_config_maxDuels",
+  );
+  assert.equal(
+    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { pairRankedPerStream: 51 } } })
+      .reason,
+    "invalid_config_pairRankedPerStream",
+    "the ranked limit per pair is 0 (none) to 50",
   );
   assert.equal(
     w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { reminderMin: 5 } } }).reason,
@@ -1200,7 +1210,15 @@ test("the bot result line says how the duel was won", async () => {
   );
   assert.equal(
     seResultText({ winner: "Bean", loser: "Aria", w, l, unrated: "pair_cap" }),
-    "Bean beat Aria! Just for fun (5 ranked duels between them in 24 h already): no Elo or dollars.",
+    "Bean beat Aria! Just for fun (ranked limit for this pair reached): no Elo, pays half, ranked again next stream.",
+  );
+  assert.equal(
+    seResultText({ winner: "Bean", loser: "Aria", w, l, unrated: "offline" }),
+    "Bean beat Aria! Just for fun (stream offline): no rank or dollars.",
+  );
+  assert.equal(
+    seResultText({ winner: "Bean", loser: "Aria", w, l, lastRanked: true }),
+    "Bean beat Aria! Bean 1014 Elo (+14), Aria 989 Elo (-11). Last ranked duel between them this stream.",
   );
   assert.equal(
     seResultText({ winner: "Bean", loser: "Aria", w, l, unrated: "new_account" }),
@@ -1509,18 +1527,42 @@ test("the 2026-10-06 price cut moves prices still at the old defaults and keeps 
   assert.equal(later.config.petPriceCommon, 30);
 });
 
-test("a pair gets 5 rated duels a day; later ones are just for fun", () => {
+test("live duels have no pair limit by default", () => {
   const w = arena({ quick: true });
+  w.stream = { id: "s1", startedAt: T0 };
+  assert.equal(w.state.config.pairRankedPerStream, 0);
+  for (let i = 0; i < 7; i += 1) {
+    const d = w.duel(w.fight("alice", "bob"));
+    w.advance(120_000);
+    assert.deepEqual([d.unrated, d.lastRanked], [undefined, undefined], `duel ${i + 1} is ranked`);
+  }
+});
+
+test("with a limit of 5 a pair gets 5 ranked duels per stream; later ones are unrated, pay half, and count again next stream", () => {
+  const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 5;
+  w.stream = { id: "s1", startedAt: T0 };
   const fight = () => {
     const d = w.duel(w.fight("alice", "bob"));
     w.advance(120_000);
     return d;
   };
-  for (let i = 0; i < 5; i += 1) assert.equal(fight().unrated, undefined, `duel ${i + 1} is rated`);
+  const paid = (d: Duel, win: number, loss: number) => ({
+    [must(d.winnerId)]: win,
+    [d.winnerId === "id-alice" ? "id-bob" : "id-alice"]: loss,
+  });
+  for (let i = 0; i < 4; i += 1) {
+    const d = fight();
+    assert.deepEqual([d.unrated, d.lastRanked], [undefined, undefined], `duel ${i + 1} is ranked`);
+    assert.deepEqual(d.payout, paid(d, 5, 3));
+  }
+  assert.equal(pairRankedLeft(w.state, "id-bob", "id-alice"), 1);
+  const fifth = fight();
+  assert.deepEqual([fifth.unrated, fifth.lastRanked], [undefined, true], "the fifth is the last ranked one");
   const before = { a: { ...w.player("alice") }, b: { ...w.player("bob") } };
   const sixth = fight();
   assert.equal(sixth.unrated, "pair_cap");
-  assert.equal(sixth.payout, undefined, "no dollars");
+  assert.deepEqual(sixth.payout, paid(sixth, 2, 1), "half of $5 and $3, rounded down");
   for (const [login, was] of [
     ["alice", before.a],
     ["bob", before.b],
@@ -1531,6 +1573,7 @@ test("a pair gets 5 rated duels a day; later ones are just for fun", () => {
   const done = w.state.events.filter((e) => e.type === "duel_completed").at(-1);
   assert.equal(must(done).unrated, "pair_cap");
   assert.equal(w.state.pairPlays.length, 5, "unrated duels are not counted");
+  assert.equal(pairRankedLeft(w.state, "id-alice", "id-bob"), 0);
   const reset = structuredClone(w.state);
   assert.equal(
     reduceGame(reset, { type: "admin", actorId: "mod", action: "resetAllRanks" }, w.now).state.pairPlays.length,
@@ -1538,14 +1581,84 @@ test("a pair gets 5 rated duels a day; later ones are just for fun", () => {
     "reset all ranks starts the pair counts over",
   );
   w.register("cara");
-  assert.equal(w.duel(w.fight("alice", "cara")).unrated, undefined, "other pairs are still rated");
+  assert.equal(w.duel(w.fight("alice", "cara")).unrated, undefined, "other pairs are still ranked");
   w.advance(120_000);
   w.now += 86_400_000;
   w.apply({ type: "tick" });
-  assert.equal(w.state.pairPlays.length, 0, "plays expire after 24 h");
+  assert.equal(w.state.pairPlays.length, 6, "a day passing doesn't reset the count");
   w.register("alice");
   w.register("bob");
-  assert.equal(w.duel(w.fight("alice", "bob")).unrated, undefined, "rated again the next day");
+  assert.equal(w.duel(w.fight("alice", "bob")).unrated, "pair_cap", "still the same stream");
+  w.advance(120_000);
+  w.stream = { id: "s2", startedAt: w.now };
+  assert.equal(w.duel(w.fight("alice", "bob")).unrated, undefined, "ranked again next stream");
+  w.advance(120_000);
+  assert.deepEqual(
+    w.state.pairPlays.map((p) => p.stream),
+    ["s2"],
+    "the old stream's plays are dropped",
+  );
+});
+
+test("offline duels are unrated and pay nothing; a failed live check keeps the last answer", () => {
+  const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 5;
+  w.stream = null;
+  const d = w.duel(w.fight("alice", "bob"));
+  w.advance(120_000);
+  assert.equal(d.unrated, "offline");
+  assert.equal(d.payout, undefined, "no dollars offline");
+  assert.deepEqual([w.player("alice").wins + w.player("bob").wins, w.state.pairPlays.length], [0, 0]);
+  w.stream = undefined; // the room sends no stream when Twitch didn't answer
+  assert.equal(w.duel(w.fight("alice", "cara")).unrated, "offline", "still offline as last seen");
+});
+
+test("before any live answer duels are ranked; plays from before stream ids count toward the stream they fall in", () => {
+  const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 5;
+  assert.equal(w.duel(w.fight("alice", "bob")).unrated, undefined, "never checked counts as live");
+  w.advance(120_000);
+  w.state.pairPlays = [
+    { pair: "id-alice:id-bob", at: T0 - 60_000 },
+    { pair: "id-alice:id-bob", at: T0 + 1_000 },
+    { pair: "id-alice:id-bob", at: T0 + 2_000 },
+  ];
+  w.stream = { id: "s1", startedAt: T0 };
+  w.say("cara", "!challenge @dan");
+  assert.equal(pairRankedLeft(w.state, "id-alice", "id-bob"), 3, "two plays since the stream started count");
+  assert.equal(w.state.pairPlays.length, 2, "the play from before the stream is dropped");
+});
+
+test("pairRankedPerStream 0 means no limit", () => {
+  const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 0;
+  w.stream = { id: "s1", startedAt: T0 };
+  for (let i = 0; i < 7; i += 1) {
+    const d = w.duel(w.fight("alice", "bob"));
+    w.advance(120_000);
+    assert.deepEqual([d.unrated, d.lastRanked], [undefined, undefined], `duel ${i + 1} is ranked`);
+  }
+  assert.equal(w.state.pairPlays.length, 0, "nothing to count");
+  assert.equal(pairRankedLeft(w.state, "id-alice", "id-bob"), null);
+});
+
+test("mods reset one pair's ranked count", () => {
+  const w = arena({ quick: true });
+  w.state.config.pairRankedPerStream = 5;
+  w.state.pairPlays = [
+    { pair: "id-alice:id-bob", at: T0, stream: "" },
+    { pair: "id-alice:id-bob", at: T0, stream: "" },
+    { pair: "id-alice:id-cara", at: T0, stream: "" },
+  ];
+  const admin = (payload: { a?: unknown; b?: unknown }) =>
+    w.apply({ type: "admin", actorId: "mod", action: "resetPair", payload });
+  assert.deepEqual(admin({ a: "id-bob", b: "id-alice" }), { ok: true, reason: "pair_reset", amount: 2 });
+  assert.deepEqual(
+    w.state.pairPlays.map((p) => p.pair),
+    ["id-alice:id-cara"],
+  );
+  assert.equal(admin({ a: "id-bob", b: "id-bob" }).reason, "invalid_pair");
+  assert.equal(admin({ a: "id-bob" }).reason, "invalid_pair");
 });
 
 test("duels with an account younger than 7 days are unrated", () => {
