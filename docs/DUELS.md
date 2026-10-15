@@ -60,7 +60,8 @@ The duel is rolled at once, the moment the challenge is accepted.
 
 ## PixFray dollars
 
-- Ranked duels pay saved fighters: $5 a win, $3 a loss.
+- Ranked duels pay saved fighters: $5 a win, $3 a loss. Past the pair limit below, a duel pays half
+  ($2 and $1). Other unrated duels pay nothing.
 - `!wallet` shows your dollars.
 - `!pay @name 10` passes them on (`!give` on channels with the PixFray chat bot). You can pay after
   5 finished duels, at most $100 per stream, and only while the stream is live.
@@ -68,16 +69,22 @@ The duel is rolled at once, the moment the challenge is accepted.
 
 ## Ranked and unrated duels
 
-- The same two fighters get 5 ranked duels per rolling 24 hours. After that they still fight,
-  unrated.
+- Duels count only while the stream is live. Offline duels are unrated and pay nothing. If Twitch
+  can't say whether the stream is live, the last answer stands.
+- The same two fighters get 5 ranked duels per live stream (mods change the number; 0 means no
+  limit). The fifth result says "Last ranked duel between them this stream." After that they still
+  fight, unrated, for half the dollars, and they're ranked again next stream.
+- `!stats @name` adds how many ranked duels you have left against that fighter this stream.
 - A Twitch account under 7 days old also duels unrated. If Twitch can't say how old an account is,
   the duel is ranked.
-- An unrated duel moves no Elo, wins, losses or dollars, and the reply starts "Just for fun".
+- An unrated duel moves no Elo, wins or losses. The reply starts "Just for fun" and says why.
 
 ## What mods and the broadcaster control
 
 - Mods tune every number in the balance editor on the mod controls page. Every change is versioned
   and can be undone.
+- Mods reset one pair's ranked duels for this stream with `!resetpair @name @name` in chat or
+  "Reset pair count" on the mod page.
 - Only the broadcaster (or the site owner) can reset all ranks, make a new StreamElements key, turn
   PixFray off or move chat from another site.
 - Turning PixFray off keeps every fighter and rank.

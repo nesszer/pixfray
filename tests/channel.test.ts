@@ -3090,8 +3090,55 @@ test("!stats: own levels that count, unspent points and the pet; @name for someo
       })
     ).body.reply;
   assert.equal(await stats("u1", "alice"), "@alice: Power 2, Vitality 3. 5 points unspent.");
-  assert.equal(await stats("u1", "alice", "bob"), "@bob: no upgrades yet. 0 points unspent.");
+  assert.equal(
+    await stats("u1", "alice", "bob"),
+    "@bob: no upgrades yet. 0 points unspent. 5 ranked duels left between you this stream.",
+  );
   assert.match(await stats("u1", "alice", "nobody"), /nobody/);
+});
+
+test("!resetpair @a @b: mods start a pair's ranked count for this stream over; the mod page does the same", async () => {
+  const r = botRoom({});
+  await r.save("u1", "alice");
+  await r.save("u2", "bob");
+  await r.save("u3", "cara");
+  await r.connectChat("sub-bot");
+  const plays = (pair: string, n: number) => Array.from({ length: n }, (_, i) => ({ pair, at: 1 + i, stream: "" }));
+  const seed = () => {
+    const live = r.readState("nesszerra");
+    live.pairPlays = [...plays("u1:u2", 5), ...plays("u1:u3", 2)];
+    r.writeState(live);
+  };
+  seed();
+  assert.match((await r.say("u1", "alice", "!resetpair @alice @bob")).reply, /only the broadcaster or a mod/i);
+  assert.equal(r.readState("nesszerra").pairPlays.length, 7, "a viewer changes nothing");
+  assert.equal(
+    (await r.say("u9", "modmia", "!resetpair @Alice @bob", { mod: true })).reply,
+    "Ranked duels reset for alice and bob: 5 left this stream.",
+  );
+  assert.deepEqual(
+    r.readState("nesszerra").pairPlays.map((p) => p.pair),
+    ["u1:u3", "u1:u3"],
+    "only that pair's count is cleared",
+  );
+  assert.equal(
+    (await r.say("u9", "modmia", "!resetpair @alice @nobody", { mod: true })).reply,
+    "@nobody has no saved fighter on this channel.",
+  );
+  assert.match((await r.say("u9", "modmia", "!resetpair @alice", { mod: true })).reply, /!resetpair @name @name/);
+  assert.match((await r.say("u9", "modmia", "!resetpair @bob @bob", { mod: true })).reply, /two different fighters/);
+  seed();
+  const page = await r.call("/admin", {
+    method: "POST",
+    body: { actorId: "mod1", action: "resetPair", payload: { a: "@BOB", b: "alice" } },
+  });
+  assert.deepEqual([page.status, page.body.ok, page.body.left], [200, true, 5]);
+  assert.equal(r.readState("nesszerra").pairPlays.length, 2);
+  const missing = await r.call("/admin", {
+    method: "POST",
+    body: { actorId: "mod1", action: "resetPair", payload: { a: "bob", b: "zed" } },
+  });
+  assert.deepEqual([missing.status, missing.body.error], [404, "profile_not_found"]);
 });
 
 test("legendary rolls: 4 different stats in STATS order, never the set it replaces; stored text parses back", () => {

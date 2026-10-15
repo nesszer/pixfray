@@ -8,6 +8,7 @@ import {
   hiddenResults,
   NEW_ACCOUNT_MS,
   normalizeGameState,
+  pairRankedLeft,
   parseGameCommand,
   reduceGame,
   shownProfile,
@@ -958,6 +959,13 @@ export class ChannelRoom extends DurableObject<Env> {
           gift.ok ? 200 : gift.reason === "profile_not_found" ? 404 : 400,
         );
       }
+      if (action === "resetPair") {
+        const out = this.resetPair(channel, payload.a, payload.b, actorId, actorName);
+        return json(
+          out.ok ? out : { ...out, error: out.reason },
+          out.ok ? 200 : out.reason === "profile_not_found" ? 404 : 400,
+        );
+      }
       if (action === "saveCommand" || action === "deleteCommand" || action === "setCounter") {
         const out = this.editBotCommands(channel, action, payload, actorName || actorId);
         return json(
@@ -1110,7 +1118,7 @@ export class ChannelRoom extends DurableObject<Env> {
         },
       };
       await this.checkAccountAge(userId);
-      const result = this.processChatMessage(channel, msg, now);
+      const result = this.processChatMessage(channel, msg, now, await this.streamNews(channel, line, now));
       if (result.visible) this.broadcast(result.state);
       if (result.changed) await this.scheduleAlarm(result.state);
       const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
@@ -1820,7 +1828,12 @@ export class ChannelRoom extends DurableObject<Env> {
     } else if (kind === "notification" && msg.bot === true) return this.botCommand(channel, msg, origin);
     else if (kind === "notification") {
       await this.checkAccountAge(msg.event?.chatter_user_id);
-      result = this.processChatMessage(channel, msg, now);
+      result = this.processChatMessage(
+        channel,
+        msg,
+        now,
+        await this.streamNews(channel, msg.event?.message?.text, now),
+      );
     } else return json({ ok: true, ignored: true });
     if (result.visible) this.broadcast(result.state);
     if (result.changed) await this.scheduleAlarm(result.state);
@@ -1931,7 +1944,9 @@ export class ChannelRoom extends DurableObject<Env> {
       !Object.values(settings.names).some((n) => String(n).toLowerCase() === first)
     )
       action = BOT_ALIASES[first];
-    if (!action && !custom) return json({ ok: true, reason: "not_command", reply: "" });
+    // !resetpair @a @b (broadcaster or a mod) has a fixed name, like !fray debug.
+    const resetPair = first === "!resetpair" && !action && !custom;
+    if (!action && !custom && !resetPair) return json({ ok: true, reason: "not_command", reply: "" });
     const subscriptionId = String(msg.subscription?.id || "");
     const state = this.readState(channel);
     if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) {
@@ -1989,6 +2004,23 @@ export class ChannelRoom extends DurableObject<Env> {
       const line = this.customReply(custom, ev, words, Date.now());
       if (!line) this.noteBotHeld(channel, "cooldown", { command: custom.name }, false);
       return this.sendBotLines([line], channel);
+    }
+    if (resetPair) {
+      const actor = String(ev.chatter_user_login || "").slice(0, 48);
+      if (!boss) return this.sendBotLines(["Only the broadcaster or a mod can use !resetpair."], channel);
+      if (!words[1] || !words[2])
+        return this.sendBotLines(["Type !resetpair @name @name to reset a pair's ranked duels."], channel);
+      const out = this.resetPair(channel, words[1], words[2], chatterId, actor);
+      return this.sendBotLines(
+        [
+          out.ok
+            ? `Ranked duels reset for ${out.a} and ${out.b}: ${typeof out.left === "number" ? out.left + " left this stream" : "no limit on this channel"}.`
+            : out.reason === "profile_not_found"
+              ? `@${normalizeUsername(String(out.missing || "").replace(/^@/, ""))} has no saved fighter on this channel.`
+              : "Pick two different fighters: !resetpair @name @name",
+        ],
+        channel,
+      );
     }
     // "!fray debug" (broadcaster, mods or the bot account): the bot's health in one line, as the admin page shows it.
     if (action === "help" && String(words[1] || "").toLowerCase() === "debug") {
@@ -2320,7 +2352,7 @@ export class ChannelRoom extends DurableObject<Env> {
     if (action === "stats") {
       // like !pet, it works while duels are paused
       const self = !target || target === username,
-        info = this.statsInfo(channel, self ? { userId } : { username: target });
+        info = this.statsInfo(channel, self ? { userId } : { username: target, asker: userId });
       return done(
         // the sender's name as sent; short() reads it through String()
         seStatsText(info, {
@@ -2413,7 +2445,12 @@ export class ChannelRoom extends DurableObject<Env> {
       },
     };
     await this.checkAccountAge(userId);
-    const result = this.processChatMessage(channel, msg, Date.now());
+    const result = this.processChatMessage(
+      channel,
+      msg,
+      Date.now(),
+      await this.streamNews(channel, msg.event?.message?.text, now),
+    );
     if (result.visible) this.broadcast(result.state);
     if (result.changed) await this.scheduleAlarm(result.state);
     const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
@@ -2814,7 +2851,10 @@ export class ChannelRoom extends DurableObject<Env> {
   // !pet [@name]: a saved fighter's active pet as the catalog names it, or null when there's no such fighter.
   // !stats [@name]: the upgrade levels that count in duels, unspent points and the pet's boost, as the stream has shown
   // them (a quick duel still playing doesn't give its win away, like !wallet).
-  statsInfo(channel: string, { userId = "", username = "" }: { userId?: string; username?: string }) {
+  statsInfo(
+    channel: string,
+    { userId = "", username = "", asker = "" }: { userId?: string; username?: string; asker?: string },
+  ) {
     const state = this.readState(channel);
     const found = userId ? this.getProfile(userId, state.config) : this.getProfileByUsername(username, state.config);
     if (!found) return null;
@@ -2825,6 +2865,7 @@ export class ChannelRoom extends DurableObject<Env> {
       stats: effectiveStats(own, profile.wins, profile.bonus, null, state.config.maxStatLevel),
       unspent: Math.max(0, pointsFor(profile.wins, profile.bonus) - spentOn(own)),
       petBoost: profile.petBoost,
+      rankedLeft: asker && asker !== profile.userId ? pairRankedLeft(state, asker, profile.userId) : null,
     };
   }
 
@@ -2876,6 +2917,40 @@ export class ChannelRoom extends DurableObject<Env> {
       displayName: row.display_name,
       amount,
       dollars,
+    };
+  }
+
+  // Mods start one pair's ranked count for this stream over (game.ts resetPair), by Twitch login, from the mod page or
+  // !resetpair @a @b in chat.
+  resetPair(channel: string, a: unknown, b: unknown, actorId: string, actorName: string) {
+    const config = this.readState(channel).config,
+      find = (name: unknown) =>
+        this.getProfileByUsername(normalizeUsername(String(name || "").replace(/^@/, "")), config);
+    const one = find(a),
+      two = find(b);
+    if (!one || !two)
+      return { ok: false, reason: "profile_not_found", missing: one ? String(b || "") : String(a || "") };
+    const out = this.advance(
+      channel,
+      { type: "admin", actorId, actorName, action: "resetPair", payload: { a: one.userId, b: two.userId } },
+      Date.now(),
+    );
+    if (!out.result.ok) return { ok: false, reason: out.result.reason || "invalid_pair" };
+    logRoomEvent(this, "command", `${actorName || actorId} reset pair ${one.username} ${two.username}`, {
+      channel,
+      action: "resetPair",
+      actorId,
+      actorName,
+      a: one.username,
+      b: two.username,
+      amount: out.result.amount,
+    });
+    return {
+      ok: true,
+      reason: "pair_reset",
+      a: one.displayName || one.username,
+      b: two.displayName || two.username,
+      left: pairRankedLeft(out.state, one.userId, two.userId),
     };
   }
 
@@ -3107,6 +3182,30 @@ export class ChannelRoom extends DurableObject<Env> {
     return stream;
   }
 
+  // The live check for a chat line that can start a duel (game.ts noteStream): {id, startedAt}, null offline, or
+  // undefined (another command, no Twitch app, or Twitch didn't answer) so the room keeps its last answer.
+  async streamNews(
+    channel: string,
+    text: unknown,
+    now: number,
+  ): Promise<{ id: string; startedAt: number } | null | undefined> {
+    const action = parseGameCommand(text)?.action;
+    if (action !== "duel" && action !== "accept" && action !== "rematch") return undefined;
+    const dev =
+      Boolean(this.env?.DEV_TOOLS_TOKEN) &&
+      this.ctx.storage.sql.exec("SELECT 1 FROM dev_live WHERE id = 1").toArray().length > 0;
+    if (!dev && !this.env?.TWITCH_CLIENT_ID) return undefined;
+    try {
+      return await this.currentStream(channel, now);
+    } catch (error) {
+      // anything can be thrown
+      logRoomEvent(this, "warn", `live check failed: ${String((error as Thrown)?.message || error).slice(0, 80)}`, {
+        channel,
+      });
+      return undefined;
+    }
+  }
+
   // A saved fighter's Twitch account age, asked once (again after ACCOUNT_RETRY_MS while Twitch doesn't answer).
   async checkAccountAge(userId: unknown): Promise<void> {
     const id = validUserId(userId),
@@ -3180,7 +3279,12 @@ export class ChannelRoom extends DurableObject<Env> {
 
   // One channel.chat.message: a presence update, plus a game command when the text parses as one.
   // No chat replies; rejected commands are logged to the room event list.
-  processChatMessage(channel: string, msg: BotMessage, now: number): ChatOutcome {
+  processChatMessage(
+    channel: string,
+    msg: BotMessage,
+    now: number,
+    stream?: { id: string; startedAt: number } | null,
+  ): ChatOutcome {
     const ev: Partial<ChatEvent> = msg.event && typeof msg.event === "object" ? msg.event : {};
     const userId = validUserId(ev.chatter_user_id);
     const username = normalizeUsername(ev.chatter_user_login);
@@ -3244,6 +3348,7 @@ export class ChannelRoom extends DurableObject<Env> {
             newAccounts,
             quick: subscriptionId === SE_SUBSCRIPTION_ID || msg.quick === true,
             rolls: Array.from({ length: 120 }, () => Math.random()), // 5 slots of 24 (settleQuickDuel)
+            ...(stream !== undefined ? { stream } : {}),
           });
           if (!main.result.ok && main.result.reason !== "duplicate")
             step({
@@ -3474,6 +3579,7 @@ export class ChannelRoom extends DurableObject<Env> {
         decision: d.decision,
         flawless: d.flawless,
         unrated: d.unrated,
+        lastRanked: d.lastRanked,
       });
       const { replies } = await this.sendBotLines([line], channel, { system: 1 }).json<{ replies: string[] }>(); // sendBotLines's answer
       if (!replies.length) return;
