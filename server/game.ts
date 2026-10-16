@@ -391,7 +391,9 @@ function expireState(state: GameState, now: number): boolean {
     }
   }
 
+  const locks = state.rematchLocks.length;
   state.rematchLocks = state.rematchLocks.filter((lock) => lock.until > now);
+  if (state.rematchLocks.length !== locks) changed = true; // unsaved, a stale lock re-arms the alarm for now in a loop
   const inDuel = new Set(openDuels(state).flatMap((duel) => [duel.a, duel.b]));
   const before = state.players.length;
   state.players = state.players.filter(

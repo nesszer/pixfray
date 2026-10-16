@@ -350,6 +350,8 @@ Bot replies and status (room table `bot_status`, one row):
   failed, stays due and is retried every 5 s in reveal order until it is 2 minutes past `revealAt`, then
   skipped; a bot command also posts any due result before its own reply. A line Twitch accepted and then
   dropped (AutoMod, chat settings) counts as done. Alarm errors are logged and never stop the next alarm.
+  The alarm's tick saves every expiry it applies (rematch locks included), so nothing past due stays stored and
+  re-arms the alarm for the current moment.
   An unrated duel's line ends with its "Just for fun" text (Game rules). The pair's last ranked duel this stream ends
   "Last ranked duel between them this stream."
   StreamElements channels get no result line; their `!elo` and `!ranks` show it after `revealAt`.
