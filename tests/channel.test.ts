@@ -504,6 +504,18 @@ test("a subscription stuck awaiting verification is re-checked within minutes an
   assert.equal((await r.call("/chat")).body.connected, true);
 });
 
+test("an expired rematch lock is saved away, so the alarm doesn't re-arm for now", async () => {
+  const r = room();
+  await r.save("u1", "alice");
+  const s = r.readState("nesszerra");
+  s.rematchLocks = [{ pair: "u1:u2", until: Date.now() - 1 }];
+  r.writeState(s);
+  await r.alarm();
+  assert.deepEqual(r.readState("nesszerra").rematchLocks, [], "the expired lock is gone from storage");
+  const next = r.ctx.storage.alarm;
+  assert.ok(next === null || next > Date.now() + 1000, "no alarm due again right away");
+});
+
 test("versioned config editor: history, optimistic version check, rollback", async () => {
   const r = room();
   const a = await r.call("/admin", {
