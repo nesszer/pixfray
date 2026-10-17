@@ -13,7 +13,10 @@ const KEEP_DEFAULT = 500;
 /** Busy sources store at most this many rows a day; the rest go to Workers Logs only. */
 export const DAILY_STORE_CAP = 300;
 const TRIM_EVERY = 25;
-const FLUSH_MS = 5 * 60_000;
+/** Counters reach SQLite at least this often while a room is busy. */
+export const FLUSH_MS = 30_000;
+/** A request flushes dirty counters once this long has passed since the last write; an alarm always does. */
+export const SETTLE_MS = 10_000;
 const KEEP_DAYS = 14;
 /** A run of this many alarms each under BURST_GAP_MS apart logs a warning (at most every BURST_ALERT_MS). */
 export const BURST_RUN = 20;
@@ -59,7 +62,8 @@ function tracker(room: Room, now: number): Tracker {
     day,
     counts,
     dirty: false,
-    flushedAt: now,
+    // 0, so the first request or alarm after a wake writes what it counted before the room can sleep again
+    flushedAt: 0,
     sinceTrim: t?.sinceTrim || {},
     lastAlarmAt: t?.lastAlarmAt || 0,
     alarmRun: t?.alarmRun || 0,
@@ -81,7 +85,7 @@ function flush(room: Room, t: Tracker): void {
   );
 }
 
-/** Adds to today's counter. Counts reach SQLite every 5 minutes, so an evicted room loses at most that. Never throws. */
+/** Adds to today's counter. Counts reach SQLite at most every FLUSH_MS and at the end of each request and alarm (settleCounts). Never throws. */
 export function count(room: Room, name: string, n = 1): void {
   try {
     const now = Date.now(),
@@ -100,6 +104,18 @@ export function count(room: Room, name: string, n = 1): void {
         }
     }
     if (now - t.flushedAt >= FLUSH_MS) flush(room, t);
+  } catch {}
+}
+
+/**
+ * Called at the end of every request (`always` false) and alarm (`always` true): a room idle for seconds hibernates and
+ * drops what is only in memory. An alarm already writes state, so its counters go with it; a request writes them once
+ * SETTLE_MS has passed, which bounds the rows a chatty channel adds. Never throws.
+ */
+export function settleCounts(room: Room, always = false): void {
+  try {
+    const t = tracker(room, Date.now());
+    if (always || Date.now() - t.flushedAt >= SETTLE_MS) flush(room, t);
   } catch {}
 }
 

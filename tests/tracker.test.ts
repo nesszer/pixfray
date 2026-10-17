@@ -8,6 +8,7 @@ import {
   ensureTrackerSchema,
   noteAlarm,
   readCounts,
+  settleCounts,
   trace,
 } from "../server/tracker.ts";
 import { ensureDeveloperSchema } from "../server/developer.ts";
@@ -102,4 +103,22 @@ test("an alarm burst logs one warning, and alarms trace why they ran", (t) => {
   assert.deepEqual(rows(r, "warn"), [`alarm burst: ${BURST_RUN} alarms under a second apart`]);
   const c = readCounts(r)[0]?.counts;
   assert.deepEqual([c?.alarms, c?.alarms_idle], [BURST_RUN * 2, BURST_RUN * 2 - 1]);
+});
+
+test("settleCounts writes what a woken room counted before it can hibernate", (t) => {
+  quiet(t);
+  const sql = fakeSql(),
+    stored = () => {
+      const row = sql.exec<{ data: string }>("SELECT data FROM daily_stats").toArray()[0];
+      return row ? JSON.parse(row.data) : undefined;
+    },
+    a = room(sql);
+  count(a, "requests");
+  assert.equal(stored()?.requests, 1, "the first count after a wake writes");
+  count(a, "requests");
+  settleCounts(a);
+  assert.equal(stored()?.requests, 1, "a request right after the last write waits");
+  noteAlarm(a, ["respawn"], 0, "nesszers");
+  settleCounts(a, true);
+  assert.deepEqual([stored()?.requests, stored()?.alarms], [2, 1], "an alarm always writes");
 });

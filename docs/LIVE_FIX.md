@@ -49,7 +49,7 @@ request id (`r` + 10 hex digits), so a click can be matched to its run.
 ## Logs and counters
 
 The owner page's **Room log** filters by source (errors, commands, warnings, alarms, duels, chat delivery), and
-**Room counters by day** shows each channel's daily counts, up to 5 minutes behind. Every log line also goes to
+**Room counters by day** shows each channel's daily counts, up to 10 seconds behind. Every log line also goes to
 Workers Logs for 3 days, with more detail than the room keeps. Read them from a terminal:
 
 ```

@@ -16,7 +16,7 @@ import {
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.ts";
 import { ensureRankLogSchema, rankBefore } from "./ranklog.ts";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.ts";
-import { count, ensureTrackerSchema, noteAlarm, trace } from "./tracker.ts";
+import { count, ensureTrackerSchema, noteAlarm, settleCounts, trace } from "./tracker.ts";
 import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.ts";
 import { accountCreatedAt } from "./accounts.ts";
 import { EVENTSUB_DEDUPE_MS, claimMessage, releaseMessage } from "./dedupe.ts";
@@ -688,6 +688,8 @@ export class ChannelRoom extends DurableObject<Env> {
     } catch (error) {
       logRoomError(this, error, { path: new URL(request.url).pathname, method: request.method });
       return json({ error: "room error" }, 500);
+    } finally {
+      settleCounts(this);
     }
   }
 
@@ -3544,6 +3546,7 @@ export class ChannelRoom extends DurableObject<Env> {
       logRoomError(this, error, { path: "alarm", method: "ALARM" });
     }
     await this.scheduleAlarm(this.readState(channel));
+    settleCounts(this, true);
   }
 
   async alarmTasks(channel: string): Promise<void> {
