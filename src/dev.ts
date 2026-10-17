@@ -8,6 +8,7 @@ import {
   parseRuns,
   parseSession,
   parseSettings,
+  parseStats,
   parseVersions,
 } from "./parse.ts";
 import type { Channel, Channels, Progress, TargetVersions } from "./parse.ts";
@@ -172,7 +173,7 @@ async function start() {
   if (!($("#branch") as HTMLInputElement).value)
     // element type from the page HTML
     ($("#branch") as HTMLInputElement).value = "live-fix/" + new Date().toISOString().slice(0, 10);
-  await Promise.all([loadDiagnostics(), loadConfig(), loadLogs(), loadChannels()]);
+  await Promise.all([loadDiagnostics(), loadConfig(), loadLogs(), loadStats(), loadChannels()]);
   loadRuns();
   loadVersions();
 }
@@ -1013,9 +1014,17 @@ async function loadLogs() {
           "td",
           {},
           // indexed by any stored source; one this page doesn't name falls back to the raw text
-          ({ room: "Durable Object", worker: "Worker", command: "Chat command", warn: "Warning" } as SourceLabels)[
-            x.source
-          ] || x.source,
+          (
+            {
+              room: "Durable Object",
+              worker: "Worker",
+              command: "Chat command",
+              warn: "Warning",
+              alarm: "Alarm",
+              duel: "Duel",
+              chat: "Chat delivery",
+            } as SourceLabels
+          )[x.source] || x.source,
         ),
         h("td", { class: "wrap" }, x.message),
         h("td", { class: "wrap ctx" }, h("code", {}, x.context ? JSON.stringify(x.context) : "–")),
@@ -1025,10 +1034,45 @@ async function loadLogs() {
     4,
   );
 }
+// The counters that answer "is something looping or stuck" lead the table; the rest follow by name.
+const LEAD_COUNTERS = ["requests", "alarms", "alarms_idle", "rows_written", "bot_sent", "bot_failed", "bot_held"];
+async function loadStats() {
+  // element type from the page HTML
+  const channel = ($("#log-channel") as HTMLSelectElement).value,
+    r = parseAnswer(await api("/api/dev/stats?days=7&channel=" + channel), parseStats, "the counters");
+  const days = r.ok ? r.data : [];
+  // element type from the page HTML
+  ($("#stats-head") as HTMLTableRowElement).replaceChildren(
+    h("th", {}, "Counter"),
+    ...days.map((d) => h("th", { class: "num" }, d.day.slice(5))),
+  );
+  if (!r.ok) return rows("#stats", [], errorText(r, "Counters unavailable"), 1);
+  const names = new Set(days.flatMap((d) => Object.keys(d.counts)));
+  const order = [
+    ...LEAD_COUNTERS.filter((n) => names.has(n)),
+    ...[...names].filter((n) => !LEAD_COUNTERS.includes(n)).sort(),
+  ];
+  rows(
+    "#stats",
+    order.map((name) =>
+      h(
+        "tr",
+        {},
+        h("td", {}, h("code", {}, name)),
+        ...days.map((d) => h("td", { class: "num" }, name in d.counts ? fmtNum(d.counts[name]) : "–")),
+      ),
+    ),
+    "Nothing counted yet for " + channel + ".",
+    days.length + 1,
+  );
+}
 // element type from the page HTML
 ($("#log-source") as HTMLSelectElement).addEventListener("change", loadLogs);
 // element type from the page HTML
-($("#log-channel") as HTMLSelectElement).addEventListener("change", loadLogs);
+($("#log-channel") as HTMLSelectElement).addEventListener("change", () => {
+  loadLogs();
+  loadStats();
+});
 // element type from the page HTML
 ($("#clear-logs") as HTMLButtonElement).addEventListener("click", (e) =>
   // the listener sits on a button
@@ -1054,7 +1098,7 @@ async function loadLogs() {
 ($("#refresh") as HTMLButtonElement).addEventListener("click", (e) =>
   // the listener sits on a button
   busy(e.currentTarget as HTMLButtonElement, async () => {
-    await Promise.all([loadDiagnostics(), loadLogs(), loadChannels()]);
+    await Promise.all([loadDiagnostics(), loadLogs(), loadStats(), loadChannels()]);
     loadRuns();
     loadVersions();
   }),

@@ -876,6 +876,29 @@ test("error log: worker errors land in the room, can be filtered, and cleared", 
   assert.equal((await call(f, "/api/dev/logs", "GET", undefined, owner)).body.length, 0);
 });
 
+test("owner logs filter by every stored source, and stats show today's counters", async (t) => {
+  for (const level of ["log", "warn", "error"] as const) t.mock.method(console, level, () => {});
+  const f = environment(),
+    owner = await cookieFor(f, true);
+  f.env.ROOMS.get("nesszerra");
+  const r = must(f.rooms.get("nesszerra"));
+  logRoomEvent(r, "command", "alice challenge @bob -> challenge");
+  logRoomEvent(r, "warn", "slow");
+  logRoomEvent(r, "alarm", "ran rematch_lock");
+  for (const source of ["command", "warn", "alarm"]) {
+    const logs = await call(f, "/api/dev/logs?source=" + source, "GET", undefined, owner);
+    assert.deepEqual(
+      logs.body.map((l: { source: string }) => l.source),
+      [source],
+    );
+  }
+  const stats = await call(f, "/api/dev/stats?channel=nesszerra&days=3", "GET", undefined, owner);
+  assert.equal(stats.status, 200);
+  assert.equal(stats.body.channel, "nesszerra");
+  assert.equal(stats.body.days[0].counts.log_warn, 1);
+  assert.equal(stats.body.days[0].counts.log_alarm, 1);
+});
+
 test("live settings passthrough edits the versioned config as the session user", async () => {
   const f = environment(),
     owner = await cookieFor(f, true);

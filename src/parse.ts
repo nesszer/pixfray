@@ -676,3 +676,11 @@ const parseLogRow = shape<LogRow>({ at: num, source: str, message: str }, "log r
 export function parseLogs(value: unknown): Parsed<LogRow[]> {
   return Array.isArray(value) ? ok(keepGood(value, "a log row", parseLogRow)) : bad("logs is not a list");
 }
+
+/** One UTC day of a room's counters (GET /api/dev/stats), newest day first. */
+export type StatsDay = { day: string; counts: Record<string, number> };
+const parseStatsDay = shape<StatsDay>({ day: str, counts: numMap }, "stats day");
+export function parseStats(value: unknown): Parsed<StatsDay[]> {
+  if (!isObject(value) || !Array.isArray(value.days)) return bad("stats.days is not a list");
+  return ok(keepGood(value.days, "a stats day", parseStatsDay));
+}

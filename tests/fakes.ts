@@ -12,7 +12,7 @@ import type { Stats } from "../server/upgrades.ts";
 export type Loose = any;
 
 /** A cursor like SqlStorageCursor: the rows of one statement, read whole or iterated. */
-export type FakeCursor = { toArray(): Loose[]; [Symbol.iterator](): Iterator<Loose> };
+export type FakeCursor = { toArray(): Loose[]; [Symbol.iterator](): Iterator<Loose>; rowsWritten?: number };
 export type FakeSql = { exec(query: string, ...params: SQLInputValue[]): FakeCursor };
 
 /** `ctx.storage.sql` over an in-memory SQLite database. Rows come back as plain objects, as SqlStorage returns them. */
@@ -24,7 +24,11 @@ export function fakeSql(): FakeSql & SqlStorage {
         .prepare(query)
         .all(...params)
         .map((r) => ({ ...r }));
-      return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() };
+      // like SqlStorageCursor.rowsWritten, without the index entries Cloudflare also counts
+      const rowsWritten = /^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(query)
+        ? Number(db.prepare("SELECT changes() AS n").get()?.n)
+        : 0;
+      return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator](), rowsWritten };
     },
   };
   return sql as FakeSql & SqlStorage; // the fake has only exec, the one SqlStorage call the server makes

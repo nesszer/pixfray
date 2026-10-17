@@ -516,6 +516,34 @@ test("an expired rematch lock is saved away, so the alarm doesn't re-arm for now
   assert.ok(next === null || next > Date.now() + 1000, "no alarm due again right away");
 });
 
+test("the room log says why each alarm ran, and keeps duel events and chat counts", async (t) => {
+  for (const level of ["log", "warn", "error"] as const) t.mock.method(console, level, () => {});
+  const r = room();
+  await r.save("u1", "alice");
+  await r.save("u2", "bob");
+  await r.connectChat();
+  await r.chat("u1", "alice", "!challenge @bob");
+  const s = r.readState("nesszerra");
+  s.rematchLocks = [{ pair: "u1:u3", until: Date.now() - 1 }];
+  r.writeState(s);
+  await r.alarm();
+  const log = (source: string) =>
+    r.ctx.storage.sql
+      .exec<{ message: string }>("SELECT message FROM error_log WHERE source = ? ORDER BY id", source)
+      .toArray()
+      .map((x) => x.message);
+  assert.ok(log("alarm").includes("ran rematch_lock"), log("alarm").join(" | "));
+  assert.ok(log("alarm").some((m) => m.startsWith("set challenge_expiry")));
+  assert.ok(log("duel").includes("challenge_created"));
+  assert.ok(log("chat").includes("chat_connected"));
+  const stats = (await r.call("/dev/stats")).body;
+  const today = stats.days[0].counts;
+  assert.equal(today.eventsub_notification, 1);
+  assert.equal(today.event_challenge_created, 1);
+  assert.equal(today.alarms, 1);
+  assert.ok(today.requests >= 5);
+});
+
 test("versioned config editor: history, optimistic version check, rollback", async () => {
   const r = room();
   const a = await r.call("/admin", {
