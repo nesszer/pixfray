@@ -128,7 +128,7 @@
             <thead><tr id="stats-head"><th>Counter</th></tr></thead>
             <tbody id="stats"></tbody>
           </table></div>
-          <p class="caveat">Counts reach storage every 5 minutes, so the newest minutes show up late and are lost if the room shuts down before then. Days older than 14 are dropped.</p>
+          <p class="caveat">Counts reach storage at least every 30 seconds while the room is busy, so the last few seconds before it goes idle can be missing. Days older than 14 are dropped.</p>
         </section>
 
         <details class="history" id="dev-tools">
