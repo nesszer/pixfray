@@ -63,8 +63,14 @@ export const HATS: Hat[] = [
 const HAT_WINS = new Map(HATS.map((h) => [h.id, h.wins]));
 
 const whole = (n: unknown): number => (Number.isInteger(n) && n > 0 ? n : 0);
-// Points from wins plus check-in (bonus) points.
-export const pointsFor = (wins: unknown, bonus: unknown = 0): number => whole(wins) + whole(bonus);
+/** What a fighter has earned upgrade points from: a profile, a player, or the numbers as the stream has shown them. */
+export type Earned = { wins?: unknown; bonus?: unknown; losses?: unknown };
+// Every LOSSES_PER_POINT-th ranked loss gives a point, so a fighter who keeps losing still grows.
+export const LOSSES_PER_POINT = 3;
+const fromLosses = (losses: unknown): number => Math.floor(whole(losses) / LOSSES_PER_POINT);
+// Points from wins, check-in (bonus) points and losses.
+export const pointsFor = (earned: Earned): number =>
+  whole(earned.wins) + whole(earned.bonus) + fromLosses(earned.losses);
 
 // Points the level-th level of a stat costs: 1 for levels 1-8, then doubling every 8 levels.
 export const levelCost = (level: number): number => 2 ** Math.floor((Math.max(1, level) - 1) / FULL_STEP_LEVELS);
@@ -115,13 +121,12 @@ export function cleanStats(input?: unknown): Stats {
 // boost (the active pet's, server/pets.ts) is added after both, so it may take a stat past the cap.
 export function effectiveStats(
   stats: unknown,
-  wins: unknown,
-  bonus: unknown = 0,
+  earned: Earned,
   boost: LooseStats | null = null,
   maxLevel = LEVEL_LIMIT,
 ): Stats {
   const out = cleanStats(stats),
-    points = pointsFor(wins, bonus);
+    points = pointsFor(earned);
   let spent = spentOn(out);
   for (const key of [...STATS].reverse()) while (spent > points && out[key] > 0) spent -= levelCost(out[key]--);
   for (const key of STATS) out[key] = Math.min(out[key], Math.max(0, maxLevel));
@@ -129,8 +134,30 @@ export function effectiveStats(
   return out;
 }
 
+// Level sync: in a duel the stronger build drops levels until it costs at most SYNC_MARGIN points more than the
+// weaker one, so every duel stays winnable. Both builds are the duel's effective stats, pet boost included. Levels
+// come off the highest stat first (ties: the last in STATS). It only changes the fight; saved builds stay as they are.
+export const SYNC_MARGIN = 10;
+export function syncStats(stats: Stats, budget: number): Stats {
+  const out = { ...stats };
+  let spent = spentOn(out);
+  while (spent > budget) {
+    const top = STATS.reduce((best, key) => (out[key] >= out[best] ? key : best), STATS[0]);
+    if (out[top] === 0) break;
+    spent -= levelCost(out[top]--);
+  }
+  return out;
+}
+export function syncPair(a: Stats, b: Stats): [Stats, Stats] {
+  const costA = spentOn(a),
+    costB = spentOn(b);
+  if (costA > costB + SYNC_MARGIN) return [syncStats(a, costB + SYNC_MARGIN), b];
+  if (costB > costA + SYNC_MARGIN) return [a, syncStats(b, costA + SYNC_MARGIN)];
+  return [a, b];
+}
+
 // For saving: null when the build spends more points than the fighter has or isn't whole levels.
-export function validStats(input: unknown, wins: unknown, bonus: unknown = 0): Stats | null {
+export function validStats(input: unknown, earned: Earned): Stats | null {
   if (input === undefined || input === null) return emptyStats();
   if (typeof input !== "object" || Array.isArray(input)) return null;
   const out = emptyStats();
@@ -140,7 +167,7 @@ export function validStats(input: unknown, wins: unknown, bonus: unknown = 0): S
     if (!Number.isInteger(v) || v < 0 || v > LEVEL_LIMIT) return null;
     out[key] = v;
   }
-  return spentOn(out) <= pointsFor(wins, bonus) ? out : null;
+  return spentOn(out) <= pointsFor(earned) ? out : null;
 }
 
 /** A suggested build: how much each stat weighs. */
@@ -205,18 +232,27 @@ export type UpgradeRules = {
   points: number;
   fromWins: number;
   fromCheckins: number;
+  /** Points from losses: one per LOSSES_PER_POINT ranked losses. */
+  fromLosses: number;
+  lossesPerPoint: number;
+  /** Level sync: how many points' worth of levels the stronger fighter keeps above the weaker one. */
+  syncMargin: number;
   step: number;
   hats: (Hat & { unlocked: boolean })[];
 };
 
 // Rules for the dashboard, sent with the profile so the page never hard-codes them.
-export function upgradeRules(wins: unknown, bonus: unknown = 0, maxLevel = LEVEL_LIMIT): UpgradeRules {
+export function upgradeRules(earned: Earned, maxLevel = LEVEL_LIMIT): UpgradeRules {
+  const wins = earned.wins;
   return {
     stats: STATS,
     maxLevel,
-    points: pointsFor(wins, bonus),
+    points: pointsFor(earned),
     fromWins: whole(wins),
-    fromCheckins: whole(bonus),
+    fromCheckins: whole(earned.bonus),
+    fromLosses: fromLosses(earned.losses),
+    lossesPerPoint: LOSSES_PER_POINT,
+    syncMargin: SYNC_MARGIN,
     step: STAT_STEP,
     hats: HATS.map((h) => ({ ...h, unlocked: (Number.isInteger(wins) ? wins : 0) >= h.wins })),
   };

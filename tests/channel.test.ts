@@ -1786,10 +1786,10 @@ test("pets: tier boosts, added after the upgrade cap", () => {
   assert.deepEqual(must(petOf("p-blob-1a2b3c", "rare:power:")).boost, fullStats({ power: 2, guard: 0, luck: 0 }));
   // 8 power at 8 points stays 8 before the pet, then the fox's +2 goes past the per-stat cap.
   assert.deepEqual(
-    effectiveStats({ power: 8 }, 8, 0, tierBoost("rare", "power")),
+    effectiveStats({ power: 8 }, { wins: 8 }, tierBoost("rare", "power")),
     fullStats({ power: 10, guard: 0, luck: 0 }),
   );
-  assert.deepEqual(effectiveStats({ power: 8 }, 3, 0, null), fullStats({ power: 3, guard: 0, luck: 0 }));
+  assert.deepEqual(effectiveStats({ power: 8 }, { wins: 3 }, null), fullStats({ power: 3, guard: 0, luck: 0 }));
 });
 
 test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pet uploads and deletes", async () => {

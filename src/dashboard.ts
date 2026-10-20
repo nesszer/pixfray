@@ -276,7 +276,7 @@ const REASONS: Record<string, string> = {
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
-const rules = () => upgradeRules(state.profile?.wins || 0, state.profile?.bonus || 0, state.config?.maxStatLevel);
+const rules = () => upgradeRules(state.profile ?? {}, state.config?.maxStatLevel);
 // A saved build (or profile) as an editable loadout, with only ids this page knows.
 function loadoutOf(b: Build | null | undefined): Loadout {
   const p = state.profile;
@@ -286,7 +286,7 @@ function loadoutOf(b: Build | null | undefined): Loadout {
     // b!.color!: the test matched b?.color, so b and its color are set
     color: /^#[0-9a-f]{6}$/i.test(b?.color || "") ? b!.color!.toLowerCase() : DEFAULT_COLOR,
     defaultAbility: str(b?.defaultAbility) || p?.defaultAbility || "strike", // only used by the HP fight
-    stats: effectiveStats(b?.stats, p?.wins || 0, p?.bonus || 0),
+    stats: effectiveStats(b?.stats, p ?? {}),
     hat: str(b?.hat),
     pet: str(b?.pet),
     // as: Object.fromEntries types its keys as string; they are LOOK_FIELDS
@@ -969,16 +969,23 @@ function renderUpgrades() {
   const left = r.points - spentOn(state.d.stats);
   // element type from the page HTML
   ($("#points-note") as HTMLSpanElement).textContent = canEdit ? "(" + left + " of " + r.points + " points free)" : "";
-  const from = r.fromCheckins
-    ? " You have " + r.fromWins + " from wins and " + r.fromCheckins + " from check-ins."
-    : "";
+  const parts = [
+    r.fromWins + " from wins",
+    r.fromCheckins ? r.fromCheckins + " from check-ins" : "",
+    r.fromLosses ? r.fromLosses + " from losses" : "",
+  ].filter(Boolean);
+  const from = parts.length > 1 ? " You have " + parts.slice(0, -1).join(", ") + " and " + parts.at(-1) + "." : "";
   ($("#upgrades-help") as HTMLParagraphElement).textContent = canEdit // element type from the page HTML
-    ? "Each win and each stream check-in (!checkin in chat) gives a point. Levels 1 to 8 cost 1 point each, and the cost doubles every 8 levels after that. Levels above " +
+    ? "Each win, each stream check-in (!checkin in chat) and every " +
+      r.lossesPerPoint +
+      " losses give a point. Levels 1 to 8 cost 1 point each, and the cost doubles every 8 levels after that. Levels above " +
       r.maxLevel +
       " don't count on this channel." +
       from +
       " Move points between stats whenever you're not in a duel."
-    : "Save your fighter, then each win and each stream check-in (!checkin in chat) gives an upgrade point.";
+    : "Save your fighter, then each win, each stream check-in (!checkin in chat) and every " +
+      r.lossesPerPoint +
+      " losses give an upgrade point.";
   const shown = canEdit ? state.d.stats : emptyStats();
   const link = $("#points-link") as HTMLAnchorElement; // element type from the page HTML
   link.hidden = !canEdit || left <= 0;

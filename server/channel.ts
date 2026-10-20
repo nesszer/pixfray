@@ -907,7 +907,7 @@ export class ChannelRoom extends DurableObject<Env> {
       return json({
         ...profile,
         ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}),
-        upgrades: upgradeRules(profile.wins, profile.bonus, state.config.maxStatLevel),
+        upgrades: upgradeRules(profile, state.config.maxStatLevel),
         owned: this.owned(userId),
         builds: this.builds(profile),
       });
@@ -945,7 +945,7 @@ export class ChannelRoom extends DurableObject<Env> {
       return json({
         profile: {
           ...shown,
-          upgrades: upgradeRules(shown.wins, shown.bonus, result.state.config.maxStatLevel),
+          upgrades: upgradeRules(shown, result.state.config.maxStatLevel),
           owned: this.owned(actorId),
           builds: this.builds(shown),
         },
@@ -1404,8 +1404,11 @@ export class ChannelRoom extends DurableObject<Env> {
       const existing = this.getProfile(userId, state.config);
       // Upgrades and hat: optional in the request (left out = keep the saved ones), checked against the wins the stream
       // has shown, so a save can't reveal a duel result the overlay hasn't played yet.
-      const wins = Math.max(0, (existing?.wins || 0) - (hiddenResults(state, now).get(userId)?.wins || 0));
-      const stats = input.stats === undefined ? existing?.stats : validStats(input.stats, wins, existing?.bonus || 0);
+      const hidden = hiddenResults(state, now).get(userId);
+      const wins = Math.max(0, (existing?.wins || 0) - (hidden?.wins || 0)),
+        losses = Math.max(0, (existing?.losses || 0) - (hidden?.losses || 0));
+      const stats =
+        input.stats === undefined ? existing?.stats : validStats(input.stats, { wins, bonus: existing?.bonus, losses });
       if (stats === null) return { ok: false, reason: "invalid_upgrades" };
       const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
       const owns = (kind: string, id: string) =>
@@ -2573,6 +2576,7 @@ export class ChannelRoom extends DurableObject<Env> {
           Pick<
             ProfileTable,
             | "wins"
+            | "losses"
             | "bonus_points"
             | "streak"
             | "last_stream"
@@ -2587,7 +2591,7 @@ export class ChannelRoom extends DurableObject<Env> {
             | "vitality"
           >
         >(
-          "SELECT wins, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck, crit, dodge, counter, vitality FROM profiles WHERE user_id = ?",
+          "SELECT wins, losses, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck, crit, dodge, counter, vitality FROM profiles WHERE user_id = ?",
           userId,
         )
         .toArray()[0];
@@ -2612,9 +2616,10 @@ export class ChannelRoom extends DurableObject<Env> {
       const points = config.checkinPoints + extra;
       const bonus = Math.min(MAX_BONUS, row.bonus_points + points);
       // The total counts only wins the stream has shown, like !wallet: a quick duel still playing doesn't give it away.
-      const wins = row.wins - (hiddenResults(state, now).get(userId)?.wins || 0);
-      const total = pointsFor(wins, bonus),
-        unspent = Math.max(0, total - spentOn(effectiveStats(row, wins, bonus)));
+      const hidden = hiddenResults(state, now).get(userId);
+      const earned = { wins: row.wins - (hidden?.wins || 0), bonus, losses: row.losses - (hidden?.losses || 0) };
+      const total = pointsFor(earned),
+        unspent = Math.max(0, total - spentOn(effectiveStats(row, earned)));
       if (test) return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total, unspent };
       sql.exec(
         "UPDATE profiles SET bonus_points = ?, checkins = checkins + 1, streak = ?, last_stream = ?, last_stream_seq = ?, free_miss_at = ? WHERE user_id = ?",
@@ -2640,9 +2645,7 @@ export class ChannelRoom extends DurableObject<Env> {
     // shownProfile passes null (no fighter) through
     const profile =
       userId && shownProfile(this.getProfile(userId, state.config) as Profile, hiddenResults(state, Date.now()));
-    return profile
-      ? { dollars: profile.dollars, points: pointsFor(profile.wins, profile.bonus), streak: profile.streak }
-      : null;
+    return profile ? { dollars: profile.dollars, points: pointsFor(profile), streak: profile.streak } : null;
   }
 
   // !give @name amount: dollars from one saved fighter to another, only while the channel is live. Limits (config):
@@ -2919,11 +2922,11 @@ export class ChannelRoom extends DurableObject<Env> {
     const found = userId ? this.getProfile(userId, state.config) : this.getProfileByUsername(username, state.config);
     if (!found) return null;
     const profile = shownProfile(found, hiddenResults(state, Date.now()));
-    const own = effectiveStats(profile.stats, profile.wins, profile.bonus);
+    const own = effectiveStats(profile.stats, profile);
     return {
       name: profile.displayName || profile.username,
-      stats: effectiveStats(own, profile.wins, profile.bonus, null, state.config.maxStatLevel),
-      unspent: Math.max(0, pointsFor(profile.wins, profile.bonus) - spentOn(own)),
+      stats: effectiveStats(own, profile, null, state.config.maxStatLevel),
+      unspent: Math.max(0, pointsFor(profile) - spentOn(own)),
       petBoost: profile.petBoost,
       rankedLeft: asker && asker !== profile.userId ? pairRankedLeft(state, asker, profile.userId) : null,
     };

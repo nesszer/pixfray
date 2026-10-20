@@ -8,6 +8,7 @@ import {
   knownHat,
   scaledDamage,
   statValue,
+  syncPair,
   HP_CRIT_BONUS,
 } from "./upgrades.ts";
 import { cleanBoost, TIERS } from "./pets.ts";
@@ -528,12 +529,11 @@ function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccoun
   duel.status = "active";
   duel.startedAt = now;
   duel.lastActionAt = now;
-  // Each fighter's max HP: the channel's plus their vitality.
-  const vitality = (p: Player): number =>
-    effectiveStats(p.stats, p.wins, p.bonus, p.petBoost, state.config.maxStatLevel).vitality;
+  // Each fighter's max HP: the channel's plus their vitality after level sync.
+  const synced = duelStats(state, duel);
   duel.maxHp = {
-    [duel.a]: state.config.maxHp + bonusHp(vitality(a)),
-    [duel.b]: state.config.maxHp + bonusHp(vitality(b)),
+    [duel.a]: state.config.maxHp + bonusHp(synced[duel.a]!.vitality),
+    [duel.b]: state.config.maxHp + bonusHp(synced[duel.b]!.vitality),
   };
   duel.hp = clone(duel.maxHp);
   duel.rules = {
@@ -561,6 +561,16 @@ function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccoun
     maxHp: clone(duel.maxHp),
   });
   return { ok: true, duelId: duel.id };
+}
+
+// Both fighters' stats in this duel: their effective stats, then level sync (server/upgrades.ts syncPair).
+function duelStats(state: GameState, duel: Duel): Record<string, Stats> {
+  const of = (id: string): Stats => {
+    const p = player(state, id);
+    return effectiveStats(p?.stats, p ?? {}, p?.petBoost, state.config.maxStatLevel);
+  };
+  const [a, b] = syncPair(of(duel.a), of(duel.b));
+  return { [duel.a]: a, [duel.b]: b };
 }
 
 // A fighter's full health in a started duel: their own max HP, or the rules' for a duel started before vitality.
@@ -600,18 +610,7 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
   const maxHp = duel.rules!.maxHp;
   const blow = { hit: Math.round(maxHp * 0.34), crit: Math.round(maxHp * 0.5), counter: Math.round(maxHp * 0.34) };
   const look = (id: string): string => player(state, id)?.defaultAbility || "strike"; // cosmetic: picks the attack effect on the overlay
-  const stats = Object.fromEntries(
-    [duel.a, duel.b].map((id) => [
-      id,
-      effectiveStats(
-        player(state, id)?.stats,
-        player(state, id)?.wins,
-        player(state, id)?.bonus,
-        player(state, id)?.petBoost,
-        state.config.maxStatLevel,
-      ),
-    ]),
-  );
+  const stats = duelStats(state, duel);
   const swings: Swing[] = [];
   let attacker = duel.a,
     defender = duel.b,
@@ -842,8 +841,8 @@ function applyAbility(
     amount = duel.hp[actor.userId]! - before;
   } else {
     const before = duel.hp[targetId]!;
-    const foe = player(state, targetId);
-    const mine = effectiveStats(actor.stats, actor.wins, actor.bonus, actor.petBoost, state.config.maxStatLevel);
+    const synced = duelStats(state, duel);
+    const mine = synced[actor.userId]!;
     const first: unknown = Array.isArray(rolls) ? rolls[0] : undefined;
     const roll =
       typeof first === "number" && first >= 0 && first < 1
@@ -854,7 +853,7 @@ function applyAbility(
       // not the heal branch, so ability is abilities.strike or abilities.heavy
       Math.round((ability as Abilities["strike"]).damage * (crit ? 1 + HP_CRIT_BONUS : 1)),
       mine,
-      effectiveStats(foe?.stats, foe?.wins, foe?.bonus, foe?.petBoost, state.config.maxStatLevel),
+      synced[targetId],
     );
     duel.hp[targetId] = Math.max(0, before - damage);
     amount = before - duel.hp[targetId];

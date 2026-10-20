@@ -1229,9 +1229,12 @@ test("the bot result line says how the duel was won", async () => {
 // ---------- upgrades (server/upgrades.ts) ----------
 test("upgrade points: one per win plus check-in points with no cap; a rank reset trims the last stats first", async () => {
   const u = await import("../server/upgrades.ts");
-  assert.deepEqual(u.effectiveStats({ power: 1, dodge: 1, counter: 2 }, 2), fullStats({ power: 1, dodge: 1 }));
   assert.deepEqual(
-    [0, 3, 20, 400].map((w) => u.pointsFor(w)),
+    u.effectiveStats({ power: 1, dodge: 1, counter: 2 }, { wins: 2 }),
+    fullStats({ power: 1, dodge: 1 }),
+  );
+  assert.deepEqual(
+    [0, 3, 20, 400].map((w) => u.pointsFor({ wins: w })),
     [0, 3, 20, 400],
   );
   assert.deepEqual(
@@ -1241,41 +1244,68 @@ test("upgrade points: one per win plus check-in points with no cap; a rank reset
       [0, 25],
       [-1, 4],
       [2, 1.5],
-    ].map(([w, b]) => u.pointsFor(w, b)),
+    ].map(([w, b]) => u.pointsFor({ wins: w, bonus: b })),
     [5, 24, 25, 4, 2],
   );
-  assert.deepEqual(u.validStats({ power: 2, guard: 1 }, 3), fullStats({ power: 2, guard: 1, luck: 0 }));
-  assert.equal(u.validStats({ power: 2, guard: 2 }, 3), null, "more points than wins");
+  assert.deepEqual(u.validStats({ power: 2, guard: 1 }, { wins: 3 }), fullStats({ power: 2, guard: 1, luck: 0 }));
+  assert.equal(u.validStats({ power: 2, guard: 2 }, { wins: 3 }), null, "more points than wins");
   assert.deepEqual(
-    u.validStats({ power: 2, guard: 2 }, 3, 1),
+    u.validStats({ power: 2, guard: 2 }, { wins: 3, bonus: 1 }),
     fullStats({ power: 2, guard: 2, luck: 0 }),
     "a check-in point covers the fourth",
   );
-  assert.deepEqual(u.validStats({ power: 8 }, 8), fullStats({ power: 8, guard: 0, luck: 0 }));
-  assert.equal(u.validStats({ power: 9 }, 9), null, "level 9 costs 2 points");
-  assert.deepEqual(u.validStats({ power: 9 }, 10), fullStats({ power: 9, guard: 0, luck: 0 }));
-  assert.equal(u.validStats({ power: 201 }, 1e12), null, "past the level limit");
-  assert.equal(u.validStats({ power: 1.5 }, 10), null);
+  assert.deepEqual(u.validStats({ power: 8 }, { wins: 8 }), fullStats({ power: 8, guard: 0, luck: 0 }));
+  assert.equal(u.validStats({ power: 9 }, { wins: 9 }), null, "level 9 costs 2 points");
+  assert.deepEqual(u.validStats({ power: 9 }, { wins: 10 }), fullStats({ power: 9, guard: 0, luck: 0 }));
+  assert.equal(u.validStats({ power: 201 }, { wins: 1e12 }), null, "past the level limit");
+  assert.equal(u.validStats({ power: 1.5 }, { wins: 10 }), null);
   assert.deepEqual(
-    u.effectiveStats(fullStats({ power: 3, guard: 3, luck: 3 }), 5),
+    u.effectiveStats(fullStats({ power: 3, guard: 3, luck: 3 }), { wins: 5 }),
     fullStats({ power: 3, guard: 2, luck: 0 }),
   );
   assert.deepEqual(
-    u.effectiveStats({ power: 3, guard: 3, luck: 3 }, 0, 7),
+    u.effectiveStats({ power: 3, guard: 3, luck: 3 }, { wins: 0, bonus: 7 }),
     fullStats({ power: 3, guard: 3, luck: 1 }),
     "check-in points survive a rank reset",
   );
   assert.deepEqual(
-    u.effectiveStats({ power: 10, guard: 0, luck: 0 }, 11),
+    u.effectiveStats({ power: 10, guard: 0, luck: 0 }, { wins: 11 }),
     fullStats({ power: 9, guard: 0, luck: 0 }),
     "trimming refunds level 10 at 2 points",
   );
-  const r = u.upgradeRules(4, 3, 16);
+  const r = u.upgradeRules({ wins: 4, bonus: 3 }, 16);
   assert.deepEqual([r.points, r.fromWins, r.fromCheckins, r.maxLevel], [7, 4, 3, 16]);
   assert.equal(u.hatUnlocked("crown", 19), false);
   assert.equal(u.hatUnlocked("crown", 20), true);
   assert.equal(u.hatUnlocked("cap", 0), true);
   assert.equal(u.hatUnlocked("sombrero", 99), false);
+});
+
+test("upgrade points: every third loss gives a point", async () => {
+  const u = await import("../server/upgrades.ts");
+  assert.deepEqual(
+    [0, 1, 2, 3, 4, 5, 6, 7].map((losses) => u.pointsFor({ wins: 2, losses })),
+    [2, 2, 2, 3, 3, 3, 4, 4],
+  );
+  const r = u.upgradeRules({ wins: 4, bonus: 3, losses: 7 }, 16);
+  assert.deepEqual([r.points, r.fromWins, r.fromCheckins, r.fromLosses, r.lossesPerPoint], [9, 4, 3, 2, 3]);
+  assert.deepEqual(u.validStats({ power: 3 }, { wins: 0, losses: 9 }), fullStats({ power: 3, guard: 0, luck: 0 }));
+  assert.equal(u.validStats({ power: 3 }, { wins: 0, losses: 8 }), null, "8 losses are 2 points");
+});
+
+test("level sync: the stronger build drops levels from its highest stat until it costs at most 10 points more", async () => {
+  const u = await import("../server/upgrades.ts");
+  const strong = fullStats({ power: 8, guard: 8, luck: 4 });
+  assert.deepEqual(u.syncPair(strong, u.emptyStats()), [fullStats({ power: 4, guard: 3, luck: 3 }), u.emptyStats()]);
+  assert.deepEqual(u.syncPair(fullStats({ luck: 2 }), strong), [
+    fullStats({ power: 0, guard: 0, luck: 2 }),
+    fullStats({ power: 4, guard: 4, luck: 4 }),
+  ]);
+  // Levels past 8 cost 2: 6 points against power 16 (24 points) leaves power 12 (16 points).
+  assert.deepEqual(u.syncPair(fullStats({ power: 6 }), fullStats({ power: 16 }))[1], fullStats({ power: 12 }));
+  const near = fullStats({ power: 6, guard: 4 });
+  assert.deepEqual(u.syncPair(near, u.emptyStats()), [near, u.emptyStats()], "10 points apart stays as is");
+  assert.deepEqual(strong, fullStats({ power: 8, guard: 8, luck: 4 }), "syncPair copies, never changes its input");
 });
 
 test("upgrade levels: cost doubles every 8 levels and the effect closes in on each stat's ceiling", async () => {
@@ -1308,15 +1338,19 @@ test("upgrade levels: cost doubles every 8 levels and the effect closes in on ea
 test("upgrade levels: a channel's maxStatLevel caps what counts, and a pet's boost goes on top", async () => {
   const u = await import("../server/upgrades.ts");
   assert.deepEqual(
-    u.effectiveStats({ power: 20, guard: 2 }, 1000, 0, null, 16),
+    u.effectiveStats({ power: 20, guard: 2 }, { wins: 1000 }, null, 16),
     fullStats({ power: 16, guard: 2, luck: 0 }),
   );
   assert.deepEqual(
-    u.effectiveStats({ power: 20 }, 1000, 0, { power: 2, luck: 1 }, 16),
+    u.effectiveStats({ power: 20 }, { wins: 1000 }, { power: 2, luck: 1 }, 16),
     fullStats({ power: 18, guard: 0, luck: 1 }),
     "the boost lands after the cap",
   );
-  assert.deepEqual(u.effectiveStats({ power: 20 }, 1000), fullStats({ power: 20, guard: 0, luck: 0 }), "no cap given");
+  assert.deepEqual(
+    u.effectiveStats({ power: 20 }, { wins: 1000 }),
+    fullStats({ power: 20, guard: 0, luck: 0 }),
+    "no cap given",
+  );
 });
 
 test("upgrade presets spread the points by weight within the channel's level cap", async () => {
@@ -1352,7 +1386,7 @@ test("upgrade presets spread the points by weight within the channel's level cap
   );
   assert.deepEqual(u.presetStats(preset("brawler"), 0), fullStats({ power: 0, guard: 0, luck: 0 }));
   const built = u.presetStats(preset("balanced"), 100, 32);
-  assert.ok(u.spentOn(built) <= 100 && u.validStats(built, 100) !== null);
+  assert.ok(u.spentOn(built) <= 100 && u.validStats(built, { wins: 100 }) !== null);
 });
 
 function upgraded(stats: Record<string, Partial<Stats>>) {
@@ -1391,6 +1425,21 @@ test("quick duels: power adds 4% damage per point and guard takes 4% off per poi
   const w = arena({ quick: true });
   w.register("alice", { stats: { power: 5 } });
   assert.equal(must(quickWith(w, hit).swings[0]).damage, 34);
+});
+
+test("quick duels: level sync plays the stronger build at most 10 points above the weaker one, and saves nothing", () => {
+  const w = upgraded({ alice: { power: 8, guard: 8, luck: 4 } });
+  const alice = must(w.state.players.find((p) => p.username === "alice"));
+  alice.wins = 20;
+  // 20 points against 0: alice fights as power 4, guard 3, luck 3, so her hit is 34 x 1.16 and bob's is 34 x 0.88.
+  const r = quickWith(w, [0.75, 0.75]);
+  assert.deepEqual(
+    r.swings.slice(0, 2).map((s) => s.damage),
+    [39, 30],
+  );
+  assert.deepEqual(alice.stats, fullStats({ power: 8, guard: 8, luck: 4 }), "the saved build is untouched");
+  // Within 10 points nothing changes: 5 power against 0 still hits for 41.
+  assert.equal(must(quickWith(upgraded({ alice: { power: 5 } }), [0.75]).swings[0]).damage, 41);
 });
 
 test("quick duels: luck turns a miss into a hit with 4% per point, from a second roll", () => {
