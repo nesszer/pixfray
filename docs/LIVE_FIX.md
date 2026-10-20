@@ -46,6 +46,20 @@ Merge that PR afterwards, or the next promote from `main` will undo the hotfix.
 Recent runs and the versions now serving are listed on the page. Every run name ends with a
 request id (`r` + 10 hex digits), so a click can be matched to its run.
 
+## Logs and counters
+
+The owner page's **Room log** filters by source (errors, commands, warnings, alarms, duels, chat delivery), and
+**Room counters by day** shows each channel's daily counts, up to 10 seconds behind. Every log line also goes to
+Workers Logs for 3 days, with more detail than the room keeps. Read them from a terminal:
+
+```
+node scripts/logs.ts --mode test --channel nesszers --source alarm --hours 6
+node scripts/logs.ts --channel miolafff --source duel --limit 300
+```
+
+Without `--mode test` it reads production. It needs `bunx cf` signed in, and prints only the log fields.
+The routes and every counter name are in [CONTRACTS.md](CONTRACTS.md) §2.
+
 ## Backups
 
 Cloudflare keeps 30 days of every change to each channel's storage (point-in-time recovery on SQLite

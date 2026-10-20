@@ -16,7 +16,7 @@ before relying on memory. Don't guess commands, flags or file locations: they ar
 | Dev server | `bun run dev`, then http://127.0.0.1:5173 (`.dev.vars` holds throwaway local values only) |
 | Before every commit | `bun run check` (format, lint, types, unit tests; the pre-commit hook adds gitleaks) |
 | Unit tests | `bun run test:unit`, port tools `bun run test:port` |
-| Smoke test | `bun run test` (needs the dev server running) |
+| Smoke test | `bun run test` (needs the dev server) |
 | Everything | `bun run test:all` (unit, builds, workerd upload, browser tests, local e2e duel) |
 | Deploy to staging | `bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.test.json` |
 | Deploy to production | `bunx cf deploy --secrets-file ~/.pixfray/secrets.json` |
@@ -95,11 +95,11 @@ Each one has happened here. Check for it by name before calling work done.
 |DEVTOOLS.md: test-site tools (bot fighters, scripted duels, alt account in real chat, OBS)
 |LIVE_FIX.md: release flow, owner page fix/deploy/rollback, backups
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
-[Code]|server/: worker.ts routes, auth glue|channel.ts ChannelRoom DO (state, bot commands, alarms, broadcast)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|upgrades.ts pets.ts cosmetics.ts
+[Code]|server/: worker.ts routes|channel.ts ChannelRoom DO (state, bot commands, alarms)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|tracker.ts logs, counters|upgrades.ts pets.ts cosmetics.ts
 |src/: admin.ts mod page|dashboard.ts channel page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
 |src/served/: overlay.ts|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
 |tests/: *.test.ts unit|fakes.ts doubles|port/ port tools|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
-|scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
+|scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
 ```
 
 ## Changing this file

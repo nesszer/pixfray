@@ -111,14 +111,24 @@
             <label class="inline" for="log-channel">Channel</label>
             <select id="log-channel" class="narrow"><option value="%SITE_CHANNEL%">%SITE_CHANNEL%</option></select>
             <label class="inline" for="log-source">Source</label>
-            <select id="log-source" class="narrow"><option value="">All</option><option value="room">Durable Object</option><option value="worker">Worker</option><option value="command">Chat commands</option><option value="warn">Warnings</option></select>
+            <select id="log-source" class="narrow"><option value="">All</option><option value="room">Durable Object</option><option value="worker">Worker</option><option value="command">Chat commands</option><option value="warn">Warnings</option><option value="alarm">Alarms</option><option value="duel">Duels</option><option value="chat">Chat delivery</option></select>
             <button class="btn" id="clear-logs" type="button">Clear log</button>
           </div>
           <div class="table-wrap"><table class="data">
             <thead><tr><th>Time</th><th>Source</th><th>Message</th><th>Context</th></tr></thead>
             <tbody id="logs"></tbody>
           </table></div>
-          <p class="caveat">The newest 100 of up to 200 stored rows per channel.</p>
+          <p class="caveat">The newest 100 rows. Each channel keeps the last 500 rows per source (200 for alarms, duels and chat delivery, which also stop storing after 300 a day). Every line also goes to Workers Logs in the Cloudflare dashboard for 3 days.</p>
+        </section>
+
+        <section class="section" id="sec-stats">
+          <h2>Room counters by day</h2>
+          <p class="muted">For the channel picked in the log above, newest UTC day first. A jump in alarms or requests points to a loop; bot_failed or bot_held point to chat delivery.</p>
+          <div class="table-wrap"><table class="data">
+            <thead><tr id="stats-head"><th>Counter</th></tr></thead>
+            <tbody id="stats"></tbody>
+          </table></div>
+          <p class="caveat">Counts reach storage at least every 30 seconds while the room is busy, so the last few seconds before it goes idle can be missing. Days older than 14 are dropped.</p>
         </section>
 
         <details class="history" id="dev-tools">

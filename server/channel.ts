@@ -16,6 +16,7 @@ import {
 import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.ts";
 import { ensureRankLogSchema, rankBefore } from "./ranklog.ts";
 import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.ts";
+import { count, ensureTrackerSchema, noteAlarm, settleCounts, trace } from "./tracker.ts";
 import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.ts";
 import { accountCreatedAt } from "./accounts.ts";
 import { EVENTSUB_DEDUPE_MS, claimMessage, releaseMessage } from "./dedupe.ts";
@@ -534,6 +535,8 @@ export class ChannelRoom extends DurableObject<Env> {
   /** Duel ids whose expired-challenge line went out. */
   declare expiredSaid: Set<string> | undefined;
   declare postingResults: Promise<void> | null | undefined;
+  /** The alarm this instance last set (null: none), undefined until it sets or clears one. */
+  declare alarmAt: number | null | undefined;
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
@@ -646,6 +649,7 @@ export class ChannelRoom extends DurableObject<Env> {
       sql.exec("ALTER TABLE config_history ADD COLUMN actor_name TEXT NOT NULL DEFAULT ''");
     ensureUploadSchema(sql);
     ensureDeveloperSchema(sql);
+    ensureTrackerSchema(sql);
     sql.exec(
       "CREATE TABLE IF NOT EXISTS se_settings (id INTEGER PRIMARY KEY CHECK (id = 1), secret TEXT NOT NULL, names TEXT NOT NULL)",
     );
@@ -678,11 +682,14 @@ export class ChannelRoom extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     if (!this.authorized(request)) return json({ error: "internal authorization required" }, 403);
+    count(this, "requests");
     try {
       return await this.route(request);
     } catch (error) {
       logRoomError(this, error, { path: new URL(request.url).pathname, method: request.method });
       return json({ error: "room error" }, 500);
+    } finally {
+      settleCounts(this);
     }
   }
 
@@ -1257,8 +1264,10 @@ export class ChannelRoom extends DurableObject<Env> {
   }
 
   advance(channel: string, event: RoomEvent, now: number): ReduceOutput {
-    return this.ctx.storage.transactionSync(() => {
+    let since = 0;
+    const out = this.ctx.storage.transactionSync(() => {
       const state = this.readState(channel);
+      since = state.revision;
       if (event.type === "admin" && event.action === "config") this.seedConfigHistory(state);
       const result = reduceGame(state, event, now);
       for (const userId of result.dirtyProfileIds) {
@@ -1310,6 +1319,23 @@ export class ChannelRoom extends DurableObject<Env> {
       }
       return result;
     });
+    // after the commit, so a rolled-back reduce logs nothing it didn't do (its error is logged by fetch or alarm)
+    this.traceEvents(channel, out.state, since);
+    return out;
+  }
+
+  // Each new game event: counted, printed to Workers Logs, and duel and chat events kept in the room log (server/tracker.ts).
+  traceEvents(channel: string, state: GameState, since: number): void {
+    for (const e of state.events) {
+      if (Number(e.id) <= since) continue;
+      count(this, "event_" + e.type);
+      const source = /^(challenge|duel|rank|pair)_/.test(e.type)
+        ? "duel"
+        : e.type.startsWith("chat_")
+          ? "chat"
+          : "event";
+      trace(this, source, e.type, { channel, ...e }, source !== "event");
+    }
   }
 
   // Config history keeps every version so mods can review and roll back (see docs/CONTRACTS.md).
@@ -1366,8 +1392,10 @@ export class ChannelRoom extends DurableObject<Env> {
     }
 
     const now = Date.now();
-    return this.ctx.storage.transactionSync((): SaveResult => {
+    let since = 0;
+    const out = this.ctx.storage.transactionSync((): SaveResult => {
       const state = this.readState(channel);
+      since = state.revision;
       const existing = this.getProfile(userId, state.config);
       // Upgrades and hat: optional in the request (left out = keep the saved ones), checked against the wins the stream
       // has shown, so a save can't reveal a duel result the overlay hasn't played yet.
@@ -1469,6 +1497,8 @@ export class ChannelRoom extends DurableObject<Env> {
       };
       return { ok: true, profile: saved, state: result.state };
     });
+    if (out.ok) this.traceEvents(channel, out.state, since);
+    return out;
   }
 
   // An approved viewer sprite goes on its uploader's saved fighter, and replaces their previous sprite in every build
@@ -1780,6 +1810,7 @@ export class ChannelRoom extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket): Promise<void> {
     // Overlay sockets are read-only snapshots. "ping" never reaches here: the auto-response in the constructor answers it.
+    count(this, "ws_messages");
     try {
       ws.close(1008, "Read-only socket");
     } catch {}
@@ -1814,6 +1845,30 @@ export class ChannelRoom extends DurableObject<Env> {
 
   async handleEventsub(channel: string, msg: BotMessage, origin: string, kind: string, now: number): Promise<Response> {
     const subscriptionId = String(msg.subscription?.id || "");
+    count(this, msg.bot === true ? "eventsub_bot" : "eventsub_" + (kind || "unknown"));
+    if (kind !== "notification")
+      trace(this, "chat", "eventsub " + (kind || "unknown"), {
+        channel,
+        subscriptionId: subscriptionId.slice(0, 64),
+        status: String(msg.subscription?.status || ""),
+      });
+    else {
+      // every chat line, to Workers Logs only: the first word (a command name) and who, never the whole line
+      const text = String(msg.event?.message?.text || "");
+      trace(
+        this,
+        "chat",
+        "heard",
+        {
+          channel,
+          via: msg.bot === true ? "bot" : origin || "eventsub",
+          user: normalizeUsername(msg.event?.chatter_user_login) || "?",
+          first: text.trim().startsWith("!") ? text.trim().split(/\s+/)[0]!.slice(0, 32) : "", // split always has one item
+          length: text.length,
+        },
+        false,
+      );
+    }
     let result: ChatOutcome;
     if (kind === "webhook_callback_verification")
       result = this.advance(channel, { type: "chat_verified", subscriptionId }, now);
@@ -3008,6 +3063,9 @@ export class ChannelRoom extends DurableObject<Env> {
     const now = Date.now(),
       last = (this.heldLogged ||= {});
     this.ctx.storage.sql.exec("UPDATE bot_status SET held_at = ?, held_reason = ? WHERE id = 1", now, reason);
+    count(this, "bot_held");
+    count(this, "bot_held_" + reason);
+    trace(this, "chat", "bot held: " + reason, { channel, reason, ...context }, false);
     if (!log || now - (last[reason] || 0) < 60_000) return;
     last[reason] = now;
     logRoomEvent(this, "warn", "bot reply held back: " + reason, { channel, via: "bot", reason, ...context });
@@ -3022,8 +3080,11 @@ export class ChannelRoom extends DurableObject<Env> {
     for (const r of ([] as (Partial<SendResult> | null | undefined)[]).concat(results || [])) {
       if (r?.sent === true) {
         sql.exec("UPDATE bot_status SET sent_at = ?, sent_total = sent_total + 1 WHERE id = 1", now);
+        count(this, "bot_sent");
+        trace(this, "chat", "bot " + via + " sent", { channel, via });
         continue;
       }
+      count(this, "bot_failed");
       const reason = String(r?.reason || "unknown").slice(0, 200);
       sql.exec(
         "UPDATE bot_status SET failed_at = ?, failed_total = failed_total + 1, failed_reason = ? WHERE id = 1",
@@ -3294,8 +3355,10 @@ export class ChannelRoom extends DurableObject<Env> {
     const textValue = String(ev.message?.text || "").slice(0, 512);
     const color = /^#[0-9a-f]{6}$/i.test(ev.color || "") ? ev.color!.toUpperCase() : ""; // test() passed, so it is set
     const subscriptionId = String(msg.subscription?.id || "");
-    return this.ctx.storage.transactionSync((): ChatOutcome => {
+    let since = 0;
+    const outcome = this.ctx.storage.transactionSync((): ChatOutcome => {
       let state = this.readState(channel);
+      since = state.revision;
       const none = (reason: string): ChatOutcome => ({
         state,
         result: { ok: false, reason },
@@ -3396,6 +3459,8 @@ export class ChannelRoom extends DurableObject<Env> {
         visible: steps.some((r) => r.visible),
       };
     });
+    if (outcome.changed) this.traceEvents(channel, outcome.state, since);
+    return outcome;
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
@@ -3414,27 +3479,49 @@ export class ChannelRoom extends DurableObject<Env> {
     }
   }
 
-  async scheduleAlarm(state: GameState): Promise<void> {
-    const due: number[] = [];
+  // Every time the room has work to do, with why. scheduleAlarm sets the earliest; alarm() names the ones it ran for.
+  alarmDue(state: GameState, now: number): { at: number; why: string }[] {
+    const due: { at: number; why: string }[] = [];
     const chatDue = chatCheckDue(state);
-    if (chatDue !== null) due.push(chatDue);
+    if (chatDue !== null) due.push({ at: chatDue, why: "chat_check" });
     for (const duel of state.duels) {
-      if (duel.status === "pending") due.push(duel.expiresAt + 1);
+      if (duel.status === "pending") due.push({ at: duel.expiresAt + 1, why: "challenge_expiry" });
       else if (duel.status === "active")
-        due.push(duel.lastActionAt! + (duel.rules?.inactivityMs || state.config.inactivityMs) + 1); // set when a duel starts
+        due.push({
+          at: duel.lastActionAt! + (duel.rules?.inactivityMs || state.config.inactivityMs) + 1, // set when a duel starts
+          why: "duel_inactivity",
+        });
     }
-    for (const profile of state.players) if (profile.respawnAt > 0) due.push(profile.respawnAt);
-    for (const lock of state.rematchLocks) due.push(lock.until);
+    for (const profile of state.players) if (profile.respawnAt > 0) due.push({ at: profile.respawnAt, why: "respawn" });
+    for (const lock of state.rematchLocks) due.push({ at: lock.until, why: "rematch_lock" });
     // a bot channel announces each duel's result once the stream has played it
     if (this.botSource(state) && state.config.botEnabled !== false)
       for (const duel of state.duels)
         // revealAt! : set when a duel completes
-        if (duel.status === "completed" && duel.revealAt! > Date.now()) due.push(duel.revealAt! + 1);
-    if (this.dueResults(state, Date.now()).length) due.push(Date.now() + RESULT_RETRY_MS); // one that couldn't go out yet
+        if (duel.status === "completed" && duel.revealAt! > now)
+          due.push({ at: duel.revealAt! + 1, why: "result_reveal" });
+    if (this.dueResults(state, now).length) due.push({ at: now + RESULT_RETRY_MS, why: "result_retry" }); // one that couldn't go out yet
     const reminder = this.reminderDue(state);
-    if (reminder) due.push(reminder);
-    if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, Math.min(...due)));
-    else await this.ctx.storage.deleteAlarm();
+    if (reminder) due.push({ at: reminder, why: "reminder" });
+    return due;
+  }
+
+  async scheduleAlarm(state: GameState): Promise<void> {
+    const now = Date.now(),
+      due = this.alarmDue(state, now);
+    if (!due.length) {
+      if (this.alarmAt !== null) trace(this, "alarm", "cleared", { channel: state.channel });
+      this.alarmAt = null;
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    const next = due.reduce((a, b) => (b.at < a.at ? b : a)),
+      at = Math.max(now + 1, next.at);
+    // traced only when the target moves; the same alarm set again by every command would flood the log
+    if (at !== this.alarmAt)
+      trace(this, "alarm", "set " + next.why, { channel: state.channel, inMs: at - now, due: due.length });
+    this.alarmAt = at;
+    await this.ctx.storage.setAlarm(at);
   }
 
   // Errors are logged (owner diagnostics) and the next alarm is always set, so one failure can't stall result lines.
@@ -3443,12 +3530,23 @@ export class ChannelRoom extends DurableObject<Env> {
     if (!row) return;
     const channel = normalizeChannel(row.channel);
     if (!channel) return;
+    // why it ran, from the state itself: a woken room has none of the reasons scheduleAlarm saw
+    const now = Date.now(),
+      ran = this.alarmDue(this.readState(channel), now).filter((d) => d.at <= now);
+    this.alarmAt = undefined;
+    noteAlarm(
+      this,
+      [...new Set(ran.map((d) => d.why))],
+      ran.length ? now - Math.min(...ran.map((d) => d.at)) : null,
+      channel,
+    );
     try {
       await this.alarmTasks(channel);
     } catch (error) {
       logRoomError(this, error, { path: "alarm", method: "ALARM" });
     }
     await this.scheduleAlarm(this.readState(channel));
+    settleCounts(this, true);
   }
 
   async alarmTasks(channel: string): Promise<void> {

@@ -137,6 +137,14 @@ async function stub(page: Page, { configured, calls = { progress: [] } }: StubOp
         ],
       });
     if (op === "settings") return json(r, { ok: true });
+    if (op === "stats")
+      return json(r, {
+        channel: "nesszerra",
+        days: [
+          { day: "2026-10-16", counts: { requests: 1840, alarms: 212, event_challenge_created: 9, bot_sent: 31 } },
+          { day: "2026-10-15", counts: { requests: 2310, alarms: 260, bot_sent: 44 } },
+        ],
+      });
     if (op === "logs")
       return json(r, [
         {
@@ -289,6 +297,12 @@ for (const size of sizes) {
   assert.match((await page.textContent("#summary-title"))!, /chat offline/);
   // !: the element is on the page, so its textContent is a string
   assert.match((await page.textContent("#github-missing"))!, /GITHUB_TOKEN, GITHUB_REPO/);
+  // lead counters first, then the rest by name; a day without a counter shows a dash
+  assert.deepEqual(
+    await page.$$eval("#stats tr", (trs: HTMLTableRowElement[]) => trs.map((t) => t.innerText.split("	").join(" "))),
+    ["requests 1,840 2,310", "alarms 212 260", "bot_sent 31 44", "event_challenge_created 9 –"],
+  );
+  assert.equal(await page.textContent("#stats-head"), "Counter10-1610-15");
   assert.equal(await page.isDisabled("#deploy-test"), true);
   assert.equal(await page.isDisabled("#save-file"), true);
   assert.deepEqual(await page.$$eval("#sec-code, #sec-release", (s: HTMLElement[]) => s.map((x) => x.hidden)), [

@@ -4,6 +4,7 @@ import { CHANNELS, record } from "./auth.ts";
 import { channelState, overview, listRecords, setPaused, LOGIN } from "./channels.ts";
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.ts";
 import { rankHistory } from "./ranklog.ts";
+import { LOG_SOURCES, readCounts, trace } from "./tracker.ts";
 import {
   ignoreAnswer,
   isObject,
@@ -99,7 +100,6 @@ export type DevRoom = {
   looksReset: boolean;
   flushLooksSoon(): void;
 };
-const MAX_LOG_ROWS = 500;
 const VERSION = "0.2.0";
 const DAILY_REQUEST_LIMIT = 100000;
 const SCRIPTS = site.workers;
@@ -188,6 +188,7 @@ const ROUTES: { [op: string]: { [method: string]: Handler } } = {
     DELETE: ({ room }) => room("/dev/logs", { method: "DELETE" }),
   },
   backups: { GET: backupsRead, POST: backupsRun },
+  stats: { GET: ({ room, query }) => room("/dev/stats?" + new URLSearchParams({ days: query.get("days") || "" })) },
   ranks: {
     GET: ({ room, query }) =>
       room("/dev/ranks?" + new URLSearchParams({ user: query.get("user") || "", limit: query.get("limit") || "" })),
@@ -471,7 +472,7 @@ function logQuery(query: URLSearchParams): string {
   const out = new URLSearchParams(),
     source = query.get("source"),
     limit = Number(query.get("limit"));
-  if (source === "room" || source === "worker") out.set("source", source);
+  if (source && LOG_SOURCES.includes(source)) out.set("source", source);
   if (Number.isInteger(limit) && limit >= 1 && limit <= 100) out.set("limit", String(limit));
   return out.toString();
 }
@@ -1072,7 +1073,7 @@ export async function handleRoomDeveloper(
       source = q.searchParams.get("source"),
       limit = Math.min(100, Math.max(1, Number(q.searchParams.get("limit")) || 100));
     // includes() is false for a missing source (null)
-    const rows = ["room", "worker", "command", "warn"].includes(source as string)
+    const rows = LOG_SOURCES.includes(source as string)
       ? sql
           .exec<LogRow>(
             "SELECT id, at, source, message, context FROM error_log WHERE source = ? ORDER BY id DESC LIMIT ?",
@@ -1098,13 +1099,28 @@ export async function handleRoomDeveloper(
     return json({ ok: true });
   }
   if (path === "/dev/log" && method === "POST") {
-    // Any JSON: insertLog stringifies and clips every field
+    // Any JSON: trace stringifies and clips every field
     const body = await request
       .json<{ source?: unknown; message?: unknown; context?: unknown } | null>()
       .catch((): { source?: unknown; message?: unknown; context?: unknown } => ({}));
     // The Worker logs errors here, and as "warn" the profile saves it refuses before they reach the room.
-    insertLog(sql, body?.source === "warn" ? "warn" : "worker", body?.message, body?.context);
+    const context = body?.context;
+    trace(
+      room,
+      body?.source === "warn" ? "warn" : "worker",
+      String(body?.message || "unknown"),
+      // a JSON object from the Worker's own logWorkerError; anything else is kept as one value
+      context && typeof context === "object" && !Array.isArray(context)
+        ? (context as JsonObject)
+        : { value: context ?? null },
+    );
     return json({ ok: true });
+  }
+  // Per-day counters, newest first: ?days=1..14 (default 7). Flushes today's first, so the numbers are current.
+  if (path === "/dev/stats" && method === "GET") {
+    const q = url || new URL(request.url),
+      days = Math.min(14, Math.max(1, Number(q.searchParams.get("days")) || 7));
+    return json({ channel, days: readCounts(room, days) });
   }
   // Setup progress for the owner's Channels table: read only, so it never creates a StreamElements key.
   if (path === "/dev/progress" && method === "GET") {
@@ -1202,33 +1218,32 @@ export function ensureDeveloperSchema(sql: SqlStorage): void {
 export function logRoomError(room: { ctx: DurableObjectState }, error: unknown, context: JsonObject = {}): void {
   try {
     // anything can be thrown; an Error's message reads best
-    insertLog(
-      room.ctx.storage.sql,
-      "room",
-      (error as { message?: unknown } | null | undefined)?.message || String(error),
-      context,
-    );
+    const thrown = error as { message?: unknown; stack?: unknown } | null | undefined;
+    trace(room, "room", String(thrown?.message || error), {
+      ...context,
+      stack: String(thrown?.stack || "").slice(0, 600),
+    });
   } catch {}
 }
 
 // One line per chat command (source 'command') or a broken invariant (source 'warn'), so a wrong reply
-// can be traced without a crash. Also printed for `wrangler tail`. Must never throw.
+// can be traced without a crash. Also printed to Workers Logs (server/tracker.ts). Must never throw.
 export function logRoomEvent(
   room: { ctx: DurableObjectState },
   source: string,
   message: string,
   context: JsonObject = {},
 ): void {
-  try {
-    console.log(JSON.stringify({ log: source, message, ...context }));
-  } catch {}
-  try {
-    insertLog(room.ctx.storage.sql, source, message, context);
-  } catch {}
+  trace(room, source, message, context);
 }
 
 // Called by the Worker's top-level catch (through ctx.waitUntil). Must never throw.
 export async function logWorkerError(env: Env, error: unknown, context: JsonObject = {}): Promise<void> {
+  try {
+    // anything can be thrown; an Error's message reads best
+    const message = String((error as { message?: unknown } | null | undefined)?.message || error);
+    console.error(JSON.stringify({ log: "worker", message, ...context }));
+  } catch {}
   try {
     if (!env.INTERNAL_SECRET || !env.ROOMS) return;
     await env.ROOMS.get(env.ROOMS.idFromName(site.defaultChannel)).fetch("https://room/dev/log", {
@@ -1367,19 +1382,6 @@ function roomExport(room: DevRoom, channel: string) {
     customCharacters: characters,
     streamelements: { commandNames: names },
   };
-}
-
-function insertLog(sql: SqlStorage, source: string, message: unknown, context: unknown): void {
-  let ctx = JSON.stringify(context ?? {}) || "{}";
-  if (ctx.length > 2000) ctx = JSON.stringify({ truncated: ctx.slice(0, 1900) });
-  sql.exec(
-    "INSERT INTO error_log (at, source, message, context) VALUES (?, ?, ?, ?)",
-    Date.now(),
-    source,
-    String(message || "unknown").slice(0, 500),
-    ctx,
-  );
-  sql.exec("DELETE FROM error_log WHERE id <= (SELECT MAX(id) FROM error_log) - ?", MAX_LOG_ROWS);
 }
 
 // T is the shape the caller stored; null when the value is missing or not JSON.

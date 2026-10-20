@@ -24,6 +24,7 @@ import {
   parseSettings,
   parseShop,
   parseStateConfig,
+  parseStats,
   parseVersions,
 } from "../src/parse.ts";
 import {
@@ -363,9 +364,15 @@ test("owner page: runs, versions, settings, channels, progress and logs", (t) =>
 
   const log = { at: 1, source: "chat", message: "hi", context: { a: 1 } };
   assert.deepEqual(parseLogs([log, { at: 1 }]), { ok: true, value: [log] });
+  const day = { day: "2026-10-16", counts: { requests: 40, alarms: 3 } };
+  assert.deepEqual(parseStats({ channel: "ann", days: [day, { day: "2026-10-15", counts: { alarms: "3" } }] }), {
+    ok: true,
+    value: [day],
+  });
+  assert.deepEqual(parseStats({ channel: "ann" }), { ok: false, error: "stats.days is not a list" });
   assert.equal(
     warn.mock.callCount(),
-    6,
-    "one warning per list kind: runs, targets, config versions, channels, progress, logs",
+    7,
+    "one warning per list kind: runs, targets, config versions, channels, progress, logs, stats",
   );
 });
