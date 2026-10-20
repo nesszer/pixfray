@@ -532,6 +532,7 @@ test("pages: / is the intro, /?channel= the fighter page, /play/ the picker, and
   assert.equal(await body("/play/"), "asset /");
   assert.equal((await get("/")).headers.get("X-Frame-Options"), "DENY", "the intro gets the page headers too");
   assert.equal(await moved("/play", 301), "https://chat.miolaf.xyz/play/");
+  assert.equal(await moved("/changelog", 301), "https://chat.miolaf.xyz/changelog/");
   assert.equal(await moved("/play/?channel=miolafff", 302), "https://chat.miolaf.xyz/?channel=miolafff");
   for (const old of ["/intro", "/intro/", "/intro/index.html"])
     assert.equal(await moved(old, 301), "https://chat.miolaf.xyz/");

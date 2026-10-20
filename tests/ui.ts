@@ -39,6 +39,7 @@ const config = {
   sharedCooldownMs: 1000,
   initialElo: 1000,
   eloK: 24,
+  pairRankedPerStream: 0,
   checkinPoints: 1,
   streakBonus: true,
   maxStatLevel: 16,
@@ -237,6 +238,27 @@ try {
     assert.match((await page.locator("#gate-text").textContent())!, /Sign in|isn't set up/); // element text, never null
     await noOverflow(page, "admin signed-out " + s.name);
     await page.screenshot({ path: shots + "/admin-signed-out-real-" + s.name + ".png", fullPage: true });
+    await context.close();
+  }
+
+  // 1a. /changelog/ reads at both widths; the release index sits beside the notes on wide screens only.
+  for (const s of sizes) {
+    const { context, page } = await newPage(s);
+    await page.goto(base + "/changelog/");
+    assert.equal(await page.locator("h1:visible").textContent(), "What's new in PixFray");
+    assert.equal(
+      await page.locator(".btn-primary:visible").count(),
+      0,
+      "the header's Pick your fighter stays the only gold",
+    );
+    assert.ok((await page.locator("section.release").count()) > 0);
+    assert.equal(
+      await page.locator(".changelog .page-index").isVisible(),
+      s.width > 900,
+      "index only beside the notes",
+    );
+    await noOverflow(page, "changelog " + s.name);
+    await page.screenshot({ path: shots + "/changelog-" + s.name + ".png", fullPage: true });
     await context.close();
   }
 

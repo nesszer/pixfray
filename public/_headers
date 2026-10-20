@@ -24,6 +24,9 @@
 /play/*
   Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'
   X-Frame-Options: DENY
+/changelog/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'
+  X-Frame-Options: DENY
 
 # no-transform keeps Cloudflare from adding its Web Analytics beacon, which OVERLAY_CSP blocks (a console error in OBS
 # and in the /start demo on every load). max-age=0 and must-revalidate are the assets default, so a new build still loads.

@@ -73,6 +73,7 @@ test("chat.miolaf.xyz opens miolafff's pages and sends every other page to pixfr
   assert.equal(await moved(MIOLAF + "/admin/?channel=nesszerra"), MAIN + "/admin/?channel=nesszerra");
   assert.equal(await moved(MIOLAF + "/start/?error=full"), MAIN + "/start/?error=full");
   assert.equal(await moved(MIOLAF + "/admin/dev/"), MAIN + "/admin/dev/");
+  assert.equal(await moved(MIOLAF + "/changelog/"), MAIN + "/changelog/");
   // Older OBS overlay links and assets keep working for every channel.
   assert.equal(await moved(MIOLAF + "/overlay.html?channel=nesszerra&size=64"), "served 200");
   assert.equal(await moved(MIOLAF + "/assets/characters.json"), "served 200");
@@ -82,7 +83,7 @@ test("chat.miolaf.xyz opens miolafff's pages and sends every other page to pixfr
 });
 
 test("pages keep their no-framing headers when they pass through the Worker", async () => {
-  for (const url of [MAIN + "/", MIOLAF + "/admin/?channel=miolafff", MAIN + "/start/"]) {
+  for (const url of [MAIN + "/", MIOLAF + "/admin/?channel=miolafff", MAIN + "/start/", MAIN + "/changelog/"]) {
     const r = await get(url);
     assert.equal(r.headers.get("X-Frame-Options"), "DENY", url);
     assert.equal(r.headers.get("Content-Security-Policy"), PAGE_CSP, url);

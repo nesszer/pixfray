@@ -19,6 +19,7 @@
     "tests/upload-helpers.ts",
     "tests/auth.test.ts",
     "tests/channel-param.test.ts",
+    "tests/changelog.test.ts",
     "tests/channel.test.ts",
     "tests/content.test.ts",
     "tests/dedupe.test.ts",
