@@ -15,7 +15,7 @@ export const DAILY_STORE_CAP = 300;
 const TRIM_EVERY = 25;
 /** Counters reach SQLite at least this often while a room is busy. */
 export const FLUSH_MS = 30_000;
-/** A request flushes dirty counters once this long has passed since the last write; an alarm always does. */
+/** A request, or an alarm in a burst, flushes dirty counters once this long has passed since the last write. */
 export const SETTLE_MS = 10_000;
 const KEEP_DAYS = 14;
 /** A run of this many alarms each under BURST_GAP_MS apart logs a warning (at most every BURST_ALERT_MS). */
@@ -109,13 +109,15 @@ export function count(room: Room, name: string, n = 1): void {
 
 /**
  * Called at the end of every request (`always` false) and alarm (`always` true): a room idle for seconds hibernates and
- * drops what is only in memory. An alarm already writes state, so its counters go with it; a request writes them once
- * SETTLE_MS has passed, which bounds the rows a chatty channel adds. Never throws.
+ * drops what is only in memory. An alarm already writes state, so its counters go with it; a request (or an alarm in a
+ * burst) writes them once SETTLE_MS has passed, which bounds the rows a chatty channel or a runaway alarm adds. Never throws.
  */
 export function settleCounts(room: Room, always = false): void {
   try {
-    const t = tracker(room, Date.now());
-    if (always || Date.now() - t.flushedAt >= SETTLE_MS) flush(room, t);
+    const now = Date.now(),
+      t = tracker(room, now);
+    // during an alarm burst (the runaway loop) an alarm saves like a request, so the counters never double its writes
+    if ((always && t.alarmRun < BURST_RUN) || now - t.flushedAt >= SETTLE_MS) flush(room, t);
   } catch {}
 }
 

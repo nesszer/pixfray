@@ -122,3 +122,22 @@ test("settleCounts writes what a woken room counted before it can hibernate", (t
   settleCounts(a, true);
   assert.deepEqual([stored()?.requests, stored()?.alarms], [2, 1], "an alarm always writes");
 });
+
+test("alarms in a burst save counters at most every SETTLE_MS, not on every run", (t) => {
+  quiet(t);
+  const sql = fakeSql(),
+    r = room(sql),
+    storedAlarms = () =>
+      JSON.parse(sql.exec<{ data: string }>("SELECT data FROM daily_stats").toArray()[0]?.data ?? "{}").alarms;
+  t.mock.timers.enable({ apis: ["Date"], now: 1_800_000_000_000 });
+  const alarm = () => {
+    noteAlarm(r, ["tick"], 0, "nesszers");
+    settleCounts(r, true);
+    t.mock.timers.tick(100);
+    return storedAlarms();
+  };
+  const beforeBurst = Array.from({ length: BURST_RUN }, alarm);
+  assert.deepEqual(beforeBurst.slice(-2), [BURST_RUN - 1, BURST_RUN - 1], "alarms save each run until the burst");
+  const inBurst = new Set(Array.from({ length: 100 }, alarm));
+  assert.deepEqual([...inBurst], [BURST_RUN - 1, 119], "100 burst alarms over 10 s save once, after SETTLE_MS");
+});
