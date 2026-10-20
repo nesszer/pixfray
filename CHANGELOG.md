@@ -12,6 +12,13 @@ Rules (checked by `tests/changelog.test.ts`):
   and behind-the-scenes work.
   0.1.0 to 0.7.1 were cut after the fact from git history.
 
+## 0.9.0 - 2026-10-20
+
+- Level sync: `syncPair` in `server/upgrades.ts` (`SYNC_MARGIN` 10) and `duelStats` in `server/game.ts`, used for
+  `duel.maxHp`, quick-duel swings and HP-fight blows.
+- Every third ranked loss is an upgrade point (`LOSSES_PER_POINT`). `pointsFor`, `effectiveStats`, `validStats` and
+  `upgradeRules` take one `Earned` object instead of separate wins and bonus arguments.
+
 ## 0.8.1 - 2026-10-20
 
 - The changelog splits in two: `/changelog/` keeps only what players and streamers notice, and this file holds code

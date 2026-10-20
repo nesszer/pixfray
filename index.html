@@ -134,7 +134,7 @@
           </fieldset>
           <fieldset id="upgrades">
             <legend>Upgrades <span class="muted small" id="points-note"></span></legend>
-            <p class="muted small" id="upgrades-help">Each win and each stream check-in (!checkin in chat) gives a point. Move points between stats whenever you're not in a duel.</p>
+            <p class="muted small" id="upgrades-help">Each win, each stream check-in (!checkin in chat) and every 3 losses give a point. Move points between stats whenever you're not in a duel.</p>
             <div class="upgrade-list" id="upgrade-list"></div>
             <div class="filter-buttons" id="upgrade-presets" role="group" aria-label="Suggested builds" hidden></div>
           </fieldset>
@@ -242,6 +242,7 @@
       <li>After 12 rolls the fighter with more health wins. If health is level, the next hit or counter decides it.</li>
       <li>A win without taking any damage is flawless and earns 3 extra Elo.</li>
       <li>Upgrades change the numbers: each Power point adds 4% to your blows, each Guard point takes 4% off blows you take, and each Luck point gives a 4% chance that a miss still hits.</li>
+      <li>Level sync keeps every duel winnable. When one fighter's levels cost more than 10 points above the other's, the stronger fighter plays this duel with levels taken off their highest stats until the gap is 10. Saved builds don't change.</li>
     </ul>
     <p class="caveat">The loser is knocked out for a few seconds, and the same two viewers wait <span id="cmd-rematch">30 s</span> before a rematch.</p>
   </section>
