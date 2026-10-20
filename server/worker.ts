@@ -18,6 +18,15 @@ import { handleUploads } from "./uploads.ts";
 import { handlePets } from "./pets.ts";
 import { handleSprites } from "./sprites.ts";
 import {
+  createReward,
+  deleteReward,
+  markRedemption,
+  pointsLoginUrl,
+  rewardProblem,
+  MAX_POINT_REWARDS,
+} from "./points.ts";
+import type { PointReward } from "./points.ts";
+import {
   EVENTSUB_PATH,
   BOT_LOGIN_URL,
   handleEventsub,
@@ -189,6 +198,52 @@ async function bodyJson(request: Request, limit = 2200000): Promise<JsonObject> 
   return value;
 }
 // Chat source lifecycle (owner or mod via /api/admin, owner via /api/dev). The room only records the outcome.
+// Channel point rewards (server/points.ts): Twitch first, then the room. A reward the room refuses is removed again.
+async function pointsAction(
+  env: Env,
+  url: URL,
+  channel: string,
+  action: "createPointReward" | "deletePointReward",
+  data: JsonObject,
+  actor: string,
+): Promise<Response> {
+  const room = (path: string, body?: JsonObject) =>
+    roomFetch(
+      null,
+      env,
+      channel,
+      path,
+      body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {},
+    );
+  const { rewards } = await (await room("/points")).json<{ rewards: PointReward[] }>();
+  if (action === "deletePointReward") {
+    const reward = rewards.find((r) => r.rewardId === data.rewardId);
+    if (!reward) return json({ ok: false, reason: "reward_not_found", error: "reward_not_found" }, 404);
+    await deleteReward(env, { channel, rewardId: reward.rewardId, subscriptionId: reward.subscriptionId, url });
+    return room("/points/rewards", { op: "remove", rewardId: reward.rewardId, actor });
+  }
+  const { cost, dollars } = data,
+    title = typeof data.title === "string" ? data.title.trim() : data.title;
+  const problem = rewardProblem(title, cost, dollars);
+  if (problem) return json({ ok: false, reason: problem, error: problem }, 400);
+  if (rewards.length >= MAX_POINT_REWARDS)
+    return json({ ok: false, reason: "points_max_rewards", error: "points_max_rewards" }, 409);
+  const reward = await createReward(env, {
+    channel,
+    title: title as string, // rewardProblem checked these three
+    cost: cost as number,
+    dollars: dollars as number,
+    origin: siteOrigin(env, url, channel),
+    url,
+  });
+  const r = await room("/points/rewards", { op: "add", reward, actor });
+  if (!r.ok)
+    await deleteReward(env, { channel, rewardId: reward.rewardId, subscriptionId: reward.subscriptionId, url }).catch(
+      (e) => console.warn("point reward undo failed", e?.message),
+    );
+  return r;
+}
+
 async function chatAction(
   env: Env,
   url: URL,
@@ -500,6 +555,37 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
               )
               .catch((e) => console.warn("bot reply report failed", e?.message)),
           ),
+        // A redemption: mark it on Twitch (FULFILLED, or CANCELED to refund), tell the room, then post the bot's line.
+        onRedeemed: ({ redemption: r, mark, reply }) =>
+          ctx?.waitUntil?.(
+            (async () => {
+              if (mark) {
+                const status = await markRedemption(env, {
+                  channel: r.channel,
+                  rewardId: r.rewardId,
+                  redemptionId: r.id,
+                  status: mark,
+                });
+                await roomFetch(null, env, r.channel, "/points/marked", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ redemptionId: r.id, status }),
+                });
+              }
+              const botId = env.CHAT_BOT === "1" ? String((await record(env, "bot:twitch"))?.id || "") : "";
+              if (!reply || !botId) return;
+              const results = await sendChatMessages(env, {
+                broadcasterId: r.broadcasterId,
+                senderId: botId,
+                messages: [reply],
+              });
+              await roomFetch(null, env, r.channel, "/bot-sent", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ results }),
+              });
+            })().catch((e) => console.warn("redemption follow-up failed", e?.message)),
+          ),
       });
     }
     // StreamElements custom commands ($(customapi ...)): GET with the channel's key, answered with one chat line.
@@ -720,6 +806,7 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
           chatBot: env.CHAT_BOT === "1" ? { login: bot?.login || "", debug: env.BOT_DEBUG === "1" } : null,
           modsReady,
           modsLapsed,
+          pointsLogin: pointsLoginUrl(channel),
           channelState: state,
         });
       }
@@ -743,7 +830,9 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
             ? "make a new StreamElements key"
             : data.takeover === true
               ? "move chat from another site"
-              : "";
+              : data.action === "createPointReward" || data.action === "deletePointReward"
+                ? "change channel point rewards"
+                : "";
       if (only && !roles.owner && !roles.broadcaster)
         return json({ error: "Only " + channel + " can " + only, reason: "broadcaster_only" }, 403);
       const admin = parseAdminBody(data);
@@ -772,6 +861,8 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
         });
         return json(await r.json(), r.status);
       }
+      if (action === "createPointReward" || action === "deletePointReward")
+        return await pointsAction(env, url, channel, action, admin.value.payload, user!.displayName || user!.login); // canManage: signed in
       if (action === "connectChat" && env.CHAT_BOT !== "1" && (channel !== site.defaultChannel || env.SE_ONLY === "1"))
         return json({ error: "This channel uses StreamElements for chat. Choose Use StreamElements." }, 400);
       if (action === "connectChat" || action === "disconnectChat" || action === "useStreamElements")

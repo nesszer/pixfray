@@ -7,6 +7,8 @@ import type { Env } from "./env.ts";
 import { isObject, parseEventsubEnvelope } from "./parse.ts";
 import type { JsonObject } from "./parse.ts";
 import type { ChatEvent, SendResult } from "./model.ts";
+import { parseRedemption, REDEMPTION_TYPE } from "./points.ts";
+import type { Redemption } from "./points.ts";
 
 /** The bot's reply lines for one command, handed to deps.sendChat after the 204. */
 export type BotChat = { channel: string; broadcasterId: string; senderId: string; messages: string[]; replyTo: string };
@@ -19,6 +21,8 @@ export type EventsubDeps = {
   findChannel?: (broadcasterId: string) => Promise<string>;
   isEnabled?: (login: string) => Promise<boolean>;
   botUserId?: () => Promise<string>;
+  // after the 204: marks the redemption on Twitch and posts the bot line (server/points.ts)
+  onRedeemed?: (done: { redemption: Redemption; mark: "FULFILLED" | "CANCELED" | null; reply: string }) => void;
   now?: number;
 };
 /** A Helix EventSub subscription (the fields read here). */
@@ -185,6 +189,7 @@ export async function handleEventsub(
     findChannel = async () => "",
     isEnabled = async () => false,
     botUserId = async () => "",
+    onRedeemed,
     now = Date.now(),
   }: EventsubDeps,
 ): Promise<Response> {
@@ -250,6 +255,35 @@ export async function handleEventsub(
       return text("Missing challenge", 400);
     if (subType === "channel.chat.message") for (const channel of await rooms()) await send(channel);
     return text(body.challenge, 200);
+  }
+  // Channel point redemptions (server/points.ts). The redemption id keys the room's row, so a retry grants nothing twice.
+  if (subType === REDEMPTION_TYPE) {
+    const points = (channel: string, path: string, data: object) =>
+      roomFetch(channel, path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+    if (type === "revocation") {
+      for (const channel of await rooms())
+        await points(channel, "/points/rewards", {
+          op: "revoked",
+          subscriptionId: message.subscription.id,
+          status: message.subscription.status,
+        });
+      return new Response(null, { status: 204 });
+    }
+    const r = type === "notification" ? parseRedemption(body.event) : null;
+    // No isEnabled gate: each subscription is for a reward PixFray made, and the room ignores rewards it doesn't hold.
+    // A paused channel still grants, so a viewer's spent points never sit unmarked in the streamer's queue.
+    if (!r) return new Response(null, { status: 204 });
+    const res = await points(r.channel, "/points/redeem", { redemption: body.event, origin: origin(r.channel) });
+    if (res.status >= 500) throw new Error("Room rejected redemption (" + res.status + ")");
+    const d: { mark?: unknown; reply?: unknown } = res.ok ? await res.json<object>().catch(() => ({})) : {};
+    const mark = d.mark === "FULFILLED" || d.mark === "CANCELED" ? d.mark : null,
+      reply = typeof d.reply === "string" ? d.reply : "";
+    if ((mark || reply) && onRedeemed) onRedeemed({ redemption: r, mark, reply });
+    return new Response(null, { status: 204 });
   }
   if (type === "revocation") {
     if (subType === "channel.chat.message") for (const channel of await rooms()) await send(channel); // rooms ignore ids they don't own
@@ -320,7 +354,8 @@ export async function appToken(env: Env, fresh = false): Promise<string> {
   await record(env, "app-token:twitch", await seal(env, { access_token: t.access_token, expiresAt }), expiresAt);
   return t.access_token;
 }
-async function helix(env: Env, method: string, path: string, body?: unknown): Promise<Response> {
+/** A Helix call with the app access token; a 401 fetches a fresh token once. */
+export async function appHelix(env: Env, method: string, path: string, body?: unknown): Promise<Response> {
   const call = async (token: string) =>
     fetch(HELIX + path, {
       method,
@@ -339,7 +374,7 @@ export async function listChatSubscriptions(env: Env): Promise<ChatSubscription[
   const all: ChatSubscription[] = [];
   let after = "";
   for (let page = 0; page < 10; page++) {
-    const r = await helix(
+    const r = await appHelix(
       env,
       "GET",
       "/eventsub/subscriptions?type=channel.chat.message" + (after ? "&after=" + encodeURIComponent(after) : ""),
@@ -352,8 +387,8 @@ export async function listChatSubscriptions(env: Env): Promise<ChatSubscription[
   }
   return all;
 }
-async function deleteSubscription(env: Env, id: string): Promise<void> {
-  const r = await helix(env, "DELETE", "/eventsub/subscriptions?id=" + encodeURIComponent(id));
+export async function deleteSubscription(env: Env, id: string): Promise<void> {
+  const r = await appHelix(env, "DELETE", "/eventsub/subscriptions?id=" + encodeURIComponent(id));
   if (!r.ok && r.status !== 404) throw fail("Twitch subscription delete failed (" + r.status + ")", 502);
 }
 const summary = (s: ChatSubscription): ChatSubscriptionSummary => ({
@@ -409,7 +444,7 @@ export async function connectChat(
   const keep = mine.find((s) => s.status === "enabled" && s.version === "1" && sameCondition(s));
   for (const s of mine) if (s !== keep) await deleteSubscription(env, s.id);
   if (keep) return summary(keep);
-  const r = await helix(env, "POST", "/eventsub/subscriptions", {
+  const r = await appHelix(env, "POST", "/eventsub/subscriptions", {
     type: "channel.chat.message",
     version: "1",
     condition: { broadcaster_user_id: broadcasterId, user_id: userId },
@@ -505,11 +540,11 @@ export async function sendChatMessage(
       message,
       ...(replyTo ? { reply_parent_message_id: replyTo } : {}),
     };
-    let r = await helix(env, "POST", "/chat/messages", body);
+    let r = await appHelix(env, "POST", "/chat/messages", body);
     for (const wait of [1100, 2200]) {
       if (r.status !== 429) break;
       await sleep(wait);
-      r = await helix(env, "POST", "/chat/messages", body);
+      r = await appHelix(env, "POST", "/chat/messages", body);
     }
     if (!r.ok) throw fail("Twitch send chat message failed (" + r.status + ")", 502);
     const d = (await r.json<{ data?: { is_sent?: boolean; drop_reason?: { code?: string } | null }[] }>()).data?.[0];
@@ -547,13 +582,13 @@ export async function sendChatMessages(
 }
 // A channel's immutable Twitch id from its login, or '' when Twitch doesn't know it.
 export async function twitchUserId(env: Env, login: string): Promise<string> {
-  const r = await helix(env, "GET", "/users?login=" + encodeURIComponent(login));
+  const r = await appHelix(env, "GET", "/users?login=" + encodeURIComponent(login));
   if (!r.ok) throw fail("Twitch user lookup failed (" + r.status + ")", 502);
   return String((await r.json<{ data?: { id?: string }[] }>()).data?.[0]?.id || "");
 }
 // !checkin: the channel's current stream as {id,startedAt}, or null when it is offline. Throws when Twitch can't be reached.
 export async function liveStream(env: Env, login: string): Promise<{ id: string; startedAt: number } | null> {
-  const r = await helix(env, "GET", "/streams?user_login=" + encodeURIComponent(login));
+  const r = await appHelix(env, "GET", "/streams?user_login=" + encodeURIComponent(login));
   if (!r.ok) throw fail("Twitch stream lookup failed (" + r.status + ")", 502);
   const s = (await r.json<{ data?: { id?: string; type?: string; started_at: string }[] }>()).data?.[0];
   return s?.id && s.type === "live" ? { id: String(s.id), startedAt: Date.parse(s.started_at) || 0 } : null;

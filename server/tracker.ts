@@ -6,7 +6,7 @@ import type { JsonObject } from "./parse.ts";
 type Room = { ctx: DurableObjectState };
 
 /** Every source the room log stores; the owner page filters by these. */
-export const LOG_SOURCES = ["room", "worker", "command", "warn", "alarm", "duel", "chat"];
+export const LOG_SOURCES = ["room", "worker", "command", "warn", "alarm", "duel", "chat", "points"];
 /** Rows kept per source in error_log. Busy trace sources keep a shorter tail. */
 export const KEEP_ROWS: { [source: string]: number } = { alarm: 200, duel: 200, chat: 200 };
 const KEEP_DEFAULT = 500;

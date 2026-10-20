@@ -159,6 +159,7 @@ channel of that account only, so nobody can turn on someone else's channel.
 - `fighters:<userId>` = `{channels:[login]}`, the channels where the viewer saved a fighter, newest save first, at most 8. A successful `POST /api/profile/:channel` moves the channel to the front; kept 90 days from the last save. Read by `GET /api/profile/:channel/others`.
 - `modsconnected:<login>` = `{at}`. Written when mod access is connected (`connect=mods`, a signup that grants `moderation:read`, or `connect=1`), and also by an admin page view that finds a stored token without one. Expires after 20 years (the AuthStore accepts expiries up to 21 years for `channel:`, `modsconnected:` and `bot:` keys, 100 days for everything else).
 - `broadcaster:<login>` = the sealed Twitch token plus `touched` (ms). It is kept 90 days from its last use: every save refreshes the expiry, the hourly token validation re-saves it, and an admin page view re-saves it when `touched` is more than 7 days old. A 401 from Twitch renews the access token with the stored refresh token. If the record expires or the refresh fails, mod checks stop (`modsReady:false`).
+- `GET /api/admin/:channel` adds `points` (`{rewards:[{rewardId, title, cost, dollars, subscriptionId, status, createdAt}], redemptions:[{id, at, rewardId, user, outcome, dollars, marked}] (the latest 20), limits}`) and `pointsLogin` (the points sign-in link). A reward's `status` is the subscription status Twitch answered when it was made (usually `webhook_callback_verification_pending`) until a revocation replaces it, so a pending status is not a fault.
 - `GET /api/admin/:channel` adds `modsReady` (the `broadcaster:<login>` record exists) and `modsLapsed` (`modsconnected:<login>` exists but `broadcaster:<login>` is gone). They are never both true. `modsLapsed` makes the admin page show "Expired" and "Reconnect mod access" instead of "Connect mod access" in Stream setup.
 - `OWNER_TWITCH_ID` is a text binding, nesszerra's public Twitch id `445610108`, declared for prod and test in `cloudflare.config.ts`. When it is set, `isOwner` compares the session user's id to it and ignores the `owner:nesszerra` record (which expires 90 days after the last sign-in). It is not declared when `cf dev` runs with `MINI_LOCAL_TEST=1` (the test server), where seeded sessions use owner id 900001 and the `owner:nesszerra` record decides. A plain `cf dev` without that flag does declare it.
 - An overlay on a paused or unknown channel draws nothing and reloads every 5 minutes. One that was
@@ -189,6 +190,8 @@ channel of that account only, so nobody can turn on someone else's channel.
 | `rotateSeKey` | none | Handled by the Worker; broadcaster or owner only (403 `broadcaster_only`). Makes a new StreamElements key (New key) and clears the heard and rejected badges. |
 | `setSeNames` | `{names:{action:"!name"}}` | Handled by the Worker, any mod. Renames the StreamElements commands: each name is `!` plus 1 to 24 of `a-z0-9_`, and each action needs its own name (400 `{error}`). |
 | `useStreamElements` | none | Handled by the Worker, any mod. Records StreamElements as the chat source and deletes any Twitch subscription. |
+| `createPointReward` | `{title, cost, dollars}` | Handled by the Worker; the broadcaster or the owner only (403 `broadcaster_only`). Makes a Twitch channel point reward that adds `dollars` PixFray dollars (server/points.ts, section 4). The title is 1 to 45 characters (400 `invalid_title`), the cost 1 to 1,000,000 points (`invalid_cost`), dollars 1 to 10,000 (`invalid_dollars`); at most 5 rewards per channel (409 `points_max_rewards`). Needs the broadcaster's points sign-in, `/auth/login?channel=<login>&connect=points`, which asks for the earlier scopes plus `channel:manage:redemptions` (409 `{reason:"points_not_connected", reconnect}` until then). 403 `points_not_affiliate` ("Twitch only gives channel points to Affiliates and Partners, and <login> is neither yet."), 400 `points_rejected` when Twitch refuses the title or cost, 502 when Twitch fails or refuses the redemption subscription (the new reward is then deleted at Twitch). Returns `{ok:true, rewards, redemptions, limits}`. |
+| `deletePointReward` | `{rewardId}` | Handled by the Worker; the broadcaster or the owner only. Deletes the reward and its subscription at Twitch (a reward already gone at Twitch counts as deleted), then forgets it. 404 `reward_not_found`. Returns the same shape as `createPointReward`. |
 | `checkinTest` | `{value:boolean}` (top level) | Handled by the Worker, any mod, on the site channel (`site.defaultChannel`) only; any other channel gets 403. `true` turns check-in test mode on for 15 minutes (room table `checkin_test`, `{until, by}`), `false` ends it. While it's on and Twitch says the channel is offline, `!checkin` works out the check-in the next stream would give and answers "[Test, not saved] @name would check in: ..." without writing anything (no points, streak, check-in count or stream row), so it can be repeated. While the channel is live, check-ins count as usual. `GET /api/admin/:channel` returns `checkinTest` (`{until, by}` or `null`) and `checkinTestAllowed` (whether this channel shows the control). Returns `{ok:true, checkinTest}`. |
 
 ## 3. Overlay socket `/api/live/:channel`
@@ -394,6 +397,26 @@ while its typed chat lines stay ignored.
 `challenge` is an alias of `duel`, `fight` is an alias of `accept`, and duel needs a target. `attack` uses the player's
 `defaultAbility`. The optional target is allowed on every command. `rematch` ignores it and challenges the opponent of the sender's last finished duel (`lastOpponentId` on the player, saved as `profiles.last_opponent`), with the same rules as a challenge; with no such duel the reason is `no_previous_opponent`. A rematch answered by `!rematch` is a mutual challenge, so the duel starts. If someone has challenged the sender and is waiting for an answer, `!rematch` answers that challenge instead, so it works even when the challenger was not the sender's last opponent.
 
+### Channel point redemptions
+
+`createPointReward` (section 2) subscribes each reward PixFray makes to
+`channel.channel_points_custom_reward_redemption.add` v1 with condition `{broadcaster_user_id, reward_id}`, on the
+same callback and secret. The Worker answers the verification challenge for this type like any other.
+- A notification goes to the room of the event's `broadcaster_user_login` as `POST /points/redeem`. It is not gated
+  on the channel being on: a paused channel still grants, so spent points never sit unmarked in the streamer's queue.
+  A room 5xx answers 503 so Twitch retries; anything else answers 204.
+- The room keys each redemption by its id (table `point_redemptions`, the latest 500 kept), so a retried
+  notification grants nothing twice. A reward the room doesn't hold is ignored. A saved fighter (matched by Twitch
+  user id) gets the reward's dollars, capped at 1,000,000; the bot says "@name got $N PixFray dollars from Title.
+  Wallet: $total." and the redemption is marked `FULFILLED`. A viewer with no saved fighter gets "@name needs a saved
+  fighter first: make one at <origin>/?channel=<login>. Your channel points were refunded (redemption <last 4 of the
+  id>)." and the redemption is marked `CANCELED`, which refunds the points.
+- Marking uses the broadcaster's token (`PATCH /channel_points/custom_rewards/redemptions`) after the 204. A failed
+  mark counts `points_mark_failed` and logs a warning; the grant stands. Outcomes count as `points_granted`,
+  `points_refunded`, `points_no_fighter` and `points_ignored`, and log under source `points`.
+- A revocation goes to `POST /points/rewards {op:"revoked"}` in each room `rooms()` names; the room holding that
+  subscription sets the reward's `status`.
+
 Local testing: `cf dev` started with `MINI_LOCAL_TEST=1` (scripts/test-all.ts does this) makes
 `connectChat` record a `local-<16 hex>` subscription without calling Twitch, only when
 `PUBLIC_ORIGIN` and the request host are loopback. `cloudflare.config.ts` refuses to build or
@@ -567,6 +590,14 @@ export async function handleRoomDeveloper(room, request, {path, channel}) // DO:
 export function ensureDeveloperSchema(sql)
 export function logRoomError(room, error, context)                     // never throws
 export async function logWorkerError(env, error, context)              // never throws
+```
+
+```ts
+// server/points.ts: channel point rewards. Worker side: createReward(env, {channel, title, cost, dollars, origin, url}),
+// deleteReward(env, {channel, rewardId, subscriptionId, url}), markRedemption(env, redemption, status); room side:
+export function ensurePointsSchema(sql), pointsView(room), redeem(room, redemption, {maxDollars, origin})
+export async function handleRoomPoints(room, request, {path, channel, maxDollars}) // DO: GET /points, POST /points/redeem, /points/marked, /points/rewards
+export function parseRedemption(event), rewardProblem(title, cost, dollars), pointsLoginUrl(channel)
 ```
 
 Browser input is parsed once where it arrives, in the style of `server/parse.ts` (each parser returns
