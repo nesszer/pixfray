@@ -8,6 +8,7 @@ import { logRoomError } from "../server/developer.ts";
 import { createInitialState, defaultConfig } from "../server/game.ts";
 import { makePng, b64 } from "./upload-helpers.ts";
 import { effectiveStats } from "../server/upgrades.ts";
+import { LATEST_RELEASE } from "../server/release.ts";
 import { tierBoost, petOf, PETS, boostText, cleanBoost, parseRoll, rollLegendary } from "../server/pets.ts";
 import { asEnv, fakeCtx, fullStats, must } from "./fakes.ts";
 import type { FakeSocketLike, FakeState, Loose } from "./fakes.ts";
@@ -2736,7 +2737,7 @@ test("debug bot: the real bot login (pixfray, a known chat bot) still plays ever
   await r.connectChat("sub-bot");
   await r.call("/dev-live", { method: "POST", body: { live: false } });
   const run = await r.say("u1", "alice", "!fray e2e", { mod: true });
-  assert.match(run.replies[0], /^PixFray e2e, pixfray vs alice: 18 of 18 steps passed\.$/);
+  assert.match(run.replies[0], /^PixFray e2e, pixfray vs alice: 19 of 19 steps passed\.$/);
   // Outside the bot's own commands, a chat line from pixfray is still ignored.
   const open = () => r.readState("nesszerra").duels.filter((d) => d.status === "pending").length;
   const before = open(),
@@ -2758,7 +2759,7 @@ test("debug bot: !fray e2e plays every command once against the asker and posts 
   await r.call("/dev-live", { method: "POST", body: { live: false } });
   assert.match((await r.say("u1", "alice", "!fray e2e")).reply, /only the broadcaster or a mod/);
   const run = await r.say("u1", "alice", "!fray e2e", { mod: true });
-  assert.match(run.replies[0], /^PixFray e2e, pixbot vs alice: 18 of 18 steps passed\.$/);
+  assert.match(run.replies[0], /^PixFray e2e, pixbot vs alice: 19 of 19 steps passed\.$/);
   const detail = run.replies.slice(1).join(" · ");
   assert.doesNotMatch(detail, /FAIL/);
   assert.match(detail, /checkin ok \(not_live\)/);
@@ -3139,6 +3140,37 @@ test("!stats: own levels that count, unspent points and the pet; @name for someo
     "@bob: no upgrades yet. 0 points unspent. 5 ranked duels left between you this stream.",
   );
   assert.match(await stats("u1", "alice", "nobody"), /nobody/);
+});
+
+test("!changelog: the newest release and the changelog link, from the bot and StreamElements, even while paused", async () => {
+  const line = (origin: string) =>
+    `PixFray ${LATEST_RELEASE.version}: ${LATEST_RELEASE.name}. Every change: ${origin}/changelog/`;
+  const bot = botRoom({});
+  await bot.connectChat("sub-bot");
+  assert.equal((await bot.say("u1", "alice", "!changelog")).reply, line("https://staging.example"));
+  const r = room({}, { quick: true });
+  const se = (await r.call("/admin")).body.streamelements;
+  assert.equal(se.names.changelog, "!changelog");
+  const paused = r.readState("nesszerra");
+  paused.config.enabled = false;
+  r.writeState(paused);
+  const answer = await r.call("/se?origin=https%3A%2F%2Ftest.example", {
+    method: "POST",
+    body: {
+      key: se.secret,
+      action: "changelog",
+      userId: "u9",
+      username: "nofighter",
+      displayName: "nofighter",
+      target: "",
+      messageId: "c1",
+    },
+  });
+  assert.equal(
+    answer.body.reply,
+    line("https://test.example"),
+    "no fighter needed, and it works while duels are paused",
+  );
 });
 
 test("!resetpair @a @b: mods start a pair's ranked count for this stream over; the mod page does the same", async () => {

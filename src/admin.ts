@@ -1984,6 +1984,7 @@ const SE_LABELS: Record<string, string | undefined> = {
   look: "Link to change your look",
   pet: "Own pet, or @viewer's",
   stats: "Own stats, or @viewer's",
+  changelog: "What changed in PixFray",
   checkin: "Daily check-in",
   wallet: "Wallet",
   give: "Give dollars",

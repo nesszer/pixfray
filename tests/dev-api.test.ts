@@ -360,7 +360,7 @@ test("channels lists the registry without reading any room, and progress answers
   );
   assert.equal(p.overlays, 0);
   assert.equal(p.source, "");
-  assert.equal(p.commands, 13);
+  assert.equal(p.commands, 14);
   assert.equal(p.commandsWorking, 0);
 });
 
@@ -404,7 +404,7 @@ test("progress covers more than 40 channels across batched calls, 40 room reads 
     Object.assign(seen, r.body.progress);
   }
   assert.deepEqual(Object.keys(seen).sort(), [...on].sort());
-  assert.equal(seen.streamer_050.commands, 13);
+  assert.equal(seen.streamer_050.commands, 14);
 });
 
 test("progress validates logins: required, at most 40, only channels that are on", async () => {
