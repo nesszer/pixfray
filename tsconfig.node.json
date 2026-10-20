@@ -27,6 +27,7 @@
     "tests/game.test.ts",
     "tests/hardening.test.ts",
     "tests/hosts.test.ts",
+    "tests/points.test.ts",
     "tests/registry.test.ts",
     "tests/security.test.ts",
     "tests/site-config.test.ts",

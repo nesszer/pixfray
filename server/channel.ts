@@ -33,6 +33,7 @@ import {
   HATS,
   STATS,
 } from "./upgrades.ts";
+import { ensurePointsSchema, handleRoomPoints, pointsView } from "./points.ts";
 import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice, parseRoll, rollLegendary } from "./pets.ts";
 import { ensureSpriteSchema, handleRoomSprites, spriteCatalog } from "./sprites.ts";
 import {
@@ -650,6 +651,7 @@ export class ChannelRoom extends DurableObject<Env> {
     ensureUploadSchema(sql);
     ensureDeveloperSchema(sql);
     ensureTrackerSchema(sql);
+    ensurePointsSchema(sql);
     sql.exec(
       "CREATE TABLE IF NOT EXISTS se_settings (id INTEGER PRIMARY KEY CHECK (id = 1), secret TEXT NOT NULL, names TEXT NOT NULL)",
     );
@@ -765,6 +767,8 @@ export class ChannelRoom extends DurableObject<Env> {
     if (path === "/catalog" || path === "/asset" || path.startsWith("/asset/"))
       return handleRoomAssets(this, request, { path, channel });
     if (path.startsWith("/dev/")) return handleRoomDeveloper(this, request, { path, channel, url });
+    if (path === "/points" || path.startsWith("/points/"))
+      return handleRoomPoints(this, request, { path, channel, maxDollars: MAX_DOLLARS });
     if (path === "/pets" || path.startsWith("/pets/")) {
       // A deleted upload leaves the fighters using it with no pet; the stored profiles are cleared by handleRoomPets.
       let cleared: GameState | null = null;
@@ -852,6 +856,7 @@ export class ChannelRoom extends DurableObject<Env> {
         checkinTest: this.checkinTest(),
         botCommands: this.botCommands(),
         botStatus: this.botStatus(),
+        points: pointsView(this),
       });
     }
 

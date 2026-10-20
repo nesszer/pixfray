@@ -33,10 +33,11 @@ export type OAuthPending = {
   connect?: boolean;
   connectMods?: boolean;
   connectBot?: boolean;
+  connectPoints?: boolean;
   next?: string;
 };
 /** The broadcaster token as it is sealed in broadcaster:<login>: Twitch's token answer plus the account and check. */
-type BroadcasterToken = TwitchTokens & { userId: string; validatedAt: number };
+type BroadcasterToken = TwitchTokens & { userId: string; validatedAt: number; scopes?: string[] };
 /** A Helix /users row (the fields read here and in reviewReasons), as parseHelixUsers answers it. */
 export type HelixUser = {
   id: string;
@@ -241,6 +242,19 @@ export const CONNECT_SCOPES = ["moderation:read", "user:read:chat", "user:bot", 
 // bot=1 (test site, CHAT_BOT): the BOT_LOGIN account lets the app read and send chat as it. Only its id is stored
 // (bot:twitch); the app token does the rest. connect=bot: a broadcaster allows the bot in their chat (channel:bot).
 export const BOT_SCOPES = ["user:read:chat", "user:write:chat", "user:bot"];
+// connect=points: a broadcaster lets PixFray make channel point rewards and fulfil or refund their redemptions.
+export const POINTS_SCOPE = "channel:manage:redemptions";
+// The points sign-in replaces the stored broadcaster token, so it asks again for every scope the earlier sign-ins
+// granted (the default channel's chat read included): Twitch may give the new token only what it asks for.
+export function pointsScopes(env: Env, channel: string): string[] {
+  const base =
+    channel === site.defaultChannel
+      ? CONNECT_SCOPES
+      : env.CHAT_BOT === "1"
+        ? ["moderation:read", "channel:bot"]
+        : ["moderation:read"];
+  return [...base, POINTS_SCOPE];
+}
 export function configured(env: Env): boolean {
   return !!(env.TWITCH_CLIENT_ID && env.TWITCH_CLIENT_SECRET && env.AUTH_SECRET && env.INTERNAL_SECRET);
 }
@@ -311,7 +325,8 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
         return Response.json({ error: "PixFray is not enabled for this channel" }, { status: 403 });
       const connect = url.searchParams.get("connect") === "1",
         connectBot = env.CHAT_BOT === "1" && url.searchParams.get("connect") === "bot",
-        connectMods = connectBot || url.searchParams.get("connect") === "mods";
+        connectPoints = url.searchParams.get("connect") === "points",
+        connectMods = connectBot || connectPoints || url.searchParams.get("connect") === "mods";
       if (connect && channel !== site.defaultChannel)
         return Response.json(
           { error: "Chat for this channel comes through StreamElements; no Twitch connection needed" },
@@ -323,15 +338,18 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
         connect,
         ...(connectMods ? { connectMods: true } : {}),
         ...(connectBot ? { connectBot: true } : {}),
+        ...(connectPoints ? { connectPoints: true } : {}),
         next,
       };
       scope = connect
         ? CONNECT_SCOPES.join(" ")
-        : connectBot
-          ? "moderation:read channel:bot"
-          : connectMods
-            ? "moderation:read"
-            : "";
+        : connectPoints
+          ? pointsScopes(env, channel).join(" ")
+          : connectBot
+            ? "moderation:read channel:bot"
+            : connectMods
+              ? "moderation:read"
+              : "";
     }
     const nonce = await sealState(env, pending);
     const target = new URL("https://id.twitch.tv/oauth2/authorize");
@@ -358,7 +376,8 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   if (pending?.signup && !url.searchParams.get("code"))
     return startPage(url.searchParams.get("error") === "access_denied" ? "denied" : "failed");
   // !: a connectMods sign-in always carries its channel (the login branch above)
-  if (pending?.connectMods && !url.searchParams.get("code")) return adminPage(pending.channel!, "mods=denied");
+  if (pending?.connectMods && !url.searchParams.get("code"))
+    return adminPage(pending.channel!, pending.connectPoints ? "points=denied" : "mods=denied");
   if (!pending || !url.searchParams.get("code"))
     return Response.json({ error: "Authorization expired or denied" }, { status: 400 });
   const tokenRes = await fetch("https://id.twitch.tv/oauth2/token", {
@@ -470,12 +489,16 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   if (pending.connectMods) {
     // !: a connectMods sign-in always carries its channel (the login branch above), here and below
     if (!(await isBroadcaster(env, user, pending.channel!))) return adminPage(pending.channel!, "mods=wrong_account");
-    if (!modScope || (pending.connectBot && !validation.scopes?.includes("channel:bot")))
+    if (pending.connectPoints) {
+      // !: as above
+      const missing = pointsScopes(env, pending.channel!).filter((x) => !validation.scopes?.includes(x));
+      if (missing.length) return adminPage(pending.channel!, "points=denied"); // !: as above
+    } else if (!modScope || (pending.connectBot && !validation.scopes?.includes("channel:bot")))
       return adminPage(pending.channel!, "mods=denied"); // !: as above
     await keepBroadcaster(
       env,
       pending.channel!, // !: as above
-      await seal(env, { ...tokens, userId: user.id, validatedAt: Date.now() }),
+      await seal(env, { ...tokens, userId: user.id, scopes: validation.scopes || [], validatedAt: Date.now() }),
     );
     await markModsConnected(env, pending.channel!); // !: as above
   }
@@ -483,12 +506,13 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   await record(env, "session:" + (await digest(key)), { user, createdAt: Date.now() }, Date.now() + SESSION_S * 1000);
   // Back to the page the sign-in started on; the viewer and mod pages get the channel when the address lacks it.
   const to = new URL(safeNext(pending.next || "/"), url.origin);
-  for (const k of ["signed_in", "mods", "bot"]) to.searchParams.delete(k);
+  for (const k of ["signed_in", "mods", "bot", "points"]) to.searchParams.delete(k);
   if (pending.channel && ["/", "/admin/"].includes(to.pathname) && !to.searchParams.get("channel"))
     to.searchParams.set("channel", pending.channel);
   to.searchParams.set("signed_in", "1");
   // bot=allowed: the admin page connects chat through the PixFray bot as soon as it opens
   if (pending.connectBot || (pending.signup && botScope)) to.searchParams.set("bot", "allowed");
+  else if (pending.connectPoints) to.searchParams.set("points", "connected");
   else if (pending.connectMods) to.searchParams.set("mods", "connected");
   if (pending.bot) to.searchParams.set("bot", "connected");
   if (pending.signup || pending.connectMods) to.hash = "chat";
@@ -513,6 +537,80 @@ function adminPage(channel: string, query: string): Response {
     },
   });
 }
+/** A channel's stored broadcaster token (broadcaster:<login>), from openBroadcaster. */
+export type Broadcaster = {
+  userId: string;
+  /** The scopes Twitch granted: from the hourly validation, else the token answer. */
+  scopes: () => string[];
+  /** Checks the token with Twitch at most hourly (renewing it when expired); `checked` says whether it ran now. */
+  validate: () => Promise<{ scopes: string[]; checked: boolean }>;
+  /** A Helix call as the broadcaster; a 401 renews the token once and retries. */
+  helix: (path: string, init?: RequestInit) => Promise<Response>;
+};
+// The broadcaster token a sign-in stored for this channel, or null. Renewals and validations are saved back.
+export async function openBroadcaster(env: Env, channel: string): Promise<Broadcaster | null> {
+  const encrypted = await record<StoredSeal | null>(env, "broadcaster:" + channel);
+  if (!encrypted) return null;
+  let token = await unseal<BroadcasterToken>(env, encrypted);
+  const keep = async () => keepBroadcaster(env, channel, await seal(env, token));
+  const renew = async () => {
+    const r = await fetch("https://id.twitch.tv/oauth2/token", {
+      method: "POST",
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: token.refresh_token,
+        client_id: env.TWITCH_CLIENT_ID,
+        client_secret: env.TWITCH_CLIENT_SECRET,
+      }),
+    });
+    const renewed = r.ok ? parseTwitchTokens(await r.json<unknown>().catch(() => undefined)) : null;
+    if (!renewed?.ok) throw new Error("Broadcaster must reconnect Twitch");
+    token = { ...token, ...renewed.value, validatedAt: 0 };
+  };
+  // Twitch's token answer lists its scopes as `scope`; a validation stores them as `scopes`.
+  const scopes = (): string[] =>
+    token.scopes || (Array.isArray(token.scope) ? token.scope.filter((x) => typeof x === "string") : []);
+  return {
+    userId: token.userId,
+    scopes,
+    async validate() {
+      if (Date.now() - token.validatedAt <= 3600000) return { scopes: scopes(), checked: false };
+      const check = () =>
+        fetch("https://id.twitch.tv/oauth2/validate", { headers: { Authorization: "OAuth " + token.access_token } });
+      let r = await check();
+      if (r.status === 401) {
+        await renew();
+        r = await check();
+      }
+      const validated = r.ok ? parseTwitchValidation(await r.json<unknown>().catch(() => undefined)) : null;
+      if (!validated?.ok) throw new Error("Twitch authorization unavailable");
+      const v = validated.value;
+      if (v.user_id !== token.userId || v.client_id !== env.TWITCH_CLIENT_ID)
+        throw new Error("Broadcaster authorization is invalid");
+      token = { ...token, scopes: v.scopes || [], validatedAt: Date.now() };
+      await keep();
+      return { scopes: scopes(), checked: true };
+    },
+    async helix(path, init = {}) {
+      const call = () =>
+        fetch("https://api.twitch.tv/helix" + path, {
+          ...init,
+          headers: {
+            "Client-Id": env.TWITCH_CLIENT_ID,
+            Authorization: "Bearer " + token.access_token,
+            ...(init.body ? { "Content-Type": "application/json" } : {}),
+          },
+        });
+      let r = await call();
+      if (r.status === 401) {
+        await renew();
+        await keep();
+        r = await call();
+      }
+      return r;
+    },
+  };
+}
 const verdict = (moderator: boolean): Access => ({
   owner: false,
   moderator,
@@ -530,62 +628,19 @@ export async function access(env: Env, user: TwitchUser | null | undefined, chan
   const cacheKey = "mod:" + channel + ":" + user.id,
     cached = await record<boolean | null>(env, cacheKey);
   if (cached !== null) return verdict(cached === true);
-  const encrypted = await record<StoredSeal | null>(env, "broadcaster:" + channel);
-  if (!encrypted)
+  const broadcaster = await openBroadcaster(env, channel);
+  if (!broadcaster)
     return {
       owner: false,
       moderator: false,
       canManage: false,
       reason: "Broadcaster must connect moderator authorization",
     };
-  let token = await unseal<BroadcasterToken>(env, encrypted);
-  const authHeaders = () => ({ "Client-Id": env.TWITCH_CLIENT_ID, Authorization: "Bearer " + token.access_token });
-  const renew = async () => {
-    const r = await fetch("https://id.twitch.tv/oauth2/token", {
-      method: "POST",
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: token.refresh_token,
-        client_id: env.TWITCH_CLIENT_ID,
-        client_secret: env.TWITCH_CLIENT_SECRET,
-      }),
-    });
-    const renewed = r.ok ? parseTwitchTokens(await r.json<unknown>().catch(() => undefined)) : null;
-    if (!renewed?.ok) throw new Error("Broadcaster must reconnect Twitch");
-    token = { ...token, ...renewed.value, validatedAt: 0 };
-  };
-  if (Date.now() - token.validatedAt > 3600000) {
-    let r = await fetch("https://id.twitch.tv/oauth2/validate", {
-      headers: { Authorization: "OAuth " + token.access_token },
-    });
-    if (r.status === 401) {
-      await renew();
-      r = await fetch("https://id.twitch.tv/oauth2/validate", {
-        headers: { Authorization: "OAuth " + token.access_token },
-      });
-    }
-    const validated = r.ok ? parseTwitchValidation(await r.json<unknown>().catch(() => undefined)) : null;
-    if (!validated?.ok) throw new Error("Twitch authorization unavailable");
-    const v = validated.value;
-    if (v.user_id !== token.userId || v.client_id !== env.TWITCH_CLIENT_ID || !v.scopes?.includes("moderation:read"))
-      throw new Error("Broadcaster authorization is invalid");
-    token.validatedAt = Date.now();
-    await keepBroadcaster(env, channel, await seal(env, token));
-  }
-  const checkMod = () =>
-    fetch(
-      "https://api.twitch.tv/helix/moderation/moderators?broadcaster_id=" +
-        token.userId +
-        "&user_id=" +
-        encodeURIComponent(user.id),
-      { headers: authHeaders() },
-    );
-  let r = await checkMod();
-  if (r.status === 401) {
-    await renew();
-    await keepBroadcaster(env, channel, await seal(env, token));
-    r = await checkMod();
-  }
+  const { scopes, checked } = await broadcaster.validate();
+  if (checked && !scopes.includes("moderation:read")) throw new Error("Broadcaster authorization is invalid");
+  const r = await broadcaster.helix(
+    "/moderation/moderators?broadcaster_id=" + broadcaster.userId + "&user_id=" + encodeURIComponent(user.id),
+  );
   const mods = r.ok ? parseModerators(await r.json<unknown>().catch(() => undefined)) : null;
   if (!mods?.ok) throw new Error("Current moderator role cannot be verified");
   const moderator = mods.value.includes(user.id);
