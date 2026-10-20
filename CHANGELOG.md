@@ -8,8 +8,14 @@ Rules (checked by `tests/changelog.test.ts`):
 - The newest version here equals `package.json` `version`, which is what production runs.
 - Every release on `/changelog/` has a heading here with the same date. A release with nothing a player or streamer
   would notice appears only here.
-- Versions are semver below 1.0: a minor bump for anything players or streamers can see, a patch bump otherwise.
+- Versions are semver below 1.0: a minor bump for new things players or streamers can see, a patch bump for fixes
+  and behind-the-scenes work.
   0.1.0 to 0.7.1 were cut after the fact from git history.
+
+## 0.8.1 - 2026-10-20
+
+- The changelog splits in two: `/changelog/` keeps only what players and streamers notice, and this file holds code
+  notes for every release. `tests/changelog.test.ts` checks both against `package.json` (#45).
 
 ## 0.8.0 - 2026-10-20
 
@@ -17,7 +23,7 @@ Rules (checked by `tests/changelog.test.ts`):
   `createPointReward` and `deletePointReward` admin actions (broadcaster only), idempotent grants and refunds keyed
   by redemption ID, and a per-room redemption log in `server/points.ts` (#43).
 - Debug tracing: alarm, duel and chat logs, daily room counters, and `scripts/logs.ts` to read them (#42).
-- `package.json` `version` is the version source; `/changelog/` and this file both follow it (#44).
+- `/changelog/` page, with `package.json` `version` as the version source (#44).
 - `tests/ui.ts` mock config gains `pairRankedPerStream`, missing since #40.
 
 ## 0.7.1 - 2026-10-16
