@@ -1,3 +1,3 @@
 // The newest release on the /changelog/ page (changelog/index.html), for the !changelog chat line.
-// tests/changelog.test.ts keeps it equal to the page's newest release and to package.json's version.
+// tests/changelog.test.ts keeps it equal to the page's newest release.
 export const LATEST_RELEASE = { version: "0.10.0", name: "Changelog in chat" };

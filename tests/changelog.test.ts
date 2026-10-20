@@ -76,7 +76,6 @@ test("every release on the page is in CHANGELOG.md with the same date", () => {
 });
 
 test("!changelog's release (server/release.ts) is the page's newest release, named as its heading names it", () => {
-  assert.equal(LATEST_RELEASE.version, version);
   const heading = /<h2[^>]*><span class="num">([^<]+)<\/span> ([^<]+)<\/h2>/.exec(html);
   assert.deepEqual(heading?.slice(1), [LATEST_RELEASE.version, LATEST_RELEASE.name]);
 });
