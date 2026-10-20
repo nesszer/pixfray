@@ -81,6 +81,29 @@ Characters tab. Approving puts the viewer in their sprite; **Turn down** drops t
 approved sprite can be removed later. Each viewer can send 6 a day; the AI redraw is limited to
 3 per viewer and 60 per channel a day.
 
+## 6. Channel point rewards (optional)
+
+Channel point rewards let viewers spend their Twitch channel points on PixFray dollars for their
+saved fighter. Twitch offers channel points only to Affiliates and Partners; on other channels
+adding a reward fails and the page says why.
+
+1. On the mod page's **Stream setup** tab, find **Channel point rewards that add PixFray dollars**.
+2. Click **Allow channel point rewards** and approve the permission while signed in to Twitch as
+   yourself. You come back to the mod page.
+3. Fill in the reward's name (up to 45 characters), its cost in channel points (1 to 1,000,000) and
+   the dollars it adds (1 to 10,000), then click **Add reward**. It shows under channel points on
+   Twitch right away.
+
+A channel can have 5 PixFray rewards; delete one to add another. **Delete** removes the reward from
+Twitch too; dollars already added stay. Only you (or the site owner) can add or delete rewards.
+Moderators see the rewards and the recent redemptions without the controls.
+
+Each redemption adds the dollars and the bot says the viewer's new wallet. A viewer without a saved
+fighter gets the points back and the bot links the fighter page. **Recent redemptions** lists the
+latest 20. If a line says Twitch's request queue wasn't updated, the redemption is still pending in
+Twitch's queue: refund or complete it there. If Twitch stops letting PixFray manage the rewards,
+the page asks you to allow them again.
+
 ## Channels that use StreamElements
 
 Channels that set PixFray up before the bot, and sites without a bot (`bot` unset in

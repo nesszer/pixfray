@@ -2169,6 +2169,201 @@ try {
         await context.close();
       }
   }
+  // 7d. Channel point rewards on a signed-up channel: the broadcaster allows them first, then adds and deletes rewards
+  // (five at most); a moderator reads the rewards and redemptions without controls.
+  {
+    const newstreamer = { id: "5505", login: "newstreamer", displayName: "NewStreamer" },
+      ch = "newstreamer",
+      login = "/auth/login?channel=newstreamer&connect=points";
+    const cases = [
+      {
+        name: "broadcaster, not allowed yet",
+        session: newstreamer,
+        access: { owner: false, broadcaster: true, moderator: false, canManage: true },
+        ready: false,
+      },
+      {
+        name: "broadcaster, allowed",
+        session: newstreamer,
+        access: { owner: false, broadcaster: true, moderator: false, canManage: true },
+        ready: true,
+      },
+      { name: "moderator", session: mod, access: { owner: false, moderator: true, canManage: true }, ready: true },
+    ];
+    for (const c of cases)
+      for (const s of sizes) {
+        const { context, page } = await newPage(s);
+        const posts: Loose[] = []; // Loose: the POST bodies, read by field below
+        const limits = { titleMax: 45, costMax: 1000000, dollarsMax: 10000, maxRewards: 5 };
+        let rewards = [
+          {
+            rewardId: "rw1",
+            title: "PixFray $100",
+            cost: 500,
+            dollars: 100,
+            status: "enabled",
+            createdAt: now - 3600000,
+          },
+        ];
+        const redemptions = [
+          { id: "rd2", at: now - 60000, rewardId: "rw1", user: "alice", outcome: "granted", dollars: 100, marked: 200 },
+          { id: "rd1", at: now - 120000, rewardId: "gone", user: "bob", outcome: "refunded", dollars: 0, marked: 401 },
+        ];
+        await page.route("**/api/session", (r) =>
+          json(r, {
+            user: c.session,
+            owner: false,
+            configured: true,
+            channels: ["nesszerra"],
+            productionEnabled: false,
+          }),
+        );
+        await page.route("**/api/access/" + ch, (r) => json(r, c.access));
+        await page.route("**/api/leaderboard/" + ch + "*", (r) => json(r, []));
+        await page.route("**/api/assets/" + ch, (r) =>
+          json(r, {
+            items: [],
+            usage: { count: 0, limit: 8, bytes: 0 },
+            limits: { maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864, maxCharacters: 8 },
+          }),
+        );
+        await page.route("**/api/admin/" + ch, (r) => {
+          if (r.request().method() === "POST") {
+            const body = r.request().postDataJSON();
+            posts.push(body);
+            if (body.action === "createPointReward" && body.payload.title === "Taken")
+              return json(
+                r,
+                { ok: false, reason: "points_rejected", error: "Twitch refused the reward: duplicate" },
+                400,
+              );
+            if (body.action === "createPointReward")
+              rewards = [
+                ...rewards,
+                { rewardId: "rw" + (rewards.length + 2), status: "enabled", createdAt: now, ...body.payload },
+              ];
+            if (body.action === "deletePointReward")
+              rewards = rewards.filter((x) => x.rewardId !== body.payload.rewardId);
+            return json(r, { ok: true, rewards, redemptions, limits });
+          }
+          return json(r, {
+            type: "snapshot",
+            channel: ch,
+            revision: 1,
+            paused: false,
+            chat: { connected: true, lastSeen: now, status: "enabled" },
+            config,
+            configVersion: 1,
+            round: 1,
+            players: [],
+            duels: [],
+            events: [],
+            chatStatus: {
+              connected: true,
+              source: "twitch",
+              status: "enabled",
+              subscriptionId: "sub-bot",
+              createdAt: now,
+            },
+            history: [{ version: 1, config, actorId: "system", at: now, note: "" }],
+            customUsage: { count: 0, limit: 8, bytes: 0 },
+            streamelements: null,
+            overlays: 1,
+            modsReady: true,
+            channelState: "on",
+            chatBot: { login: "pixfray", debug: false },
+            botCommands: { commands: [], counters: [], max: 50 },
+            botStatus: null,
+            points: { rewards, redemptions, limits },
+            pointsLogin: login,
+            pointsReady: c.ready,
+            access: c.access,
+          });
+        });
+        await page.goto(base + "/admin/?channel=" + ch + "#chat");
+        await page.waitForSelector("#points:not([hidden])");
+        assert.deepEqual(await page.locator("#points-table tbody tr").first().locator("td").allTextContents(), [
+          "PixFray $100",
+          "500",
+          "$100",
+          c.name === "moderator" ? "" : "Delete",
+        ]);
+        assert.deepEqual(
+          await page.locator("#points-redemptions tbody td:nth-child(4)").allTextContents(),
+          [
+            "Dollars added",
+            "No saved fighter, points refunded. Twitch's request queue wasn't updated, so check it there",
+          ],
+          c.name + ": outcomes, and a refund Twitch refused",
+        );
+        assert.equal(
+          await page.locator("#points-redemptions tbody td:nth-child(3)").nth(1).textContent(),
+          "A deleted reward",
+        );
+        if (c.name === "moderator") {
+          assert.equal(await page.locator("#points-form").isHidden(), true);
+          assert.equal(await page.locator("#points-connect").isHidden(), true);
+          assert.equal(await page.locator("#points-note").textContent(), "Only newstreamer can add or delete rewards.");
+        } else if (!c.ready) {
+          assert.equal(await page.locator("#points-form").isHidden(), true, "no form before the permission");
+          assert.equal(await page.locator("#points-login").getAttribute("href"), login);
+          assert.match(
+            (await page.locator("#points-connect-text").textContent())!, // element text, never null
+            /^Twitch no longer lets PixFray manage these rewards\./,
+          );
+        } else {
+          assert.equal(await page.locator("#points-connect").isHidden(), true);
+          await page.click("#points-add");
+          assert.equal(
+            await page.locator("#points-status").textContent(),
+            "Name the reward with 1 to 45 characters.",
+            "checked before sending",
+          );
+          await page.fill("#points-title-input", "Taken");
+          await page.fill("#points-cost", "100");
+          await page.fill("#points-dollars", "10");
+          await page.click("#points-add");
+          await page.waitForFunction(
+            () => /duplicate/.test(document.querySelector("#points-status")!.textContent), // the page has this element
+          );
+          for (const n of [2, 3, 4, 5]) {
+            await page.fill("#points-title-input", "Reward " + n);
+            await page.fill("#points-cost", String(n * 100));
+            await page.fill("#points-dollars", String(n * 10));
+            await page.click("#points-add");
+            await page.waitForFunction(
+              (t) => document.querySelector("#points-status")!.textContent.startsWith("Added " + t), // the page has this element
+              "Reward " + n,
+            );
+          }
+          assert.deepEqual(posts.at(-1), {
+            action: "createPointReward",
+            payload: { title: "Reward 5", cost: 500, dollars: 50 },
+          });
+          assert.equal(await page.locator("#points-table tbody tr").count(), 5);
+          assert.equal(await page.locator("#points-add").isDisabled(), true, "five rewards is the limit");
+          assert.equal(await page.locator("#points-note").textContent(), "5 of 5 rewards. Delete one to add another.");
+          await noOverflow(page, "channel points " + s.name);
+          for (const t of ["#points-table", "#points-redemptions"])
+            assert.ok(
+              await page
+                .locator(t)
+                .locator("xpath=..")
+                .evaluate((n) => n.scrollWidth <= n.clientWidth + 1),
+              t + " fits without sideways scrolling at " + s.name,
+            );
+          await page.locator("#points").screenshot({ path: shots + "/admin-points-" + s.name + ".png" });
+          page.once("dialog", (d) => d.accept());
+          await page.click('[data-reward="rw1"]');
+          await page.waitForFunction(
+            () => document.querySelector("#points-status")!.textContent === "Deleted PixFray $100.", // the page has this element
+          );
+          assert.deepEqual(posts.at(-1), { action: "deletePointReward", payload: { rewardId: "rw1" } });
+          assert.equal(await page.locator("#points-add").isDisabled(), false, "room for one more");
+        }
+        await context.close();
+      }
+  }
   // 8. /start: open sign-up, and each reason Twitch sign-in can send someone back, at 1280/390.
   for (const s of sizes) {
     const { context, page } = await newPage(s);

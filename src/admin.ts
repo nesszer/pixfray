@@ -30,6 +30,7 @@ import type {
   BotStatus,
   ChatStatus,
   LeaderRow as Fighter,
+  PointsPanel,
   Se,
   Session,
 } from "./parse.ts";
@@ -437,6 +438,24 @@ async function init() {
     url.searchParams.delete("mods");
     history.replaceState(null, "", url.pathname + url.search + url.hash);
   }
+  // Back from "Allow channel point rewards" (/auth/login?channel=<login>&connect=points)
+  const points = new URLSearchParams(location.search).get("points");
+  const POINTS: Record<string, string | undefined> = {
+    connected: "Channel point rewards are allowed. Add a reward below.",
+    denied: "The Twitch permission was cancelled, so PixFray can't make channel point rewards.",
+  };
+  // without ?points= this looks up "null", which isn't a key
+  if (POINTS[points as string]) {
+    // as above; element type from the page HTML
+    setStatus(
+      $("#points-status") as HTMLParagraphElement,
+      POINTS[points as string],
+      points === "connected" ? "ok" : "error",
+    );
+    const url = new URL(location.href);
+    url.searchParams.delete("points");
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
   // Back from "Add the PixFray bot" (/auth/login?connect=bot) or sign-up with channel:bot: connect chat through the bot now.
   if (new URLSearchParams(location.search).get("bot") === "allowed") {
     const url = new URL(location.href);
@@ -812,6 +831,7 @@ function renderAll() {
   renderChecklist();
   renderCheckinTest();
   renderBotCommands();
+  renderPoints();
   renderPower();
 }
 // Where chat comes from and whether it works. StreamElements counts as working only once a command has
@@ -2711,6 +2731,167 @@ async function commandAction(action: string, payload: Record<string, unknown>, s
   if (await commandAction("setCounter", { name, value }, status))
     setStatus(status, "Counter " + name + " is " + value + " now.", "ok");
   else button.disabled = false;
+});
+
+// ---------- channel point rewards (server/points.ts; the broadcaster or the owner adds and deletes, mods read) ----------
+const POINT_OUTCOMES: Record<string, string | undefined> = {
+  granted: "Dollars added",
+  refunded: "No saved fighter, points refunded",
+  no_fighter: "No saved fighter, not refunded",
+  ignored: "Not a PixFray reward",
+};
+const POINT_ERRORS: Record<string, string | undefined> = {
+  invalid_title: "Name the reward with 1 to 45 characters",
+  invalid_cost: "Pick a cost from 1 to 1000000 channel points",
+  invalid_dollars: "Pick 1 to 10000 dollars",
+  points_max_rewards: "A channel can have 5 PixFray rewards. Delete one first",
+  points_not_connected: "Twitch needs the channel point permission again. Use Allow channel point rewards",
+  reward_not_found: "That reward is already gone",
+};
+let shownPoints = "";
+function renderPoints() {
+  // S.admin!: called from renderAll and pointsAction, after load()
+  const a = S.admin!,
+    p: PointsPanel | undefined = a.points,
+    // element type from the page HTML
+    section = $("#points") as HTMLElement;
+  section.hidden = !p;
+  if (!p) return;
+  const rewards = Array.isArray(p.rewards) ? p.rewards : [],
+    redemptions = Array.isArray(p.redemptions) ? p.redemptions : [],
+    max = p.limits?.maxRewards || 5,
+    owner = mayBroadcast(),
+    ready = !!a.pointsReady;
+  // element type from the page HTML
+  ($("#points-connect") as HTMLDivElement).hidden = ready || !owner;
+  // element type from the page HTML
+  ($("#points-connect-text") as HTMLParagraphElement).textContent = rewards.length
+    ? "Twitch no longer lets PixFray manage these rewards. Allow it again so redemptions add dollars and refunds work."
+    : "First let PixFray make rewards on your channel. Twitch asks for one more permission, then you come back here.";
+  // element type from the page HTML
+  ($("#points-login") as HTMLAnchorElement).href = a.pointsLogin || "#";
+  // element type from the page HTML
+  ($("#points-form") as HTMLFormElement).hidden = !(owner && ready);
+  // element type from the page HTML
+  ($("#points-add") as HTMLButtonElement).disabled = rewards.length >= max;
+  // element type from the page HTML
+  ($("#points-note") as HTMLParagraphElement).textContent = !owner
+    ? "Only " + CHANNEL + " can add or delete rewards." + (ready ? "" : " Channel point rewards aren't allowed yet.")
+    : ready && rewards.length >= max
+      ? max + " of " + max + " rewards. Delete one to add another."
+      : "";
+  const key = JSON.stringify([p, owner]);
+  if (key === shownPoints) return;
+  shownPoints = key;
+  // element type from the page HTML
+  ($("#points-table tbody") as HTMLTableSectionElement).replaceChildren(
+    ...(rewards.length
+      ? rewards.map((r) =>
+          h(
+            "tr",
+            {},
+            h("td", {}, r.title),
+            h("td", { class: "num" }, r.cost.toLocaleString("en-US")),
+            h("td", { class: "num" }, "$" + r.dollars.toLocaleString("en-US")),
+            h(
+              "td",
+              {},
+              owner
+                ? h(
+                    "button",
+                    {
+                      class: "btn btn-small btn-danger",
+                      type: "button",
+                      "data-reward": r.rewardId,
+                      "data-title": r.title,
+                      "aria-label": "Delete " + r.title,
+                    },
+                    "Delete",
+                  )
+                : "",
+            ),
+          ),
+        )
+      : [h("tr", {}, h("td", { colspan: "4", class: "muted" }, "No rewards yet."))]),
+  );
+  const titles = new Map(rewards.map((r) => [r.rewardId, r.title]));
+  // element type from the page HTML
+  ($("#points-redemptions tbody") as HTMLTableSectionElement).replaceChildren(
+    ...(redemptions.length
+      ? redemptions.map((x) => {
+          // marked: 0 until Twitch answers, -1 when PixFray leaves it alone, else Twitch's HTTP status (1: no answer)
+          const unmarked = x.marked > 0 && (x.marked < 200 || x.marked > 299);
+          return h(
+            "tr",
+            {},
+            h("td", {}, dateTime(x.at)),
+            h("td", {}, x.user),
+            h("td", {}, titles.get(x.rewardId) || "A deleted reward"),
+            h(
+              "td",
+              {},
+              (POINT_OUTCOMES[x.outcome] || x.outcome) +
+                (unmarked ? ". Twitch's request queue wasn't updated, so check it there" : ""),
+            ),
+            h("td", { class: "num" }, x.dollars ? "$" + x.dollars.toLocaleString("en-US") : "0"),
+          );
+        })
+      : [h("tr", {}, h("td", { colspan: "5", class: "muted" }, "No redemptions yet."))]),
+  );
+}
+async function pointsAction(action: string, payload: Record<string, unknown>) {
+  // element type from the page HTML
+  const status = $("#points-status") as HTMLParagraphElement;
+  setStatus(status, "Working…");
+  const r = await api("/api/admin/" + CHANNEL, { method: "POST", body: { action, payload } });
+  if (!r.ok) {
+    setStatus(status, "That didn't work: " + (POINT_ERRORS[r.data?.reason] || errorText(r)) + ".", "error");
+    if (r.data?.reason === "points_not_connected") await load();
+    return false;
+  }
+  // S.admin!: the section shows only after load()
+  S.admin!.points = { rewards: r.data.rewards, redemptions: r.data.redemptions, limits: r.data.limits };
+  renderPoints();
+  return true;
+}
+// element type from the page HTML
+($("#points-form") as HTMLFormElement).addEventListener("submit", async (e) => {
+  e.preventDefault();
+  // element type from the page HTML
+  const status = $("#points-status") as HTMLParagraphElement,
+    // element type from the page HTML
+    title = ($("#points-title-input") as HTMLInputElement).value.trim(),
+    // element type from the page HTML
+    cost = Number(($("#points-cost") as HTMLInputElement).value),
+    // element type from the page HTML
+    dollars = Number(($("#points-dollars") as HTMLInputElement).value),
+    // element type from the page HTML
+    button = $("#points-add") as HTMLButtonElement;
+  if (!title || title.length > 45) return setStatus(status, POINT_ERRORS.invalid_title + ".", "error");
+  if (!Number.isInteger(cost) || cost < 1 || cost > 1e6)
+    return setStatus(status, POINT_ERRORS.invalid_cost + ".", "error");
+  if (!Number.isInteger(dollars) || dollars < 1 || dollars > 1e4)
+    return setStatus(status, POINT_ERRORS.invalid_dollars + ".", "error");
+  button.disabled = true;
+  const ok = await pointsAction("createPointReward", { title, cost, dollars });
+  button.disabled = false;
+  renderPoints();
+  if (!ok) return;
+  // element type from the page HTML
+  ($("#points-form") as HTMLFormElement).reset();
+  setStatus(status, "Added " + title + ". It shows under channel points on Twitch now.", "ok");
+});
+// element type from the page HTML
+($("#points-table") as HTMLTableElement).addEventListener("click", async (e) => {
+  // clicks come from elements in the table; the delete carriers are buttons
+  const del = (e.target as Element).closest<HTMLButtonElement>("[data-reward]");
+  if (!del || !confirm("Delete " + del.dataset.title + "? It disappears from Twitch too. Dollars already added stay."))
+    return;
+  del.disabled = true;
+  if (await pointsAction("deletePointReward", { rewardId: del.dataset.reward }))
+    // element type from the page HTML
+    setStatus($("#points-status") as HTMLParagraphElement, "Deleted " + del.dataset.title + ".", "ok");
+  else del.disabled = false;
 });
 
 // ---------- turning PixFray off (signed-up channels; the broadcaster or the owner, and only the owner undoes the owner's off) ----------

@@ -1559,14 +1559,19 @@ html:has(.config-bar.dirty) {
   /* mod tables: keep who, state and the row's button on screen; the detail columns are on wider screens */
   table#duels :is(th, td):nth-child(n + 3):nth-child(-n + 5),
   table#players :is(th, td):nth-child(n + 3):nth-child(-n + 6),
-  table#ranks :is(th, td):nth-child(n + 4):nth-child(-n + 5) {
+  table#ranks :is(th, td):nth-child(n + 4):nth-child(-n + 5),
+  table#points-redemptions :is(th, td):nth-child(odd):not(:last-child) {
     display: none;
   }
-  .table-wrap > table:is(#duels, #players, #ranks) {
+  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) {
     width: 100%;
   }
-  .table-wrap > table:is(#duels, #players, #ranks) td:first-child {
+  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) td:first-child {
     min-width: 0;
+  }
+  #points-table td:first-child,
+  #points-redemptions td {
+    white-space: normal;
   }
   .stat .value {
     font-size: var(--text-xl);

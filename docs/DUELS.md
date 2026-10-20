@@ -72,6 +72,7 @@ The duel is rolled at once, the moment the challenge is accepted.
   5 finished duels, at most $100 per stream, and only while the stream is live.
 - On a channel that has PixFray channel point rewards, redeeming one adds its dollars to your saved fighter and
   the bot says your new wallet. Without a saved fighter the redemption is refunded and the bot links the fighter page.
+  The broadcaster sets these rewards up on the mod page (docs/STREAMER_SETUP.md).
 - Dollars show only to mods and the owner on the website.
 
 ## Ranked and unrated duels

@@ -440,6 +440,20 @@ export type BotCommands = {
   commands: { name: string; reply: string }[];
   counters: { name: string; value: number }[];
 };
+/** Channel point rewards and the newest redemptions (server/points.ts pointsView). */
+export type PointsPanel = {
+  rewards: { rewardId: string; title: string; cost: number; dollars: number; status?: string; createdAt?: number }[];
+  redemptions: {
+    id: string;
+    at: number;
+    rewardId: string;
+    user: string;
+    outcome: string;
+    dollars: number;
+    marked: number;
+  }[];
+  limits: { titleMax: number; costMax: number; dollarsMax: number; maxRewards: number };
+};
 /** GET /api/admin/:channel: the room's state plus the mod page's panels. */
 export type Admin = {
   revision: number;
@@ -461,6 +475,9 @@ export type Admin = {
   checkinTestAllowed?: boolean;
   checkinTest?: { until: number; by?: string } | null;
   botCommands?: BotCommands;
+  points?: PointsPanel;
+  pointsLogin?: string;
+  pointsReady?: boolean;
   channelState?: string;
 };
 const ADMIN: Spec = {
@@ -485,6 +502,9 @@ const ADMIN: Spec = {
   customUsage: opt(isObject),
   checkinTest: opt(orNull(isObject)),
   botCommands: opt(isObject),
+  points: opt(isObject),
+  pointsLogin: opt(str),
+  pointsReady: opt(bool),
 };
 /** The room's lists, with each duel and player that doesn't read dropped. */
 function roomLists<T extends { duels: AdminDuel[]; players: AdminPlayer[] }>(value: T): T {

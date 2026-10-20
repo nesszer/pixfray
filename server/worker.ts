@@ -11,6 +11,8 @@ import {
   CHANNELS,
   touchBroadcaster,
   markModsConnected,
+  unseal,
+  POINTS_SCOPE,
 } from "./auth.ts";
 import { handleDeveloper, logWorkerError } from "./developer.ts";
 import { backupChannels } from "./backups.ts";
@@ -792,6 +794,11 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
         ]);
         const modsReady = !!broadcaster,
           modsLapsed = !modsReady && !!marker;
+        // pointsReady: the stored token carries channel:manage:redemptions (the points sign-in), read from the scopes sealed
+        // with it; renewals keep them. Twitch can still refuse later, which createPointReward answers with the sign-in link.
+        const pointsReady = broadcaster
+          ? !!(await unseal<{ scopes?: string[] }>(env, broadcaster).catch(() => null))?.scopes?.includes(POINTS_SCOPE)
+          : false;
         if (broadcaster)
           await Promise.all([
             touchBroadcaster(env, channel, broadcaster),
@@ -808,6 +815,7 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
           modsReady,
           modsLapsed,
           pointsLogin: pointsLoginUrl(channel),
+          pointsReady,
           channelState: state,
         });
       }
