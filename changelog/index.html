@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>What's new in PixFray · Changelog</title>
+<meta name="description" content="Every PixFray release, newest first: new duel features, fighter upgrades, bot commands and fixes.">
+<meta name="theme-color" content="#17110c">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/dashboard.css" data-design></head>
+<body>
+<header class="topbar"><div class="topbar-inner">
+  <a class="brand" href="/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
+  <nav aria-label="Pages"><a href="/">See a duel</a><a href="/start/">For streamers</a><a class="nav-cta" href="/play/">Pick your fighter</a></nav>
+</div></header>
+
+<!-- Releases go newest first. Each one is a <section class="release" id="v<version>"> with an h2 holding the version
+     and name and a <time datetime>; the newest version equals package.json "version" (tests/changelog.test.ts). -->
+<main class="page">
+  <header class="page-header">
+    <h1>What's new in PixFray</h1>
+    <p class="subtitle">Every release, newest first. PixFray is on version <span class="num" id="current-version">0.8.0</span>.</p>
+  </header>
+
+  <div class="with-index changelog">
+    <nav class="page-index" aria-label="Releases"><ol>
+      <li><a href="#v0.8.0">0.8.0 Channel point rewards</a></li>
+      <li><a href="#v0.7.1">0.7.1 Steadier rooms</a></li>
+      <li><a href="#v0.7.0">0.7.0 Deeper fighter stats</a></li>
+      <li><a href="#v0.6.2">0.6.2 Under the hood</a></li>
+      <li><a href="#v0.6.1">0.6.1 Ranks and backups</a></li>
+      <li><a href="#v0.6.0">0.6.0 Viewer sprites and bot controls</a></li>
+      <li><a href="#v0.5.0">0.5.0 Open sign-up and the PixFray bot</a></li>
+      <li><a href="#v0.4.0">0.4.0 PixFray</a></li>
+      <li><a href="#v0.3.0">0.3.0 Rematches and progression</a></li>
+      <li><a href="#v0.2.0">0.2.0 Upgrades and more fighters</a></li>
+      <li><a href="#v0.1.0">0.1.0 First duels</a></li>
+    </ol></nav>
+
+    <div>
+      <section class="release" id="v0.8.0" aria-labelledby="v0.8.0-title">
+        <h2 id="v0.8.0-title"><span class="num">0.8.0</span> Channel point rewards</h2>
+        <p class="meta"><time datetime="2026-10-20">20 October 2026</time></p>
+        <ul>
+          <li><span class="badge">New</span> Channel point rewards that add PixFray dollars to the redeemer's fighter, up to 5 per channel. The bot confirms each one in chat with the new wallet total. Setting them up from the mod page comes in a later release.</li>
+          <li><span class="badge">New</span> A viewer who redeems without a saved fighter gets their points back. A repeated delivery from Twitch never pays twice.</li>
+          <li><span class="badge">New</span> This changelog page.</li>
+          <li><span class="badge">Under the hood</span> Duel, alarm and chat logs and daily room counters, so problems are easier to trace.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.7.1" aria-labelledby="v0.7.1-title">
+        <h2 id="v0.7.1-title"><span class="num">0.7.1</span> Steadier rooms</h2>
+        <p class="meta"><time datetime="2026-10-16">16 October 2026</time></p>
+        <ul>
+          <li><span class="badge">Fixed</span> An expired rematch no longer keeps a channel's room waking up over and over.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.7.0" aria-labelledby="v0.7.0-title">
+        <h2 id="v0.7.0-title"><span class="num">0.7.0</span> Deeper fighter stats</h2>
+        <p class="meta"><time datetime="2026-10-15">15 October 2026</time></p>
+        <ul>
+          <li><span class="badge">New</span> Upgrade points have no cap. Each level costs more, every stat has a ceiling, and presets spend points for you.</li>
+          <li><span class="badge">New</span> Crit, dodge and counter stats, plus vitality.</li>
+          <li><span class="badge">New</span> Legendary stat rolls with one free reroll, and <code>!stats</code> to see your fighter's numbers in chat.</li>
+          <li><span class="badge">New</span> Turning a picture into a sprite works without AI: PixFray finds the subject and drops the background.</li>
+          <li><span class="badge">Changed</span> Duels are ranked only while the stream is live. Streamers can also limit how often the same two fighters duel in one stream.</li>
+          <li><span class="badge">Fixed</span> The bot no longer stalls on an unreadable shop answer.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.6.2" aria-labelledby="v0.6.2-title">
+        <h2 id="v0.6.2-title"><span class="num">0.6.2</span> Under the hood</h2>
+        <p class="meta"><time datetime="2026-10-12">12 October 2026</time></p>
+        <ul>
+          <li><span class="badge">Under the hood</span> All of PixFray now runs on strict TypeScript, and everything it receives is checked before use.</li>
+          <li><span class="badge">Fixed</span> A stray empty slot after full build slots, and the mod page on a channel without an arena.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.6.1" aria-labelledby="v0.6.1-title">
+        <h2 id="v0.6.1-title"><span class="num">0.6.1</span> Ranks and backups</h2>
+        <p class="meta"><time datetime="2026-10-09">9 October 2026</time></p>
+        <ul>
+          <li><span class="badge">Fixed</span> Saving your fighter keeps your rank.</li>
+          <li><span class="badge">Fixed</span> The <code>!fray</code> link opens your channel instead of the channel picker.</li>
+          <li><span class="badge">New</span> Every channel is backed up daily and kept for 90 days, and a lost rank can be restored.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.6.0" aria-labelledby="v0.6.0-title">
+        <h2 id="v0.6.0-title"><span class="num">0.6.0</span> Viewer sprites and bot controls</h2>
+        <p class="meta"><time datetime="2026-10-07">7 October 2026</time></p>
+        <ul>
+          <li><span class="badge">New</span> Turn any picture into a pixel fighter, with an optional AI redraw. Mods review each one before it goes on stream.</li>
+          <li><span class="badge">New</span> <code>!fray off</code> and <code>!fray on</code> silence or wake the bot in a channel.</li>
+          <li><span class="badge">New</span> Mods add the bot's own text commands, with counters, and can turn on a timed <code>!fray</code> reminder.</li>
+          <li><span class="badge">New</span> <code>!give</code> sends dollars (<code>!pay</code> still works), and an unanswered challenge gets an expiry line.</li>
+          <li><span class="badge">Changed</span> The bot names the duel winner in chat, and the overlay no longer shows a winner banner.</li>
+          <li><span class="badge">Changed</span> Duels show 2D hit effects: glow, sparks, shake and a knockout push-in. The overlay option <code>fx=off</code> turns them off, and <code>bubbles=0</code> hides chat bubbles.</li>
+          <li><span class="badge">Changed</span> Duels with a brand-new Twitch account are unrated, and the same two fighters have a daily ranked limit.</li>
+          <li><span class="badge">Changed</span> The home page is the 3D tour, and the channel picker moved to <a href="/play/">/play/</a>.</li>
+          <li><span class="badge">Fixed</span> Lead moderators count as mods, and a fighter changed on the website updates on stream.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.5.0" aria-labelledby="v0.5.0-title">
+        <h2 id="v0.5.0-title"><span class="num">0.5.0</span> Open sign-up and the PixFray bot</h2>
+        <p class="meta"><time datetime="2026-10-06">6 October 2026</time></p>
+        <ul>
+          <li><span class="badge">New</span> Any streamer can turn PixFray on from <a href="/start/">/start/</a>, with no invite.</li>
+          <li><span class="badge">New</span> The PixFray bot answers duel commands in chat, so streamers need no other chat bot.</li>
+          <li><span class="badge">New</span> Search the channel picker for any channel running PixFray.</li>
+          <li><span class="badge">New</span> Mods can try <code>!checkin</code> for 15 minutes while offline.</li>
+          <li><span class="badge">New</span> Anyone can run their own copy of PixFray from one config file.</li>
+          <li><span class="badge">Changed</span> Shop prices cut to about a third.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.4.0" aria-labelledby="v0.4.0-title">
+        <h2 id="v0.4.0-title"><span class="num">0.4.0</span> PixFray</h2>
+        <p class="meta"><time datetime="2026-10-05">5 October 2026</time></p>
+        <ul>
+          <li><span class="badge">Changed</span> Mini Chat is now PixFray, and the help command is <code>!fray</code>.</li>
+          <li><span class="badge">New</span> Build slots and cosmetics, on a fighter page with tabs for the shop, Ranks and Rules.</li>
+          <li><span class="badge">New</span> A 3D preview of your fighter, and a 3D tour of how a duel plays out.</li>
+          <li><span class="badge">New</span> <code>!look</code> links straight to picking or changing your fighter.</li>
+          <li><span class="badge">Changed</span> Every page redesigned as a night arena.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.3.0" aria-labelledby="v0.3.0-title">
+        <h2 id="v0.3.0-title"><span class="num">0.3.0</span> Rematches and progression</h2>
+        <p class="meta"><time datetime="2026-10-04">4 October 2026</time></p>
+        <ul>
+          <li><span class="badge">New</span> <code>!rematch</code> challenges your last opponent.</li>
+          <li><span class="badge">New</span> <code>!checkin</code> and stream streaks.</li>
+          <li><span class="badge">New</span> Dollars, with <code>!wallet</code>, <code>!pay</code> and gifts from mods.</li>
+          <li><span class="badge">New</span> Pets and the shop.</li>
+          <li><span class="badge">Changed</span> Duel results stay out of chat until the stream has shown them.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.2.0" aria-labelledby="v0.2.0-title">
+        <h2 id="v0.2.0-title"><span class="num">0.2.0</span> Upgrades and more fighters</h2>
+        <p class="meta"><time datetime="2026-10-02">2 October 2026</time></p>
+        <ul>
+          <li><span class="badge">New</span> Upgrades earned from wins (power, guard and luck) and hats to earn.</li>
+          <li><span class="badge">New</span> 56 built-in characters, and up to 24 uploaded characters per channel.</li>
+          <li><span class="badge">New</span> <code>!top</code> and <code>!elo</code>, and a limit on how many fighters show on stream.</li>
+          <li><span class="badge">New</span> Streamer sign-up, with a setup checklist that ticks off each step as it starts working.</li>
+          <li><span class="badge">New</span> Optional duel announcements on the overlay.</li>
+        </ul>
+      </section>
+
+      <section class="release" id="v0.1.0" aria-labelledby="v0.1.0-title">
+        <h2 id="v0.1.0-title"><span class="num">0.1.0</span> First duels</h2>
+        <p class="meta"><time datetime="2026-10-01">1 October 2026</time></p>
+        <ul>
+          <li><span class="badge">New</span> Chatters walk on stream as pixel fighters through an OBS overlay.</li>
+          <li><span class="badge">New</span> Duels with <code>!challenge @name</code> and <code>!fight</code>, settled by alternating d6 rolls with crits.</li>
+          <li><span class="badge">New</span> Elo, wins and losses saved for every fighter.</li>
+          <li><span class="badge">New</span> The overlay replays each duel: the fighters meet, HP bars drop with each roll, and the loser is knocked out.</li>
+          <li><span class="badge">New</span> A fighter page for viewers and duel controls for mods.</li>
+        </ul>
+      </section>
+    </div>
+  </div>
+</main>
+<footer class="site-foot"><div class="site-foot-inner">
+  <a class="foot-brand" href="/"><svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 2h6v6H2zM12 2h6v6h-6zM7 7h6v6H7zM2 12h6v6H2zM12 12h6v6h-6z"/></svg>PixFray</a>
+  <nav aria-label="More"><a href="/">See a duel</a><a href="/play/">Pick a channel</a><a href="/start/">For streamers</a><a href="/changelog/" aria-current="page">Changelog</a></nav>
+  <p>Duels for Twitch chat. Your fighter is saved per channel, and signing in shares only your public Twitch name.</p>
+</div></footer>
+</body></html>

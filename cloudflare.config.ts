@@ -41,6 +41,8 @@ export default defineConfig(({ mode }) => {
           "/start/*",
           "/play",
           "/play/*",
+          "/changelog",
+          "/changelog/*",
           "/intro",
           "/intro/*",
           "/robots.txt",

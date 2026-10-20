@@ -26,6 +26,7 @@ test("pages and browser scripts carry no hard-coded owner, channel or domain", a
     "admin/index.html",
     "admin/dev/index.html",
     "start/index.html",
+    "changelog/index.html",
     "intro/index.html",
     "public/overlay.html",
     "src/served/overlay.ts",

@@ -155,6 +155,7 @@ test("no page runs inline script, so script-src needs no hashes", () => {
     "admin/index.html",
     "admin/dev/index.html",
     "start/index.html",
+    "changelog/index.html",
     "intro/index.html",
     "public/overlay.html",
     "public/404.html",
@@ -190,7 +191,7 @@ test("public/_headers repeats the Worker policies for pages assets serve without
     const i = line.indexOf(":");
     rules[at][line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
   }
-  for (const path of ["/", "/admin/*", "/start/*", "/play/*"])
+  for (const path of ["/", "/admin/*", "/start/*", "/play/*", "/changelog/*"])
     assert.equal(rules[path]["content-security-policy"], PAGE_CSP, path);
   assert.equal(rules["/overlay*"]["content-security-policy"], OVERLAY_CSP);
   assert.match(

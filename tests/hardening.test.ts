@@ -599,7 +599,7 @@ test("robots.txt and sitemap.xml follow the host: production lists its pages, th
   assert.match(robots.body, /Disallow: \/api\//);
   assert.match(robots.body, new RegExp("Sitemap: " + site.origins.production + "/sitemap.xml"));
   const map = await get(site.origins.production, "/sitemap.xml");
-  for (const p of ["/", "/play/", "/start/"])
+  for (const p of ["/", "/play/", "/start/", "/changelog/"])
     assert.match(map.body, new RegExp("<loc>" + site.origins.production + p + "</loc>"));
   assert.equal((await get(site.origins.test, "/robots.txt")).body, "User-agent: *\nDisallow: /\n");
   assert.equal((await get(site.origins.test, "/sitemap.xml")).status, 404);

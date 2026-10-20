@@ -1,7 +1,7 @@
 # PixFray design
 
 Applies to every page PixFray renders: the home page tour (`/`), the picker (`/play/`), a channel's fighter page
-(`/?channel=`), `/start/`, the mod page (`/admin/`), the owner page, the not-found page and the OBS overlay.
+(`/?channel=`), `/start/`, `/changelog/`, the mod page (`/admin/`), the owner page, the not-found page and the OBS overlay.
 The look is a **night arena tavern**: warm near-black wood, one gold trim accent, Fraunces headings, and the 3D
 arena scene behind the page. Everything here is already built in `public/dashboard.css` (pages) and
 `src/intro/intro.css` (home page); this file says how to use it. Read it before changing any page.
@@ -14,6 +14,7 @@ Write one line for yourself before laying anything out: who opens this page and 
 |---|---|---|
 | `/` | A viewer or streamer who heard of PixFray: learn what it is | The 3D tour and one way in |
 | `/play/` | A viewer: find the stream they watch | "Which stream are you watching?", the search, the channel rows |
+| `/changelog/` | A viewer or streamer: see what changed and when | The current version, then releases newest first |
 | `/?channel=` | A viewer: build their fighter and save it | The 3D fighter stage, the character grid, **Save profile** |
 | `/start/` | A streamer: set PixFray up | The headline, **Sign in with Twitch**, the live overlay demo |
 | `/admin/` | A mod or the broadcaster: run duels live | The live state, Pause duels, the setup checklist |

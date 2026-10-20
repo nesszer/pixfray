@@ -1383,6 +1383,31 @@ html:has(.config-bar.dirty) {
   border-left-color: var(--trim);
 }
 
+/* changelog: releases newest first, separated by rules; the change kind is a quiet badge, never win/loss colors */
+.release + .release {
+  margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+}
+.release h2 {
+  margin: 0;
+}
+.release .meta {
+  margin: var(--space-1) 0 var(--space-4);
+}
+.release ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: var(--measure);
+}
+.release li + li {
+  margin-top: var(--space-3);
+}
+.release .badge {
+  margin-right: var(--space-2);
+}
+
 @media (max-width: 900px) {
   /* narrow screens: the preview card sticks to the top of the screen as a compact bar while you pick in the tabs
      below it, so the fighter and Save are always in view (dashboard.ts keeps scroll-padding-top clear of it) */
@@ -1469,6 +1494,10 @@ html:has(.config-bar.dirty) {
     border-radius: var(--radius-sm);
     margin: 0;
     padding: var(--space-1) var(--space-3);
+  }
+  /* eleven release chips would push the first release off the phone screen */
+  .changelog .page-index {
+    display: none;
   }
 }
 @media (max-width: 760px) {

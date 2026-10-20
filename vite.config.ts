@@ -5,7 +5,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import site from "./site.config.js";
 import { linkServed, servedSources, servedVersion, stripServed } from "./scripts/lib/served.ts";
-// Multi-page build: index.html (viewer dashboard: /?channel= and the /play/ picker), "/admin/", "/admin/dev/", "/start/" (streamer sign-up),
+// Multi-page build: index.html (viewer dashboard: /?channel= and the /play/ picker), "/admin/", "/admin/dev/", "/start/" (streamer sign-up), "/changelog/",
 // intro/index.html (3D showcase, served at "/" by server/worker.ts page()).
 // Add new pages here as extra inputs; files in public/ are copied as-is.
 // The pages' HTML names the site through tokens filled in from site.config.js, so a copy of PixFray needs no HTML edits:
@@ -97,6 +97,7 @@ export default defineConfig({
             admin: "admin/index.html",
             dev: "admin/dev/index.html",
             start: "start/index.html",
+            changelog: "changelog/index.html",
             intro: "intro/index.html",
           },
         },

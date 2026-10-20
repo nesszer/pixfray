@@ -313,6 +313,7 @@ async function page(request: Request, env: Env, url: URL): Promise<Response> {
     channel = url.searchParams.get("channel");
   if (/^\/intro(\/(index\.html)?)?$/.test(path)) return Response.redirect(url.origin + "/" + url.search, 301);
   if (path === "/play") return Response.redirect(url.origin + "/play/" + url.search, 301);
+  if (path === "/changelog") return Response.redirect(url.origin + "/changelog/", 301);
   if (path === "/play/" && channel) return Response.redirect(url.origin + "/" + url.search, 302);
   if (path === "/admin/" && !channel) {
     const own = await ownAdmin(request, env, url);
@@ -347,7 +348,7 @@ async function ownAdmin(request: Request, env: Env, url: URL): Promise<string | 
   }
 }
 // robots.txt and sitemap.xml follow the host: the production site lists its public pages, and the test site stays out of search.
-const PUBLIC_PAGES = ["/", "/play/", "/start/"];
+const PUBLIC_PAGES = ["/", "/play/", "/start/", "/changelog/"];
 function seoFile(url: URL, path: string): Response {
   const text = (body: string, type: string) =>
     new Response(body, {
