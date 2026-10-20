@@ -292,8 +292,8 @@
         </div>
       </section>
       <section class="section" id="points" aria-labelledby="points-title" hidden>
-        <h2 id="points-title">Channel point rewards that add PixFray dollars</h2>
-        <p class="muted small">A viewer redeems the reward with channel points, the bot adds its dollars to their saved fighter and says their new wallet. A viewer without a saved fighter gets the points back. Twitch gives channel points only to Affiliates and Partners.</p>
+        <h2 id="points-title">Channel point rewards that add style dollars</h2>
+        <p class="muted small">A viewer redeems the reward with channel points and the bot adds its dollars to their style dollars. Style dollars buy looks, hats and build slots, never pets, and <code>!give</code> can't move them, so channel points don't buy duel strength. A viewer without a saved fighter gets the points back. Twitch gives channel points only to Affiliates and Partners.</p>
         <div id="points-connect" class="stack" hidden>
           <p id="points-connect-text"></p>
           <div class="toolbar"><a class="btn" id="points-login" href="#">Allow channel point rewards</a></div>
@@ -305,7 +305,7 @@
         <form id="points-form" class="controls" novalidate hidden>
           <div><label for="points-title-input">Reward name</label><input id="points-title-input" maxlength="45" autocomplete="off" required><p class="hint">Up to 45 characters, shown on Twitch</p></div>
           <div><label for="points-cost">Cost (channel points)</label><input id="points-cost" type="number" min="1" max="1000000" step="1" inputmode="numeric" required><p class="hint">1 to 1000000</p></div>
-          <div><label for="points-dollars">Adds ($)</label><input id="points-dollars" type="number" min="1" max="10000" step="1" inputmode="numeric" required><p class="hint">1 to 10000 PixFray dollars</p></div>
+          <div><label for="points-dollars">Adds ($)</label><input id="points-dollars" type="number" min="1" max="10000" step="1" inputmode="numeric" required><p class="hint">1 to 10000 style dollars</p></div>
           <div><button class="btn" id="points-add" type="submit">Add reward</button></div>
         </form>
         <p class="small muted" id="points-note"></p>

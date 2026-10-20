@@ -2735,7 +2735,7 @@ async function commandAction(action: string, payload: Record<string, unknown>, s
 
 // ---------- channel point rewards (server/points.ts; the broadcaster or the owner adds and deletes, mods read) ----------
 const POINT_OUTCOMES: Record<string, string | undefined> = {
-  granted: "Dollars added",
+  granted: "Style dollars added",
   refunded: "No saved fighter, points refunded",
   no_fighter: "No saved fighter, not refunded",
   ignored: "Not a PixFray reward",

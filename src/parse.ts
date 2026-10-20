@@ -150,6 +150,8 @@ export type Profile = Build & {
   elo: number;
   // absent on a fighter who never earned any (server/game.ts shownProfile)
   dollars?: number;
+  // channel point rewards (server/points.ts): spent on anything but pets
+  styleDollars?: number;
   streak?: number;
   build?: number;
   builds?: (Build | null)[];
@@ -161,6 +163,7 @@ const PROFILE: Spec = {
   losses: num,
   elo: num,
   dollars: opt(num),
+  styleDollars: opt(num),
   bonus: opt(num),
   streak: opt(num),
   build: opt(num),
@@ -189,9 +192,9 @@ export function parseProfileSaved(value: unknown): Parsed<{ profile: Profile }> 
   const profile = parseProfile(value.profile);
   return profile.ok ? ok({ ...value, profile: profile.value }) : profile;
 }
-/** POST /api/shop/:channel: the dollars left and what the fighter owns now. */
-export type Bought = { dollars: number; owned?: Partial<Owned> };
-export const parseBought = shape<Bought>({ dollars: num, owned: opt(isOwned) }, "purchase");
+/** POST /api/shop/:channel: the dollars and style dollars left and what the fighter owns now. */
+export type Bought = { dollars: number; styleDollars?: number; owned?: Partial<Owned> };
+export const parseBought = shape<Bought>({ dollars: num, styleDollars: opt(num), owned: opt(isOwned) }, "purchase");
 
 /** A shop pet: its id, words, price (null when not for sale), tier, stat boost and, for an upload, its picture. */
 export type ShopPet = {

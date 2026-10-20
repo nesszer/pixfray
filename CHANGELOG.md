@@ -12,6 +12,14 @@ Rules (checked by `tests/changelog.test.ts`):
   and behind-the-scenes work.
   0.1.0 to 0.7.1 were cut after the fact from git history.
 
+## 0.12.0 - 2026-10-20
+
+- Channel point redemptions add to a new `profiles.style_dollars` balance instead of `dollars` (server/points.ts).
+  `buy` in `server/channel.ts` spends style dollars first on hats, cosmetics and slots and never on pets; `give` and
+  `giftDollars` stay on `dollars`. `!wallet`, the profile, the shop result and the export carry it; the public
+  leaderboard strips it.
+- Test site: `POST /api/devtools/:channel/style` and `scripts/devtools.ts style <bot> <amount>`.
+
 ## 0.11.0 - 2026-10-20
 
 - Channel point rewards section on the mod page's Stream setup tab (`renderPoints` in `src/admin.ts`): the

@@ -1294,6 +1294,7 @@ function roomExport(room: DevRoom, channel: string) {
       checkins: p.checkins,
       streak: p.streak,
       dollars: p.dollars,
+      styleDollars: p.style_dollars,
       pet: p.pet,
       recolor: p.recolor,
       petColor: p.pet_color,

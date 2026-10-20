@@ -2297,6 +2297,83 @@ function botRoom(env: Extra): BotRoom {
   return r;
 }
 
+test("style dollars: buy hats, cosmetics and build slots before dollars, never pets; !give can't move them; private like dollars", async () => {
+  const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40) }, { quick: true });
+  const se = (await r.call("/admin")).body.streamelements;
+  await r.call("/chat", {
+    method: "POST",
+    body: { action: "connected", subscriptionId: "se-streamelements", status: "enabled", createdAt: Date.now() },
+  });
+  await r.save("u1", "alice");
+  await r.save("u2", "bob");
+  let m = 0;
+  const cmd = async (id: string, login: string, action: string, target = "", amount?: string) =>
+    (
+      await r.call("/se?origin=https%3A%2F%2Ftest.example", {
+        method: "POST",
+        body: {
+          key: se.secret,
+          action,
+          userId: id,
+          username: login,
+          displayName: login,
+          target,
+          messageId: "s" + ++m,
+          ...(amount !== undefined ? { amount } : {}),
+        },
+      })
+    ).body.reply;
+  const style = (userId: string, amount: number) => r.call("/dev-style", { method: "POST", body: { userId, amount } });
+  const buy = async (kind: string, id = "") => {
+    const { status, body } = await r.call("/shop", { method: "POST", userId: "u1", body: { userId: "u1", kind, id } });
+    return [status, body.error || body.reason, body.price, body.dollars, body.styleDollars];
+  };
+  assert.equal((await style("u9", 100)).status, 404, "no fighter, no style dollars");
+  assert.equal((await style("u1", 100)).body.styleDollars, 100);
+  assert.deepEqual(await buy("pet", "fox"), [409, "not_enough", 60, 0, 100], "style dollars never buy a pet");
+  assert.deepEqual(await buy("hat", "wizard"), [200, "bought", 9, 0, 91]);
+  assert.deepEqual(await buy("trail", "flames"), [200, "bought", 40, 0, 51]);
+  assert.deepEqual(await buy("slot"), [409, "not_enough", 60, 0, 51], "$51 style is $9 short of a slot");
+  await r.call("/admin", {
+    method: "POST",
+    body: { actorId: "mod1", action: "giftDollars", payload: { username: "alice", amount: 20 } },
+  });
+  assert.deepEqual(await buy("slot"), [200, "bought", 60, 11, 0], "style dollars first, then $9 of dollars");
+  assert.deepEqual(await buy("pet", "fox"), [409, "not_enough", 60, 11, 0]);
+  assert.equal((await style("u1", 30)).body.styleDollars, 30);
+  const profile = (await r.call("/profile?userId=u1")).body;
+  assert.deepEqual([profile.dollars, profile.styleDollars], [11, 30]);
+  assert.equal(
+    await cmd("u1", "alice", "wallet"),
+    "@alice: $11 PixFray dollars, $30 style dollars, 0 upgrade points, 0-stream streak.",
+  );
+  assert.equal(await cmd("u2", "bob", "wallet"), "@bob: $0 PixFray dollars, 0 upgrade points, 0-stream streak.");
+  const board = (await r.call("/leaderboard")).body,
+    mine = (await r.call("/leaderboard?private=1")).body;
+  assert.deepEqual(
+    board.map((p: Extra) => ["dollars", "styleDollars"].filter((k) => k in p)),
+    [[], []],
+    "the public board shows neither balance",
+  );
+  assert.equal(mine.find((p: Extra) => p.userId === "u1").styleDollars, 30);
+  // !give (and !pay) move dollars only: $11 is all alice can give, and her style dollars stay.
+  await r.call("/dev-live", { method: "POST", body: { live: true, streamId: "s1" } });
+  r.ctx.storage.sql.exec("UPDATE profiles SET wins = 3, losses = 2 WHERE user_id = 'u1'");
+  assert.equal(await cmd("u1", "alice", "give", "bob", "20"), "@alice, you only have $11.");
+  assert.equal(await cmd("u1", "alice", "give", "bob", "11"), "@alice gave $11 to @bob. You have $0 left.");
+  const rows = r.ctx.storage.sql
+    .exec<{ username: string; dollars: number; style_dollars: number }>(
+      "SELECT username, dollars, style_dollars FROM profiles ORDER BY username",
+    )
+    .toArray()
+    .map(({ username, dollars, style_dollars }) => [username, dollars, style_dollars]);
+  assert.deepEqual(rows, [
+    ["alice", 0, 30],
+    ["bob", 11, 0],
+  ]);
+  assert.equal((await style("u1", -1000)).body.styleDollars, 0, "taking style dollars back stops at 0");
+});
+
 test("chat bot: !give gives dollars (and !pay still does); replies name !give", async () => {
   const r = botRoom({});
   await r.save("u1", "alice");

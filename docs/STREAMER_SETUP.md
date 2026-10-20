@@ -83,22 +83,24 @@ approved sprite can be removed later. Each viewer can send 6 a day; the AI redra
 
 ## 6. Channel point rewards (optional)
 
-Channel point rewards let viewers spend their Twitch channel points on PixFray dollars for their
-saved fighter. Twitch offers channel points only to Affiliates and Partners; on other channels
-adding a reward fails and the page says why.
+Channel point rewards let viewers spend their Twitch channel points on style dollars for their
+saved fighter. Style dollars buy looks, hats and build slots, never pets (the only shop item that
+adds stats), and `!give` can't move them, so channel points don't buy duel strength. Twitch offers
+channel points only to Affiliates and Partners; on other channels adding a reward fails and the
+page says why.
 
-1. On the mod page's **Stream setup** tab, find **Channel point rewards that add PixFray dollars**.
+1. On the mod page's **Stream setup** tab, find **Channel point rewards that add style dollars**.
 2. Click **Allow channel point rewards** and approve the permission while signed in to Twitch as
    yourself. You come back to the mod page.
 3. Fill in the reward's name (up to 45 characters), its cost in channel points (1 to 1,000,000) and
-   the dollars it adds (1 to 10,000), then click **Add reward**. It shows under channel points on
+   the style dollars it adds (1 to 10,000), then click **Add reward**. It shows under channel points on
    Twitch right away.
 
 A channel can have 5 PixFray rewards; delete one to add another. **Delete** removes the reward from
-Twitch too; dollars already added stay. Only you (or the site owner) can add or delete rewards.
+Twitch too; style dollars already added stay. Only you (or the site owner) can add or delete rewards.
 Moderators see the rewards and the recent redemptions without the controls.
 
-Each redemption adds the dollars and the bot says the viewer's new wallet. A viewer without a saved
+Each redemption adds the style dollars and the bot says the viewer's new style balance. A viewer without a saved
 fighter gets the points back and the bot links the fighter page. **Recent redemptions** lists the
 latest 20. If a line says Twitch's request queue wasn't updated, the redemption is still pending in
 Twitch's queue: refund or complete it there. If Twitch stops letting PixFray manage the rewards,

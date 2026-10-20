@@ -9,7 +9,7 @@ scripted duels, and an alt account that types in real Twitch chat. Production ha
   (`cloudflare.config.ts`). The production Worker has no such binding, so no token can match there.
   `tests/worker.test.ts` checks both configs.
 - A request with `Authorization: Bearer <token>` acts as the owner for `/api/dev/*` and
-  `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live|shop|export)`. A wrong or short
+  `/api/admin/*`, and is the only way into `/api/devtools/<channel>/(profile|chat|live|shop|style|export)`. A wrong or short
   token gets 401; an owner session without the token gets 404 from `/api/devtools`.
 - The token can't change production: promote, hotfix and rollback to production return 403
   `owner_session_required`; only the owner signed in with Twitch can run them. It also can't save build
@@ -40,6 +40,7 @@ node scripts/devtools.ts say a "!checkin" --via se
 node scripts/devtools.ts say a "!wallet"
 node scripts/devtools.ts say a "!pay @testbot_b 10" --via se
 node scripts/devtools.ts gift a 300
+node scripts/devtools.ts style a 200
 node scripts/devtools.ts buy a pet fox
 node scripts/devtools.ts equip a fox
 node scripts/devtools.ts say a "!pet" --via se
@@ -55,7 +56,8 @@ node scripts/devtools.ts clean
   stream for streaks (`--stream <id>` reuses one). `!pay` needs it too. `live off` answers "not live", and `live real`
   goes back to asking Twitch. Only the test Worker reads this, because only it has the token.
 - `buy <bot> <pet|hat|recolor|petcolor|accessory|trail|effect|taunt|title> <id>` (or `buy <bot> slot`)
-  spends the bot's dollars like the viewer page's Buy button (`gift` them first). `equip <bot> <pet|none|->`
+  spends the bot's dollars like the viewer page's Buy button (`gift` them first, or `style` for anything but a pet).
+  `style <bot> <amount>` adds style dollars the way a channel point reward does. `equip <bot> <pet|none|->`
   brings a pet the bot owns (`-` keeps the current one) and takes `field=id` pairs for cosmetics it owns
   (`recolor`, `petColor`, `accessory`, `trail`, `winEffect`, `taunt`, `title`, `build`). It keeps the
   character, color and hat.

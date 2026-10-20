@@ -416,14 +416,15 @@ export function seCheckinText(
       return "Couldn't reach Twitch to check the stream. Try again in a minute!";
   }
 }
-// !wallet: dollars, upgrade points and streak. w = ChannelRoom.wallet() or null (no fighter).
+// !wallet: dollars, style dollars (only when there are some), upgrade points and streak. w = ChannelRoom.wallet() or null (no fighter).
 export function seWalletText(
-  w: { dollars: number; points: number; streak: number } | null | undefined,
+  w: { dollars: number; style?: number; points: number; streak: number } | null | undefined,
   { who = "", origin = "", channel = "" }: SePointsOptions = {},
 ): string {
   const me = short(who) || "you";
   if (!w) return noFighter(me, true, origin, channel);
-  return `@${me}: $${w.dollars} PixFray dollars, ${w.points} upgrade point${w.points === 1 ? "" : "s"}, ${w.streak}-stream streak.`;
+  const style = w.style ? `, $${w.style} style dollars` : "";
+  return `@${me}: $${w.dollars} PixFray dollars${style}, ${w.points} upgrade point${w.points === 1 ? "" : "s"}, ${w.streak}-stream streak.`;
 }
 
 // !pet [@name]: p = ChannelRoom.petInfo() -> { name, pet: {label, tier, boost} | null }, or null (no fighter).

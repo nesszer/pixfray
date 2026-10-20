@@ -460,6 +460,18 @@ async function handleDevtools(
     if (!item.ok) return json({ error: "Invalid item" }, 400);
     return internal(request, env, channel, "/shop", { userId, ...item.value });
   }
+  // Style dollars as a channel point redemption adds them (server/points.ts), so the shop split can be tried without a
+  // real reward; a negative amount takes them back.
+  if (action === "style") {
+    const amount = data.amount;
+    if (typeof amount !== "number" || !Number.isInteger(amount) || Math.abs(amount) > 100000)
+      return json({ error: "amount: a whole number up to 100000" }, 400);
+    return roomFetch(null, env, channel, "/dev-style", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, amount }),
+    });
+  }
   if (action === "chat") {
     const text = account.value.text.slice(0, 500);
     if (!text.trim()) return json({ error: "text required" }, 400);
@@ -623,7 +635,7 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
       user = dev ? await devUser(env) : s?.user || null,
       owner = await isOwner(env, user);
     // both groups are required in the pattern, so a match has them
-    const devMatch = path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop|export)$/) as
+    const devMatch = path.match(/^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop|style|export)$/) as
       | (RegExpMatchArray & [string, string, string])
       | null;
     if (path.startsWith("/api/devtools/")) {
