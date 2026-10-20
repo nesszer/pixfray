@@ -399,6 +399,7 @@ Bots on the test site
                               the bot brings a pet it owns (- keeps it) and wears cosmetics it owns, e.g.
                               recolor=crimson petColor=gold accessory=cape trail=flames winEffect=confetti taunt=gg title=legend build=1
   gift <bot> <amount>         a mod gift of PixFray dollars (negative takes them back)
+  style <bot> <amount>        style dollars as a channel point reward adds them (negative takes them back)
   clean                       remove the bots and their profiles
 
 Alt account in real Twitch chat (posts only while the channel is offline)
@@ -464,6 +465,14 @@ const commands: Record<string, () => Promise<unknown>> = {
       body: { action: "giftDollars", payload: { username: botByName(args[0]).username, amount: Number(args[1]) } },
     });
     console.log(`${r.username}: ${r.amount > 0 ? "+" : ""}${r.amount} -> $${r.dollars}`);
+  },
+  style: async () => {
+    const b = botByName(args[0]);
+    const r = await site<{ styleDollars: number }>(`/api/devtools/${CHANNEL}/style`, {
+      method: "POST",
+      body: { ...b, amount: Number(args[1]) },
+    });
+    console.log(`${b.username}: style $${r.styleDollars}`);
   },
   say: async () => {
     const who = botByName(args[0]);

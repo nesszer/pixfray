@@ -2297,7 +2297,7 @@ try {
         assert.deepEqual(
           await page.locator("#points-redemptions tbody td:nth-child(4)").allTextContents(),
           [
-            "Dollars added",
+            "Style dollars added",
             "No saved fighter, points refunded. Twitch's request queue wasn't updated, so check it there",
           ],
           c.name + ": outcomes, and a refund Twitch refused",

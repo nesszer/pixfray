@@ -67,13 +67,16 @@ The duel is rolled at once, the moment the challenge is accepted.
 
 - Ranked duels pay saved fighters: $5 a win, $3 a loss. Past a pair limit (if mods set one, below), a
   duel pays half ($2 and $1). Other unrated duels pay nothing.
-- `!wallet` shows your dollars.
+- `!wallet` shows your dollars, and your style dollars if you have any.
 - `!pay @name 10` passes them on (`!give` on channels with the PixFray chat bot). You can pay after
   5 finished duels, at most $100 per stream, and only while the stream is live.
-- On a channel that has PixFray channel point rewards, redeeming one adds its dollars to your saved fighter and
-  the bot says your new wallet. Without a saved fighter the redemption is refunded and the bot links the fighter page.
-  The broadcaster sets these rewards up on the mod page (docs/STREAMER_SETUP.md).
-- Dollars show only to mods and the owner on the website.
+- On a channel that has PixFray channel point rewards, redeeming one adds **style dollars** to your saved fighter
+  and the bot says your style balance. Without a saved fighter the redemption is refunded and the bot links the
+  fighter page. The broadcaster sets these rewards up on the mod page (docs/STREAMER_SETUP.md).
+- Style dollars buy looks, hats and build slots, and they're spent before your duel dollars. They never buy pets
+  (pets are the only thing in the shop that adds stats), and `!give` / `!pay` can't move them, so channel points
+  don't buy duel strength.
+- Dollars and style dollars show only to you, mods and the owner on the website.
 
 ## Ranked and unrated duels
 

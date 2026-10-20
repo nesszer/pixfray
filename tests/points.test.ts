@@ -22,7 +22,9 @@ const ORIGIN = "https://staging.pixfray.xyz",
 function pointsRoom() {
   const ctx = fakeCtx(),
     sql = ctx.storage.sql;
-  sql.exec("CREATE TABLE profiles (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, dollars INTEGER NOT NULL)");
+  sql.exec(
+    "CREATE TABLE profiles (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, dollars INTEGER NOT NULL, style_dollars INTEGER NOT NULL DEFAULT 0)",
+  );
   ensureDeveloperSchema(sql);
   ensureTrackerSchema(sql);
   ensurePointsSchema(sql);
@@ -30,7 +32,12 @@ function pointsRoom() {
   const call = (channel: string, path: string, init: RequestInit = {}) =>
     handleRoomPoints(room, new Request("https://room" + path, init), { path, channel, maxDollars: 1_000_000 });
   const wallet = (userId: string) =>
-    sql.exec<{ dollars: number }>("SELECT dollars FROM profiles WHERE user_id = ?", userId).toArray()[0]?.dollars;
+    sql
+      .exec<{ dollars: number; style: number }>(
+        "SELECT dollars, style_dollars AS style FROM profiles WHERE user_id = ?",
+        userId,
+      )
+      .toArray()[0];
   return { room, sql, call, wallet };
 }
 const post = (body: object): RequestInit => ({
@@ -101,31 +108,34 @@ function eventsub(r: ReturnType<typeof pointsRoom>) {
   return { done, paths, deliver };
 }
 
-test("a redemption adds the reward's dollars once, even when Twitch retries it", async () => {
+test("a redemption adds the reward's dollars to style dollars once, even when Twitch retries it; duel dollars stay", async () => {
   const r = pointsRoom(),
     e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles VALUES ('7', 'viewer', 100)");
+  r.sql.exec("INSERT INTO profiles (user_id, username, dollars) VALUES ('7', 'viewer', 100)");
   assert.equal((await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }))).status, 200);
   const first = await e.deliver("notification", { subscription, event: redemption("red-1") });
   const retry = await e.deliver("notification", { subscription, event: redemption("red-1") });
   assert.deepEqual([first.status, retry.status], [204, 204]);
-  assert.equal(r.wallet("7"), 150);
+  assert.deepEqual({ ...r.wallet("7") }, { dollars: 100, style: 50 });
   assert.equal(e.done.length, 1, "the retry marks nothing and posts nothing");
   assert.equal(e.done[0]?.mark, "FULFILLED");
-  assert.equal(e.done[0]?.reply, "@Viewer got $50 PixFray dollars from PixFray $50. Wallet: $150.");
+  assert.equal(
+    e.done[0]?.reply,
+    "@Viewer got $50 style dollars from PixFray $50 for looks, hats and build slots. Style: $50.",
+  );
   assert.equal(readCounts(r.room)[0]?.counts.points_granted, 1);
 });
 
 test("a reward PixFray doesn't hold is ignored: no dollars, no mark", async () => {
   const r = pointsRoom(),
     e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles VALUES ('7', 'viewer', 100)");
+  r.sql.exec("INSERT INTO profiles (user_id, username, dollars) VALUES ('7', 'viewer', 100)");
   const res = await e.deliver("notification", {
     subscription,
     event: redemption("red-2", { reward: { id: "other", title: "Hydrate", cost: 100 } }),
   });
   assert.equal(res.status, 204);
-  assert.equal(r.wallet("7"), 100);
+  assert.deepEqual({ ...r.wallet("7") }, { dollars: 100, style: 0 });
   assert.deepEqual(e.done, []);
 });
 
@@ -150,13 +160,13 @@ test("a viewer with no fighter gets their points back and a line that differs pe
   );
 });
 
-test("a wallet never passes the dollar cap", async () => {
+test("style dollars never pass the dollar cap", async () => {
   const r = pointsRoom(),
     e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles VALUES ('7', 'viewer', 999990)");
+  r.sql.exec("INSERT INTO profiles (user_id, username, dollars, style_dollars) VALUES ('7', 'viewer', 5, 999990)");
   await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }));
   await e.deliver("notification", { subscription, event: redemption("red-3") });
-  assert.equal(r.wallet("7"), 1_000_000);
+  assert.deepEqual({ ...r.wallet("7") }, { dollars: 5, style: 1_000_000 });
 });
 
 test("the redemption subscription's challenge is answered, and a revocation marks the reward", async () => {
@@ -308,7 +318,8 @@ test("a new reward is subscribed to, and removed again when Twitch refuses the s
         assert.deepEqual(JSON.parse(String(init.body)), {
           title: "PixFray $50",
           cost: 500,
-          prompt: "Adds $50 PixFray dollars to your fighter. Save a fighter first, or your points come back.",
+          prompt:
+            "Adds $50 style dollars for looks, hats and build slots (not pets). Save a fighter first, or your points come back.",
           should_redemptions_skip_request_queue: false,
         });
         return Response.json({ data: [{ id: "rw-new" }] });

@@ -149,6 +149,7 @@ type ProfileTable = {
   free_miss_at: number;
   last_stream: string;
   dollars: number;
+  style_dollars: number;
   given_in_stream: number;
   give_stream: string;
   pet: string;
@@ -176,7 +177,7 @@ type ProfileRow = Omit<
   | "account_checked_at"
 > & { pet_custom: string | null; pet_roll: string | null; last_opponent?: string };
 /** A saved fighter as normalizeProfileRow builds it: the player plus the columns only the profile keeps. */
-type Profile = Player & { checkins: number; streak: number; dollars: number; build: number };
+type Profile = Player & { checkins: number; streak: number; dollars: number; styleDollars: number; build: number };
 /** A config_history row. */
 type ConfigHistoryRow = {
   version: number;
@@ -278,7 +279,14 @@ type ProfileWrite = Pick<
 > &
   Partial<Cosmetics> & { pet?: string; lastOpponentId?: string | undefined };
 /** A profile saveProfile answers with: the saved loadout plus the columns only the profiles table keeps. */
-type SavedProfile = ProfileWrite & { bonus: number; checkins: number; streak: number; dollars: number; build: number };
+type SavedProfile = ProfileWrite & {
+  bonus: number;
+  checkins: number;
+  streak: number;
+  dollars: number;
+  styleDollars: number;
+  build: number;
+};
 /** saveProfile's answer. */
 type SaveResult =
   | { ok: false; reason: string | undefined; status?: number; profile?: undefined; state?: undefined }
@@ -380,7 +388,7 @@ const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 const MAX_GIFT = 10_000; // the most a mod can add or take back in one gift
 // Every query that builds a profile with normalizeProfileRow reads these columns.
 const PROFILE_COLUMNS =
-  "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, bonus_points, checkins, streak, dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom, (SELECT roll FROM owned_items o WHERE o.user_id = profiles.user_id AND o.kind = 'pet' AND o.item_id = profiles.pet) AS pet_roll";
+  "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, bonus_points, checkins, streak, dollars, style_dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom, (SELECT roll FROM owned_items o WHERE o.user_id = profiles.user_id AND o.kind = 'pet' AND o.item_id = profiles.pet) AS pet_roll";
 
 function json(data: unknown, status = 200, headers: { [name: string]: string } = {}): Response {
   return new Response(JSON.stringify(data), {
@@ -475,6 +483,7 @@ function normalizeProfileRow(row: ProfileRow | null | undefined, config: Config)
     checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
     streak: Number.isInteger(row.streak) ? row.streak : 0,
     dollars: Number.isInteger(row.dollars) ? row.dollars : 0, // PixFray dollars (payDuels, give, giftDollars)
+    styleDollars: Number.isInteger(row.style_dollars) ? row.style_dollars : 0, // channel point rewards (server/points.ts)
     ...petFieldsOf(row),
     ...cleanCosmetics(
       // each COSMETIC_COLUMNS column is in PROFILE_COLUMNS
@@ -584,6 +593,10 @@ export class ChannelRoom extends DurableObject<Env> {
         sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     if (!profileColumns.includes("give_stream"))
       sql.exec("ALTER TABLE profiles ADD COLUMN give_stream TEXT NOT NULL DEFAULT ''");
+    // 0.12.0: style dollars from channel point rewards (server/points.ts). They buy looks and build slots, never pets,
+    // and !give never moves them, so channel points can't buy duel strength.
+    if (!profileColumns.includes("style_dollars"))
+      sql.exec("ALTER TABLE profiles ADD COLUMN style_dollars INTEGER NOT NULL DEFAULT 0");
     // v2.8: the active pet, plus bought items and uploaded pets (server/pets.ts). PROFILE_COLUMNS reads custom_pets.
     if (!profileColumns.includes("pet")) sql.exec("ALTER TABLE profiles ADD COLUMN pet TEXT NOT NULL DEFAULT ''");
     const rolled = ensurePetSchema(sql);
@@ -862,10 +875,10 @@ export class ChannelRoom extends DurableObject<Env> {
       });
     }
 
-    // Dollars are private: the Worker asks for them (?private=1) only for mods and the owner.
+    // Dollars and style dollars are private: the Worker asks for them (?private=1) only for mods and the owner.
     if (path === "/leaderboard" && request.method === "GET") {
       const board = this.leaderboard(channel);
-      return json(url.searchParams.get("private") === "1" ? board : board.map(({ dollars, ...p }) => p));
+      return json(url.searchParams.get("private") === "1" ? board : board.map(({ dollars, styleDollars, ...p }) => p));
     }
 
     // Saved looks by login for the overlay (?u=a,b,c, at most 20): only viewers with a saved fighter are listed.
@@ -1192,6 +1205,23 @@ export class ChannelRoom extends DurableObject<Env> {
           : "",
       });
     }
+    // Test site only: add style dollars to a saved fighter (or take them back), as a channel point redemption would.
+    if (path === "/dev-style" && request.method === "POST") {
+      if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
+      const read = await this.readJson(request);
+      if (!read.ok) return json({ error: read.error }, 400);
+      const { userId, amount } = read.value,
+        sql = this.ctx.storage.sql;
+      if (typeof userId !== "string" || typeof amount !== "number" || !Number.isInteger(amount))
+        return json({ error: "userId and amount required" }, 400);
+      const row = sql
+        .exec<{ style_dollars: number }>("SELECT style_dollars FROM profiles WHERE user_id = ?", userId)
+        .toArray()[0];
+      if (!row) return json({ error: "no_fighter" }, 404);
+      const styleDollars = Math.max(0, Math.min(MAX_DOLLARS, row.style_dollars + amount));
+      sql.exec("UPDATE profiles SET style_dollars = ? WHERE user_id = ?", styleDollars, userId);
+      return json({ ok: true, userId, styleDollars });
+    }
     // Test site only: pretend the channel is live ({live:true}, a new stream id unless streamId is given), offline
     // ({live:false}), or ask Twitch again ({live:null}).
     if (path === "/dev-live" && request.method === "POST") {
@@ -1504,6 +1534,7 @@ export class ChannelRoom extends DurableObject<Env> {
         checkins: existing?.checkins || 0,
         streak: existing?.streak || 0,
         dollars: existing?.dollars || 0,
+        styleDollars: existing?.styleDollars || 0,
       };
       return { ok: true, profile: saved, state: result.state };
     });
@@ -2648,7 +2679,9 @@ export class ChannelRoom extends DurableObject<Env> {
     // shownProfile passes null (no fighter) through
     const profile =
       userId && shownProfile(this.getProfile(userId, state.config) as Profile, hiddenResults(state, Date.now()));
-    return profile ? { dollars: profile.dollars, points: pointsFor(profile), streak: profile.streak } : null;
+    return profile
+      ? { dollars: profile.dollars, style: profile.styleDollars, points: pointsFor(profile), streak: profile.streak }
+      : null;
   }
 
   // !give @name amount: dollars from one saved fighter to another, only while the channel is live. Limits (config):
@@ -2781,7 +2814,8 @@ export class ChannelRoom extends DurableObject<Env> {
   }
 
   // Shop: a pet (price by tier, config) or a hat before its wins unlock it (hatPrice). Pays with the dollars the
-  // stream has shown, like give(). Buying doesn't equip; the dashboard selects it and the viewer saves.
+  // stream has shown, like give(). A pet takes duel dollars only; anything else spends style dollars (channel point
+  // rewards) first, then dollars. Buying doesn't equip; the dashboard selects it and the viewer saves.
   buy(
     channel: string,
     userId: string,
@@ -2793,7 +2827,10 @@ export class ChannelRoom extends DurableObject<Env> {
         config = state.config,
         now = Date.now();
       const row = sql
-        .exec<Pick<ProfileTable, "wins" | "dollars">>("SELECT wins, dollars FROM profiles WHERE user_id = ?", userId)
+        .exec<Pick<ProfileTable, "wins" | "dollars" | "style_dollars">>(
+          "SELECT wins, dollars, style_dollars FROM profiles WHERE user_id = ?",
+          userId,
+        )
         .toArray()[0];
       if (!row) return { ok: false, reason: "no_fighter" };
       const h = hiddenResults(state, now).get(userId) || { wins: 0, dollars: 0 };
@@ -2821,9 +2858,17 @@ export class ChannelRoom extends DurableObject<Env> {
         return { ok: false, reason: "owned" };
       // The page sends the price it showed; a mod may have changed it since, and the viewer should see the new one first.
       if (expected !== undefined && expected !== price) return { ok: false, reason: "price_changed", price };
-      const dollars = Math.max(0, row.dollars - h.dollars);
-      if (price > dollars) return { ok: false, reason: "not_enough", price, dollars };
-      sql.exec("UPDATE profiles SET dollars = dollars - ? WHERE user_id = ?", price, userId);
+      const dollars = Math.max(0, row.dollars - h.dollars),
+        fromStyle = kind === "pet" ? 0 : Math.min(row.style_dollars, price),
+        fromDollars = price - fromStyle;
+      if (fromDollars > dollars)
+        return { ok: false, reason: "not_enough", price, dollars, styleDollars: row.style_dollars };
+      sql.exec(
+        "UPDATE profiles SET dollars = dollars - ?, style_dollars = style_dollars - ? WHERE user_id = ?",
+        fromDollars,
+        fromStyle,
+        userId,
+      );
       sql.exec(
         "INSERT INTO owned_items (user_id, kind, item_id, price, bought_at, roll) VALUES (?, ?, ?, ?, ?, ?)",
         userId,
@@ -2840,8 +2885,18 @@ export class ChannelRoom extends DurableObject<Env> {
         kind,
         id,
         price,
+        fromStyle,
       });
-      return { ok: true, reason: "bought", kind, id, price, dollars: dollars - price, owned: this.owned(userId) };
+      return {
+        ok: true,
+        reason: "bought",
+        kind,
+        id,
+        price,
+        dollars: dollars - fromDollars,
+        styleDollars: row.style_dollars - fromStyle,
+        owned: this.owned(userId),
+      };
     });
   }
 
@@ -2852,7 +2907,10 @@ export class ChannelRoom extends DurableObject<Env> {
       const sql = this.ctx.storage.sql,
         state = this.readState(channel);
       const fighter = sql
-        .exec<Pick<ProfileTable, "dollars">>("SELECT dollars FROM profiles WHERE user_id = ?", userId)
+        .exec<Pick<ProfileTable, "dollars" | "style_dollars">>(
+          "SELECT dollars, style_dollars FROM profiles WHERE user_id = ?",
+          userId,
+        )
         .toArray()[0];
       if (!fighter) return { ok: false, reason: "no_fighter" };
       const pet = petCatalog(sql, channel, state.config).find((p) => p.id === id);
@@ -2895,6 +2953,7 @@ export class ChannelRoom extends DurableObject<Env> {
         kind: "reroll",
         id,
         dollars,
+        styleDollars: fighter.style_dollars,
         owned: this.owned(userId),
         state: changed ? state : null,
       };

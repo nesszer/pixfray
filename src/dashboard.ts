@@ -581,7 +581,11 @@ async function buy(
     return;
   }
   // as Profile: only a fighter with a profile can buy (canShop), so the spread copies one
-  state.profile = { ...state.profile, dollars: r.data.dollars } as Profile;
+  state.profile = {
+    ...state.profile,
+    dollars: r.data.dollars,
+    styleDollars: r.data.styleDollars ?? state.profile?.styleDollars,
+  } as Profile;
   state.owned = { ...emptyOwned(), ...(r.data.owned || state.owned) };
   if (kind === "slot") {
     switchBuild(state.owned.slots - 1, copy(state.d));
@@ -609,7 +613,8 @@ const buyButton = (
   out: Element,
   text = "Buy for $" + price,
 ) => {
-  const have = state.profile?.dollars || 0,
+  // A pet takes duel dollars only; anything else spends style dollars (channel point rewards) first.
+  const have = (state.profile?.dollars || 0) + (kind === "pet" ? 0 : state.profile?.styleDollars || 0),
     short = canShop() && have < price;
   // Out of reach: say how far, so the affordable items are the only gold buttons
   return h(
@@ -618,7 +623,13 @@ const buyButton = (
       type: "button",
       class: "btn btn-small buy" + (short ? " short" : ""),
       disabled: !canShop() || short,
-      title: short ? "Costs $" + price + "; you have $" + have : null,
+      title: short
+        ? "Costs $" +
+          price +
+          "; you have $" +
+          have +
+          (kind === "pet" && state.profile?.styleDollars ? " duel dollars" : "")
+        : null,
       "aria-label": "Buy " + label + " for $" + price + (short ? ", you need $" + (price - have) + " more" : ""),
       // as: the handler sits on this button
       onclick: (e: MouseEvent) => buy(kind, item, label, price, e.currentTarget as HTMLButtonElement, out, text),
@@ -899,7 +910,12 @@ function renderPets() {
   box.replaceChildren(option(null), ...state.shop.pets.map(withReroll));
   checkPicked(box, "pet", state.d.pet);
   ($("#pet-note") as HTMLSpanElement).textContent = canShop() // element type from the page HTML
-    ? "(you own " + state.owned.pets.length + ", you have " + money(state.profile!.dollars) + ")" // profile!: canShop() needs one
+    ? "(you own " +
+      state.owned.pets.length +
+      ", you have " +
+      money(state.profile!.dollars) + // profile!: canShop() needs one
+      (state.profile!.styleDollars ? " in duel dollars; style dollars don't buy pets" : "") + // as above
+      ")"
     : "";
   // element type from the page HTML
   ($("#petcolor-help") as HTMLParagraphElement).textContent = petById(state.d.pet)
@@ -1652,12 +1668,18 @@ function renderSignedIn() {
     ($("#stat-elo") as HTMLDivElement).textContent = state.profile.elo as unknown as string;
     ($("#stat-wl") as HTMLDivElement).textContent = state.profile.wins + " / " + state.profile.losses; // element type from the page HTML
     ($("#stat-dollars") as HTMLDivElement).textContent = money(state.profile.dollars); // element type from the page HTML
+    // element type from the page HTML; shown only once channel point rewards added some
+    ($("#stat-style-box") as HTMLDivElement).hidden = !state.profile.styleDollars;
+    ($("#stat-style") as HTMLDivElement).textContent = money(state.profile.styleDollars); // element type from the page HTML
     // element type from the page HTML; as unknown as string: textContent turns the number into text, as in the .js
     ($("#stat-streak") as HTMLDivElement).textContent = (state.profile.streak || 0) as unknown as string;
   }
   // element type from the page HTML; profile!: canShop() needs one
   ($("#shop-note") as HTMLParagraphElement).textContent =
     (canShop() ? "You have " + money(state.profile!.dollars) + ". " : "") + // profile!: canShop() needs one
+    (canShop() && state.profile!.styleDollars // as above
+      ? "Your " + money(state.profile!.styleDollars) + " in style dollars from channel points goes first. " // as above
+      : "") +
     "Spend the PixFray dollars you earn in duels. Everything here changes looks only, not stats, and you can wear it in any build." +
     (signedIn() ? "" : " Try anything on now; sign in to buy.");
 }

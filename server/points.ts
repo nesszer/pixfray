@@ -1,8 +1,9 @@
-// Twitch channel point rewards that add PixFray dollars (docs/CONTRACTS.md §2, §4, §7). The broadcaster allows it once
+// Twitch channel point rewards that add style dollars (docs/CONTRACTS.md §2, §4, §7). The broadcaster allows it once
 // at /auth/login?channel=<login>&connect=points (channel:manage:redemptions). PixFray creates each reward with the
 // broadcaster's token, so only PixFray can fulfil, refund or delete it, and subscribes to that reward's redemptions.
-// A redemption adds the reward's dollars to the viewer's fighter and is marked FULFILLED; with no fighter it is
-// CANCELED, which gives the viewer their points back.
+// A redemption adds the reward's dollars to the viewer's style balance (profiles.style_dollars: looks and build slots,
+// never pets, never moved by !give) and is marked FULFILLED; with no fighter it is CANCELED, which gives the viewer
+// their points back.
 import { openBroadcaster, POINTS_SCOPE, randomToken } from "./auth.ts";
 import { appHelix, deleteSubscription, eventsubSecret, localTestMode, EVENTSUB_PATH } from "./eventsub.ts";
 import { logRoomEvent } from "./developer.ts";
@@ -117,7 +118,10 @@ export async function createReward(
     body: JSON.stringify({
       title,
       cost,
-      prompt: "Adds $" + dollars + " PixFray dollars to your fighter. Save a fighter first, or your points come back.",
+      prompt:
+        "Adds $" +
+        dollars +
+        " style dollars for looks, hats and build slots (not pets). Save a fighter first, or your points come back.",
       should_redemptions_skip_request_queue: false,
     }),
   });
@@ -290,7 +294,7 @@ export type RedeemReply = {
 };
 
 /**
- * Adds a reward's dollars to the redeeming viewer's fighter, once per redemption id. A reward PixFray doesn't own is
+ * Adds a reward's dollars to the redeeming viewer's style balance, once per redemption id. A reward PixFray doesn't own is
  * ignored (Twitch lets only the app that made it change it). With no fighter the redemption is refunded when it is still
  * UNFULFILLED, which it always is for PixFray's rewards unless the streamer turned on skipping the request queue.
  */
@@ -313,8 +317,8 @@ export function redeem(
   const seen = sql.exec<RedemptionRow>("SELECT * FROM point_redemptions WHERE id = ?", r.id).toArray()[0];
   if (seen) return nothing(seen.outcome as RedeemOutcome, true); // as: only redeem writes outcome, from RedeemOutcome
   const profile = sql
-    .exec<{ user_id: string; username: string; dollars: number }>(
-      "SELECT user_id, username, dollars FROM profiles WHERE user_id = ?",
+    .exec<{ user_id: string; username: string; style_dollars: number }>(
+      "SELECT user_id, username, style_dollars FROM profiles WHERE user_id = ?",
       r.userId,
     )
     .toArray()[0];
@@ -325,8 +329,8 @@ export function redeem(
     reply = "";
   room.ctx.storage.transactionSync(() => {
     if (profile) {
-      total = Math.max(0, Math.min(maxDollars, profile.dollars + reward.dollars));
-      sql.exec("UPDATE profiles SET dollars = ? WHERE user_id = ?", total, r.userId);
+      total = Math.max(0, Math.min(maxDollars, profile.style_dollars + reward.dollars));
+      sql.exec("UPDATE profiles SET style_dollars = ? WHERE user_id = ?", total, r.userId);
     }
     sql.exec(
       "INSERT INTO point_redemptions (id, at, reward_id, user_id, user_login, outcome, dollars, marked) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -345,7 +349,8 @@ export function redeem(
     );
   });
   // The wallet total, or the redemption id's tail, makes each line differ: Twitch drops a repeat within 30 s.
-  if (profile) reply = `@${name} got $${reward.dollars} PixFray dollars from ${reward.title}. Wallet: $${total}.`;
+  if (profile)
+    reply = `@${name} got $${reward.dollars} style dollars from ${reward.title} for looks, hats and build slots. Style: $${total}.`;
   else
     reply =
       `@${name} needs a saved fighter first: make one at ${origin}/?channel=${r.channel}` +

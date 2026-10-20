@@ -945,6 +945,26 @@ test("dev token (test site only): the right token acts as the owner and can seed
     ).status,
     400,
   );
+  // Style dollars reach the room as a whole amount; anything else stops at the Worker.
+  await worker.fetch(
+    devReq("/api/devtools/nesszerra/style", { userId: "testbot:a", username: "testbot_a", amount: 200 }),
+    f.env,
+  );
+  assert.deepEqual(
+    { path: f.forwarded.at(-1).path, body: f.forwarded.at(-1).body },
+    { path: "/dev-style", body: { userId: "testbot:a", amount: 200 } },
+  );
+  for (const amount of [1.5, "200", 100001])
+    assert.equal(
+      (
+        await worker.fetch(
+          devReq("/api/devtools/nesszerra/style", { userId: "testbot:a", username: "testbot_a", amount }),
+          f.env,
+        )
+      ).status,
+      400,
+      String(amount),
+    );
   await worker.fetch(
     devReq("/api/devtools/nesszerra/profile", { userId: "testbot:a", username: "testbot_a", pet: "fox" }),
     f.env,
