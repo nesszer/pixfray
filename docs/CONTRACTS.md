@@ -52,7 +52,8 @@ fighter (saving and buying stay closed).
 
 Pages (server/worker.ts `page()`): `/` is the intro (intro/index.html); `/?channel=x` is that channel's fighter page;
 `/play/` is the channel picker (`/play/?channel=x` moves to `/?channel=x`, `/play` to `/play/`); `/changelog/` is the release notes
-(changelog/index.html, static; its newest release must equal `package.json` `version`, checked by tests/changelog.test.ts);
+(changelog/index.html, static, game changes only; its subtitle names `package.json` `version`, and each release on it has
+a `CHANGELOG.md` heading with the same date, whose newest equals `package.json`, checked by tests/changelog.test.ts);
 `/intro/` moves to `/` (301).
 `/admin/` without `?channel=` sends a signed-in streamer whose own channel is set up (on or turned off) and who can manage
 it to `/admin/?channel=<their login>` (302); anyone else

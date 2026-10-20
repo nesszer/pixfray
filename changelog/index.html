@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>What's new in PixFray · Changelog</title>
-<meta name="description" content="Every PixFray release, newest first: new duel features, fighter upgrades, bot commands and fixes.">
+<meta name="description" content="What changed in PixFray for players and streamers, newest first: new duel features, fighter upgrades, bot commands and fixes.">
 <meta name="theme-color" content="#17110c">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -12,21 +12,21 @@
   <nav aria-label="Pages"><a href="/">See a duel</a><a href="/start/">For streamers</a><a class="nav-cta" href="/play/">Pick your fighter</a></nav>
 </div></header>
 
-<!-- Releases go newest first. Each one is a <section class="release" id="v<version>"> with an h2 holding the version
-     and name and a <time datetime>; the newest version equals package.json "version" (tests/changelog.test.ts). -->
+<!-- Only what players and streamers notice; code changes go in CHANGELOG.md. Releases go newest first. Each one is a
+     <section class="release" id="v<version>"> with an h2 holding the version and name and a <time datetime> that
+     matches its CHANGELOG.md heading. #current-version equals package.json "version" (tests/changelog.test.ts). -->
 <main class="page">
   <header class="page-header">
     <h1>What's new in PixFray</h1>
-    <p class="subtitle">Every release, newest first. PixFray is on version <span class="num" id="current-version">0.8.0</span>.</p>
+    <p class="subtitle">What changed for players and streamers, newest first. PixFray is on version <span class="num" id="current-version">0.8.1</span>. Code changes are listed in <code>CHANGELOG.md</code> in the PixFray source.</p>
   </header>
 
   <div class="with-index changelog">
     <nav class="page-index" aria-label="Releases"><ol>
       <li><a href="#v0.8.0">0.8.0 Channel point rewards</a></li>
-      <li><a href="#v0.7.1">0.7.1 Steadier rooms</a></li>
       <li><a href="#v0.7.0">0.7.0 Deeper fighter stats</a></li>
-      <li><a href="#v0.6.2">0.6.2 Under the hood</a></li>
-      <li><a href="#v0.6.1">0.6.1 Ranks and backups</a></li>
+      <li><a href="#v0.6.2">0.6.2 Small fixes</a></li>
+      <li><a href="#v0.6.1">0.6.1 Rank fixes</a></li>
       <li><a href="#v0.6.0">0.6.0 Viewer sprites and bot controls</a></li>
       <li><a href="#v0.5.0">0.5.0 Open sign-up and the PixFray bot</a></li>
       <li><a href="#v0.4.0">0.4.0 PixFray</a></li>
@@ -43,17 +43,9 @@
           <li><span class="badge">New</span> Channel point rewards that add PixFray dollars to the redeemer's fighter, up to 5 per channel. The bot confirms each one in chat with the new wallet total. Setting them up from the mod page comes in a later release.</li>
           <li><span class="badge">New</span> A viewer who redeems without a saved fighter gets their points back. A repeated delivery from Twitch never pays twice.</li>
           <li><span class="badge">New</span> This changelog page.</li>
-          <li><span class="badge">Under the hood</span> Duel, alarm and chat logs and daily room counters, so problems are easier to trace.</li>
         </ul>
       </section>
 
-      <section class="release" id="v0.7.1" aria-labelledby="v0.7.1-title">
-        <h2 id="v0.7.1-title"><span class="num">0.7.1</span> Steadier rooms</h2>
-        <p class="meta"><time datetime="2026-10-16">16 October 2026</time></p>
-        <ul>
-          <li><span class="badge">Fixed</span> An expired rematch no longer keeps a channel's room waking up over and over.</li>
-        </ul>
-      </section>
 
       <section class="release" id="v0.7.0" aria-labelledby="v0.7.0-title">
         <h2 id="v0.7.0-title"><span class="num">0.7.0</span> Deeper fighter stats</h2>
@@ -69,21 +61,19 @@
       </section>
 
       <section class="release" id="v0.6.2" aria-labelledby="v0.6.2-title">
-        <h2 id="v0.6.2-title"><span class="num">0.6.2</span> Under the hood</h2>
+        <h2 id="v0.6.2-title"><span class="num">0.6.2</span> Small fixes</h2>
         <p class="meta"><time datetime="2026-10-12">12 October 2026</time></p>
         <ul>
-          <li><span class="badge">Under the hood</span> All of PixFray now runs on strict TypeScript, and everything it receives is checked before use.</li>
           <li><span class="badge">Fixed</span> A stray empty slot after full build slots, and the mod page on a channel without an arena.</li>
         </ul>
       </section>
 
       <section class="release" id="v0.6.1" aria-labelledby="v0.6.1-title">
-        <h2 id="v0.6.1-title"><span class="num">0.6.1</span> Ranks and backups</h2>
+        <h2 id="v0.6.1-title"><span class="num">0.6.1</span> Rank fixes</h2>
         <p class="meta"><time datetime="2026-10-09">9 October 2026</time></p>
         <ul>
           <li><span class="badge">Fixed</span> Saving your fighter keeps your rank.</li>
           <li><span class="badge">Fixed</span> The <code>!fray</code> link opens your channel instead of the channel picker.</li>
-          <li><span class="badge">New</span> Every channel is backed up daily and kept for 90 days, and a lost rank can be restored.</li>
         </ul>
       </section>
 
@@ -111,7 +101,6 @@
           <li><span class="badge">New</span> The PixFray bot answers duel commands in chat, so streamers need no other chat bot.</li>
           <li><span class="badge">New</span> Search the channel picker for any channel running PixFray.</li>
           <li><span class="badge">New</span> Mods can try <code>!checkin</code> for 15 minutes while offline.</li>
-          <li><span class="badge">New</span> Anyone can run their own copy of PixFray from one config file.</li>
           <li><span class="badge">Changed</span> Shop prices cut to about a third.</li>
         </ul>
       </section>

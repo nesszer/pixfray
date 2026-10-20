@@ -1,4 +1,4 @@
-// The changelog page (changelog/index.html) against package.json: the newest release is the version that ships.
+// The game changelog page (changelog/index.html) and the code changelog (CHANGELOG.md) against package.json.
 // Run with: node --import ./tests/register.ts --test tests/changelog.test.ts
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,6 +21,11 @@ const releases: Release[] = [...html.matchAll(/<section class="release" id="([^"
     items: (block.match(/<li>/g) || []).length,
   }),
 );
+/** The code changelog's `## <version> - <date>` headings, newest first. */
+const md = [...read("CHANGELOG.md").matchAll(/^## (\S+) - (\S+)$/gm)].map(([, v, d]) => ({
+  version: v ?? "",
+  date: d ?? "",
+}));
 const semver = (v: string) => v.split(".").map(Number);
 const newer = (a: string, b: string) => {
   const [x, y] = [semver(a), semver(b)];
@@ -28,9 +33,9 @@ const newer = (a: string, b: string) => {
   return false;
 };
 
-test("the newest release on the changelog is package.json's version", () => {
+test("CHANGELOG.md's newest release is package.json's version, and the page names it", () => {
   assert.ok(releases.length > 0, "the page lists releases");
-  assert.equal(releases[0]?.version, version);
+  assert.equal(md[0]?.version, version);
   assert.match(html, new RegExp('<span class="num" id="current-version">' + version.replace(/\./g, "\\.") + "</span>"));
 });
 
@@ -51,5 +56,20 @@ test("releases go newest first: versions strictly down, dates never up", () => {
     assert.ok(a && b);
     assert.ok(newer(a.version, b.version), a.version + " comes before " + b.version);
     assert.ok(a.date >= b.date, a.version + " is not older than " + b.version);
+  }
+});
+
+test("CHANGELOG.md goes newest first with semver versions and real dates", () => {
+  for (const [i, r] of md.entries()) {
+    assert.match(r.version, /^\d+\.\d+\.\d+$/, r.version);
+    assert.ok(!Number.isNaN(Date.parse(r.date)) && /^\d{4}-\d{2}-\d{2}$/.test(r.date), r.version + " has a date");
+    const prev = md[i - 1];
+    if (prev) assert.ok(newer(prev.version, r.version) && prev.date >= r.date, prev.version + " before " + r.version);
+  }
+});
+
+test("every release on the page is in CHANGELOG.md with the same date", () => {
+  for (const r of releases) {
+    assert.equal(md.find((m) => m.version === r.version)?.date, r.date, r.version);
   }
 });

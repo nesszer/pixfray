@@ -23,9 +23,11 @@ settings work without any of them.
 
 PixFray uses semver below 1.0: a minor bump (`0.8.0` to `0.9.0`) for anything a viewer or streamer can
 see, a patch bump for fixes and behind-the-scenes work. `package.json` `version` is the one source. Before a
-production deploy from `main`, bump it and add the matching entry at the top of `changelog/index.html` (the same
-version in the page's subtitle). `bun run check` fails when the two disagree (tests/changelog.test.ts). A live fix
-or hotfix that reaches production gets a patch entry the same way, in its PR.
+production deploy from `main`, bump it, add an entry at the top of `CHANGELOG.md` (code changes) and set the
+version in the subtitle of `changelog/index.html`. When players or streamers would notice the release, also add an
+entry at the top of the page, with the same version and date; a code-only release stays off the page.
+`bun run check` fails when these disagree (tests/changelog.test.ts). A live fix or hotfix that reaches production
+gets a patch entry the same way, in its PR.
 
 ## The flow
 
