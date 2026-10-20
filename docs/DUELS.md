@@ -58,6 +58,7 @@ The duel is rolled at once, the moment the challenge is accepted.
   fresh fighter against a top build wins about 2 in 5 instead of about 1 in 40.
 - `!checkin`, once per live stream, adds a point too, with streak bonuses: +1 at 3, 7, 14 and 30
   streams, +2 at 60, +3 at 100, +5 at 200 and +10 at 365.
+- `!changelog` names the newest PixFray release and links to the changelog page.
 - `!pet` shows a fighter's pet. `!stats` (or `!stats @name`) shows the upgrade levels that count, unspent points and the pet's boost.
 - A legendary pet gives +1 to 4 different stats, rolled at random when you buy it. You can reroll them
   once for free on the Fighter tab; the new set is always different. Not during a challenge or duel.

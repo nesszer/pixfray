@@ -3,6 +3,7 @@
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
 import { hiddenResults } from "./game.ts";
 import { boostText } from "./pets.ts";
+import { LATEST_RELEASE } from "./release.ts";
 import type { Env } from "./env.ts";
 import type { GameResult, GameState, Player } from "./model.ts";
 import { STATS } from "./upgrades.ts";
@@ -28,8 +29,9 @@ export const SE_ACTIONS = [
   "give",
   "pet",
   "stats",
+  "changelog",
 ]; // quick duels need no attack commands
-export const SE_READ_ACTIONS = ["top", "elo", "help", "look"]; // no game state, so they work while duels are paused
+export const SE_READ_ACTIONS = ["top", "elo", "help", "look", "changelog"]; // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
 export const DEFAULT_SE_NAMES = {
   challenge: "!challenge",
@@ -45,6 +47,7 @@ export const DEFAULT_SE_NAMES = {
   give: "!pay",
   pet: "!pet",
   stats: "!stats",
+  changelog: "!changelog",
 }; // not !give: StreamElements' built-in !givepoints answers to that
 export const LOST_TEXT = "Lost in the arena? Type !fray";
 export const MISSED_TEXT = "That move didn't land. Try again in a moment!";
@@ -231,6 +234,12 @@ export function seHelpText({ names = {}, origin = "", channel = "" }: SeLinkOpti
   const link = siteLink(origin, channel);
   // The link goes last: Twitch takes punctuation right after a link into it, and the page then can't tell the channel.
   return `PixFray duels: name your rival with ${n("challenge")} @name. They answer ${n("accept")}. Again? ${n("rematch")}. More: ${n("checkin")} ${n("wallet")} ${n("top")} ${n("look")}. Gear up ${link ? "at " + link : "on the PixFray site"}`;
+}
+
+// !changelog: the newest release and a link to every change. The link goes last, as in !fray.
+export function seChangelogText({ origin = "" }: SeLinkOptions = {}): string {
+  const { version, name } = LATEST_RELEASE;
+  return `PixFray ${version}: ${name}. Every change: ${origin ? origin + "/changelog/" : "the changelog on the PixFray site"}`;
 }
 
 // The bot's timed reminder (config.reminderMin): the !fray line, which already lists the other commands.

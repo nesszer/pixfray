@@ -44,8 +44,8 @@ with chat connected.
 
 - Type `/mod pixfray` in your chat. Twitch lets a bot that isn't a moderator answer only about one
   command a second.
-- Type `!fray` to test. The bot answers 13 commands: `!challenge`, `!fight`, `!decline`,
-  `!rematch`, `!checkin`, `!wallet`, `!pay`, `!pet`, `!stats`, `!elo`, `!ranks`, `!fray` and `!look`. The
+- Type `!fray` to test. The bot answers 14 commands: `!challenge`, `!fight`, `!decline`,
+  `!rematch`, `!checkin`, `!wallet`, `!pay`, `!pet`, `!stats`, `!elo`, `!ranks`, `!fray`, `!look` and `!changelog`. The
   **Chat commands** section below the checklist adds your own text commands.
 - If StreamElements is also in your chat, turn off its Duel module (Chat bot, then Modules), or
   its `!duel` and `!accept` answer next to PixFray.
@@ -96,8 +96,8 @@ In StreamElements go to Chat bot, then Modules, and switch off Duel, or type
 
 ### Add the commands to StreamElements
 
-The table in **Add the chat commands to StreamElements** lists 13 commands: `!challenge`, `!fight`, `!decline`,
-`!rematch`, `!checkin`, `!wallet`, `!pay`, `!pet`, `!stats`, `!elo`, `!ranks`, `!fray` and `!look`. You can rename them first and click **Save names**.
+The table in **Add the chat commands to StreamElements** lists 14 commands: `!challenge`, `!fight`, `!decline`,
+`!rematch`, `!checkin`, `!wallet`, `!pay`, `!pet`, `!stats`, `!elo`, `!ranks`, `!fray`, `!look` and `!changelog`. You can rename them first and click **Save names**.
 Keep `!pay` off `!give`: StreamElements' built-in `!givepoints` already answers to `!give`.
 
 The commands run as StreamElements custom commands; Nightbot and Fossabot can't run them.

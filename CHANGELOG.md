@@ -12,6 +12,11 @@ Rules (checked by `tests/changelog.test.ts`):
   and behind-the-scenes work.
   0.1.0 to 0.7.1 were cut after the fact from git history.
 
+## 0.10.0 - 2026-10-20
+
+- `!changelog` bot and StreamElements command (`changelog` action, a read action). Its line comes from `LATEST_RELEASE`
+  in `server/release.ts`; `tests/changelog.test.ts` keeps it equal to the page's newest release.
+
 ## 0.9.0 - 2026-10-20
 
 - Level sync: `syncPair` in `server/upgrades.ts` (`SYNC_MARGIN` 10) and `duelStats` in `server/game.ts`, used for

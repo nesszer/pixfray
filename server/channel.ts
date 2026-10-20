@@ -71,6 +71,7 @@ import {
   seReplyText,
   seTopText,
   seEloText,
+  seChangelogText,
   seHelpText,
   seLookText,
   seCheckinText,
@@ -311,6 +312,7 @@ const BOT_TARGET_ACTIONS: { [action: string]: (names: SeNames) => string } = {
 const E2E_STEPS: [who: "B" | "O", action: string, target: "" | "O", want: string[], gate?: boolean][] = [
   ["B", "help", "", ["help"]],
   ["B", "look", "", ["look"]],
+  ["B", "changelog", "", ["changelog"]],
   ["B", "top", "", ["top"]],
   ["B", "elo", "", ["elo"]],
   ["B", "elo", "O", ["elo"]],
@@ -2438,6 +2440,7 @@ export class ChannelRoom extends DurableObject<Env> {
     }
     if (SE_READ_ACTIONS.includes(action)) {
       if (action === "help") return done(seHelpText({ names, origin, channel }), "help");
+      if (action === "changelog") return done(seChangelogText({ origin }), "changelog");
       if (action === "look")
         return done(
           seLookText({

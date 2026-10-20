@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { URL as NodeURL } from "node:url";
+import { LATEST_RELEASE } from "../server/release.ts";
 
 const read = (file: string) => readFileSync(new NodeURL("../" + file, import.meta.url), "utf8");
 // Comments are dropped so the format note at the top of the page isn't read as a release.
@@ -72,4 +73,10 @@ test("every release on the page is in CHANGELOG.md with the same date", () => {
   for (const r of releases) {
     assert.equal(md.find((m) => m.version === r.version)?.date, r.date, r.version);
   }
+});
+
+test("!changelog's release (server/release.ts) is the page's newest release, named as its heading names it", () => {
+  assert.equal(LATEST_RELEASE.version, version);
+  const heading = /<h2[^>]*><span class="num">([^<]+)<\/span> ([^<]+)<\/h2>/.exec(html);
+  assert.deepEqual(heading?.slice(1), [LATEST_RELEASE.version, LATEST_RELEASE.name]);
 });
