@@ -12,6 +12,12 @@ Rules (checked by `tests/changelog.test.ts`):
   and behind-the-scenes work.
   0.1.0 to 0.7.1 were cut after the fact from git history.
 
+## 0.11.0 - 2026-10-20
+
+- Channel point rewards section on the mod page's Stream setup tab (`renderPoints` in `src/admin.ts`): the
+  broadcaster or owner allows the points permission, adds and deletes rewards; mods read rewards and redemptions.
+- `GET /api/admin/:channel` returns `pointsReady`, read from the scopes sealed with the stored broadcaster token.
+
 ## 0.10.0 - 2026-10-20
 
 - `!changelog` bot and StreamElements command (`changelog` action, a read action). Its line comes from `LATEST_RELEASE`

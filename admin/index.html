@@ -291,6 +291,31 @@
           <p class="status" id="counter-status" role="status"></p>
         </div>
       </section>
+      <section class="section" id="points" aria-labelledby="points-title" hidden>
+        <h2 id="points-title">Channel point rewards that add PixFray dollars</h2>
+        <p class="muted small">A viewer redeems the reward with channel points, the bot adds its dollars to their saved fighter and says their new wallet. A viewer without a saved fighter gets the points back. Twitch gives channel points only to Affiliates and Partners.</p>
+        <div id="points-connect" class="stack" hidden>
+          <p id="points-connect-text"></p>
+          <div class="toolbar"><a class="btn" id="points-login" href="#">Allow channel point rewards</a></div>
+        </div>
+        <div class="table-wrap"><table class="data" id="points-table">
+          <thead><tr><th scope="col">Reward</th><th scope="col" class="num">Cost<span class="wide-only"> (points)</span></th><th scope="col" class="num">Adds ($)</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <form id="points-form" class="controls" novalidate hidden>
+          <div><label for="points-title-input">Reward name</label><input id="points-title-input" maxlength="45" autocomplete="off" required><p class="hint">Up to 45 characters, shown on Twitch</p></div>
+          <div><label for="points-cost">Cost (channel points)</label><input id="points-cost" type="number" min="1" max="1000000" step="1" inputmode="numeric" required><p class="hint">1 to 1000000</p></div>
+          <div><label for="points-dollars">Adds ($)</label><input id="points-dollars" type="number" min="1" max="10000" step="1" inputmode="numeric" required><p class="hint">1 to 10000 PixFray dollars</p></div>
+          <div><button class="btn" id="points-add" type="submit">Add reward</button></div>
+        </form>
+        <p class="small muted" id="points-note"></p>
+        <p class="status" id="points-status" role="status"></p>
+        <h3>Recent redemptions</h3>
+        <div class="table-wrap"><table class="data" id="points-redemptions">
+          <thead><tr><th scope="col">When</th><th scope="col">Viewer</th><th scope="col">Reward</th><th scope="col">What happened</th><th scope="col" class="num">Added ($)</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
       <section class="section" id="troubleshoot" aria-labelledby="trouble-title">
         <h2 id="trouble-title">If something doesn't work</h2>
         <details class="small"><summary>The overlay is blank in OBS</summary>

@@ -563,6 +563,22 @@ test("admin snapshot: modsLapsed is true only when mod access was connected and 
   assert.deepEqual([s.modsReady, s.modsLapsed], [false, true], "and lapsed again once it expires");
 });
 
+test("admin snapshot: pointsReady is true only when the stored token has channel:manage:redemptions", async () => {
+  const f = environment(),
+    cookie = await ownerCookie(f);
+  let s = await snapshot(f, cookie);
+  assert.deepEqual([s.pointsReady, s.pointsLogin], [false, "/auth/login?channel=nesszerra&connect=points"], "no token");
+  f.entries.set("broadcaster:nesszerra", await broadcasterToken(f, { scopes: ["moderation:read", "channel:bot"] }));
+  s = await snapshot(f, cookie);
+  assert.equal(s.pointsReady, false, "mod access only");
+  f.entries.set(
+    "broadcaster:nesszerra",
+    await broadcasterToken(f, { scopes: ["moderation:read", "channel:bot", "channel:manage:redemptions"] }),
+  );
+  s = await snapshot(f, cookie);
+  assert.equal(s.pointsReady, true, "after the points sign-in");
+});
+
 test("admin snapshot: a token seen without a marker gets one, and viewing keeps a stale token alive", async () => {
   const f = environment(),
     cookie = await ownerCookie(f);
