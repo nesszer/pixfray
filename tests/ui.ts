@@ -2189,6 +2189,12 @@ try {
         ready: true,
       },
       { name: "moderator", session: mod, access: { owner: false, moderator: true, canManage: true }, ready: true },
+      {
+        name: "site owner, not allowed yet",
+        session: { id: "9009", login: "nesszerra", displayName: "nesszerra" },
+        access: { owner: true, moderator: false, canManage: true },
+        ready: false,
+      },
     ];
     for (const c of cases)
       for (const s of sizes) {
@@ -2304,6 +2310,17 @@ try {
           assert.equal(await page.locator("#points-form").isHidden(), true);
           assert.equal(await page.locator("#points-connect").isHidden(), true);
           assert.equal(await page.locator("#points-note").textContent(), "Only newstreamer can add or delete rewards.");
+        } else if (c.name === "site owner, not allowed yet") {
+          assert.equal(
+            await page.locator("#points-connect").isHidden(),
+            true,
+            "Twitch takes only the broadcaster's account",
+          );
+          assert.equal(await page.locator("#points-form").isHidden(), true);
+          assert.equal(
+            await page.locator("#points-note").textContent(),
+            "newstreamer has to allow channel point rewards, signed in to Twitch as themself.",
+          );
         } else if (!c.ready) {
           assert.equal(await page.locator("#points-form").isHidden(), true, "no form before the permission");
           assert.equal(await page.locator("#points-login").getAttribute("href"), login);

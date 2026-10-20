@@ -2763,7 +2763,8 @@ function renderPoints() {
     owner = mayBroadcast(),
     ready = !!a.pointsReady;
   // element type from the page HTML
-  ($("#points-connect") as HTMLDivElement).hidden = ready || !owner;
+  // only the broadcaster's own Twitch account can grant the permission, so the site owner elsewhere gets the note instead
+  ($("#points-connect") as HTMLDivElement).hidden = ready || !broadcasterHere();
   // element type from the page HTML
   ($("#points-connect-text") as HTMLParagraphElement).textContent = rewards.length
     ? "Twitch no longer lets PixFray manage these rewards. Allow it again so redemptions add dollars and refunds work."
@@ -2777,9 +2778,11 @@ function renderPoints() {
   // element type from the page HTML
   ($("#points-note") as HTMLParagraphElement).textContent = !owner
     ? "Only " + CHANNEL + " can add or delete rewards." + (ready ? "" : " Channel point rewards aren't allowed yet.")
-    : ready && rewards.length >= max
-      ? max + " of " + max + " rewards. Delete one to add another."
-      : "";
+    : !ready && !broadcasterHere()
+      ? CHANNEL + " has to allow channel point rewards, signed in to Twitch as themself."
+      : ready && rewards.length >= max
+        ? max + " of " + max + " rewards. Delete one to add another."
+        : "";
   const key = JSON.stringify([p, owner]);
   if (key === shownPoints) return;
   shownPoints = key;
