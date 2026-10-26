@@ -1,6 +1,6 @@
 // Mod page state shared by every tab: the session, access, arena and leaderboard, loading them, and the actions
 // that change them (POST /api/admin/:channel, docs/CONTRACTS.md section 2).
-import { api, errorText, h, $, setStatus, tabKey, CHANNEL, CHANNEL_PICKED } from "../ui.ts";
+import { api, errorText, h, $, setStatus, tabKey, emptyRow, CHANNEL, CHANNEL_PICKED } from "../ui.ts";
 import { parseAdmin, parseAdminSnapshot, parseAnswer, parseLeaderboard } from "../parse.ts";
 import type { Access, Admin, ChatStatus, LeaderRow, Session } from "../parse.ts";
 import { isObject, warnOnce } from "../served/parse.ts";
@@ -62,6 +62,15 @@ export function renderAll() {
   for (const p of [...S.leaderboard, ...(S.admin?.players || [])]) S.names.set(p.userId, p.displayName || p.username);
   for (const draw of RENDER.all) draw();
 }
+// Snapshots rebuild the tables; put keyboard focus back on the same row's button afterwards, and show `none` when
+// there are no rows.
+export function fillTable(id: string, rows: HTMLElement[], cols: number, none: string) {
+  const tbody = $("#" + id + " tbody"),
+    focused = document.activeElement;
+  const key = focused instanceof HTMLElement && tbody.contains(focused) ? focused.dataset.key : undefined;
+  tbody.replaceChildren(...(rows.length ? rows : [emptyRow(cols, none)]));
+  if (key) $<HTMLButtonElement | null>('[data-key="' + CSS.escape(key) + '"]', tbody)?.focus();
+}
 export function nameOf(id: string | undefined) {
   if (!id) return "—";
   if (id === "system") return "System";
@@ -90,22 +99,16 @@ async function gateProof() {
   const ranked = lb.ok ? lb.data.filter((p) => p.wins + p.losses > 0).sort((a, b) => b.elo - a.elo) : [];
   const parts = [];
   if (st.ok) parts.push(st.data.paused || st.data.config?.enabled === false ? "duels are paused" : "duels are running");
-  const top = ranked[0];
+  const top = ranked[0],
+    n = ranked.length;
   if (lb.ok)
     parts.push(
       top
-        ? ranked.length +
-            " ranked fighter" +
-            (ranked.length === 1 ? "" : "s") +
-            ", " +
-            (top.displayName || top.username) +
-            " leads at " +
-            top.elo +
-            " Elo"
+        ? `${n} ranked fighter${n === 1 ? "" : "s"}, ${top.displayName || top.username} leads at ${top.elo} Elo`
         : "no ranked duels yet",
     );
   const p = $("#gate-proof");
-  p.textContent = "Right now in " + CHANNEL + "'s arena: " + parts.join("; ") + ".";
+  p.textContent = `Right now in ${CHANNEL}'s arena: ${parts.join("; ")}.`;
   p.hidden = false;
 }
 export async function load() {

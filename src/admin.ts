@@ -95,6 +95,7 @@ async function init() {
     if (S.session.configured === false)
       return gate("Twitch sign-in isn't set up on this server yet, so mod controls are unavailable.");
     $("#who").replaceChildren(); // one sign-in button: the gate's
+    const owner = site.owner.login;
     // a word joiner keeps "?channel=" on one line on phones
     if (BARE)
       return gate(
@@ -103,11 +104,7 @@ async function init() {
       );
     return gate(
       CHANNEL === site.defaultChannel
-        ? "Sign in with the " +
-            site.owner.login +
-            " account or a " +
-            site.owner.login +
-            " moderator account to open mod controls."
+        ? `Sign in with the ${owner} account or a ${owner} moderator account to open mod controls.`
         : "Sign in with the " + CHANNEL + " Twitch account to open mod controls.",
       [signIn()],
     );
@@ -118,9 +115,7 @@ async function init() {
   S.access = access.ok ? access.data : null;
   if (!S.access?.canManage && BARE)
     return gate(
-      "PixFray isn't on for " +
-        login +
-        " yet. Set it up on /start. Moderators: open the mod link your streamer shares.",
+      `PixFray isn't on for ${login} yet. Set it up on /start. Moderators: open the mod link your streamer shares.`,
       [startLink(true), h("a", { class: "btn", href: "/play/" }, "Pick a channel")],
     );
   if (access.data?.off === "not_enabled")
@@ -136,14 +131,12 @@ async function init() {
       ? "Twitch couldn't confirm moderators right now. Try again in a minute."
       : // a missing reason looks up "undefined", which isn't a key, as before
         GATE_REASONS[S.access?.reason as string]?.() || "";
-    return gate(
-      (CHANNEL === site.defaultChannel
+    const only =
+      CHANNEL === site.defaultChannel
         ? "Only " + site.owner.login + " and current channel moderators can use mod controls"
-        : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL) +
-        "." +
-        (why ? " " + why : ""),
-      [h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter")],
-    );
+        : "Only the " + CHANNEL + " account can use mod controls for " + CHANNEL;
+    const back = h("a", { class: "btn", href: withChannel("/") }, "Back to your fighter");
+    return gate(only + (why ? ". " + why : "."), [back]);
   }
   if (BARE)
     title(

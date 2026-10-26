@@ -15,8 +15,7 @@ import {
   CHANNEL,
 } from "../ui.ts";
 import { admin, load } from "./state.ts";
-// /api/assets, /api/pets and /api/sprites are read with these shapes, and each place that keeps one of those bodies
-// casts it once.
+// Shapes of the /api/assets, /api/pets and /api/sprites bodies; each place that keeps one casts it once.
 type CustomItem = {
   id: string;
   label?: string;
@@ -157,22 +156,16 @@ export async function loadSprites() {
   );
 }
 async function reviewSprite(x: Sprite, action: "approve" | "reject" | "remove", b: HTMLButtonElement) {
-  if (
-    action === "remove" &&
-    !confirm("Remove " + x.label + "? " + x.displayName + " goes back to the default character if they wear it.")
-  )
-    return;
+  const ask = `Remove ${x.label}? ${x.displayName} goes back to the default character if they wear it.`;
+  if (action === "remove" && !confirm(ask)) return;
   const r = await busy(b, () => api("/api/sprites/" + CHANNEL + "/" + x.id, { method: "POST", body: { action } }));
   const done = {
     approve: x.label + " approved and put on " + x.displayName + "'s fighter.",
     reject: x.label + " turned down.",
     remove: x.label + " removed.",
   }[action];
-  setStatus(
-    $("#sprite-review-status"),
-    r.ok ? done : "Couldn't " + (action === "reject" ? "turn it down" : action) + ": " + errorText(r) + ".",
-    r.ok ? "ok" : "error",
-  );
+  const failed = `Couldn't ${action === "reject" ? "turn it down" : action}: ${errorText(r)}.`;
+  setStatus($("#sprite-review-status"), r.ok ? done : failed, r.ok ? "ok" : "error");
   loadSprites();
 }
 
@@ -214,11 +207,8 @@ export async function loadPets() {
 async function deletePet(p: Pet, b: HTMLButtonElement) {
   if (!confirm("Delete " + p.label + "? Fighters who bought it lose it, and no dollars are refunded.")) return;
   const r = await busy(b, () => api("/api/pets/" + CHANNEL + "/" + p.id, { method: "DELETE" }));
-  setStatus(
-    $("#pet-upload-status"),
-    r.ok ? p.label + " deleted." : "Couldn't delete: " + errorText(r) + ".",
-    r.ok ? "ok" : "error",
-  );
+  const text = r.ok ? p.label + " deleted." : "Couldn't delete: " + errorText(r) + ".";
+  setStatus($("#pet-upload-status"), text, r.ok ? "ok" : "error");
   if (r.ok) loadPets();
 }
 function syncPetStats() {

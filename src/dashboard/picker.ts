@@ -1,6 +1,5 @@
-// /play/ (the viewer page with no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the
-// wrong channel.
-import { api, h, $, renderWho, signOut, composeLook, whenImage } from "../ui.ts";
+// /play/ (no ?channel=) asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
+import { api, button, h, $, renderWho, signOut, composeLook, whenImage } from "../ui.ts";
 import { parseAnswer, parseSession } from "../parse.ts";
 import { CHARACTER_GROUPS } from "../character-groups.ts";
 import site from "../../site.config.js";
@@ -31,74 +30,24 @@ export async function pickChannel() {
       ? list.data.channels
       : site.builtinChannels.map((login) => ({ login, top: [] }));
   const builtin: CatalogEntry[] = list.ok && Array.isArray(list.data?.catalog) ? list.data.catalog : [];
-  $("#channel-list").replaceChildren(
-    ...picked.map(({ login: c, top, catalog = [] }) => {
-      const crew = h("span", { class: "channel-crew", "aria-hidden": "true" }),
-        meta = h("span", { class: "channel-meta" });
-      const link = h(
-        "a",
-        { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
-        crew,
-        h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta),
-        h("span", { class: "channel-go" }, "Fight in " + c),
-      );
-      const byId = new Map([...builtin, ...catalog].map((e): [string, CatalogEntry] => [e.id, e]));
-      channelRanks(c, link, crew, meta, top, byId);
-      return h("li", { "data-login": c }, link);
-    }),
-  );
-  channelSearch(
-    picked.map((c) => c.login),
-    list.ok && list.data?.full === true,
-  );
-  liveLanding();
-}
-// A viewer's fighter belongs to the stream they watch, so the search only finds channels with PixFray on. Up to
-// SHOWN rows show before typing; the rest are a search away. A name with no match gets an invite to this site (notHere).
-const SHOWN = 8;
-// A Twitch name that isn't on this site: the viewer can send its streamer this site's /start/ link (a forked copy invites
-// to its own site, not ours). When this site is full it points at running their own copy instead. Other copies
-// can't be seen from here, so the note says a streamer may already have PixFray on a site of their own.
-function notHere(q: string, full: boolean) {
-  const host = location.host,
-    lead = h("strong", {}, q + " isn't on " + host + " yet.");
-  const note = h(
-    "span",
-    { class: "invite-note" },
-    "Streamers who run their own copy of PixFray have it on their own site.",
-  );
-  if (full)
-    return [
-      lead,
-      " This site is full right now; they can ",
-      h("a", { href: "/start/#source" }, "run their own copy"),
-      ".",
-      note,
-    ];
-  const link = location.origin + "/start/";
-  const copy = h(
-    "button",
-    {
-      type: "button",
-      class: "btn btn-small",
-      onclick: async () => {
-        try {
-          await navigator.clipboard.writeText(link);
-          copy.textContent = "Copied";
-        } catch {
-          copy.textContent = "Copy the link by hand";
-        }
-      },
-    },
-    "Copy invite link",
-  );
-  return [lead, " Send them this link to set it up: ", h("a", { href: "/start/" }, host + "/start"), " ", copy, note];
-}
-function channelSearch(listed: string[], full: boolean) {
+  const rows = picked.map(({ login: c, top, catalog = [] }) => {
+    const crew = h("span", { class: "channel-crew", "aria-hidden": "true" }),
+      meta = h("span", { class: "channel-meta" });
+    const link = h(
+      "a",
+      { class: "channel", href: "/?channel=" + encodeURIComponent(c) },
+      crew,
+      h("span", { class: "channel-text" }, h("span", { class: "channel-name" }, c), meta),
+      h("span", { class: "channel-go" }, "Fight in " + c),
+    );
+    const byId = new Map([...builtin, ...catalog].map((e): [string, CatalogEntry] => [e.id, e]));
+    channelRanks(c, link, crew, meta, top, byId);
+    return h("li", { "data-login": c }, link);
+  });
+  $("#channel-list").replaceChildren(...rows);
   const input = $<HTMLInputElement>("#channel-q"),
     status = $("#channel-status"),
-    // the list holds only the li rows pickChannel built
-    rows = [...($("#channel-list").children as HTMLCollectionOf<HTMLLIElement>)];
+    full = list.ok && list.data?.full === true;
   const norm = (s: string) =>
     s
       .trim()
@@ -116,7 +65,7 @@ function channelSearch(listed: string[], full: boolean) {
     }
     if (!q)
       status.replaceChildren(
-        listed.length > SHOWN ? "Type a name to find the other " + (listed.length - SHOWN) + " channels." : "",
+        rows.length > SHOWN ? "Type a name to find the other " + (rows.length - SHOWN) + " channels." : "",
       );
     else if (shown) status.replaceChildren();
     else
@@ -134,18 +83,6 @@ function channelSearch(listed: string[], full: boolean) {
     const go = visible.find((li) => li.dataset.login === q) || (visible.length === 1 ? visible[0] : null);
     if (go) location.href = go.querySelector("a")!.href; // !: every row pickChannel builds holds its link
   });
-}
-// On wide screens the picker's island is the intro's live arena, not a picture: each channel's top fighter
-// stands on it, and hovering or focusing a row brings that channel's fighter on. Phones show it as a banner over the heading.
-const landing: {
-  arena: Fighter3D | null;
-  show: ((entry: CatalogEntry, link?: HTMLAnchorElement) => void) | null;
-  first: CatalogEntry | null;
-  fallback: CatalogEntry | null;
-  labels: Map<CatalogEntry, string>;
-  links: Map<CatalogEntry, HTMLAnchorElement>;
-} = { arena: null, show: null, first: null, fallback: null, labels: new Map(), links: new Map() };
-function liveLanding() {
   if (navigator.connection?.saveData || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   import("../fighter3d.ts")
     .then(({ createFighter3D }) => {
@@ -160,8 +97,7 @@ function liveLanding() {
       const cap = h("p", { class: "landing-who", "aria-hidden": "true" });
       canvas.after(cap);
       $("#pick").classList.add("is-live");
-      // the caption names whose fighter stands on the island and the row whose fighter it is is marked, so the scene
-      // and the list read as one
+      // the caption and the marked row name the island's fighter, so the scene and the list read as one
       landing.show = (entry: CatalogEntry, link = landing.links.get(entry)) => {
         cap.textContent = landing.labels.get(entry) || "";
         for (const a of landing.links.values()) a.classList.toggle("is-shown", a === link);
@@ -175,8 +111,47 @@ function liveLanding() {
     })
     .catch(() => {});
 }
-// Each channel row shows its top three fighters, walking while the row is hovered or focused; the one on the island
-// follows the row.
+// The search finds only channels with PixFray on; SHOWN rows show before typing, the rest are a search away.
+const SHOWN = 8;
+// A name not on this site gets this site's /start/ link (a fork invites to its own), or, when full, a run-your-own
+// link. Other copies can't be seen from here, so the note says a streamer may already have one.
+function notHere(q: string, full: boolean) {
+  const host = location.host,
+    lead = h("strong", {}, q + " isn't on " + host + " yet.");
+  const note = h(
+    "span",
+    { class: "invite-note" },
+    "Streamers who run their own copy of PixFray have it on their own site.",
+  );
+  if (full)
+    return [
+      lead,
+      " This site is full right now; they can ",
+      h("a", { href: "/start/#source" }, "run their own copy"),
+      ".",
+      note,
+    ];
+  const link = location.origin + "/start/";
+  const copy = button("Copy invite link", async (b) => {
+    try {
+      await navigator.clipboard.writeText(link);
+      b.textContent = "Copied";
+    } catch {
+      b.textContent = "Copy the link by hand";
+    }
+  });
+  return [lead, " Send them this link to set it up: ", h("a", { href: "/start/" }, host + "/start"), " ", copy, note];
+}
+// The picker's island is the intro's live arena (a banner on phones); a row's hover or focus brings its fighter on.
+const landing: {
+  arena: Fighter3D | null;
+  show: ((entry: CatalogEntry, link?: HTMLAnchorElement) => void) | null;
+  first: CatalogEntry | null;
+  fallback: CatalogEntry | null;
+  labels: Map<CatalogEntry, string>;
+  links: Map<CatalogEntry, HTMLAnchorElement>;
+} = { arena: null, show: null, first: null, fallback: null, labels: new Map(), links: new Map() };
+// A row shows its top three fighters, walking while hovered or focused; the island's fighter follows the row.
 function channelRanks(
   channel: string,
   link: HTMLAnchorElement,
@@ -207,15 +182,12 @@ function channelRanks(
   if (!top) {
     meta.textContent = "No ranked duels yet. The top spot is open.";
     // the open spot: a character picked from the channel name, so each empty channel brings a different one on stage
+    // as Iterable<string>: a Twitch login is ASCII, so spreading it by code point splits nothing
+    const seed = [...(channel as Iterable<string>)].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7);
     // [0]!: the first character group (people) is always there
     const people = new Set(CHARACTER_GROUPS[0]!.ids),
       all = [...byId.values()].filter((e) => people.has(e.id)),
-      first =
-        all[
-          // as Iterable<string>: a Twitch login is ASCII, so spreading it by code point splits nothing
-          [...(channel as Iterable<string>)].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7) %
-            Math.max(1, all.length)
-        ] || byId.values().next().value;
+      first = all[seed % Math.max(1, all.length)] || byId.values().next().value;
     if (!first) return;
     add(first, " is-open");
     return stand(first, "The open spot in " + channel + "'s chat", "fallback");

@@ -1,19 +1,5 @@
 // The Live and Players tabs: the summary and stats, open duels, who is in the arena, ranks and the arena actions.
-import {
-  errorText,
-  h,
-  $,
-  setStatus,
-  seconds,
-  timeAgo,
-  on,
-  onSubmit,
-  busy,
-  button,
-  row,
-  emptyRow,
-  CHANNEL,
-} from "../ui.ts";
+import { errorText, h, $, setStatus, seconds, timeAgo, on, onSubmit, busy, button, row, CHANNEL } from "../ui.ts";
 import type { AdminPlayer, LeaderRow } from "../parse.ts";
 import site from "../../site.config.js";
 import {
@@ -23,12 +9,14 @@ import {
   liveChat,
   OPEN,
   mayBroadcast,
+  broadcasterHere,
   nameOf,
   act,
   post,
   load,
   loadLeaderboard,
   selectTab,
+  fillTable,
 } from "./state.ts";
 
 export function renderSummary() {
@@ -39,14 +27,8 @@ export function renderSummary() {
     health = chatHealth();
   // resetting all ranks, a new StreamElements key and moving chat from another site are the broadcaster's (server/worker.ts)
   for (const id of ["#reset-all-ranks", "#rotate-se"]) $(id).hidden = !mayBroadcast();
-  $("#meta").textContent =
-    "Signed in as " +
-    ((access().owner && CHANNEL === site.defaultChannel) || access().broadcaster
-      ? "the broadcaster"
-      : access().owner
-        ? "the site owner"
-        : "a moderator") +
-    ".";
+  const role = broadcasterHere() ? "the broadcaster" : access().owner ? "the site owner" : "a moderator";
+  $("#meta").textContent = `Signed in as ${role}.`;
   const waiting = c.enabled && !health.ok;
   $("#summary-title").textContent = !c.enabled
     ? "Duels are paused by a moderator"
@@ -57,7 +39,7 @@ export function renderSummary() {
     ? "Chat commands are ignored until duels are turned back on."
     : waiting
       ? health.text + (chat.lastRevocationReason ? " Twitch revoked access: " + chat.lastRevocationReason + "." : "")
-      : open.length + " of " + c.maxDuels + " duel slots in use, " + a.players.length + " viewers in the arena.";
+      : `${open.length} of ${c.maxDuels} duel slots in use, ${a.players.length} viewers in the arena.`;
   const toggle = $("#toggle-duels");
   toggle.textContent = c.enabled ? "Pause duels" : "Turn duels on";
   // while chat is offline the fix is the main action: Connect chat right here where Twitch chat applies, else the Stream setup tab
@@ -153,15 +135,6 @@ function hp(value: number, max: number, who?: string) {
     h("span", { class: "track", "aria-hidden": "true" }, h("i", { style: { "--v": pct + "%" } })),
     h("span", { class: "num" }, (who ? who + " " : "") + value + " / " + max),
   );
-}
-// Snapshots rebuild the tables; put keyboard focus back on the same row's button afterwards, and show `none` when
-// there are no rows.
-function fillTable(id: string, rows: HTMLElement[], cols: number, none: string) {
-  const tbody = $("#" + id + " tbody"),
-    focused = document.activeElement;
-  const key = focused instanceof HTMLElement && tbody.contains(focused) ? focused.dataset.key : undefined;
-  tbody.replaceChildren(...(rows.length ? rows : [emptyRow(cols, none)]));
-  if (key) $<HTMLButtonElement | null>('[data-key="' + CSS.escape(key) + '"]', tbody)?.focus();
 }
 const who = (p: AdminPlayer | LeaderRow) => p.displayName || p.username;
 
@@ -295,7 +268,7 @@ on("#toggle-duels", (b) => {
       button: b,
       confirmText:
         !enabled && open
-          ? "Pause duels? The " + open + " open duel" + (open === 1 ? "" : "s") + " will be cancelled without scoring."
+          ? `Pause duels? The ${open} open duel${open === 1 ? "" : "s"} will be cancelled without scoring.`
           : undefined,
       done: enabled ? "Duels are on." : "Duels are paused. Open duels were cancelled without scoring.",
     },
@@ -399,23 +372,13 @@ onSubmit("#gift-form", async () => {
   const r = await busy($<HTMLButtonElement>("#gift-send"), () =>
     post({ action: "giftDollars", payload: { username, amount } }),
   );
-  if (!r.ok)
-    return setStatus(
-      status,
-      r.status === 404
-        ? username + " has no saved fighter on " + CHANNEL + "."
-        : "Couldn't gift: " + errorText(r) + ".",
-      "error",
-    );
-  setStatus(
-    status,
-    (amount > 0 ? "Gave $" + amount + " to " : "Took $" + -amount + " from ") +
-      (r.data.displayName || r.data.username) +
-      ". They have $" +
-      r.data.dollars +
-      " now.",
-    "ok",
-  );
+  if (!r.ok) {
+    const why =
+      r.status === 404 ? `${username} has no saved fighter on ${CHANNEL}.` : `Couldn't gift: ${errorText(r)}.`;
+    return setStatus(status, why, "error");
+  }
+  const gave = amount > 0 ? `Gave $${amount} to` : `Took $${-amount} from`;
+  setStatus(status, `${gave} ${r.data.displayName || r.data.username}. They have $${r.data.dollars} now.`, "ok");
   $<HTMLInputElement>("#gift-amount").value = "";
   await loadLeaderboard();
 });
@@ -428,24 +391,15 @@ onSubmit("#pair-form", async () => {
   if (a.toLowerCase() === b.toLowerCase()) return setStatus(status, "Pick two different viewers.", "error");
   setStatus(status, "Saving…");
   const r = await busy($<HTMLButtonElement>("#pair-send"), () => post({ action: "resetPair", payload: { a, b } }));
-  if (!r.ok)
-    return setStatus(
-      status,
-      r.status === 404
-        ? (r.data?.missing || a + " or " + b) + " has no saved fighter on " + CHANNEL + "."
-        : "Couldn't reset: " + errorText(r) + ".",
-      "error",
-    );
-  setStatus(
-    status,
-    "Reset " +
-      r.data.a +
-      " and " +
-      r.data.b +
-      ": " +
-      (typeof r.data.left === "number" ? r.data.left + " ranked duels left this stream." : "no limit on this channel."),
-    "ok",
-  );
+  if (!r.ok) {
+    const missing = r.data?.missing || `${a} or ${b}`;
+    const why =
+      r.status === 404 ? `${missing} has no saved fighter on ${CHANNEL}.` : `Couldn't reset: ${errorText(r)}.`;
+    return setStatus(status, why, "error");
+  }
+  const left =
+    typeof r.data.left === "number" ? `${r.data.left} ranked duels left this stream.` : "no limit on this channel.";
+  setStatus(status, `Reset ${r.data.a} and ${r.data.b}: ${left}`, "ok");
 });
 // Countdown text in the duels table ages; refresh it every few seconds without refetching.
 setInterval(() => {
