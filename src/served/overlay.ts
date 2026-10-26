@@ -27,16 +27,15 @@ import { nameColor, startDrawing } from "./overlay-draw.ts";
 // The server's reason when the channel is off ('paused' | 'not_enabled'); '' (any other answer) lets the overlay run.
 async function channelOff() {
   try {
-    const r = await fetch("/api/state/" + channel, { headers: { Accept: "application/json" } });
+    const r = await fetch(`/api/state/${channel}`, { headers: { Accept: "application/json" } });
     return r.status === 403 ? String((await r.json())?.off || "") : "";
   } catch {
     return "";
   }
 }
 
-// A channel that is turned off or was never set up shows nothing. It checks again every 5 minutes, so turning PixFray
-// back on needs no OBS refresh. A channel that was never set up (often a typo in the OBS link) says so for a minute,
-// once per OBS session, so the streamer sees it in the OBS preview without it sitting on stream.
+// A channel that is off shows nothing and checks again every 5 minutes, so turning it back on needs no OBS refresh.
+// One never set up (often a typo in the link) says so for a minute once per OBS session: seen in the preview, not on stream.
 function showOff(off: string) {
   const status = document.querySelector("#status");
   let told = true;
@@ -47,12 +46,7 @@ function showOff(off: string) {
     told = false;
   }
   if (off === "not_enabled" && status && !told) {
-    status.textContent =
-      "PixFray isn't set up for \"" +
-      channel +
-      '". Check the channel name in this OBS link, or set it up at ' +
-      location.host +
-      "/start";
+    status.textContent = `PixFray isn't set up for "${channel}". Check the channel name in this OBS link, or set it up at ${location.host}/start`;
     setTimeout(() => {
       status.textContent = "";
     }, 60_000);
@@ -126,11 +120,10 @@ async function start() {
   if (debug && arenaEnabled) exposeDebug();
   updateStatus();
 }
-if (typeof document !== "undefined")
-  start().catch((error) => {
-    const status = document.querySelector<HTMLElement>("#status");
-    if (status) {
-      status.hidden = false;
-      status.textContent = "Overlay error: " + error.message;
-    }
-  });
+start().catch((error) => {
+  const status = document.querySelector<HTMLElement>("#status");
+  if (status) {
+    status.hidden = false;
+    status.textContent = `Overlay error: ${error.message}`;
+  }
+});

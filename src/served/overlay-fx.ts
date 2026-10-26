@@ -2,18 +2,10 @@
 import { ctx, DUEL_GROW, FLOOR, fxOn, height, players, size, sound, width } from "./overlay-stage.ts";
 import type { Player, Span } from "./overlay-stage.ts";
 
-/** A particle, or a spark thrown off by a blow; x and y are relative to the owner's lane. */
-type Particle = {
-  owner: Player;
-  color: string;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  born: number;
-  life: number;
-};
-type Glow = { owner: Player; color: string; y: number; r: number; born: number; life: number };
+// A particle, a spark or a glow; x and y are relative to the owner's lane.
+type Fx = { owner: Player; color: string; y: number; born: number; life: number };
+type Particle = Fx & { x: number; vx: number; vy: number };
+type Glow = Fx & { r: number };
 type Banner = Span & { x: number; text: string; title: string; color: string; sub?: string };
 
 const particles: Particle[] = [];
@@ -320,17 +312,12 @@ export function drawEffects(p: Player, x: number, y: number, now: number, s: num
   drawDie(p, x, y, s, now);
 }
 export function drawParticles(now: number, dt: number) {
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const s = particles[i]!; // i counts down over the list
-    const age = now - s.born;
-    if (age > s.life || !players.has(s.owner.key)) {
-      particles.splice(i, 1);
-      continue;
-    }
+  prune(particles, (s) => now - s.born > s.life || !players.has(s.owner.key));
+  for (const s of particles) {
     s.vy += 380 * dt;
     s.x += s.vx * dt;
     s.y += s.vy * dt;
-    ctx.globalAlpha = 1 - age / s.life;
+    ctx.globalAlpha = 1 - (now - s.born) / s.life;
     ctx.fillStyle = s.color;
     ctx.fillRect(s.x - 3, height - FLOOR - s.owner.lane + s.y - 3, 6, 6);
   }

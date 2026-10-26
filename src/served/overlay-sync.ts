@@ -52,35 +52,30 @@ export function updateStatus(detail = "") {
     status.hidden = true;
     return;
   }
-  const chatStatus = channel + " · " + arena.connection + " · " + players.size + "/" + arena.cap + " characters";
+  const chatStatus = `${channel} · ${arena.connection} · ${players.size}/${arena.cap} characters`;
   const chatOnline = arenaDemo || (arena.chat?.connected === true && ["connected", "live"].includes(arena.transport));
   const chatAge =
     Number(arena.chat?.lastSeen) > 0
       ? // a lastSeen above 0 means arena.chat is set
         Math.max(0, Math.floor((Date.now() - Number(arena.chat!.lastSeen)) / 1000))
       : null;
+  const age =
+    chatAge === null ? "" : ` · chat seen ${chatAge < 60 ? `${chatAge}s` : `${Math.floor(chatAge / 60)}m`} ago`;
+  const rev = arena.revision !== null ? ` r${arena.revision}` : "";
   const arenaStatus = arenaEnabled
-    ? " · arena " +
-      (chatOnline ? "chat live" : arena.transport) +
-      (chatAge === null
-        ? ""
-        : " · chat seen " + (chatAge < 60 ? chatAge + "s" : Math.floor(chatAge / 60) + "m") + " ago") +
-      (arena.revision !== null ? " r" + arena.revision : "") +
-      " · " +
-      profilesById.size +
-      " profiles · " +
-      openDuels().length +
-      " duels"
+    ? ` · arena ${chatOnline ? "chat live" : arena.transport}${age}${rev} · ${profilesById.size} profiles · ${openDuels().length} duels`
     : "";
-  status.textContent = chatStatus + arenaStatus + (detail ? " · " + detail : "");
+  status.textContent = chatStatus + arenaStatus + (detail ? ` · ${detail}` : "");
   status.hidden = false;
 }
 
-// Saved looks for chatters the arena doesn't list yet (a StreamElements channel only hears of a viewer when they
-// use a command): login -> { at, look }, misses included. Registered profiles decide name, color and character;
-// unregistered chatters keep their chat look. A saved look is cached 5 min and "no saved fighter" 1 min, since viewers
-// often save mid-stream. Lookups are batched (20 logins every 2 s) so a few OBS sources on one connection stay under
-// the edge rate limit (20 requests per 10 s per IP).
+// Saved looks for chatters the arena doesn't list yet, misses included: a look is cached 5 min and "no saved fighter"
+// 1 min, since viewers often save mid-stream. Batches of 20 logins every 2 s keep a few OBS sources on one connection
+// under the edge rate limit (20 requests per 10 s per IP).
+const loginOf = (v: unknown) =>
+  String(v || "")
+    .toLowerCase()
+    .slice(0, 64);
 const savedLooks = new Map<string, { at: number; look: ArenaProfile | null }>(),
   lookQueue = new Set<string>();
 let lookTimer: unknown = 0;
@@ -104,11 +99,11 @@ async function fetchLooks() {
   }
   let retryMs = 2000;
   try {
-    const response = await fetch("/api/looks/" + encodeURIComponent(channel) + "?u=" + batch.join(","), {
+    const response = await fetch(`/api/looks/${encodeURIComponent(channel)}?u=${batch.join(",")}`, {
       cache: "no-store",
       headers: { accept: "application/json" },
     });
-    if (!response.ok) throw new Error("Looks HTTP " + response.status);
+    if (!response.ok) throw new Error(`Looks HTTP ${response.status}`);
     const data: unknown = await response.json();
     for (const login of batch) {
       const entry = isObject(data) ? data[login] : null;
@@ -119,8 +114,7 @@ async function fetchLooks() {
     }
     for (const p of players.values()) if (batch.includes(p.key)) wearLook(p);
   } catch {
-    // A failed lookup (a 429 from the rate limit blocks for 10 s) says nothing about the viewer: keep their current
-    // look and ask again, rather than caching them as having no saved fighter.
+    // A failed lookup (a 429 blocks for 10 s) says nothing about the viewer: keep their look and ask again.
     for (const login of batch) {
       savedLooks.get(login)!.at = 0; // every login in the batch was set above
       lookQueue.add(login);
@@ -138,8 +132,7 @@ function wearLook(p: Player) {
     p.color = sanitizeColor(settings[p.key]?.color) || p.chatColor || p.color;
   }
 }
-// The server pushes {type:"looks"} when a saved fighter changes for a viewer it doesn't list (rank reset, removed
-// sprite, deleted profile; null means deleted). reset: every cached look is stale. Viewers it lists come from snapshots.
+// {type:"looks"}: saved fighters changed for viewers the server doesn't list (null means deleted; reset: all stale).
 function acceptLooks(message: LooksMessage) {
   const at = Date.now();
   if (message.reset) for (const hit of savedLooks.values()) hit.at = 0;
@@ -147,7 +140,7 @@ function acceptLooks(message: LooksMessage) {
     [...profilesById.values()].filter((pr) => pr.registered).map((pr) => String(pr.username || "").toLowerCase()),
   );
   for (const [raw, look] of Object.entries(message.looks)) {
-    const login = String(raw).toLowerCase().slice(0, 64);
+    const login = loginOf(raw);
     if (!login || listed.has(login)) continue;
     savedLooks.set(login, {
       at,
@@ -158,7 +151,7 @@ function acceptLooks(message: LooksMessage) {
   }
   if (message.reset) refreshLooks();
 }
-// Safety net for a missed push or a dropped socket: once a minute, ask again for everyone on stage the server doesn't list.
+// Once a minute, in case a push was missed: ask again for everyone on stage the server doesn't list.
 function refreshLooks() {
   for (const p of players.values()) {
     if (profilesById.get(p.userId)?.registered) continue;
@@ -197,9 +190,8 @@ function applyArenaProfile(p: Player) {
   for (const field of COSMETIC_FIELDS) p[field] = typeof profile[field] === "string" ? profile[field].slice(0, 32) : "";
 }
 
-// A new deploy changes the snapshot's build id. Most deploys leave the overlay's code alone, so the id only triggers a
-// cheap check: the overlay page is fetched again and its ?v= code hash compared with the one this script was loaded with.
-// Only changed overlay code reloads the page (between duels), so OBS never needs a manual refresh.
+// A new build id only triggers a cheap check of the overlay page's ?v= code hash; only changed overlay code reloads
+// the page (between duels), so OBS never needs a manual refresh.
 export const ownVersion = overlayVersionFromUrl(import.meta.url); // empty on the dev server, which never reloads
 export const build = { first: "", last: "", stale: false, changed: false, checkAt: 0, checking: false };
 
@@ -222,32 +214,22 @@ export function acceptArenaSnapshot(snapshot: ArenaSnapshot, metadata: { revisio
     }
   }
   arena.paused = snapshot.paused === true;
-  arena.revision = Number.isFinite(Number(metadata.revision))
-    ? Number(metadata.revision)
-    : Number.isFinite(Number(snapshot.revision))
-      ? Number(snapshot.revision)
-      : arena.revision;
+  arena.revision = [metadata.revision, snapshot.revision].map(Number).find(Number.isFinite) ?? arena.revision;
   profilesById.clear();
   for (const profile of snapshot.players ?? [])
     if (profile.userId != null) profilesById.set(String(profile.userId), profile);
-  // A registered profile in the snapshot is also the newest saved look for its login. The server drops a viewer from
-  // its list after 10 quiet minutes and the overlay then falls back to the saved look, which must not be one fetched
-  // before they changed their fighter on the website or played a duel.
+  // A listed profile is also the newest saved look, the fallback once the server drops its viewer after 10 quiet min.
   const lookAt = Date.now();
   for (const profile of profilesById.values()) {
-    const login = String(profile.username || "")
-      .toLowerCase()
-      .slice(0, 64);
+    const login = loginOf(profile.username);
     if (profile.registered && login) savedLooks.set(login, { at: lookAt, look: lookOf(profile, login) });
   }
   arena.duels = snapshot.duels ?? [];
   if (arena.chat?.connected === true) arena.transport = "live";
-  // Every overlay shows the same arena: the server's player list (fed by Twitch EventSub) spawns characters even
-  // when this overlay's own chat connection is down, and players the server dropped leave the stage.
+  // Every overlay shows the server's player list, even with its own chat down; players it dropped leave the stage.
   for (const [key, p] of players) if (p.fromArena && !profilesById.has(p.userId)) players.delete(key);
-  // The stage fills with the most recently active profiles while there is room. A snapshot never sends anyone off
-  // (that happens when a new chatter joins, see spawn), so with more active players than the cap nothing churns.
-  // The server's lastSeen is turned into "ms ago" relative to its newest profile, so it orders against local chat times.
+  // The stage fills with the most recently active profiles while there is room; a snapshot never sends anyone off, so
+  // nothing churns. lastSeen becomes "ms ago" relative to the newest profile, so it orders against local chat times.
   let newest = 0;
   for (const profile of profilesById.values()) newest = Math.max(newest, Number(profile.lastSeen) || 0);
   const activity = (profile: ArenaProfile) => Date.now() - Math.max(0, newest - (Number(profile.lastSeen) || 0));
@@ -258,9 +240,7 @@ export function acceptArenaSnapshot(snapshot: ArenaSnapshot, metadata: { revisio
       here.lastSeen = Math.max(here.lastSeen, activity(profile));
       continue;
     }
-    const key = String(profile.username || "id:" + userId)
-      .toLowerCase()
-      .slice(0, 64);
+    const key = loginOf(profile.username || `id:${userId}`);
     const existing = players.get(key);
     if (existing) {
       existing.userId = userId;
@@ -291,8 +271,7 @@ export function acceptArenaSnapshot(snapshot: ArenaSnapshot, metadata: { revisio
       meetPoints.delete(id);
   updateStatus();
 }
-// The overlay page as the server serves it now: its script tag names the current code hash. At most one check
-// every 30 s while the build id keeps changing (a rollout can serve two versions side by side); a failed fetch retries.
+// The served overlay page names the current code hash; at most one check every 30 s, a failed fetch retries.
 async function checkOverlayVersion() {
   build.checking = true;
   build.checkAt = Date.now();
@@ -301,7 +280,7 @@ async function checkOverlayVersion() {
       cache: "no-store",
       headers: { accept: "text/html" },
     });
-    if (!response.ok) throw new Error("Overlay page HTTP " + response.status);
+    if (!response.ok) throw new Error(`Overlay page HTTP ${response.status}`);
     const latest = overlayVersionFromHtml(await response.text());
     build.changed = false;
     if (latest && latest !== ownVersion) build.stale = true;
@@ -340,9 +319,7 @@ const CHAT_BOTS = new Set([
   "pixfray",
 ]); // same list as server/channel.ts
 export function onMessage(message: { [K in keyof ChatMessage]?: ChatMessage[K] | undefined }) {
-  const username = String(message.username || message.userId || "")
-    .toLowerCase()
-    .slice(0, 64);
+  const username = loginOf(message.username || message.userId);
   if (!username || CHAT_BOTS.has(username)) return;
   const now = Date.now();
   let p = players.get(username) || (message.userId ? findPlayer(message.userId) : null);
@@ -361,8 +338,7 @@ export function onMessage(message: { [K in keyof ChatMessage]?: ChatMessage[K] |
     p.color = sanitizeColor(settings[username]?.color) || p.chatColor || p.color;
   }
   applyArenaProfile(p);
-  // A saved look older than 5 minutes is asked for again when its viewer chats, so a fighter changed on the website
-  // reaches the stream even if the overlay missed the snapshot. Viewers the server lists come from its snapshots.
+  // A stale saved look is asked for again when its viewer chats, in case the overlay missed a change.
   if (!profilesById.get(p.userId)?.registered) queueLook(username);
   const ranked = Boolean(p.arenaProfile?.registered);
   p.lastSeen = now;

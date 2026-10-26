@@ -89,7 +89,7 @@ function drawHealthBar(x: number, y: number, health: { current: number; max: num
   ctx.lineWidth = 3;
   ctx.strokeStyle = "rgba(0,0,0,.9)";
   ctx.fillStyle = "#e2e8f0";
-  outlined(Math.round(health.current) + "/" + Math.round(health.max), x, top - 5);
+  outlined(`${Math.round(health.current)}/${Math.round(health.max)}`, x, top - 5);
 }
 function drawAnnouncement() {
   const lines = liveAnnouncements();
@@ -185,20 +185,21 @@ function drawLabels(labels: Label[], bubbles: Bubble[], bars: Box[]) {
   ctx.restore();
 }
 
+// Lunge for attacks, knockback for hits and dodges, as a share of the size [normal, heavy]; on top of drawn frames too.
+const SWAY: Partial<Record<string, [number, number]>> = {
+  attack: [0.3, 0.45],
+  hit: [-0.16, -0.3],
+  dodge: [-0.4, -0.4],
+};
 // Draws one fighter (pet, trail, body, hat, accessory) at its feet position; the canvas state is restored after.
 function drawFighter(p: Player, y: number, s: number, clock: number, now: number, ac: number, moving: boolean) {
   const ko = p.koUntil > clock;
   const sprite = sprites.get(p.renderAvatar) || sprites.get(p.avatar);
   const anim = p.anim && ac < p.anim.until ? p.anim : null;
   const progress = anim ? (ac - anim.start) / (anim.until - anim.start) : 0;
-  // Lunge for attacks, knockback for hits; both are fallbacks that also run on top of drawn frames.
-  let offset = 0;
-  if (anim?.kind === "attack" && progress > 0)
-    offset = Math.sin(progress * Math.PI) * s * (anim.heavy ? 0.45 : 0.3) * p.direction;
-  if (anim?.kind === "hit" && progress > 0)
-    offset = -Math.sin(progress * Math.PI) * s * (anim.heavy ? 0.3 : 0.16) * p.direction;
-  if (anim?.kind === "dodge" && progress > 0) offset = -Math.sin(progress * Math.PI) * s * 0.4 * p.direction;
-  offset += shakeOffset(p, clock);
+  const sway = anim && progress > 0 ? SWAY[anim.kind] : undefined;
+  const lunge = sway ? Math.sin(progress * Math.PI) * s * sway[anim?.heavy ? 1 : 0] * p.direction : 0;
+  const offset = lunge + shakeOffset(p, clock);
   // The pet trots behind its fighter, drawn first so the fighter stays in front.
   if (p.pet) {
     drawPet(ctx, petArt(p.pet), p.x - p.direction * s * 0.55, y, s * 0.42, {
@@ -300,7 +301,7 @@ function draw(now: number) {
     ctx.font = "bold 20px system-ui, sans-serif";
     const shownElo = replayRatings(p.userId)?.before ?? p.arenaProfile?.elo;
     const ranked = p.arenaProfile?.registered;
-    const text = ranked && Number.isFinite(Number(shownElo)) ? p.label + " · " + Math.round(Number(shownElo)) : p.label;
+    const text = ranked && Number.isFinite(Number(shownElo)) ? `${p.label} · ${Math.round(Number(shownElo))}` : p.label;
     p.labelWidth = ctx.measureText(text).width;
     const title = ranked ? TITLES[p.title] || "" : "";
     labels.push({

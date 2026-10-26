@@ -32,8 +32,7 @@ const CANCEL_TEXT: Record<string, string> = {
   player_removed: "player removed",
 };
 
-// Top banner lines: one per duel (keyed by duel id) and one for the arena. A newer message for the same duel replaces
-// its line.
+// Top banner lines: one per duel id and one for the arena; a newer line for the same key replaces the old one.
 const announcements: { key: string; text: string; color: string; until: number }[] = [];
 function announceArena(text: string, color = "#fde68a", key = "arena") {
   if (!text) return;
@@ -49,8 +48,8 @@ const nameOf = (id: unknown) => {
 };
 const signed = (n: number) => (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(n);
 
-// A quick-duel roll (docs/CONTRACTS.md section 3, events with a die): the die pops above the fighter who rolled,
-// then the outcome plays. A counter is the defender answering a bad roll, so the die belongs to its target.
+// A quick-duel roll (an event with a die) pops above the fighter who rolled, then plays out. A counter is the
+// defender answering a bad roll, so the die belongs to its target.
 const ROLL_REVEAL_MS = 450,
   IMPACT_MS = 200;
 function playRoll(event: ArenaEvent, replay: ArenaDuel | undefined) {
@@ -123,11 +122,8 @@ function playRoll(event: ArenaEvent, replay: ArenaDuel | undefined) {
         const color = event.crit ? "#fde047" : look === "smash" ? "#f97316" : look === "glow" ? "#4ade80" : "#fb7185";
         burst(target, color, event.crit || event.finisher ? 22 : 10, false);
         landBlow(target, dealer, color, event.finisher ? 3 : heavy ? 2 : 1);
-        floatText(
-          target,
-          (event.luckyCrit ? "LUCKY CRIT " : event.crit ? "CRIT! " : "") + "-" + amount,
-          event.crit ? "#fde047" : "#fb7185",
-        );
+        const label = `${event.luckyCrit ? "LUCKY CRIT " : event.crit ? "CRIT! " : ""}-${amount}`;
+        floatText(target, label, event.crit ? "#fde047" : "#fb7185");
         if (event.finisher && target) {
           knockout(target, at);
           if (!(target.koUntil > at)) target.koStart = at;
@@ -139,9 +135,8 @@ function playRoll(event: ArenaEvent, replay: ArenaDuel | undefined) {
     );
   }, ROLL_REVEAL_MS);
 }
-// Events of one duel that arrive together (a quick duel sends start, hit and KO at once) play one after another.
-// The fighters first walk to meet (duel_started waits for that), then each swing gets its own beat.
-// A roll takes about 1.8 s; after the finishing blow the result follows once the knockout has landed.
+// A quick duel arrives at once and plays one beat at a time: the walk to meet, about 1.8 s per roll, and the result
+// once the knockout has landed.
 const DUEL_EVENT_GAP_MS: { [type: string]: number; duel_started: number; duel_action: number } = {
   duel_started: 700,
   duel_action: 1800,
@@ -188,11 +183,11 @@ function pumpDuel(id: string, q: DuelQueue) {
 }
 // Events that only announce a line: its text and color, or null for no line.
 const ANNOUNCED: Partial<Record<string, (event: ArenaEvent) => [string, string?] | null>> = {
-  challenge_created: (e) => [nameOf(e.a) + " challenges " + nameOf(e.b) + " to a duel"],
-  challenge_declined: (e) => [nameOf(e.declinedBy) + " declined the duel", "#e2e8f0"],
-  challenge_expired: (e) => ["Challenge to " + nameOf(e.b) + " expired", "#e2e8f0"],
+  challenge_created: (e) => [`${nameOf(e.a)} challenges ${nameOf(e.b)} to a duel`],
+  challenge_declined: (e) => [`${nameOf(e.declinedBy)} declined the duel`, "#e2e8f0"],
+  challenge_expired: (e) => [`Challenge to ${nameOf(e.b)} expired`, "#e2e8f0"],
   // !: a missing reason reads the key "undefined", which falls through to "not scored"
-  duel_cancelled: (e) => ["Duel cancelled · " + (CANCEL_TEXT[e.reason!] || "not scored"), "#e2e8f0"],
+  duel_cancelled: (e) => [`Duel cancelled · ${CANCEL_TEXT[e.reason!] || "not scored"}`, "#e2e8f0"],
   chat_disconnected: () => ["Duels paused · chat offline", "#e2e8f0"],
   chat_connected: () => (arena.chat?.connected !== false ? ["Duels are live", "#a7f3d0"] : null),
 };
@@ -227,7 +222,7 @@ const ON_EVENT: Partial<Record<string, (event: ArenaEvent, now: number) => void>
       // safety net if duel_completed never arrives (!: duel events carry a duelId; without one this deletes nothing)
       setTimeout(() => replays.delete(event.duelId!), 60000);
     }
-    announceArena("Round " + event.round + ": " + nameOf(event.a) + " vs " + nameOf(event.b), undefined, event.duelId);
+    announceArena(`Round ${event.round}: ${nameOf(event.a)} vs ${nameOf(event.b)}`, undefined, event.duelId);
   },
   duel_action(event, now) {
     const replay = replays.get(event.duelId!); // !: an event without a duelId finds no replay
@@ -238,7 +233,7 @@ const ON_EVENT: Partial<Record<string, (event: ArenaEvent, now: number) => void>
     if (event.ability === "heal") {
       if (actor) actor.anim = { kind: "heal", start: now, until: now + 900 };
       burst(actor, "#4ade80", 10, true);
-      floatText(actor, "+" + (Number(event.amount) || 0), "#4ade80");
+      floatText(actor, `+${Number(event.amount) || 0}`, "#4ade80");
       return;
     }
     const heavy = event.ability === "heavy";
@@ -253,11 +248,8 @@ const ON_EVENT: Partial<Record<string, (event: ArenaEvent, now: number) => void>
     }
     burst(target, heavy ? "#f97316" : "#fb7185", heavy ? 16 : 8, false);
     landBlow(target, actor, heavy ? "#f97316" : "#fb7185", heavy ? 2 : 1);
-    floatText(
-      target,
-      event.counter ? "COUNTER" : (event.crit ? "CRIT! " : "") + "-" + (Number(event.amount) || 0),
-      event.crit ? "#fde047" : "#fb7185",
-    );
+    const label = event.counter ? "COUNTER" : `${event.crit ? "CRIT! " : ""}-${Number(event.amount) || 0}`;
+    floatText(target, label, event.crit ? "#fde047" : "#fb7185");
   },
   duel_completed(event, now) {
     const winner = findPlayer(event.winnerId),
@@ -291,31 +283,24 @@ const ON_EVENT: Partial<Record<string, (event: ArenaEvent, now: number) => void>
       winner.messageId = "";
       winner.bubbleUntil = now + 4500;
     }
-    // An unrated duel (event.unrated: "new_account" or "pair_cap") moves no Elo, so it shows "Just for fun" over the
-    // winner instead of "+0 Elo", and the result line leaves the Elo out.
+    // An unrated duel ("new_account" or "pair_cap") moves no Elo: "Just for fun" instead of "+0 Elo".
     const unrated = Boolean(event.unrated);
     // !: a missing id reads the key "undefined", which holds no rating
     const rw = unrated ? null : event.ratings?.[event.winnerId!],
       rl = unrated ? null : event.ratings?.[event.loserId!];
     if (unrated) floatText(winner, "Just for fun", "#e2e8f0", 2200);
-    if (Number.isFinite(rw?.delta)) floatText(winner, signed(rw.delta) + " Elo", "#4ade80", 2200);
-    if (Number.isFinite(rl?.delta)) floatText(loser, signed(rl.delta) + " Elo", "#fb7185", 2200);
-    const text =
-      (event.decision === "hp" ? "Time! " : "") +
-      nameOf(event.winnerId) +
-      " wins" +
-      (event.decision === "hp" ? " on HP" : "") +
-      (event.flawless ? ", FLAWLESS!" : "!") +
-      (Number.isFinite(rw?.delta) ? " " + signed(rw.delta) + " Elo" : "");
-    // No winner banner: the knockout, the cheer and the Elo floats show it, and the PixFray bot names the winner in
-    // chat once the stream has shown it. The debug hook still lists each winner.
+    if (Number.isFinite(rw?.delta)) floatText(winner, `${signed(rw.delta)} Elo`, "#4ade80", 2200);
+    if (Number.isFinite(rl?.delta)) floatText(loser, `${signed(rl.delta)} Elo`, "#fb7185", 2200);
+    const onHp = event.decision === "hp",
+      elo = Number.isFinite(rw?.delta) ? ` ${signed(rw.delta)} Elo` : "";
+    const text = `${onHp ? "Time! " : ""}${nameOf(event.winnerId)} wins${onHp ? " on HP" : ""}${event.flawless ? ", FLAWLESS!" : "!"}${elo}`;
+    // No winner banner (the bot names the winner in chat); the debug hook still lists each winner.
     results.push({ duelId: event.duelId, text, at: now });
     if (results.length > 20) results.shift();
   },
   player_respawned(event, now) {
     const p = findPlayer(event.userId);
-    // The server times the respawn from the settled duel, but the overlay's replay of it runs longer. While the
-    // fighter is in a replay (or the knockout is still queued) the event waits; the KO hold then stands them up.
+    // The overlay's replay runs longer than the server's settled duel: the respawn waits for it and the KO hold.
     if (p && (inReplay(p) || pendingKnockout(p)) && (event.tries || 0) < 400)
       setTimeout(() => handleArenaEvent({ ...event, at: undefined, tries: (event.tries || 0) + 1 }), 250);
     else if (p && p.koHoldUntil > now)
@@ -336,13 +321,11 @@ function handleArenaEvent(event: ArenaEvent) {
   updateStatus();
 }
 
-// Distance between the two fighters of a duel when there is room: two grown fighters and their nameplates.
-// With several duels at once placeMeet shrinks it (down to duelGapMin) so the health bars never collide.
+// Distance between a duel's fighters when there is room; placeMeet shrinks it down to duelGapMin when crowded.
 const duelGap = () => Math.max(size * 2, 190);
 const duelGapMin = () => Math.min(duelGap(), Math.max(96, size * DUEL_GROW));
 const barBase = (s: number) => Math.max(72, Math.min(116, s * 0.9)); // the hp bar; its "100/100" text fits the minimum
-// Bars shrink (to 64 px at the least) only when neighbouring duels are packed so close that full bars would touch:
-// the clear space between two neighbouring meeting points' inner fighters, or inside one duel, bounds the width.
+// Bars shrink (to 64 px at least) only when neighbouring meeting points are packed so close that full bars would touch.
 export function barWidthOf(s: number) {
   const base = barBase(s),
     xs = [...meetPoints.values()].sort((p, q) => p.x - q.x);
@@ -354,9 +337,8 @@ export function barWidthOf(s: number) {
   }
   return Math.max(64, Math.min(base, room));
 }
-// Each duel gets its own meeting point and gap. Neighbouring duels keep their inner fighters' hp bars (and dice) clear:
-// at full gap a comfortable slot (two gaps and a fighter); when the spot runs out the gap shrinks 8 px at a time, down
-// to duelGapMin, which also tightens the slot to bar width plus a margin. Nearest free spot to the midpoint wins.
+// The free spot nearest the midpoint that keeps neighbouring duels' hp bars and dice clear; when none is left the gap
+// shrinks 8 px at a time down to duelGapMin, which also tightens the slot to bar width plus a margin.
 export function placeMeet(mid: number) {
   const full = duelGap(),
     least = duelGapMin(),
@@ -385,8 +367,7 @@ export function placeMeet(mid: number) {
     }
     if (gap === least) break;
   }
-  // No free spot even at the smallest gap: pack every meeting point at the smallest gap, in order along the stage,
-  // spread as far apart as it allows (existing duels walk a little). Past that the bars shrink (barWidthOf).
+  // No free spot even at the smallest gap: spread every meeting point evenly at that gap (existing duels walk a little).
   const items: { m: Meet | null; x: number }[] = [...meetPoints.values()].map((m) => ({ m, x: m.x })),
     fresh = { m: null, x: best.x };
   items.push(fresh);

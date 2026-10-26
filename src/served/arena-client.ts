@@ -1,5 +1,6 @@
 import { isArenaChat, isObject, parseArenaEvent, parseArenaSnapshot, parseLooksMessage, warnOnce } from "./parse.ts";
 import type { ArenaChat, ArenaEvent, ArenaSnapshot, JsonObject, LooksMessage } from "./parse.ts";
+import { channelName } from "./text.ts";
 
 type SnapshotMeta = { revision: number | null; source: string };
 type ArenaStatus = {
@@ -63,10 +64,7 @@ export function createArenaClient({
     return new WebSocket(url);
   } as unknown as new (url: string) => WebSocket,
 }: ArenaClientOptions) {
-  const normalizedChannel = String(channel ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9_]/g, "")
-    .slice(0, 25);
+  const normalizedChannel = channelName(channel);
   if (!normalizedChannel) throw new Error("Invalid arena channel");
 
   let stopped = false;

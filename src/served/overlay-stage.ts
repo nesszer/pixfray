@@ -1,5 +1,5 @@
 // The overlay's link options, its canvas and the roster: who stands on stage, and the duels they are in.
-import { parseCap, sanitizeColor } from "./text.ts";
+import { channelName, parseCap, sanitizeColor } from "./text.ts";
 import { parseCosmeticSettings, warnOnce } from "./parse.ts";
 import type { ArenaChat, ArenaConfig, ArenaDuel, ArenaProfile, CosmeticField, CosmeticSettings } from "./parse.ts";
 import { ids, sprites } from "./overlay-sprites.ts";
@@ -132,10 +132,7 @@ export let settings = Object.create(null) as CosmeticSettings;
 // names. The demo makes no API calls.
 export async function configure() {
   channel =
-    (params.get("channel") || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9_]/g, "")
-      .slice(0, 25) ||
+    channelName(params.get("channel")) ||
     (demo
       ? ""
       : await fetch("/api/channels")
