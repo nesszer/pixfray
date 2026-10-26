@@ -355,7 +355,9 @@ export async function botCommand(
   // every other command gets no reply.
   const chatterId = validUserId(ev.chatter_user_id),
     boss = chatterId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
-  const toggle = action === "help" && boss ? String(words[1] || "").toLowerCase() : "";
+  const say = (line: string) => sendBotLines(room, [line], channel);
+  const sub = action === "help" ? String(words[1] || "").toLowerCase() : "",
+    toggle = boss ? sub : "";
   const off = state.config.botEnabled === false;
   if (toggle === "on" || toggle === "off") {
     if (off !== (toggle === "off")) {
@@ -375,14 +377,10 @@ export async function botCommand(
       room.broadcast(set.state);
       await room.scheduleAlarm(set.state);
     }
-    return sendBotLines(
-      room,
-      [
-        toggle === "on"
-          ? `PixFray bot is on. Type ${settings.names.help} to play.`
-          : `PixFray bot is off: it ignores commands until the broadcaster or a mod types ${settings.names.help} on.`,
-      ],
-      channel,
+    return say(
+      toggle === "on"
+        ? `PixFray bot is on. Type ${settings.names.help} to play.`
+        : `PixFray bot is off: it ignores commands until the broadcaster or a mod types ${settings.names.help} on.`,
     );
   }
   if (off) return json({ ok: true, reason: "bot_off", reply: "" });
@@ -390,43 +388,31 @@ export async function botCommand(
   await postResults(room, channel, Date.now());
   if (custom) {
     // A reply the cap would drop doesn't start the cooldown or add to its counters.
-    if (!botReplyRoom(room, Date.now())) return sendBotLines(room, [custom.name], channel);
+    if (!botReplyRoom(room, Date.now())) return say(custom.name);
     const line = customReply(room, custom, ev, words, Date.now());
     if (!line) noteBotHeld(room, channel, "cooldown", { command: custom.name }, false);
-    return sendBotLines(room, [line], channel);
+    return say(line);
   }
   if (pairReset) {
     const actor = String(ev.chatter_user_login || "").slice(0, 48);
-    if (!boss) return sendBotLines(room, ["Only the broadcaster or a mod can use !resetpair."], channel);
-    if (!words[1] || !words[2])
-      return sendBotLines(room, ["Type !resetpair @name @name to reset a pair's ranked duels."], channel);
+    if (!boss) return say("Only the broadcaster or a mod can use !resetpair.");
+    if (!words[1] || !words[2]) return say("Type !resetpair @name @name to reset a pair's ranked duels.");
     const out = resetPair(room, channel, words[1], words[2], chatterId, actor);
-    return sendBotLines(
-      room,
-      [
-        out.ok
-          ? `Ranked duels reset for ${out.a} and ${out.b}: ${typeof out.left === "number" ? out.left + " left this stream" : "no limit on this channel"}.`
-          : out.reason === "profile_not_found"
-            ? `@${normalizeUsername(String(out.missing || "").replace(/^@/, ""))} has no saved fighter on this channel.`
-            : "Pick two different fighters: !resetpair @name @name",
-      ],
-      channel,
+    return say(
+      out.ok
+        ? `Ranked duels reset for ${out.a} and ${out.b}: ${typeof out.left === "number" ? out.left + " left this stream" : "no limit on this channel"}.`
+        : out.reason === "profile_not_found"
+          ? `@${normalizeUsername(String(out.missing || "").replace(/^@/, ""))} has no saved fighter on this channel.`
+          : "Pick two different fighters: !resetpair @name @name",
     );
   }
   // "!fray debug" (broadcaster, mods or the bot account): the bot's health in one line, as the admin page shows it.
-  if (action === "help" && String(words[1] || "").toLowerCase() === "debug") {
-    const userId = validUserId(ev.chatter_user_id),
-      allowed = userId === validUserId(msg.botId) || userId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
-    return sendBotLines(
-      room,
-      [
-        allowed
-          ? botStatusLine(room, state, before, Date.now())
-          : "PixFray debug: only the broadcaster or a mod can use !fray debug.",
-      ],
-      channel,
+  if (sub === "debug")
+    return say(
+      boss || chatterId === validUserId(msg.botId)
+        ? botStatusLine(room, state, before, Date.now())
+        : "PixFray debug: only the broadcaster or a mod can use !fray debug.",
     );
-  }
   const input = {
     action,
     userId: ev.chatter_user_id,
@@ -439,7 +425,7 @@ export async function botCommand(
   };
   // BOT_DEBUG (test site): the bot account also plays. "!fray spar" and "!fray e2e" replace the help reply.
   const botId = room.env?.BOT_DEBUG === "1" ? validUserId(msg.botId) : "";
-  const mode = botId && action === "help" ? String(words[1] || "").toLowerCase() : "";
+  const mode = botId ? sub : "";
   let lines: string[];
   if (mode === "spar" || mode === "e2e")
     lines = await botDebug(room, channel, mode, { ev, words, botId, origin, settings, subscriptionId });
