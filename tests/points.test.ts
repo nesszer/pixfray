@@ -107,14 +107,23 @@ function eventsub(r: ReturnType<typeof pointsRoom>) {
     });
   return { done, paths, deliver };
 }
+/** A room hooked to eventsub, with the reward added unless `reward` is false and a profile row when `wallet` is given. */
+async function redeemRoom(wallet = "", reward = true) {
+  const r = pointsRoom();
+  const e = eventsub(r);
+  if (wallet)
+    r.sql.exec(`INSERT INTO profiles (user_id, username, dollars, style_dollars) VALUES ('7', 'viewer', ${wallet})`);
+  if (reward)
+    assert.equal((await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }))).status, 200);
+  const redeem = (id: string, over?: Record<string, unknown>) =>
+    e.deliver("notification", { subscription, event: redemption(id, over) });
+  return { r, e, redeem };
+}
 
 test("a redemption adds the reward's dollars to style dollars once, even when Twitch retries it; duel dollars stay", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles (user_id, username, dollars) VALUES ('7', 'viewer', 100)");
-  assert.equal((await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }))).status, 200);
-  const first = await e.deliver("notification", { subscription, event: redemption("red-1") });
-  const retry = await e.deliver("notification", { subscription, event: redemption("red-1") });
+  const { r, e, redeem } = await redeemRoom("100, 0");
+  const first = await redeem("red-1");
+  const retry = await redeem("red-1");
   assert.deepEqual([first.status, retry.status], [204, 204]);
   assert.deepEqual({ ...r.wallet("7") }, { dollars: 100, style: 50 });
   assert.equal(e.done.length, 1, "the retry marks nothing and posts nothing");
@@ -127,57 +136,36 @@ test("a redemption adds the reward's dollars to style dollars once, even when Tw
 });
 
 test("a reward PixFray doesn't hold is ignored: no dollars, no mark", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles (user_id, username, dollars) VALUES ('7', 'viewer', 100)");
-  const res = await e.deliver("notification", {
-    subscription,
-    event: redemption("red-2", { reward: { id: "other", title: "Hydrate", cost: 100 } }),
-  });
+  const { r, e, redeem } = await redeemRoom("100, 0", false);
+  const res = await redeem("red-2", { reward: { id: "other", title: "Hydrate", cost: 100 } });
   assert.equal(res.status, 204);
   assert.deepEqual({ ...r.wallet("7") }, { dollars: 100, style: 0 });
   assert.deepEqual(e.done, []);
 });
 
 test("a viewer with no fighter gets their points back and a line that differs per redemption", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }));
-  await e.deliver("notification", { subscription, event: redemption("red-aaaa") });
-  await e.deliver("notification", { subscription, event: redemption("red-bbbb") });
-  assert.deepEqual(
-    e.done.map((d) => [d.mark, d.reply]),
-    [
-      [
-        "CANCELED",
-        `@Viewer needs a saved fighter first: make one at ${ORIGIN}/?channel=newstreamer. Your channel points were refunded (redemption aaaa).`,
-      ],
-      [
-        "CANCELED",
-        `@Viewer needs a saved fighter first: make one at ${ORIGIN}/?channel=newstreamer. Your channel points were refunded (redemption bbbb).`,
-      ],
-    ],
-  );
+  const { e, redeem } = await redeemRoom();
+  await redeem("red-aaaa");
+  await redeem("red-bbbb");
+  const refunded = (id: string) => [
+    "CANCELED",
+    `@Viewer needs a saved fighter first: make one at ${ORIGIN}/?channel=newstreamer. Your channel points were refunded (redemption ${id}).`,
+  ];
+  const marks = e.done.map((d) => [d.mark, d.reply]);
+  assert.deepEqual(marks, [refunded("aaaa"), refunded("bbbb")]);
 });
 
 test("style dollars never pass the dollar cap", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles (user_id, username, dollars, style_dollars) VALUES ('7', 'viewer', 5, 999990)");
-  await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }));
-  await e.deliver("notification", { subscription, event: redemption("red-3") });
+  const { r, redeem } = await redeemRoom("5, 999990");
+  await redeem("red-3");
   assert.deepEqual({ ...r.wallet("7") }, { dollars: 5, style: 1_000_000 });
 });
 
 test("the redemption subscription's challenge is answered, and a revocation marks the reward", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }));
+  const { r, e } = await redeemRoom();
   const verify = await e.deliver("webhook_callback_verification", { subscription, challenge: "abc123" });
   assert.equal(await verify.text(), "abc123");
-  const revoked = await e.deliver("revocation", {
-    subscription: { ...subscription, status: "authorization_revoked" },
-  });
+  const revoked = await e.deliver("revocation", { subscription: { ...subscription, status: "authorization_revoked" } });
   assert.equal(revoked.status, 204);
   assert.ok(e.paths.includes("newstreamer /points/rewards"), "the broadcaster's own room hears the revocation");
   const view = await (await r.call("newstreamer", "/points")).json<{ rewards: { status: string }[] }>();
@@ -346,13 +334,9 @@ test("a new reward is subscribed to, and removed again when Twitch refuses the s
   const streamer = await s.cookie("55", "newstreamer");
   const made = await s.admin(CREATE, streamer);
   assert.equal(made.status, 200);
-  assert.deepEqual(
-    (await made.json<{ rewards: { rewardId: string; subscriptionId: string }[] }>()).rewards.map((x) => [
-      x.rewardId,
-      x.subscriptionId,
-    ]),
-    [["rw-new", "sub-new"]],
-  );
+  const { rewards } = await made.json<{ rewards: { rewardId: string; subscriptionId: string }[] }>();
+  const ids = rewards.map((x) => [x.rewardId, x.subscriptionId]);
+  assert.deepEqual(ids, [["rw-new", "sub-new"]]);
   subscribe = 409;
   calls.length = 0;
   const refused = await s.admin(CREATE, streamer);
