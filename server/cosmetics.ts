@@ -7,9 +7,9 @@ import type { Cosmetics } from "./model.ts";
 export const COSMETIC_KINDS = ["recolor", "petcolor", "accessory", "trail", "effect", "taunt", "title"] as const; // const: each kind a literal
 export type CosmeticKind = (typeof COSMETIC_KINDS)[number];
 /** One item of a kind: its id (stored on the profile) and the label the shop and chat show. */
-export type CosmeticItem = { id: string; label: string };
-/** Prices from the channel config (server/game.ts DEFAULT_CONFIG); a missing key means not for sale. */
-export type CosmeticPriceConfig = {
+type CosmeticItem = { id: string; label: string };
+/** Prices from the channel config (DEFAULT_CONFIG in server/model.ts); a missing key means not for sale. */
+type CosmeticPriceConfig = {
   [key in (typeof COSMETIC_PRICE_KEYS)[CosmeticKind] | "buildSlotPrice" | "buildSlotPriceMore"]?: number;
 };
 export const COSMETIC_FIELDS: { [kind in CosmeticKind]: keyof Cosmetics } = {
@@ -21,7 +21,7 @@ export const COSMETIC_FIELDS: { [kind in CosmeticKind]: keyof Cosmetics } = {
   taunt: "taunt",
   title: "title",
 };
-export const COSMETIC_PRICE_KEYS = {
+const COSMETIC_PRICE_KEYS = {
   recolor: "recolorPrice",
   petcolor: "petColorPrice",
   accessory: "accessoryPrice",
@@ -92,20 +92,18 @@ export const COSMETICS: Record<CosmeticKind, CosmeticItem[]> = {
 const BY_KIND = Object.fromEntries(COSMETIC_KINDS.map((k) => [k, new Map(COSMETICS[k].map((x) => [x.id, x]))]));
 
 export const cosmeticItem = (kind: string, id: string): CosmeticItem | null => BY_KIND[kind]?.get(id) || null;
-export const knownCosmetic = (kind: string, id: string): boolean => id === "" || Boolean(cosmeticItem(kind, id));
 export const cosmeticPrice = (kind: CosmeticKind, config: CosmeticPriceConfig | null | undefined): number | null =>
   config?.[COSMETIC_PRICE_KEYS[kind]] ?? null;
 
 // The worn cosmetics of a profile, unknown ids as "" (none).
-type LooseCosmetics = Partial<Record<keyof Cosmetics, unknown>> | null | undefined;
 export function cleanCosmetics(input: unknown): Cosmetics {
   // Every field is set by the loop below, one per kind
   const out = {} as Cosmetics;
   for (const kind of COSMETIC_KINDS) {
-    const field = COSMETIC_FIELDS[kind],
-      // Any value read as a loose record (?. covers null and undefined); the typeof check makes the second read a string
-      id = typeof (input as LooseCosmetics)?.[field] === "string" ? (input as Cosmetics)[field] : "";
-    out[field] = knownCosmetic(kind, id) ? id : "";
+    const field = COSMETIC_FIELDS[kind];
+    // Any value read as a loose record (?. covers null and undefined); the typeof check below keeps only strings
+    const id = (input as { [field: string]: unknown } | null | undefined)?.[field];
+    out[field] = typeof id === "string" && cosmeticItem(kind, id) ? id : "";
   }
   return out;
 }
@@ -115,15 +113,7 @@ export const MAX_BUILDS = 5;
 export const slotPrice = (slots: number, config: CosmeticPriceConfig | null | undefined): number | null =>
   slots >= MAX_BUILDS ? null : slots <= 1 ? (config?.buildSlotPrice ?? null) : (config?.buildSlotPriceMore ?? null);
 // What a build keeps (each slot spends the full point pool on its own stats).
-export const BUILD_FIELDS: string[] = [
-  "avatar",
-  "color",
-  "defaultAbility",
-  "stats",
-  "hat",
-  "pet",
-  ...COSMETIC_KINDS.map((k) => COSMETIC_FIELDS[k]),
-];
+const BUILD_FIELDS = ["avatar", "color", "defaultAbility", "stats", "hat", "pet", ...Object.values(COSMETIC_FIELDS)];
 // Any profile-shaped value: ?. reads undefined from a missing one. stats is cast for the spread: spreading any
 // value copies its own enumerable fields, and undefined, null or a number copy nothing.
 export const buildOf = (profile: { readonly [field: string]: unknown } | null | undefined): Record<string, unknown> =>
@@ -132,9 +122,7 @@ export const buildOf = (profile: { readonly [field: string]: unknown } | null | 
   );
 
 // The public shop list with this channel's prices (GET /api/shop).
-export function cosmeticCatalog(
-  config: CosmeticPriceConfig | null | undefined,
-): Record<string, (CosmeticItem & { price: number | null })[]> {
+export function cosmeticCatalog(config: CosmeticPriceConfig | null | undefined) {
   return Object.fromEntries(
     COSMETIC_KINDS.map((kind) => [kind, COSMETICS[kind].map((x) => ({ ...x, price: cosmeticPrice(kind, config) }))]),
   );

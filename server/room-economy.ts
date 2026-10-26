@@ -8,21 +8,17 @@ import { buildOf, COSMETIC_KINDS, cosmeticItem, cosmeticPrice, MAX_BUILDS, slotP
 import type { CosmeticKind } from "./cosmetics.ts";
 import type { CheckinReply, GiveReply } from "./streamelements.ts";
 import type { Duel, GameState } from "./model.ts";
-import {
-  errorText,
-  getProfile,
-  getProfileByUsername,
-  MAX_DOLLARS,
-  normalizeUsername,
-  safeJsonParse,
-} from "./room-shared.ts";
-import type { JsonObject, Profile, ProfileTable } from "./room-shared.ts";
+import { errorText, getProfile, getProfileByUsername, MAX_DOLLARS, safeJsonParse } from "./room-shared.ts";
+import type { JsonObject, ProfileTable } from "./room-shared.ts";
 import type { ChannelRoom } from "./channel.ts";
 
-/** What a fighter bought (owned): ids per pet, hat and cosmetic kind, plus build slots. */
 type Owned = { pets: string[]; hats: string[]; slots: number; rolls: { [pet: string]: Stat[] }; rerolled: string[] } & {
   [kind in CosmeticKind]: string[];
 };
+type CheckinRow = Pick<
+  ProfileTable,
+  Stat | "wins" | "losses" | "bonus_points" | "streak" | "last_stream" | "last_stream_seq" | "free_miss_at"
+>;
 const LIVE_CACHE_MS = 60_000; // !checkin asks Twitch whether the channel is live at most once a minute
 const FREE_MISS_MS = 7 * 24 * 60 * 60_000; // a streak survives one missed stream per week
 // Extra points when the streak reaches one of these streams (config.streakBonus).
@@ -51,49 +47,29 @@ export async function checkin(
   const stream = await liveOrError(room, channel, now);
   if (stream === "error") return { reason: "twitch_error" };
   // Test mode while offline: the check-in a next stream would give, worked out the same way but never saved.
-  const test = !stream && Boolean(checkinTest(room, now));
-  if (!stream && !test) return { reason: "not_live" };
+  if (!stream && !checkinTest(room, now)) return { reason: "not_live" };
   return room.ctx.storage.transactionSync((): CheckinReply => {
     const sql = room.ctx.storage.sql,
       state = room.readState(channel),
       config = state.config;
     const row = sql
-      .exec<
-        Pick<
-          ProfileTable,
-          | "wins"
-          | "losses"
-          | "bonus_points"
-          | "streak"
-          | "last_stream"
-          | "last_stream_seq"
-          | "free_miss_at"
-          | "power"
-          | "guard"
-          | "luck"
-          | "crit"
-          | "dodge"
-          | "counter"
-          | "vitality"
-        >
-      >(
+      .exec<CheckinRow>(
         "SELECT wins, losses, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck, crit, dodge, counter, vitality FROM profiles WHERE user_id = ?",
         userId,
       )
       .toArray()[0];
     if (!row) return { reason: "no_fighter" };
-    // stream! : without a stream, test is true (checked above)
-    if (!test && row.last_stream === stream!.id) return { reason: "already_checked_in", streak: row.streak };
-    if (!test)
+    if (stream?.id === row.last_stream) return { reason: "already_checked_in", streak: row.streak };
+    if (stream)
       sql.exec(
         "INSERT OR IGNORE INTO streams (stream_id, started_at) VALUES (?, ?)",
-        stream!.id, // not a test, so there is a stream
-        stream!.startedAt || now, // as above
+        stream.id,
+        stream.startedAt || now,
       );
-    const seq = test
-      ? (sql.exec<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM streams").toArray()[0]?.seq || 0) + 1
-      : // not a test, so there is a stream, and its row was inserted just above
-        sql.exec<{ seq: number }>("SELECT seq FROM streams WHERE stream_id = ?", stream!.id).toArray()[0]!.seq;
+    const seq = stream
+      ? // its row was inserted just above
+        sql.exec<{ seq: number }>("SELECT seq FROM streams WHERE stream_id = ?", stream.id).toArray()[0]!.seq
+      : (sql.exec<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM streams").toArray()[0]?.seq || 0) + 1;
     const missed = row.last_stream_seq > 0 ? seq - row.last_stream_seq - 1 : -1;
     const freeMiss = missed === 1 && now - row.free_miss_at >= FREE_MISS_MS;
     const streak = missed === 0 || freeMiss ? row.streak + 1 : 1;
@@ -106,12 +82,12 @@ export async function checkin(
     const earned = { wins: row.wins - (hidden?.wins || 0), bonus, losses: row.losses - (hidden?.losses || 0) };
     const total = pointsFor(earned),
       unspent = Math.max(0, total - spentOn(effectiveStats(row, earned)));
-    if (test) return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total, unspent };
+    if (!stream) return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total, unspent };
     sql.exec(
       "UPDATE profiles SET bonus_points = ?, checkins = checkins + 1, streak = ?, last_stream = ?, last_stream_seq = ?, free_miss_at = ? WHERE user_id = ?",
       bonus,
       streak,
-      stream!.id, // not a test, so there is a stream
+      stream.id,
       seq,
       freeMiss ? now : row.free_miss_at,
       userId,
@@ -128,9 +104,8 @@ export async function checkin(
 // !wallet: dollars, upgrade points and streak as the stream has shown them (a quick duel's payout stays hidden too).
 export function wallet(room: ChannelRoom, channel: string, userId: string) {
   const state = room.readState(channel);
-  // shownProfile passes null (no fighter) through
-  const profile =
-    userId && shownProfile(getProfile(room, userId, state.config) as Profile, hiddenResults(state, Date.now()));
+  const saved = userId ? getProfile(room, userId, state.config) : null;
+  const profile = saved && shownProfile(saved, hiddenResults(state, Date.now()));
   return profile
     ? { dollars: profile.dollars, style: profile.styleDollars, points: pointsFor(profile), streak: profile.streak }
     : null;
@@ -200,7 +175,6 @@ export async function give(
   });
 }
 
-// What a fighter bought: { pets: [ids], hats: [ids], <cosmetic kind>: [ids], slots: build slots (1 free + bought) }.
 export function owned(room: ChannelRoom, userId: string): Owned {
   const out: Owned = {
     pets: [],
@@ -229,6 +203,14 @@ export function owned(room: ChannelRoom, userId: string): Owned {
     else if (out[r.kind as CosmeticKind]) out[r.kind as CosmeticKind].push(r.item_id);
   }
   return out;
+}
+
+export function ownsItem(room: ChannelRoom, userId: string, kind: unknown, id: unknown): boolean {
+  return (
+    room.ctx.storage.sql
+      .exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id)
+      .toArray().length > 0
+  );
 }
 
 export function buildSlots(room: ChannelRoom, userId: string): number {
@@ -299,11 +281,7 @@ export function buy(
     } else if (COSMETIC_KINDS.includes(kind as CosmeticKind))
       price = cosmeticItem(kind as CosmeticKind, id as string) ? cosmeticPrice(kind as CosmeticKind, config) : null;
     if (price === null) return { ok: false, reason: "unknown_item" };
-    if (
-      sql.exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id).toArray()
-        .length
-    )
-      return { ok: false, reason: "owned" };
+    if (ownsItem(room, userId, kind, id)) return { ok: false, reason: "owned" };
     // The page sends the price it showed; a mod may have changed it since, and the viewer should see the new one first.
     if (expected !== undefined && expected !== price) return { ok: false, reason: "price_changed", price };
     const dollars = Math.max(0, row.dollars - h.dollars),
@@ -468,25 +446,16 @@ export function giftDollars(
   const amount = Number(payload.amount);
   if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > MAX_GIFT)
     return { ok: false, reason: "invalid_amount" };
-  const name = normalizeUsername(String(payload.username || "").replace(/^@/, ""));
-  const sql = room.ctx.storage.sql;
-  const row = name
-    ? sql
-        .exec<{ user_id: string; username: string; display_name: string; dollars: number }>(
-          "SELECT user_id, username, display_name, dollars FROM profiles WHERE username = ? COLLATE NOCASE",
-          name,
-        )
-        .toArray()[0]
-    : null;
+  const row = getProfileByUsername(room, payload.username, room.readState(channel).config);
   if (!row) return { ok: false, reason: "profile_not_found" };
   const dollars = Math.max(0, Math.min(MAX_DOLLARS, row.dollars + amount));
-  sql.exec("UPDATE profiles SET dollars = ? WHERE user_id = ?", dollars, row.user_id);
+  room.ctx.storage.sql.exec("UPDATE profiles SET dollars = ? WHERE user_id = ?", dollars, row.userId);
   logRoomEvent(room, "command", `${actorName || actorId} gift ${amount} -> ${row.username}`, {
     channel,
     action: "giftDollars",
     actorId,
     actorName,
-    userId: row.user_id,
+    userId: row.userId,
     user: row.username,
     amount,
     dollars,
@@ -495,7 +464,7 @@ export function giftDollars(
     ok: true,
     reason: "dollars_gifted",
     username: row.username,
-    displayName: row.display_name,
+    displayName: row.displayName,
     amount,
     dollars,
   };
@@ -512,8 +481,7 @@ export function resetPair(
   actorName: string,
 ) {
   const config = room.readState(channel).config,
-    find = (name: unknown) =>
-      getProfileByUsername(room, normalizeUsername(String(name || "").replace(/^@/, "")), config);
+    find = (name: unknown) => getProfileByUsername(room, name, config);
   const one = find(a),
     two = find(b);
   if (!one || !two) return { ok: false, reason: "profile_not_found", missing: one ? String(b || "") : String(a || "") };
@@ -570,11 +538,7 @@ export function checkinTest(room: ChannelRoom, now = Date.now()) {
 }
 
 // The channel's live stream {id, startedAt} or null. Twitch's answer is kept for a minute; a failed lookup throws.
-export async function currentStream(
-  room: ChannelRoom,
-  channel: string,
-  now: number,
-): Promise<{ id: string; startedAt: number } | null> {
+export async function currentStream(room: ChannelRoom, channel: string, now: number) {
   if (room.env?.DEV_TOOLS_TOKEN) {
     const dev = room.ctx.storage.sql
       .exec<{ stream_id: string; started_at: number }>("SELECT stream_id, started_at FROM dev_live WHERE id = 1")
@@ -599,12 +563,7 @@ async function liveOrError(room: ChannelRoom, channel: string, now: number) {
 
 // The live check for a chat line that can start a duel (game.ts noteStream): {id, startedAt}, null offline, or
 // undefined (another command, no Twitch app, or Twitch didn't answer) so the room keeps its last answer.
-export async function streamNews(
-  room: ChannelRoom,
-  channel: string,
-  text: unknown,
-  now: number,
-): Promise<{ id: string; startedAt: number } | null | undefined> {
+export async function streamNews(room: ChannelRoom, channel: string, text: unknown, now: number) {
   const action = parseGameCommand(text)?.action;
   if (action !== "duel" && action !== "accept" && action !== "rematch") return undefined;
   const dev =

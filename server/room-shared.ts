@@ -1,11 +1,10 @@
-import { cleanStats, emptyStats, knownHat } from "./upgrades.ts";
+import { cleanStats, emptyStats, knownHat, STATS } from "./upgrades.ts";
 import { petOf } from "./pets.ts";
 import { cleanCosmetics } from "./cosmetics.ts";
 import type { ChatEvent, Config, Cosmetics, Player, ReduceOutput } from "./model.ts";
 import type { ChannelRoom } from "./channel.ts";
 
-/** A JSON object request body, as readJson parses it; routes check each field they read. */
-export type JsonObject = { [field: string]: unknown };
+export type { JsonObject } from "./parse.ts";
 /** A profiles row: the table the constructor makes, with every column its migrations add. */
 export type ProfileTable = {
   user_id: string;
@@ -82,7 +81,6 @@ export type BotMessage = {
   botPlays?: boolean; // set only by runCommand for the BOT_DEBUG bot account
   [field: string]: unknown;
 };
-/** What an overlay draws for a saved fighter (savedLook). */
 export type Look = ReturnType<typeof savedLook>;
 /** What a chat message did to the game (processChatMessage, advance). */
 export type ChatOutcome = Pick<ReduceOutput, "state" | "result" | "changed" | "visible">;
@@ -122,7 +120,7 @@ export const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 export const PROFILE_COLUMNS =
   "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, bonus_points, checkins, streak, dollars, style_dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom, (SELECT roll FROM owned_items o WHERE o.user_id = profiles.user_id AND o.kind = 'pet' AND o.item_id = profiles.pet) AS pet_roll";
 
-// What was thrown, as text: anything can be thrown.
+// What was thrown, as text.
 export function errorText(error: unknown, max?: number): string {
   return String((error as Thrown)?.message || error).slice(0, max);
 }
@@ -130,20 +128,6 @@ export function errorText(error: unknown, max?: number): string {
 export function own<T>(table: { [name: string]: T }, name: string): T | undefined {
   return Object.hasOwn(table, name) ? table[name] : undefined;
 }
-export function json(data: unknown, status = 200, headers: { [name: string]: string } = {}): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers },
-  });
-}
-
-export function text(value: string, status = 200): Response {
-  return new Response(value, {
-    status,
-    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
-  });
-}
-
 export function validUserId(value: unknown): string {
   const id = String(value ?? "").trim();
   return id.length > 0 && id.length <= MAX_PROFILE_ID_LENGTH && /^[a-zA-Z0-9_:-]+$/.test(id) ? id : "";
@@ -157,7 +141,7 @@ export function normalizeUsername(value: unknown): string {
     .slice(0, 25);
 }
 
-// Stage 4 cosmetics: profile field -> profiles column (server/cosmetics.ts).
+// Cosmetics: profile field -> profiles column (server/cosmetics.ts).
 const COSMETIC_COLUMNS: { [field in keyof Cosmetics]: keyof ProfileTable } = {
   recolor: "recolor",
   petColor: "pet_color",
@@ -212,12 +196,12 @@ export function normalizeProfileRow(row: ProfileRow | null | undefined, config: 
     respawnAt: 0,
     stats: cleanStats(row),
     hat: knownHat(row.hat) ? row.hat : "",
-    bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0, // check-in points (checkin below)
+    bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0, // check-in points (room-economy.ts checkin)
     checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
     streak: Number.isInteger(row.streak) ? row.streak : 0,
     dollars: Number.isInteger(row.dollars) ? row.dollars : 0, // PixFray dollars (payDuels, give, giftDollars)
     styleDollars: Number.isInteger(row.style_dollars) ? row.style_dollars : 0, // channel point rewards (server/points.ts)
-    ...petFieldsOf(row),
+    ...petFields(petOf(row.pet, row.pet_custom, row.pet_roll)),
     ...cleanCosmetics(
       // each COSMETIC_COLUMNS column is in PROFILE_COLUMNS
       Object.fromEntries(
@@ -229,9 +213,8 @@ export function normalizeProfileRow(row: ProfileRow | null | undefined, config: 
   };
 }
 
-// The active pet (server/pets.ts): id, tier and boost (a legendary's from the owner's roll); none for a deleted upload.
-function petFieldsOf(row: { pet: string; pet_custom: string | null; pet_roll: string | null }) {
-  const pet = petOf(row.pet, row.pet_custom, row.pet_roll);
+// The active pet (server/pets.ts petOf): id, tier and boost (a legendary's from the owner's roll); none for a deleted upload.
+export function petFields(pet: ReturnType<typeof petOf>) {
   return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };
 }
 
@@ -273,6 +256,7 @@ export function getProfileByUsername(room: ChannelRoom, username: unknown, confi
 }
 
 export function upsertProfile(room: ChannelRoom, profile: ProfileWrite): void {
+  const stats = cleanStats(profile.stats);
   // Twitch logins can be renamed and later reused; free the login if a stale row still holds it.
   room.ctx.storage.sql.exec(
     "UPDATE profiles SET username = '~' || user_id WHERE username = ? COLLATE NOCASE AND user_id <> ?",
@@ -297,15 +281,7 @@ export function upsertProfile(room: ChannelRoom, profile: ProfileWrite): void {
     profile.wins,
     profile.losses,
     Number.isInteger(profile.lastSeen) ? profile.lastSeen : 0,
-    ...(({ power, guard, luck, crit, dodge, counter, vitality }) => [
-      power,
-      guard,
-      luck,
-      crit,
-      dodge,
-      counter,
-      vitality,
-    ])(cleanStats(profile.stats)),
+    ...STATS.map((stat) => stats[stat]), // the column order above
     knownHat(profile.hat) ? profile.hat : "",
     String(profile.lastOpponentId || "").slice(0, 32),
     typeof profile.pet === "string" ? profile.pet : null,

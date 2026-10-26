@@ -1,4 +1,5 @@
 import { chatStatus, defaultConfig, hiddenResults, parseGameCommand, reduceGame, shownProfile } from "./game.ts";
+import type { HiddenResult } from "./game.ts";
 import { customUsage, handleRoomAssets } from "./uploads.ts";
 import type { CatalogEntry } from "./uploads.ts";
 import { rankBefore } from "./ranklog.ts";
@@ -7,7 +8,6 @@ import { cleanStats, emptyStats, hatUnlocked, knownHat, upgradeRules, validStats
 import { handleRoomPoints, pointsView } from "./points.ts";
 import { handleRoomPets, petCatalog, petOf } from "./pets.ts";
 import { handleRoomSprites, spriteCatalog } from "./sprites.ts";
-import type { SpriteRow } from "./sprites.ts";
 import {
   buildOf,
   COSMETIC_FIELDS,
@@ -20,6 +20,7 @@ import {
 import { DEFAULT_SE_NAMES, SE_ACTIONS, seKeyHash, seReplyText } from "./streamelements.ts";
 import type { SeNames } from "./streamelements.ts";
 import {
+  isObject,
   parseBotSent,
   parseCheckinTest,
   parseDevChat,
@@ -30,24 +31,24 @@ import {
   parseSeAdmin,
 } from "./parse.ts";
 import type { DevAccount, Parsed, ProfileInput } from "./parse.ts";
-import type { AdminEvent, Cosmetics, GameEvent, GameResult, GameState } from "./model.ts";
+import type { AdminEvent, Cosmetics, GameEvent, GameState, Player } from "./model.ts";
 import {
   boardOrder,
   getProfile,
-  json,
   MAX_DOLLARS,
   normalizeProfileRow,
   normalizeUsername,
   own,
+  petFields,
   PROFILE_COLUMNS,
   randomHex,
   safeJsonParse,
   savedLook,
-  text,
   upsertProfile,
   validUserId,
 } from "./room-shared.ts";
-import type { BotMessage, JsonObject, Look, Profile, ProfileRow, SavedProfile } from "./room-shared.ts";
+import { json, refuse } from "./http.ts";
+import type { BotMessage, JsonObject, Look, ProfileRow, SavedProfile } from "./room-shared.ts";
 import {
   botCommands,
   checkAccountAge,
@@ -64,30 +65,28 @@ import {
   checkinTest,
   giftDollars,
   owned,
+  ownsItem,
   reroll,
   resetPair,
   streamNews,
 } from "./room-economy.ts";
 import type { ChannelRoom } from "./channel.ts";
 
-/** A config_history row. */
 type ConfigHistoryRow = {
   version: number;
   config: string;
-  actor_id: string;
-  actor_name: string;
+  actorId: string;
+  actorName: string;
   at: number;
   note: string;
 };
-/** saveProfile's answer. */
 type SaveResult =
-  | { ok: false; reason: string | undefined; status?: number; profile?: undefined; state?: undefined }
-  | { ok: true; profile: SavedProfile; state: GameState; reason?: undefined; status?: undefined };
+  | { ok: false; reason: string | undefined; status?: number }
+  | { ok: true; profile: SavedProfile; state: GameState };
 /** What every room route gets: the request, its URL, the path without trailing slashes and the checked channel. */
 type Ctx = { request: Request; url: URL; path: string; channel: string };
 type Handler = (room: ChannelRoom, ctx: Ctx) => Response | Promise<Response>;
 type BodyHandler<T> = (room: ChannelRoom, ctx: Ctx, body: T) => Response | Promise<Response>;
-/** A POST /admin request after its checks. */
 type AdminAsk = { channel: string; action: string; actorId: string; actorName: string; payload: JsonObject };
 const USER_HEADER = "X-Mini-User-Id";
 const MAX_CONFIG_HISTORY = 50;
@@ -113,23 +112,29 @@ const SHOP_STATUS = {
 };
 const PROFILE_STATUS = { profile_not_found: 404 };
 
-// A route that needs a JSON object body.
 function withBody(handler: BodyHandler<JsonObject>): Handler {
   return async (room, ctx) => {
-    const body = await room.readJson(ctx.request);
-    return body.ok ? handler(room, ctx, body.value) : json({ error: body.error }, 400);
+    if (Number(ctx.request.headers.get("content-length") || 0) > 16 * 1024)
+      return json({ error: "request body too large" }, 400);
+    let value: unknown;
+    try {
+      value = await ctx.request.json();
+    } catch {
+      return json({ error: "invalid JSON" }, 400);
+    }
+    return isObject(value) ? handler(room, ctx, value) : json({ error: "JSON object required" }, 400);
   };
 }
-// withBody plus a server/parse.ts check of its fields.
 function parsed<T>(parse: (body: JsonObject) => Parsed<T>, handler: BodyHandler<T>): Handler {
   return withBody((room, ctx, body) => {
     const out = parse(body);
     return out.ok ? handler(room, ctx, out.value) : json({ error: out.error }, 400);
   });
 }
+const notFound = () => new Response("Not found", { status: 404 });
 // Test site only (worker dev token): elsewhere the route doesn't exist, whatever the body.
 function devOnly(handler: Handler): Handler {
-  return (room, ctx) => (room.env?.DEV_TOOLS_TOKEN ? handler(room, ctx) : text("Not found", 404));
+  return (room, ctx) => (room.env?.DEV_TOOLS_TOKEN ? handler(room, ctx) : notFound());
 }
 // A failed result also carries its reason as `error`, with the status mapped for that reason (else 400).
 function answer(out: { ok: boolean; reason?: string }, status: { [reason: string]: number } = {}): Response {
@@ -145,7 +150,7 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
   if (stored && stored.channel !== channel) return json({ error: "channel binding mismatch" }, 409);
   // every key holds a space, so no Object.prototype name can match
   const handler = ROUTES[`${request.method} ${path}`] ?? PREFIXES.find(([prefix]) => prefix.test(path))?.[1];
-  return handler ? handler(room, { request, url, path, channel }) : text("Not found", 404);
+  return handler ? handler(room, { request, url, path, channel }) : notFound();
 }
 
 const ROUTES: { [route: string]: Handler } = {
@@ -203,18 +208,11 @@ const ROUTES: { [route: string]: Handler } = {
     room.seedConfigHistory(state);
     const history = room.ctx.storage.sql
       .exec<ConfigHistoryRow>(
-        "SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?",
+        "SELECT version, config, actor_id AS actorId, actor_name AS actorName, at, note FROM config_history ORDER BY version DESC LIMIT ?",
         MAX_CONFIG_HISTORY,
       )
       .toArray()
-      .map((row) => ({
-        version: row.version,
-        config: safeJsonParse(row.config, {}),
-        actorId: row.actor_id,
-        actorName: row.actor_name,
-        at: row.at,
-        note: row.note,
-      }));
+      .map((row) => ({ ...row, config: safeJsonParse(row.config, {}) }));
     return json({
       ...room.publicState(state),
       chatStatus: chatStatus(state),
@@ -264,18 +262,8 @@ const ROUTES: { [route: string]: Handler } = {
     if (!userId) return json({ error: "valid userId required" }, 400);
     const state = room.readState(channel);
     const hidden = hiddenResults(state, Date.now());
-    // shownProfile hands a null profile back unchanged, as the check below expects
-    const profile = shownProfile(getProfile(room, userId, state.config) as Profile, hidden);
-    if (!profile) return json(null);
-    // A knocked-out fighter (hp 0, respawnAt) would give away a result the stream hasn't shown yet.
-    const active = !hidden.has(userId) && state.players.find((item) => item.userId === userId);
-    return json({
-      ...profile,
-      ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}),
-      upgrades: upgradeRules(profile, state.config.maxStatLevel),
-      owned: owned(room, userId),
-      builds: builds(room, profile),
-    });
+    const saved = getProfile(room, userId, state.config);
+    return json(saved && fighterView(room, state, onStage(state, hidden, shownProfile(saved, hidden))));
   },
   "POST /profile": withBody(async (room, { request, channel }, body) => {
     const actorId = validUserId(request.headers.get(USER_HEADER));
@@ -297,14 +285,8 @@ const ROUTES: { [route: string]: Handler } = {
     logRoomEvent(room, "command", `${login} saved profile`, { ...logCtx, reason: "saved" });
     room.broadcast(result.state);
     await room.scheduleAlarm(result.state);
-    const shown = shownProfile(result.profile, hiddenResults(result.state, Date.now()));
     return json({
-      profile: {
-        ...shown,
-        upgrades: upgradeRules(shown, result.state.config.maxStatLevel),
-        owned: owned(room, actorId),
-        builds: builds(room, shown),
-      },
+      profile: fighterView(room, result.state, shownProfile(result.profile, hiddenResults(result.state, Date.now()))),
       revision: result.state.revision,
     });
   }),
@@ -312,7 +294,7 @@ const ROUTES: { [route: string]: Handler } = {
     const actorId = validUserId(body.actorId);
     if (!actorId) return json({ error: "authorized actor required" }, 403);
     const admin = parseRoomAdminBody(body);
-    if (!admin.ok) return json({ ok: false, reason: admin.error, error: admin.error }, 400);
+    if (!admin.ok) return refuse(400, admin.error, admin.error);
     const { action } = admin.value,
       ask = { channel, action, actorId, actorName: admin.value.actorName.slice(0, 48), payload: admin.value.payload };
     const special = own(ADMIN_ACTIONS, action);
@@ -352,7 +334,6 @@ const ROUTES: { [route: string]: Handler } = {
   // StreamElements custom commands, forwarded by the Worker from GET /api/se/<channel>/<action>.
   "POST /se": withBody(async (room, { url, channel }, body) => {
     const res = await streamElements(room, channel, body, url.searchParams.get("origin") || "");
-    // The Worker keeps the current key's hash for a minute, so random keys are refused there without waking this room.
     const secret = room.seSettings()?.secret;
     if (secret) res.headers.set("X-Se-Key", await seKeyHash(secret));
     return res;
@@ -458,11 +439,41 @@ const PREFIXES: [RegExp, Handler][] = [
         url,
         channel,
         hooks: {
+          // An approved viewer sprite goes on its uploader's saved fighter and replaces their previous one in every build.
           approved: (row, previous) => {
-            changed = wearSprite(room, channel, row, previous) || changed;
+            if (previous)
+              room.ctx.storage.sql.exec(
+                "UPDATE builds SET data = json_set(data, '$.avatar', ?) WHERE user_id = ? AND json_extract(data, '$.avatar') = ?",
+                row.id,
+                row.userId,
+                previous,
+              );
+            const existing = getProfile(room, row.userId, room.readState(channel).config);
+            const saved =
+              existing &&
+              saveProfile(room, channel, row.userId, {
+                username: existing.username,
+                displayName: existing.displayName,
+                color: existing.color,
+                defaultAbility: existing.defaultAbility,
+                avatar: row.id,
+              });
+            if (saved?.ok) changed = saved.state;
           },
+          // A removed viewer sprite: fighters wearing it, saved or on stage, go back to the default character.
           removed: (id) => {
-            changed = dropSprite(room, channel, id) || changed;
+            const sql = room.ctx.storage.sql;
+            for (const { user_id } of sql
+              .exec<{ user_id: string }>("SELECT user_id FROM profiles WHERE avatar = ?", id)
+              .toArray())
+              room.lookChanged(user_id);
+            sql.exec("UPDATE profiles SET avatar = 'player' WHERE avatar = ?", id);
+            sql.exec(
+              "UPDATE builds SET data = json_set(data, '$.avatar', 'player') WHERE json_extract(data, '$.avatar') = ?",
+              id,
+            );
+            const unworn = () => ({ avatar: "player" });
+            changed = clearOnStage(room, channel, (p) => p.avatar === id, unworn) || changed;
           },
         },
       });
@@ -489,18 +500,8 @@ const PREFIXES: [RegExp, Handler][] = [
         channel,
         config: room.readState(channel).config,
         onDelete: (id) => {
-          const state = room.readState(channel);
-          let hit = false;
-          for (const p of state.players)
-            if (p.pet === id) {
-              Object.assign(p, { pet: "", petTier: "", petBoost: emptyStats() });
-              hit = true;
-            }
-          if (hit) {
-            state.revision += 1;
-            room.writeState(state);
-            cleared = state;
-          }
+          const none = () => ({ pet: "", petTier: "", petBoost: emptyStats() });
+          cleared = clearOnStage(room, channel, (p) => p.pet === id, none) || cleared;
         },
       });
       if (cleared) room.broadcast(cleared);
@@ -534,7 +535,7 @@ const ADMIN_PAYLOADS: {
           .exec<Pick<ConfigHistoryRow, "config">>("SELECT config FROM config_history WHERE version = ?", version)
           .toArray()[0]
       : null;
-    if (!row) return json({ ok: false, reason: "config_version_not_found", error: "config_version_not_found" }, 404);
+    if (!row) return refuse(404, "config_version_not_found", "config_version_not_found");
     // A version saved before a setting existed has no value for it; it goes back to its default, not the current value.
     return {
       payload: { patch: { ...defaultConfig(), ...safeJsonParse(row.config, {}) } },
@@ -545,7 +546,7 @@ const ADMIN_PAYLOADS: {
   restoreRank(room, payload) {
     if (!Number.isInteger(payload.before)) return { payload };
     const rank = rankBefore(room.ctx.storage.sql, validUserId(payload.userId) || "", payload.before);
-    if (!rank) return json({ ok: false, reason: "no_rank_history", error: "no_rank_history" }, 404);
+    if (!rank) return refuse(404, "no_rank_history", "no_rank_history");
     return { payload: { userId: payload.userId, ...rank } };
   },
 };
@@ -571,7 +572,7 @@ async function devChat(room: ChannelRoom, { channel }: Ctx, body: DevAccount): P
   const result = processChatMessage(room, channel, msg, now, await streamNews(room, channel, line, now));
   if (result.visible) room.broadcast(result.state);
   if (result.changed) await room.scheduleAlarm(result.state);
-  const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
+  const r = result.result;
   if (r.reason === "quick_duel" || r.reason === "duel_completed") room.checkSavedProfiles(result.state, r.duelId);
   const quick =
     /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(line.trim()) ??
@@ -583,7 +584,7 @@ async function devChat(room: ChannelRoom, { channel }: Ctx, body: DevAccount): P
       userId: validUserId(userId),
       username: normalizeUsername(username),
       who: displayName || username,
-      target: normalizeUsername(String(quick[2] || "").replace(/^@/, "")),
+      target: normalizeUsername(quick[2]),
       amount: quick[3],
       origin: "",
       // seSettings() adds the settings row, so only the commands that name other commands read it
@@ -595,10 +596,6 @@ async function devChat(room: ChannelRoom, { channel }: Ctx, body: DevAccount): P
     if (out) return json({ ...out.data, reply: out.reply });
   }
   const parsed = parseGameCommand(line);
-  // other actions keep their own name
-  const action = parsed
-    ? ({ duel: "challenge" } as { [action: string]: string | undefined })[parsed.action] || parsed.action
-    : "";
   return json({
     ...r,
     revision: result.state.revision,
@@ -607,7 +604,7 @@ async function devChat(room: ChannelRoom, { channel }: Ctx, body: DevAccount): P
           result: r,
           state: result.state,
           actorId: userId,
-          action,
+          action: parsed.action === "duel" ? "challenge" : parsed.action,
           target: parsed.target,
           names: room.seSettings().names,
           origin: "",
@@ -617,7 +614,7 @@ async function devChat(room: ChannelRoom, { channel }: Ctx, body: DevAccount): P
   });
 }
 
-export function saveProfile(room: ChannelRoom, channel: string, userId: string, input: ProfileInput): SaveResult {
+function saveProfile(room: ChannelRoom, channel: string, userId: string, input: ProfileInput): SaveResult {
   const username = normalizeUsername(input.username);
   const displayName = (input.displayName || username).trim().slice(0, 48);
   const avatar = (input.avatar || "player").trim().slice(0, 64);
@@ -642,40 +639,34 @@ export function saveProfile(room: ChannelRoom, channel: string, userId: string, 
       input.stats === undefined ? existing?.stats : validStats(input.stats, { wins, bonus: existing?.bonus, losses });
     if (stats === null) return { ok: false, reason: "invalid_upgrades" };
     const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
-    const owns = (kind: string, id: string) =>
-      room.ctx.storage.sql
-        .exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id)
-        .toArray().length > 0;
-    if (hat !== (existing?.hat || "") && !hatUnlocked(hat, wins) && !(knownHat(hat) && owns("hat", hat)))
+    if (
+      hat !== (existing?.hat || "") &&
+      !hatUnlocked(hat, wins) &&
+      !(knownHat(hat) && ownsItem(room, userId, "hat", hat))
+    )
       return { ok: false, reason: knownHat(hat) ? "hat_locked" : "invalid_profile" };
     // Pet: "" (none) or one the fighter bought that still exists.
     const petId = input.pet === undefined ? existing?.pet || "" : input.pet;
-    const custom = petId
+    const bought = petId
       ? room.ctx.storage.sql
-          .exec<{ c: string | null }>(
-            "SELECT tier || ':' || stat || ':' || stat2 AS c FROM custom_pets WHERE id = ?",
+          .exec<{ custom: string | null; roll: string }>(
+            "SELECT (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE id = ?) AS custom, roll FROM owned_items WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
             petId,
-          )
-          .toArray()[0]?.c
-      : "";
-    const roll = petId
-      ? room.ctx.storage.sql
-          .exec<{ roll: string }>(
-            "SELECT roll FROM owned_items WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
             userId,
             petId,
           )
-          .toArray()[0]?.roll
-      : "";
-    const pet = petId ? petOf(petId, custom, roll) : null;
-    if (petId && (!pet || !owns("pet", petId))) return { ok: false, reason: "pet_locked" };
+          .toArray()[0]
+      : undefined;
+    const pet = bought ? petOf(petId, bought.custom, bought.roll) : null;
+    if (petId && !pet) return { ok: false, reason: "pet_locked" };
     // Cosmetics: "" (none) or one the fighter bought. Left out = keep the saved one.
     const cosmetics: Partial<Cosmetics> = {};
     for (const kind of COSMETIC_KINDS) {
       const field = COSMETIC_FIELDS[kind],
         id = input[field] === undefined ? existing?.[field] || "" : input[field];
       if (typeof id !== "string" || (id && !cosmeticItem(kind, id))) return { ok: false, reason: "invalid_profile" };
-      if (id && id !== (existing?.[field] || "") && !owns(kind, id)) return { ok: false, reason: "item_locked" };
+      if (id && id !== (existing?.[field] || "") && !ownsItem(room, userId, kind, id))
+        return { ok: false, reason: "item_locked" };
       cosmetics[field] = id;
     }
     // Build slot: the one this loadout is saved to, which becomes the active one. Left out = the active slot.
@@ -684,18 +675,11 @@ export function saveProfile(room: ChannelRoom, channel: string, userId: string, 
       return { ok: false, reason: "invalid_build" };
     const profile = {
       ...(existing || {
-        userId,
-        username,
-        displayName,
-        avatar,
-        color,
-        defaultAbility,
         hp: state.config.maxHp,
         elo: state.config.initialElo,
         wins: 0,
         losses: 0,
         lastSeen: 0,
-        registered: true,
         respawnAt: 0,
       }),
       userId,
@@ -706,9 +690,7 @@ export function saveProfile(room: ChannelRoom, channel: string, userId: string, 
       defaultAbility,
       stats: stats || cleanStats(),
       hat,
-      pet: pet ? pet.id : "",
-      petTier: pet ? pet.tier : "",
-      petBoost: pet ? pet.boost : emptyStats(),
+      ...petFields(pet),
       ...cosmetics,
       build,
       registered: true,
@@ -741,50 +723,40 @@ export function saveProfile(room: ChannelRoom, channel: string, userId: string, 
   return out;
 }
 
-// An approved viewer sprite goes on its uploader's saved fighter, and replaces their previous sprite in every build
-// slot. Returns the new game state when the overlay needs it, else null.
-function wearSprite(room: ChannelRoom, channel: string, row: SpriteRow, previous: string): GameState | null {
-  const sql = room.ctx.storage.sql;
-  if (previous)
-    sql.exec(
-      "UPDATE builds SET data = json_set(data, '$.avatar', ?) WHERE user_id = ? AND json_extract(data, '$.avatar') = ?",
-      row.id,
-      row.userId,
-      previous,
-    );
-  const existing = getProfile(room, row.userId, room.readState(channel).config);
-  if (!existing) return null;
-  const saved = saveProfile(room, channel, row.userId, {
-    username: existing.username,
-    displayName: existing.displayName,
-    color: existing.color,
-    defaultAbility: existing.defaultAbility,
-    avatar: row.id,
-  });
-  return saved.ok ? saved.state : null;
-}
-
-// A removed viewer sprite: fighters wearing it, saved or on stage, go back to the default character.
-function dropSprite(room: ChannelRoom, channel: string, id: string): GameState | null {
-  const sql = room.ctx.storage.sql;
-  for (const row of sql.exec<{ user_id: string }>("SELECT user_id FROM profiles WHERE avatar = ?", id).toArray())
-    room.lookChanged(row.user_id);
-  sql.exec("UPDATE profiles SET avatar = 'player' WHERE avatar = ?", id);
-  sql.exec(
-    "UPDATE builds SET data = json_set(data, '$.avatar', 'player') WHERE json_extract(data, '$.avatar') = ?",
-    id,
-  );
+// Fighters on stage that match take the patch; returns the written state when any did, else null.
+function clearOnStage(
+  room: ChannelRoom,
+  channel: string,
+  match: (p: Player) => boolean,
+  patch: () => Partial<Player>,
+): GameState | null {
   const state = room.readState(channel);
-  let hit = false;
-  for (const p of state.players)
-    if (p.avatar === id) {
-      p.avatar = "player";
-      hit = true;
-    }
-  if (!hit) return null;
+  const hit = state.players.filter(match);
+  if (!hit.length) return null;
+  for (const p of hit) Object.assign(p, patch());
   state.revision += 1;
   room.writeState(state);
   return state;
+}
+
+// The live hp of a fighter on stage, unless a hidden result would show (a knocked-out fighter's hp 0 and respawnAt).
+function onStage<P extends { userId: string }>(state: GameState, hidden: Map<string, HiddenResult>, profile: P) {
+  const active = !hidden.has(profile.userId) && state.players.find((item) => item.userId === profile.userId);
+  return active ? { ...profile, hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : profile;
+}
+
+// A fighter as the viewer page reads it: the profile plus its upgrade rules, purchases and build slots.
+function fighterView<P extends { userId: string; wins: number; build: number }>(
+  room: ChannelRoom,
+  state: GameState,
+  profile: P,
+) {
+  return {
+    ...profile,
+    upgrades: upgradeRules(profile, state.config.maxStatLevel),
+    owned: owned(room, profile.userId),
+    builds: builds(room, profile),
+  };
 }
 
 export function leaderboard(room: ChannelRoom, channel: string) {
@@ -795,10 +767,6 @@ export function leaderboard(room: ChannelRoom, channel: string) {
     )
     .toArray();
   const hidden = hiddenResults(state, Date.now());
-  const out = rows.map((row) => {
-    const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
-    const active = !hidden.has(profile.userId) && state.players.find((item) => item.userId === profile.userId);
-    return active ? { ...profile, hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : profile;
-  });
+  const out = rows.map((row) => onStage(state, hidden, shownProfile(normalizeProfileRow(row, state.config), hidden)));
   return hidden.size ? out.sort(boardOrder) : out; // same order as the SQL, on the numbers shown
 }

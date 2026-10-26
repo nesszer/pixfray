@@ -12,7 +12,7 @@ import type { Stats } from "../server/upgrades.ts";
 export type Loose = any;
 
 /** A cursor like SqlStorageCursor: the rows of one statement, read whole or iterated. */
-export type FakeCursor = { toArray(): Loose[]; [Symbol.iterator](): Iterator<Loose>; rowsWritten?: number };
+type FakeCursor = { toArray(): Loose[]; [Symbol.iterator](): Iterator<Loose>; rowsWritten?: number };
 export type FakeSql = { exec(query: string, ...params: SQLInputValue[]): FakeCursor };
 
 /** `ctx.storage.sql` over an in-memory SQLite database. Rows come back as plain objects, as SqlStorage returns them. */
@@ -37,7 +37,7 @@ export function fakeSql(): FakeSql & SqlStorage {
 /** A WebSocket as the fake context files it: the tags it was accepted with, and whether it is open (1). */
 export type FakeSocketLike = { tags: string[]; readyState: number };
 
-export type FakeStorage = {
+type FakeStorage = {
   sql: FakeSql;
   transactionSync<T>(fn: () => T): T;
   /** The time the last setAlarm asked for, or null. */
@@ -47,7 +47,7 @@ export type FakeStorage = {
   deleteAlarm(): Promise<void>;
 };
 
-export type FakeContext = {
+type FakeContext = {
   storage: FakeStorage;
   acceptWebSocket(ws: FakeSocketLike, tags: string[]): void;
   getWebSockets(tag: string): FakeSocketLike[];

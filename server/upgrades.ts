@@ -1,40 +1,29 @@
-// Fighter upgrades and hats, in one place so the duel math, profile saving and the dashboard agree. The rules (points,
-// level costs, each stat's effect and ceiling) are in docs/CONTRACTS.md §6 and docs/DUELS.md. The overlay draws hats
-// (src/served/hats.ts).
+// Fighter upgrades and hats, in one place so the duel math, profile saving and the dashboard agree. The rules are in
+// docs/CONTRACTS.md §6 and docs/DUELS.md; the overlay draws hats (src/served/hats.ts).
 
 export const STATS = ["power", "guard", "luck", "crit", "dodge", "counter", "vitality"] as const; // const: each stat a literal, so Stat names them
 export type Stat = (typeof STATS)[number];
-/** Levels in each stat. */
 export type Stats = Record<Stat, number>;
 /** Stat-shaped input from storage, a request or a pet boost: any value per stat, cleaned before use. */
-export type LooseStats = Partial<Record<Stat, unknown>>;
+type LooseStats = Partial<Record<Stat, unknown>>;
 /** Levels up to here keep the full step and cost 1 point each. */
-export const FULL_STEP_LEVELS = 8;
+const FULL_STEP_LEVELS = 8;
 /** A sanity bound on stored levels; reaching it would cost over 268 million points. */
-export const LEVEL_LIMIT = 200;
-export const STAT_STEP = 0.04;
-/** What one of the first 8 levels adds to each stat's effect, as a fraction (vitality: in HP). */
-export const STAT_STEPS: Record<Stat, number> = {
-  power: STAT_STEP,
-  guard: STAT_STEP,
-  luck: STAT_STEP,
-  crit: STAT_STEP,
-  dodge: STAT_STEP,
-  counter: 0.02,
-  vitality: 4,
-};
-/** The most each stat's effect can reach, as a fraction (0.6 is 60%; vitality: in HP). */
-export const STAT_CEILING: Record<Stat, number> = {
-  power: 0.6,
-  guard: 0.6,
-  luck: 0.5,
-  crit: 0.5,
-  dodge: 0.5,
-  counter: 0.6,
-  vitality: 60,
+const LEVEL_LIMIT = 200;
+const STAT_STEP = 0.04;
+type Effect = { step: number; ceiling: number };
+/** Each stat's effect: what one of the first 8 levels adds and the most it can reach, as a fraction (vitality: HP). */
+const EFFECTS: Record<Stat, Effect> = {
+  power: { step: STAT_STEP, ceiling: 0.6 },
+  guard: { step: STAT_STEP, ceiling: 0.6 },
+  luck: { step: STAT_STEP, ceiling: 0.5 },
+  crit: { step: STAT_STEP, ceiling: 0.5 },
+  dodge: { step: STAT_STEP, ceiling: 0.5 },
+  counter: { step: 0.02, ceiling: 0.6 },
+  vitality: { step: 4, ceiling: 60 },
 };
 /** Counter's second effect: the chance a foe's miss becomes your counter. */
-const COUNTER_CHANCE = { step: 0.02, ceiling: 0.5 };
+const COUNTER_CHANCE: Effect = { step: 0.02, ceiling: 0.5 };
 /** An HP-fight crit adds this much to a strike or heavy. */
 export const HP_CRIT_BONUS = 0.5;
 
@@ -50,15 +39,14 @@ export const HATS: Hat[] = [
   { id: "halo", label: "Halo", wins: 12 },
   { id: "crown", label: "Crown", wins: 20 },
 ];
-const HAT_WINS = new Map(HATS.map((h) => [h.id, h.wins]));
+const HAT_IDS = new Set(HATS.map((h) => h.id));
 
 const whole = (n: unknown): number => (Number.isInteger(n) && n > 0 ? n : 0);
-/** What a fighter has earned upgrade points from: a profile, a player, or the numbers as the stream has shown them. */
+/** What a fighter earns upgrade points from (bonus: check-in points): a profile, a player, or the stream's numbers. */
 export type Earned = { wins?: unknown; bonus?: unknown; losses?: unknown };
-// Every LOSSES_PER_POINT-th ranked loss gives a point, so a fighter who keeps losing still grows.
-export const LOSSES_PER_POINT = 3;
+// Every third ranked loss gives a point, so a fighter who keeps losing still grows.
+const LOSSES_PER_POINT = 3;
 const fromLosses = (losses: unknown): number => Math.floor(whole(losses) / LOSSES_PER_POINT);
-// Points from wins, check-in (bonus) points and losses.
 export const pointsFor = (earned: Earned): number =>
   whole(earned.wins) + whole(earned.bonus) + fromLosses(earned.losses);
 
@@ -70,30 +58,26 @@ export function levelSpend(level: number): number {
     tiers = Math.floor(n / FULL_STEP_LEVELS);
   return FULL_STEP_LEVELS * (2 ** tiers - 1) + (n % FULL_STEP_LEVELS) * 2 ** tiers;
 }
-// Points a build spends.
 export const spentOn = (stats: Stats): number => STATS.reduce((sum, key) => sum + levelSpend(stats[key]), 0);
 
 // An effect at a level: the full step a level up to level 8 (so earlier builds keep their strength), then half that
 // step at first, closing in on the ceiling without reaching it.
-function effectAt(step: number, ceiling: number, level: number): number {
+function effectAt({ step, ceiling }: Effect, level: number): number {
   const n = Math.max(0, level || 0);
   if (n <= FULL_STEP_LEVELS) return step * n;
   const base = step * FULL_STEP_LEVELS,
     room = ceiling - base;
   return base + room * (1 - Math.exp(-((step / 2) * (n - FULL_STEP_LEVELS)) / room));
 }
-// What a stat's levels do, as a fraction (for counter, the extra counter damage; for vitality, HP).
-export const statValue = (stat: Stat, level: number): number => effectAt(STAT_STEPS[stat], STAT_CEILING[stat], level);
-// The chance a foe's miss becomes this fighter's counter.
-export const counterChance = (level: number): number => effectAt(COUNTER_CHANCE.step, COUNTER_CHANCE.ceiling, level);
-// Whole extra max HP from vitality levels.
+// For counter, the extra counter damage.
+export const statValue = (stat: Stat, level: number): number => effectAt(EFFECTS[stat], level);
+export const counterChance = (level: number): number => effectAt(COUNTER_CHANCE, level);
 export const bonusHp = (level: number): number => Math.round(statValue("vitality", level));
 
 export function emptyStats(): Stats {
   return { power: 0, guard: 0, luck: 0, crit: 0, dodge: 0, counter: 0, vitality: 0 };
 }
 
-// Any input -> whole numbers within 0..max for each stat.
 export function cleanStats(input?: unknown, max = LEVEL_LIMIT): Stats {
   const out = emptyStats();
   for (const key of STATS) {
@@ -107,12 +91,7 @@ export function cleanStats(input?: unknown, max = LEVEL_LIMIT): Stats {
 // Levels the fighter can use with these points: after a rank reset, levels come off the last stat in STATS first until
 // the build fits. maxLevel (the channel's maxStatLevel) then caps each stat; boost (the pet's) is added after both, so
 // it may take a stat past the cap.
-export function effectiveStats(
-  stats: unknown,
-  earned: Earned,
-  boost: LooseStats | null = null,
-  maxLevel = LEVEL_LIMIT,
-): Stats {
+export function effectiveStats(stats: unknown, earned: Earned, boost?: LooseStats | null, maxLevel = LEVEL_LIMIT) {
   const out = cleanStats(stats),
     points = pointsFor(earned);
   let spent = spentOn(out);
@@ -125,8 +104,8 @@ export function effectiveStats(
 // Level sync: in a duel the stronger build drops levels until it costs at most SYNC_MARGIN points more than the
 // weaker one, so every duel stays winnable. Both builds are the duel's effective stats, pet boost included. Levels
 // come off the highest stat first (ties: the last in STATS). It only changes the fight; saved builds stay as they are.
-export const SYNC_MARGIN = 10;
-export function syncStats(stats: Stats, budget: number): Stats {
+const SYNC_MARGIN = 10;
+function syncStats(stats: Stats, budget: number): Stats {
   const out = { ...stats };
   let spent = spentOn(out);
   while (spent > budget) {
@@ -137,11 +116,7 @@ export function syncStats(stats: Stats, budget: number): Stats {
   return out;
 }
 export function syncPair(a: Stats, b: Stats): [Stats, Stats] {
-  const costA = spentOn(a),
-    costB = spentOn(b);
-  if (costA > costB + SYNC_MARGIN) return [syncStats(a, costB + SYNC_MARGIN), b];
-  if (costB > costA + SYNC_MARGIN) return [a, syncStats(b, costA + SYNC_MARGIN)];
-  return [a, b];
+  return [syncStats(a, spentOn(b) + SYNC_MARGIN), syncStats(b, spentOn(a) + SYNC_MARGIN)];
 }
 
 // For saving: null when the build spends more points than the fighter has or isn't whole levels.
@@ -160,7 +135,7 @@ export function validStats(input: unknown, earned: Earned): Stats | null {
 
 /** A suggested build: how much each stat weighs. */
 export type Preset = { id: string; label: string; weights: Partial<Record<string, number>> };
-// Suggested builds for the fighter page. A preset shows once every stat it weighs exists here.
+// A preset shows once every stat it weighs exists here.
 export const PRESETS: Preset[] = [
   { id: "balanced", label: "Balanced", weights: { power: 1, guard: 1, luck: 1 } },
   { id: "brawler", label: "Brawler", weights: { power: 1, guard: 1 } },
@@ -197,51 +172,28 @@ export function presetStats(preset: Preset, points: number, maxLevel = LEVEL_LIM
   }
 }
 
-export const knownHat = (id: unknown): boolean => HAT_WINS.has(typeof id === "string" ? id : "");
+export const knownHat = (id: unknown): boolean => HAT_IDS.has(typeof id === "string" ? id : "");
 export const hatUnlocked = (id: unknown, wins: unknown): boolean =>
-  // knownHat(id) is true only for a string id that HAT_WINS holds, so the cast holds and get() finds it
-  knownHat(id) && (Number.isInteger(wins) ? wins : 0) >= HAT_WINS.get(id as string)!;
+  HATS.some((h) => h.id === id && (Number.isInteger(wins) ? wins : 0) >= h.wins);
 
-// Damage after the dealer's power and the target's guard (through statValue); at least 1 so a blow always counts.
-export function scaledDamage(
-  base: number,
-  dealerStats?: Partial<Stats> | null,
-  targetStats?: Partial<Stats> | null,
-): number {
-  const factor = (1 + statValue("power", dealerStats?.power || 0)) * (1 - statValue("guard", targetStats?.guard || 0));
+// Damage after the dealer's power and the target's guard; at least 1 so a blow always counts.
+export function scaledDamage(base: number, dealer?: Partial<Stats> | null, target?: Partial<Stats> | null): number {
+  const factor = (1 + statValue("power", dealer?.power || 0)) * (1 - statValue("guard", target?.guard || 0));
   return Math.max(1, Math.round(base * factor));
 }
 
-/** The rules upgradeRules sends to the dashboard. */
-export type UpgradeRules = {
-  stats: typeof STATS;
-  /** The channel's maxStatLevel: levels above it don't count there. */
-  maxLevel: number;
-  points: number;
-  fromWins: number;
-  fromCheckins: number;
-  /** Points from losses: one per LOSSES_PER_POINT ranked losses. */
-  fromLosses: number;
-  lossesPerPoint: number;
-  /** Level sync: how many points' worth of levels the stronger fighter keeps above the weaker one. */
-  syncMargin: number;
-  step: number;
-  hats: (Hat & { unlocked: boolean })[];
-};
-
 // Rules for the dashboard, sent with the profile so the page never hard-codes them.
-export function upgradeRules(earned: Earned, maxLevel = LEVEL_LIMIT): UpgradeRules {
-  const wins = earned.wins;
+export function upgradeRules(earned: Earned, maxLevel = LEVEL_LIMIT) {
   return {
     stats: STATS,
-    maxLevel,
+    maxLevel, // the channel's maxStatLevel: levels above it don't count there
     points: pointsFor(earned),
-    fromWins: whole(wins),
+    fromWins: whole(earned.wins),
     fromCheckins: whole(earned.bonus),
     fromLosses: fromLosses(earned.losses),
     lossesPerPoint: LOSSES_PER_POINT,
     syncMargin: SYNC_MARGIN,
     step: STAT_STEP,
-    hats: HATS.map((h) => ({ ...h, unlocked: (Number.isInteger(wins) ? wins : 0) >= h.wins })),
+    hats: HATS.map((h) => ({ ...h, unlocked: hatUnlocked(h.id, earned.wins) })),
   };
 }
