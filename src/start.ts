@@ -3,13 +3,12 @@ import { h, $ } from "./ui.ts";
 import { scrub, skyBackdrop } from "./scrub.ts";
 import site from "../site.config.js";
 
-const params = new URLSearchParams(location.search);
 // Sites with a PixFray chat bot (site.config.js bot) set chat up with it; the others keep the StreamElements steps.
 const BOT = Boolean(site.bot?.[location.origin === site.origins.test ? "test" : "production"]);
 for (const n of document.querySelectorAll<HTMLElement>("[data-chat]"))
   if (n.dataset.chat === (BOT ? "bot" : "se")) n.hidden = false;
   else n.remove();
-const error = params.get("error") || "";
+const error = new URLSearchParams(location.search).get("error") || "";
 
 // The overlay lays fighters out in the pixels it gets. Narrow stages render it at least 640px wide (in the stage's own
 // shape: 16:9 wide, 4:5 on phones) and scale it down, so the nameplates keep their room and stay readable.
@@ -57,42 +56,35 @@ const PROBLEMS: Record<string, string | undefined> = {
 };
 
 function show(title: string, text: string, actions: HTMLAnchorElement[] = [], problem = "") {
-  $<HTMLHeadingElement>("#signup-title").textContent = title;
-  $<HTMLParagraphElement>("#signup-text").textContent = text;
-  $<HTMLDivElement>("#signup-actions").replaceChildren(...actions);
+  $("#signup-title").textContent = title;
+  $("#signup-text").textContent = text;
+  $("#signup-actions").replaceChildren(...actions);
   // the closing band repeats the card's main link as a plain button, so the page ends on the next step with one primary action
-  $<HTMLDivElement>("#ready-actions").replaceChildren(
+  $("#ready-actions").replaceChildren(
     ...actions.filter((n) => n.matches("a.btn-primary")).map((n) => n.cloneNode(true)),
   );
-  $("#ready").hidden = !$<HTMLDivElement>("#ready-actions").children.length;
-  const box = $<HTMLParagraphElement>("#signup-problem");
+  $("#ready").hidden = !$("#ready-actions").children.length;
+  const box = $("#signup-problem");
   box.textContent = problem;
   box.hidden = !problem;
   box.className = "callout small" + (problem ? " warning" : "");
 }
-const signIn = (mods = true) =>
-  h(
-    "a",
-    {
-      class: mods ? "btn btn-primary" : "btn",
-      href: "/auth/login?" + new URLSearchParams({ signup: "1", ...(mods ? {} : { mods: "0" }) }),
-    },
-    mods ? "Sign in with Twitch" : BOT ? "Set up without these permissions" : "Set up without mod access",
-  );
+function signIn(mods = true) {
+  const href = "/auth/login?" + new URLSearchParams(mods ? { signup: "1" } : { signup: "1", mods: "0" }),
+    label = mods ? "Sign in with Twitch" : BOT ? "Set up without these permissions" : "Set up without mod access";
+  return h("a", { class: mods ? "btn btn-primary" : "btn", href }, label);
+}
 
 // Anyone can sign up: the Twitch account that signs in gets PixFray on its own channel. The server sends people back
 // here with ?error=<reason> when sign-up doesn't finish.
-function init() {
-  show(
-    "Sign in with the Twitch account you stream on",
-    "PixFray turns on for that channel, then the Stream setup page opens. Twitch asks you to allow reading your moderator list" +
-      (BOT ? " and the PixFray bot in your chat." : "."),
-    error === "denied" ? [signIn(), signIn(false)] : [signIn()],
-    PROBLEMS[error] || "",
-  );
-  if (error) history.replaceState(null, "", location.pathname);
-}
-init();
+show(
+  "Sign in with the Twitch account you stream on",
+  "PixFray turns on for that channel, then the Stream setup page opens. Twitch asks you to allow reading your moderator list" +
+    (BOT ? " and the PixFray bot in your chat." : "."),
+  error === "denied" ? [signIn(), signIn(false)] : [signIn()],
+  PROBLEMS[error] || "",
+);
+if (error) history.replaceState(null, "", location.pathname);
 
 // The setup steps scroll past a scene that shows each one: the overlay framed as an OBS source, a bot reply in chat,
 // !challenge and !fight starting a duel, then the ranking pillars. The middle of the window picks the step.

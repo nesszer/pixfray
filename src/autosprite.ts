@@ -18,19 +18,6 @@ const LEAK_TAU = 0.06,
 // ---------- color: Oklab, so distances match what the eye sees ----------
 const lin = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const gam = (c: number) => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
-function toLab(r: number, g: number, b: number): [number, number, number] {
-  const R = lin(r),
-    G = lin(g),
-    B = lin(b);
-  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B),
-    m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B),
-    s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
-  return [
-    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
-    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
-    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
-  ];
-}
 export function toRgb(L: number, a: number, b: number): [number, number, number] {
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3,
     m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3,
@@ -47,12 +34,38 @@ export function labOf(img: Img) {
   const n = img.width * img.height,
     out = new Float32Array(n * 3),
     d = img.data;
-  for (let p = 0; p < n; p++) out.set(toLab(d[p * 4]!, d[p * 4 + 1]!, d[p * 4 + 2]!), p * 3);
+  for (let p = 0; p < n; p++) {
+    const R = lin(d[p * 4]!),
+      G = lin(d[p * 4 + 1]!),
+      B = lin(d[p * 4 + 2]!);
+    const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B),
+      m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B),
+      s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+    out[p * 3] = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+    out[p * 3 + 1] = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+    out[p * 3 + 2] = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  }
   return out;
 }
 // Distance between the colors at x[i..i+2] and y[j..j+2].
 export const d3 = (x: ArrayLike<number>, i: number, y: ArrayLike<number>, j: number) =>
   Math.hypot(x[i]! - y[j]!, x[i + 1]! - y[j + 1]!, x[i + 2]! - y[j + 2]!);
+// Which of the centers (3 numbers each) is nearest the color at pts[i * 3..].
+export function nearest(pts: ArrayLike<number>, i: number, centers: number[]) {
+  let bk = 0,
+    bd = Infinity;
+  for (let c = 0; c < centers.length / 3; c++) {
+    const v = d3(pts, i * 3, centers, c * 3);
+    if (v < bd) {
+      bd = v;
+      bk = c;
+    }
+  }
+  return bk;
+}
+// The 4 neighbors of pixel p in a w-wide picture of n pixels.
+const around = (p: number, w: number, n: number) =>
+  [p % w ? p - 1 : -1, p % w < w - 1 ? p + 1 : -1, p - w, p + w].filter((r) => r >= 0 && r < n);
 
 // k-means on weighted Lab points with deterministic k-means++ seeding (the same picture always gives the same result).
 export function kmeans(pts: Float32Array, wts: Float32Array, k: number, iters = 12) {
@@ -81,17 +94,9 @@ export function kmeans(pts: Float32Array, wts: Float32Array, k: number, iters = 
   for (let it = 0; it < iters; it++) {
     const sum = new Float64Array(K * 4);
     for (let i = 0; i < n; i++) {
-      let bk = 0,
-        bd = Infinity;
-      for (let c = 0; c < K; c++) {
-        const v = d3(pts, i * 3, centers, c * 3);
-        if (v < bd) {
-          bd = v;
-          bk = c;
-        }
-      }
+      const bk = nearest(pts, i, centers),
+        w = wts[i]!;
       label[i] = bk;
-      const w = wts[i]!;
       for (let j = 0; j < 3; j++) sum[bk * 4 + j]! += pts[i * 3 + j]! * w;
       sum[bk * 4 + 3]! += w;
     }
@@ -290,8 +295,8 @@ function components(mask: Uint8Array, w: number, h: number, value: number) {
       y0 = Math.min(y0, y);
       y1 = Math.max(y1, y);
       if (!x || !y || x === w - 1 || y === h - 1) touches = true;
-      for (const r of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, y > 0 ? p - w : -1, y < h - 1 ? p + w : -1])
-        if (r >= 0 && mask[r] === value && id[r]! < 0) {
+      for (const r of around(p, w, w * h))
+        if (mask[r] === value && id[r]! < 0) {
           id[r] = c;
           q[tl++] = r;
         }
@@ -398,17 +403,8 @@ function heapOf(key: Float32Array) {
   };
 }
 
-/** The subject at the image's own size (1 = subject, 0 = background). whole: no clear subject, so all of it. */
-type Subject = { mask: Uint8Array; whole: boolean };
-
-export function subjectMask(img: Img): Subject {
-  const k0 = Math.min(1, SEG_MAX / Math.max(img.width, img.height)),
-    w = Math.max(8, Math.round(img.width * k0)),
-    h = Math.max(8, Math.round(img.height * k0)),
-    small = resize(img, w, h),
-    n = w * h,
-    lab = labOf(small),
-    up = (m: Uint8Array) => upsample(m, w, h, img.width, img.height);
+/** The border pixels of a w x h image, top and bottom row then the side columns, and the side of each. */
+export function rim(w: number, h: number) {
   const border: number[] = [],
     side: number[] = []; // 0 top, 1 bottom, 2 left, 3 right
   for (let x = 0; x < w; x++) {
@@ -419,6 +415,20 @@ export function subjectMask(img: Img): Subject {
     border.push(y * w, y * w + w - 1);
     side.push(2, 3);
   }
+  return { border, side };
+}
+
+/** The subject at the image's own size (1 = subject, 0 = background). whole: no clear subject, so all of it. */
+type Subject = { mask: Uint8Array; whole: boolean };
+
+export function subjectMask(img: Img): Subject {
+  const k0 = Math.min(1, SEG_MAX / Math.max(img.width, img.height)),
+    w = Math.max(8, Math.round(img.width * k0)),
+    h = Math.max(8, Math.round(img.height * k0)),
+    small = resize(img, w, h),
+    n = w * h,
+    lab = labOf(small);
+  const { border, side } = rim(w, h);
 
   // background colors: border clusters on the top edge that also reach a side, fill half the top or stay off the
   // bottom edge, or on both side edges without filling the bottom edge (a bust's body fills the bottom and its
@@ -462,9 +472,8 @@ export function subjectMask(img: Img): Subject {
     const p = heap.pop();
     if (done[p]) continue;
     done[p] = 1;
-    const x = p % w;
-    for (const r of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w]) {
-      if (r < 0 || r >= n || done[r]) continue;
+    for (const r of around(p, w, n)) {
+      if (done[r]) continue;
       const g = geo[p]! + d3(lab, p * 3, lab, r * 3) + 0.002;
       if (g < geo[r]!) {
         geo[r] = g;
@@ -494,17 +503,14 @@ export function subjectMask(img: Img): Subject {
     const blank = spread < 0.03;
     return { mask: new Uint8Array(img.width * img.height).fill(blank ? 0 : 1), whole: !blank };
   }
-  let mean = 0;
-  for (const v of sal0) mean += v / n;
-  let tv = 0;
-  for (const v of sal0) tv += (v - mean) ** 2;
+  const mean = sal0.reduce((s, v) => s + v / n, 0),
+    tv = sal0.reduce((s, v) => s + (v - mean) ** 2, 0);
   if (tv < 1e-9) return { mask: new Uint8Array(img.width * img.height).fill(1), whole: true };
 
   // body prior: when the first guess reaches the bottom edge near its middle (a bust), the body widens below the
   // head and runs to the bottom even where it matches the background's color
   {
-    const g0 = new Uint8Array(n);
-    for (let p = 0; p < n; p++) g0[p] = sal[p]! > t ? 1 : 0;
+    const g0 = Uint8Array.from(sal, (v) => (v > t ? 1 : 0));
     keepMain(g0, w, h);
     let x0 = w,
       x1 = -1,
@@ -549,8 +555,7 @@ export function subjectMask(img: Img): Subject {
   }
 
   // graph cut, refitting the color models a few times
-  let fg = new Uint8Array(n);
-  for (let p = 0; p < n; p++) fg[p] = sal[p]! > t ? 1 : 0;
+  let fg = Uint8Array.from(sal, (v) => (v > t ? 1 : 0));
   const right = (p: number) => d3(lab, p * 3, lab, p * 3 + 3) ** 2,
     below = (p: number) => d3(lab, p * 3, lab, (p + w) * 3) ** 2;
   let beta = 0,
@@ -631,7 +636,7 @@ export function subjectMask(img: Img): Subject {
   const whole = cover < 0.04 || cover > 0.65 || top > 0.25 * w || wide > 0.09 * h || sep < 0.68;
   if (whole) return { mask: new Uint8Array(img.width * img.height).fill(1), whole };
   dropEdgeLeak(fg, lab, w, h);
-  return { mask: up(fg), whole };
+  return { mask: upsample(fg, w, h, img.width, img.height), whole };
 }
 
 // Background the cut kept stuck to the subject (a cloud touching the head). Foreground running along the top edge
@@ -653,8 +658,6 @@ export function dropEdgeLeak(fg: Uint8Array, lab: Float32Array, w: number, h: nu
     }
   if (edge.length < LEAK_MIN * Math.max(w, h)) return;
   const near = (p: number) => edge.some((q) => d3(lab, p * 3, lab, q * 3) < LEAK_TAU),
-    around = (p: number) =>
-      [p % w ? p - 1 : -1, p % w < w - 1 ? p + 1 : -1, p - w, p + w].filter((r) => r >= 0 && r < n),
     leak = new Uint8Array(n),
     todo = [...edge];
   for (const p of edge) leak[p] = 1;
@@ -662,20 +665,16 @@ export function dropEdgeLeak(fg: Uint8Array, lab: Float32Array, w: number, h: nu
   while (todo.length) {
     const p = todo.pop()!; // the loop runs while todo has items
     low = Math.max(low, Math.floor(p / w));
-    for (const r of around(p))
+    for (const r of around(p, w, n))
       if (fg[r] && !leak[r] && near(r)) {
         leak[r] = 1;
         todo.push(r);
       }
   }
-  const { id, sizes, boxes } = components(
-      fg.map((v, p) => (v && !leak[p] && near(p) ? 1 : 0)),
-      w,
-      h,
-      1,
-    ),
-    rim = sizes.map(() => 0);
-  for (let p = 0; p < n; p++) if (id[p]! >= 0 && around(p).some((r) => !fg[r])) rim[id[p]!]!++;
+  const split = fg.map((v, p) => (v && !leak[p] && near(p) ? 1 : 0)),
+    { id, sizes, boxes } = components(split, w, h, 1);
+  const rim = sizes.map(() => 0);
+  for (let p = 0; p < n; p++) if (id[p]! >= 0 && around(p, w, n).some((r) => !fg[r])) rim[id[p]!]!++;
   for (let p = 0; p < n; p++) {
     const c = id[p]!;
     if (c >= 0 && sizes[c]! >= LEAK_MIN * Math.max(w, h) && boxes[c]![3] <= low && rim[c]! >= LEAK_RIM * sizes[c]!)

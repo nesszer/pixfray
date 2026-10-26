@@ -3,20 +3,9 @@
 // glides instead of jumping. It draws only while the position is still moving.
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export function scrub(
-  canvas: HTMLCanvasElement,
-  {
-    frames,
-    progress,
-    keys = null,
-    onFrame = null,
-  }: {
-    frames: string[];
-    progress: () => number;
-    keys?: number[] | null;
-    onFrame?: ((p: number) => void) | null;
-  },
-) {
+type ScrubOptions = { frames: string[]; progress: () => number; keys?: number[] | null };
+
+export function scrub(canvas: HTMLCanvasElement, { frames, progress, keys = null }: ScrubOptions) {
   const imgs: (HTMLImageElement | null)[] = frames.map(() => null),
     ctx = canvas.getContext("2d") as CanvasRenderingContext2D; // a canvas only drawn in 2D always has one
   let cur = progress(),
@@ -55,8 +44,8 @@ export function scrub(
   function cover(im: HTMLImageElement, alpha: number) {
     const W = canvas.width,
       H = canvas.height,
-      s = Math.max(W / im.naturalWidth, H / im.naturalHeight);
-    const w = im.naturalWidth * s,
+      s = Math.max(W / im.naturalWidth, H / im.naturalHeight),
+      w = im.naturalWidth * s,
       hgt = im.naturalHeight * s;
     ctx.globalAlpha = alpha;
     ctx.drawImage(im, (W - w) / 2, (H - hgt) / 2, w, hgt);
@@ -74,7 +63,6 @@ export function scrub(
       ready = true;
       canvas.classList.add("is-ready");
     }
-    onFrame?.(cur);
   }
   function tick(t: number) {
     const dt = Math.min(0.05, last ? (t - last) / 1000 : 0.016);
