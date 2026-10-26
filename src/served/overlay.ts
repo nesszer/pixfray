@@ -418,24 +418,23 @@ async function start() {
     image.src = url.href;
     sprites.set(id, sprite);
   }
+  // Adds every character of a catalog; false when the catalog could not be read.
+  async function addCatalog(url: string) {
+    try {
+      for (const item of await catalogItems(url)) {
+        if (typeof item?.id === "string") addSprite(item.id.toLowerCase(), item);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
   // Custom characters can be uploaded while OBS is running; fetch the merged catalog again when one is missing.
   async function loadArenaCatalog() {
     lastCatalogFetch = Date.now();
-    try {
-      for (const item of await catalogItems("/api/catalog/" + encodeURIComponent(channel))) {
-        if (typeof item?.id === "string") addSprite(item.id.toLowerCase(), item);
-      }
-    } catch {
-      /* The bundled sprite set stays available. */
-    }
+    await addCatalog("/api/catalog/" + encodeURIComponent(channel)); // on failure the bundled sprite set stays
   }
-  try {
-    for (const item of await catalogItems("./assets/characters.json")) {
-      if (typeof item?.id === "string") addSprite(item.id.toLowerCase(), item);
-    }
-  } catch {
-    updateStatus("Using fallback characters");
-  }
+  if (!(await addCatalog("./assets/characters.json"))) updateStatus("Using fallback characters");
   if (arenaEnabled && !arenaDemo) await loadArenaCatalog();
   const ids = [...sprites.keys()].filter((id) => !sprites.get(id)!.custom); // the id comes from sprites.keys()
   function persist() {
@@ -447,9 +446,6 @@ async function start() {
     } catch {
       /* Storage is optional. */
     }
-  }
-  function hop(p: Player, amount: number) {
-    p.vy = -amount;
   }
   const nameOf = (id: unknown) => {
     const profile = profilesById.get(String(id));
@@ -1127,7 +1123,7 @@ async function start() {
           if (event.miss) {
             if (target) {
               target.anim = null;
-              hop(target, 180);
+              target.vy = -180;
             }
             floatText(target, "MISS", "#e2e8f0");
             break;
@@ -1165,7 +1161,7 @@ async function start() {
           }
         if (winner) {
           winner.anim = { kind: "cheer", start: now, until: now + 1400 };
-          hop(winner, 220);
+          winner.vy = -220;
         }
         // The winner's win effect and taunt (preset lines only; no taunt bubble with bubbles=0).
         if (winner?.winEffect) winner.winFx = { id: winner.winEffect, start: now, seed: (now % 997) + 1 };
@@ -1269,7 +1265,7 @@ async function start() {
     const command = parseCommand(message.text || "");
     if (command?.type === "jump") {
       if (now - p.lastJump >= 3000) {
-        hop(p, 300);
+        p.vy = -300;
         p.lastJump = now;
       }
       p.text = "";
@@ -1283,7 +1279,7 @@ async function start() {
       }
       p.text = "";
     } else if (now - (p.lastReaction || 0) > 1500 && !duelFor(p)) {
-      hop(p, 140);
+      p.vy = -140;
       p.lastReaction = now;
     }
     updateStatus();

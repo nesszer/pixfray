@@ -300,27 +300,19 @@ key.castShadow = !small;
 const clash = new THREE.PointLight(0xffc070, 0, 4, 2);
 scene.add(clash); // the flash between the fighters on a hit
 
-const island = buildIsland({ shadows: !small });
-scene.add(island);
-const lanterns = buildLanterns();
-scene.add(lanterns.group);
-const embers = buildEmbers(small ? 380 : 900);
-scene.add(embers);
-const islets = buildIslets();
-scene.add(islets.group);
-const die = buildDie();
+const island = buildIsland({ shadows: !small }),
+  lanterns = buildLanterns(),
+  embers = buildEmbers(small ? 380 : 900),
+  islets = buildIslets(),
+  die = buildDie(),
+  podium = buildPodium(),
+  coins = buildCoins(),
+  clouds = buildClouds(),
+  chest = buildChest();
 die.visible = false;
-scene.add(die);
-const podium = buildPodium();
-scene.add(podium.mesh);
-const coins = buildCoins();
-scene.add(coins.mesh);
-const clouds = buildClouds();
-scene.add(clouds.group);
-const chest = buildChest();
 chest.group.position.set(-1.75, 0, 1.25);
 chest.group.rotation.y = 0.62;
-scene.add(chest.group);
+scene.add(island, lanterns.group, embers, islets.group, die, podium.mesh, coins.mesh, clouds.group, chest.group);
 // the chest's light lives in the scene (dark until the lid opens): a light that comes and goes with the chest changes the
 // light count, and that rebuilds every lit material at once, a multi-second freeze the first time the loot chapter shows
 chest.group.updateMatrixWorld(true);
