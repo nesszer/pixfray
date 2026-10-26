@@ -36,7 +36,8 @@ import type {
   LooksMessage,
   Rating,
 } from "./parse.ts";
-import type { Frame, Head } from "./hats.ts";
+import type { Head } from "./hats.ts";
+import type { Frame } from "./pixels.ts";
 
 /** A character catalog entry (assets/characters.json, /api/catalog) as addSprite reads it. */
 type CatalogItem = {

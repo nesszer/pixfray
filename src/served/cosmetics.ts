@@ -1,17 +1,11 @@
 // Cosmetics drawn on stream (overlay.ts) and in the website preview (src/ui.ts). Looks only, no stat changes.
 // The lists, prices and ownership live in server/cosmetics.ts; the ids here must match (tests/cosmetics.test.ts).
 import { headFor } from "./hats.ts";
-import type { Frame, Head } from "./hats.ts";
+import type { Head } from "./hats.ts";
+import { filtered, frameKey, perSource } from "./pixels.ts";
+import type { Frame } from "./pixels.ts";
+type Ctx = CanvasRenderingContext2D;
 
-export const COSMETIC_IDS = {
-  recolor: ["crimson", "ocean", "forest", "violet", "gold", "ghost", "shadow", "negative"],
-  petcolor: ["crimson", "ocean", "forest", "violet", "gold", "ghost", "shadow", "negative"],
-  accessory: ["glasses", "shades", "monocle", "bowtie", "scarf", "cape"],
-  trail: ["sparkles", "hearts", "flames", "bubbles", "stars", "notes"],
-  effect: ["confetti", "fireworks", "banner"],
-  taunt: ["gg", "next", "easy", "rematch", "bow", "nap", "luck", "chat"],
-  title: ["rookie", "brawler", "lucky", "wall", "cannon", "owl", "menace", "champion", "legend"],
-};
 // Preset lines only: nothing a viewer types reaches the stream.
 export const TAUNTS: Record<string, string> = {
   gg: "GG!",
@@ -49,101 +43,63 @@ const RECOLORS: Record<string, string> = {
 };
 export const recolorFilter = (id: string) => RECOLORS[id] || "";
 // One sprite frame with a recolor (and an optional extra filter, the overlay's hit flash) baked in, cached per image,
-// frame and filter. Drawing with ctx.filter set costs a filter pass over the whole stage canvas per fighter: a crowd of
-// 50 recolored fighters ran at about 1 fps.
-const tintedFrames = new WeakMap<CanvasImageSource, Map<string, HTMLCanvasElement | OffscreenCanvas | null>>();
+// frame and filter (pixels.ts filtered says why).
+const recolored = perSource<HTMLCanvasElement | OffscreenCanvas | null>();
 export function recoloredFrame(image: CanvasImageSource, frame: Frame, id: string, extra = "") {
   const filter = [recolorFilter(id), extra].filter(Boolean).join(" ");
   if (!filter) return null;
-  let byKey = tintedFrames.get(image);
-  if (!byKey) tintedFrames.set(image, (byKey = new Map()));
-  const key = filter + "|" + frame.x + "," + frame.y + "," + frame.w + "," + frame.h;
-  if (!byKey.has(key)) {
-    const w = Math.max(1, Math.round(frame.w)),
-      h = Math.max(1, Math.round(frame.h));
-    const canvas =
-      typeof OffscreenCanvas === "function"
-        ? new OffscreenCanvas(w, h)
-        : Object.assign(document.createElement("canvas"), { width: w, height: h });
-    const g = canvas.getContext("2d");
-    if (g) {
-      g.filter = filter;
-      g.drawImage(image, frame.x, frame.y, frame.w, frame.h, 0, 0, w, h);
-    }
-    byKey.set(key, g ? canvas : null);
-  }
-  return byKey.get(key);
+  const px = (n: number) => Math.max(1, Math.round(n));
+  return recolored(image, filter + "|" + frameKey(frame), () =>
+    filtered(image, frame, filter, px(frame.w), px(frame.h)),
+  );
 }
 
 // ---------- accessories ----------
-// Drawn in the sprite's own box (dx, dy, dw, dh), facing right; callers mirror for left. The cape is behind the body
-// (layer "back"), the rest in front. Placement follows the head found by hats.ts.
-const BACK_ACCESSORIES = new Set(["cape"]);
-export function drawAccessory(
-  ctx: CanvasRenderingContext2D,
-  id: string,
-  image: CanvasImageSource | null | undefined,
-  frame: Frame | null | undefined,
-  dx: number,
-  dy: number,
-  dw: number,
-  dh: number,
-  {
-    headHint = null,
-    layer = "front",
-    t = 0,
-    moving = false,
-  }: { headHint?: Head | null | undefined; layer?: string; t?: number; moving?: boolean } = {},
-) {
-  if (!id || !image || !frame || BACK_ACCESSORIES.has(id) !== (layer === "back")) return;
-  const head = headFor(image, frame, headHint);
-  const x0 = dx + head.left * dw,
-    hw = Math.max(4, (head.right - head.left) * dw),
-    cx = x0 + hw / 2,
-    top = dy + head.top * dh;
-  const eyeY = top + hw * 0.46,
-    neckY = Math.min(dy + dh * 0.72, top + hw * 0.95);
-  const line = Math.max(1.5, hw * 0.055);
-  ctx.save();
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  if (id === "glasses" || id === "shades") {
-    const r = hw * 0.13,
-      a = cx + hw * 0.02,
-      b = cx + hw * 0.32;
-    ctx.strokeStyle = "#111318";
-    ctx.lineWidth = line;
-    ctx.beginPath();
-    ctx.moveTo(a - r, eyeY);
-    ctx.lineTo(x0 + hw * 0.05, eyeY - r * 0.3);
-    ctx.stroke(); // the arm to the ear
-    ctx.beginPath();
-    ctx.moveTo(a + r, eyeY);
-    ctx.lineTo(b - r, eyeY);
-    ctx.stroke(); // the bridge
-    for (const ex of [a, b]) {
-      if (id === "shades") {
-        ctx.fillStyle = "#0b0c10";
-        ctx.beginPath();
-        ctx.roundRect(ex - r * 1.15, eyeY - r * 0.8, r * 2.3, r * 1.6, r * 0.5);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(255,255,255,.55)";
-        ctx.lineWidth = line * 0.6;
-        ctx.beginPath();
-        ctx.moveTo(ex - r * 0.6, eyeY - r * 0.35);
-        ctx.lineTo(ex - r * 0.1, eyeY - r * 0.35);
-        ctx.stroke();
-        ctx.strokeStyle = "#111318";
-        ctx.lineWidth = line;
-      } else {
-        ctx.fillStyle = "rgba(190,225,255,.35)";
-        ctx.beginPath();
-        ctx.arc(ex, eyeY, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
+// Drawn in the sprite's own box, facing right; callers mirror for left. The cape is behind the body (layer "back"),
+// the rest in front. Placement follows the head found by hats.ts: x0 and hw are its left edge and width.
+type Wear = { x0: number; hw: number; cx: number; eyeY: number; neckY: number; line: number; bottom: number };
+type Sway = { t: number; moving: boolean };
+function specs(ctx: Ctx, { x0, hw, cx, eyeY, line }: Wear, shades: boolean) {
+  const r = hw * 0.13,
+    a = cx + hw * 0.02,
+    b = cx + hw * 0.32;
+  ctx.strokeStyle = "#111318";
+  ctx.lineWidth = line;
+  ctx.beginPath();
+  ctx.moveTo(a - r, eyeY);
+  ctx.lineTo(x0 + hw * 0.05, eyeY - r * 0.3);
+  ctx.stroke(); // the arm to the ear
+  ctx.beginPath();
+  ctx.moveTo(a + r, eyeY);
+  ctx.lineTo(b - r, eyeY);
+  ctx.stroke(); // the bridge
+  for (const ex of [a, b]) {
+    if (shades) {
+      ctx.fillStyle = "#0b0c10";
+      ctx.beginPath();
+      ctx.roundRect(ex - r * 1.15, eyeY - r * 0.8, r * 2.3, r * 1.6, r * 0.5);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,.55)";
+      ctx.lineWidth = line * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(ex - r * 0.6, eyeY - r * 0.35);
+      ctx.lineTo(ex - r * 0.1, eyeY - r * 0.35);
+      ctx.stroke();
+      ctx.strokeStyle = "#111318";
+      ctx.lineWidth = line;
+    } else {
+      ctx.fillStyle = "rgba(190,225,255,.35)";
+      ctx.beginPath();
+      ctx.arc(ex, eyeY, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
-  } else if (id === "monocle") {
+  }
+}
+const ACCESSORIES: Record<string, (ctx: Ctx, w: Wear, s: Sway) => void> = {
+  glasses: (ctx, w) => specs(ctx, w, false),
+  shades: (ctx, w) => specs(ctx, w, true),
+  monocle(ctx, { hw, cx, eyeY, line }) {
     const r = hw * 0.15,
       ex = cx + hw * 0.28;
     ctx.strokeStyle = "#d4a017";
@@ -158,7 +114,8 @@ export function drawAccessory(
     ctx.moveTo(ex, eyeY + r);
     ctx.quadraticCurveTo(ex - r * 0.4, eyeY + hw * 0.4, ex - r * 1.6, eyeY + hw * 0.5);
     ctx.stroke();
-  } else if (id === "bowtie") {
+  },
+  bowtie(ctx, { hw, cx, neckY, line }) {
     const w = hw * 0.2,
       hgt = hw * 0.15,
       bx = cx + hw * 0.08;
@@ -176,7 +133,8 @@ export function drawAccessory(
     }
     ctx.fillStyle = "#7f1020";
     ctx.fillRect(bx - hw * 0.045, neckY - hw * 0.05, hw * 0.09, hw * 0.1);
-  } else if (id === "scarf") {
+  },
+  scarf(ctx, { hw, cx, neckY }, { t, moving }) {
     const sway = Math.sin(t / 180) * hw * (moving ? 0.12 : 0.04),
       bandH = hw * 0.15;
     ctx.fillStyle = "#2f6fd6";
@@ -193,9 +151,9 @@ export function drawAccessory(
     ctx.fill();
     ctx.fillStyle = "#f5f7fb";
     for (const k of [-0.22, 0.02, 0.26]) ctx.fillRect(cx + hw * k, neckY - bandH / 2, hw * 0.06, bandH);
-  } else if (id === "cape") {
-    const sway = Math.sin(t / 200) * hw * (moving ? 0.16 : 0.05),
-      bottom = dy + dh * 0.93;
+  },
+  cape(ctx, { hw, cx, neckY, bottom }, { t, moving }) {
+    const sway = Math.sin(t / 200) * hw * (moving ? 0.16 : 0.05);
     const grad = ctx.createLinearGradient(0, neckY, 0, bottom);
     grad.addColorStop(0, "#9b1c22");
     grad.addColorStop(1, "#c62a32");
@@ -212,7 +170,35 @@ export function drawAccessory(
     ctx.beginPath();
     ctx.arc(cx - hw * 0.08, neckY, hw * 0.06, 0, Math.PI * 2);
     ctx.fill(); // the clasp
-  }
+  },
+};
+export function drawAccessory(
+  ctx: Ctx,
+  id: string,
+  image: CanvasImageSource | null | undefined,
+  frame: Frame | null | undefined,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  {
+    headHint = null,
+    layer = "front",
+    t = 0,
+    moving = false,
+  }: { headHint?: Head | null | undefined; layer?: string; t?: number; moving?: boolean } = {},
+) {
+  const draw = ACCESSORIES[id];
+  if (!draw || !image || !frame || (id === "cape") !== (layer === "back")) return;
+  const head = headFor(image, frame, headHint);
+  const x0 = dx + head.left * dw,
+    hw = Math.max(4, (head.right - head.left) * dw),
+    top = dy + head.top * dh;
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  const wear = { x0, hw, cx: x0 + hw / 2, eyeY: top + hw * 0.46, line: Math.max(1.5, hw * 0.055) };
+  draw(ctx, { ...wear, neckY: Math.min(dy + dh * 0.72, top + hw * 0.95), bottom: dy + dh * 0.93 }, { t, moving });
   ctx.restore();
 }
 
@@ -222,13 +208,70 @@ export function drawAccessory(
 const TRAIL_EVERY_MS = 90,
   TRAIL_LIFE_MS = 950;
 type TrailPart = { id: string; x: number; y: number; born: number; size: number; seed: number; vx: number; vy: number };
+// draw paints one particle at the origin: r is its radius, k its age (0..1). vy: its speed in sizes per second (a
+// random rise when unset); sway: it wobbles sideways.
+type TrailKind = {
+  draw: (ctx: Ctx, r: number, k: number, seed: number, age: number) => void;
+  vy?: number;
+  sway?: true;
+};
+const TRAILS: Record<string, TrailKind> = {
+  sparkles: {
+    draw: (ctx, r, _k, seed, age) => star(ctx, 4, r * 1.3 * (0.6 + 0.4 * Math.sin(age / 70 + seed)), 0.3, "#fff3b0"),
+  },
+  hearts: { draw: (ctx, r, k) => heart(ctx, r * (1 - k * 0.3), "#f472b6") },
+  flames: {
+    vy: -0.35,
+    draw(ctx, r, k) {
+      ctx.fillStyle = k < 0.3 ? "#fde047" : k < 0.6 ? "#fb923c" : "#dc2626";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * (1.2 - k * 0.9), 0, Math.PI * 2);
+      ctx.fill();
+    },
+  },
+  bubbles: {
+    sway: true,
+    draw(ctx, r, k) {
+      ctx.strokeStyle = "#8fd8ff";
+      ctx.lineWidth = Math.max(1, r * 0.25);
+      ctx.beginPath();
+      ctx.arc(0, 0, r * (0.7 + k * 0.5), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,.7)";
+      ctx.fillRect(-r * 0.35, -r * 0.45, r * 0.25, r * 0.25);
+    },
+  },
+  stars: {
+    vy: 0.25,
+    draw(ctx, r, _k, seed, age) {
+      ctx.rotate(age / 300 + seed);
+      star(ctx, 5, r * 1.1, 0.45, "#facc15", -Math.PI / 2);
+    },
+  },
+  notes: {
+    sway: true,
+    draw(ctx, r) {
+      ctx.fillStyle = ctx.strokeStyle = "#c4b5fd";
+      ctx.lineWidth = Math.max(1, r * 0.28);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.7, r * 0.5, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(r * 0.6, 0);
+      ctx.lineTo(r * 0.6, -r * 2);
+      ctx.quadraticCurveTo(r * 1.4, -r * 1.6, r * 1.3, -r * 0.9);
+      ctx.stroke();
+    },
+  },
+};
 export function createTrail(limit = 400) {
   const parts: TrailPart[] = [];
   const last = new Map<string, number>();
   return {
     // key: one per fighter, so the spawn rate holds per fighter. x, y: the feet. size: the fighter's height.
     spawn(key: string, id: string, x: number, y: number, size: number, dir: number, now: number, vx = 0) {
-      if (!COSMETIC_IDS.trail.includes(id) || now - (last.get(key) || 0) < TRAIL_EVERY_MS) return;
+      const kind = TRAILS[id];
+      if (!kind || now - (last.get(key) || 0) < TRAIL_EVERY_MS) return;
       last.set(key, now);
       if (last.size > 200) for (const [k, t] of last) if (now - t > TRAIL_LIFE_MS) last.delete(k); // fighters who left
       const seed = (now % 997) + parts.length;
@@ -240,11 +283,11 @@ export function createTrail(limit = 400) {
         size,
         seed,
         vx,
-        vy: id === "stars" ? size * 0.25 : id === "flames" ? -size * 0.35 : -size * (0.3 + rnd(seed, 3) * 0.3),
+        vy: size * (kind.vy ?? -(0.3 + rnd(seed, 3) * 0.3)),
       });
       if (parts.length > limit) parts.splice(0, parts.length - limit);
     },
-    draw(ctx: CanvasRenderingContext2D, now: number) {
+    draw(ctx: Ctx, now: number) {
       for (let i = parts.length - 1; i >= 0; i--) {
         const p = parts[i]!, // 0 <= i < parts.length
           age = now - p.born;
@@ -252,18 +295,9 @@ export function createTrail(limit = 400) {
           parts.splice(i, 1);
           continue;
         }
-        const k = age / TRAIL_LIFE_MS,
-          s = age / 1000;
-        drawTrailPart(
-          ctx,
-          p.id,
-          p.x + p.vx * s + Math.sin(p.seed + age / 160) * p.size * (p.id === "bubbles" || p.id === "notes" ? 0.04 : 0),
-          p.y + p.vy * s,
-          p.size,
-          k,
-          p.seed,
-          age,
-        );
+        const s = age / 1000,
+          wobble = TRAILS[p.id]!.sway ? Math.sin(p.seed + age / 160) * p.size * 0.04 : 0; // spawn takes only known ids
+        drawTrailPart(ctx, p.id, p.x + p.vx * s + wobble, p.y + p.vy * s, p.size, age / TRAIL_LIFE_MS, p.seed, age);
       }
     },
     clear() {
@@ -276,7 +310,7 @@ export function createTrail(limit = 400) {
   };
 }
 // One still particle for list thumbnails: k is its age (0..1).
-export function drawTrailSample(ctx: CanvasRenderingContext2D, id: string, x: number, y: number, size: number) {
+export function drawTrailSample(ctx: Ctx, id: string, x: number, y: number, size: number) {
   (
     [
       [0, 0.2, 0.15],
@@ -286,79 +320,28 @@ export function drawTrailSample(ctx: CanvasRenderingContext2D, id: string, x: nu
     ] satisfies [number, number, number][]
   ).forEach(([ox, oy, k], i) => drawTrailPart(ctx, id, x + ox * size, y - oy * size, size, k, i * 7 + 3, k * 900));
 }
-function drawTrailPart(
-  ctx: CanvasRenderingContext2D,
-  id: string,
-  x: number,
-  y: number,
-  size: number,
-  k: number,
-  seed: number,
-  age: number,
-) {
-  const fade = 1 - k * k,
-    r = size * 0.065;
+function drawTrailPart(ctx: Ctx, id: string, x: number, y: number, size: number, k: number, seed: number, age: number) {
+  const kind = TRAILS[id];
+  if (!kind) return;
   ctx.save();
-  ctx.globalAlpha = Math.max(0, fade);
+  ctx.globalAlpha = Math.max(0, 1 - k * k);
   ctx.translate(x, y);
-  if (id === "sparkles") {
-    const tw = 0.6 + 0.4 * Math.sin(age / 70 + seed);
-    star4(ctx, r * 1.3 * tw, "#fff3b0");
-  } else if (id === "hearts") {
-    heart(ctx, r * (1 - k * 0.3), "#f472b6");
-  } else if (id === "flames") {
-    ctx.fillStyle = k < 0.3 ? "#fde047" : k < 0.6 ? "#fb923c" : "#dc2626";
-    ctx.beginPath();
-    ctx.arc(0, 0, r * (1.2 - k * 0.9), 0, Math.PI * 2);
-    ctx.fill();
-  } else if (id === "bubbles") {
-    ctx.strokeStyle = "#8fd8ff";
-    ctx.lineWidth = Math.max(1, r * 0.25);
-    ctx.beginPath();
-    ctx.arc(0, 0, r * (0.7 + k * 0.5), 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(255,255,255,.7)";
-    ctx.fillRect(-r * 0.35, -r * 0.45, r * 0.25, r * 0.25);
-  } else if (id === "stars") {
-    ctx.rotate(age / 300 + seed);
-    star5(ctx, r * 1.1, "#facc15");
-  } else if (id === "notes") {
-    ctx.fillStyle = ctx.strokeStyle = "#c4b5fd";
-    ctx.lineWidth = Math.max(1, r * 0.28);
-    ctx.beginPath();
-    ctx.ellipse(0, 0, r * 0.7, r * 0.5, -0.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(r * 0.6, 0);
-    ctx.lineTo(r * 0.6, -r * 2);
-    ctx.quadraticCurveTo(r * 1.4, -r * 1.6, r * 1.3, -r * 0.9);
-    ctx.stroke();
-  }
+  kind.draw(ctx, size * 0.065, k, seed, age);
   ctx.restore();
 }
-function star4(ctx: CanvasRenderingContext2D, r: number, color: string) {
+// A star of n points at the origin; inner is the inner radius as a fraction of r, a0 the first point's angle.
+function star(ctx: Ctx, n: number, r: number, inner: number, color: string, a0 = 0) {
   ctx.fillStyle = color;
   ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const a = (i * Math.PI) / 4,
-      d = i % 2 ? r * 0.3 : r;
+  for (let i = 0; i < n * 2; i++) {
+    const a = a0 + (i * Math.PI) / n,
+      d = i % 2 ? r * inner : r;
     ctx.lineTo(Math.cos(a) * d, Math.sin(a) * d);
   }
   ctx.closePath();
   ctx.fill();
 }
-function star5(ctx: CanvasRenderingContext2D, r: number, color: string) {
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  for (let i = 0; i < 10; i++) {
-    const a = -Math.PI / 2 + (i * Math.PI) / 5,
-      d = i % 2 ? r * 0.45 : r;
-    ctx.lineTo(Math.cos(a) * d, Math.sin(a) * d);
-  }
-  ctx.closePath();
-  ctx.fill();
-}
-function heart(ctx: CanvasRenderingContext2D, r: number, color: string) {
+function heart(ctx: Ctx, r: number, color: string) {
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(0, r * 0.9);
@@ -376,29 +359,18 @@ const rnd = (seed: number, i: number) => {
   return v - Math.floor(v);
 };
 const CONFETTI = ["#f87171", "#fbbf24", "#34d399", "#60a5fa", "#c084fc", "#f472b6"];
-export function drawWinEffect(
-  ctx: CanvasRenderingContext2D,
-  id: string,
-  x: number,
-  groundY: number,
-  size: number,
-  k: number,
-  seed = 1,
-) {
-  if (!COSMETIC_IDS.effect.includes(id) || !(k >= 0 && k <= 1)) return;
-  const sec = (k * WIN_EFFECT_MS) / 1000,
-    fade = k > 0.8 ? (1 - k) / 0.2 : 1;
-  ctx.save();
-  if (id === "confetti") {
-    const ox = x,
-      oy = groundY - size * 1.05,
+// sec: seconds since the win; fade: 1, falling to 0 over the last fifth.
+type Win = { x: number; groundY: number; size: number; k: number; seed: number; sec: number; fade: number };
+const WIN_EFFECTS: Record<string, (ctx: Ctx, w: Win) => void> = {
+  confetti(ctx, { x, groundY, size, seed, sec, fade }) {
+    const oy = groundY - size * 1.05,
       g = size * 2.2;
     for (let i = 0; i < 46; i++) {
       const vx = (rnd(seed, i) - 0.5) * size * 2.6,
         vy = -(size * 1.3 + rnd(seed, i + 50) * size * 1.6);
       const t = Math.min(sec, 2.6),
         drag = 1 - Math.min(0.6, t * 0.25);
-      const px = ox + vx * t * drag + Math.sin(sec * 5 + i) * size * 0.05;
+      const px = x + vx * t * drag + Math.sin(sec * 5 + i) * size * 0.05;
       const py = oy + vy * t * drag + ((g * t * t) / 2) * 0.55;
       if (py > groundY + size * 0.05) continue;
       ctx.globalAlpha = fade;
@@ -410,20 +382,19 @@ export function drawWinEffect(
       ctx.fillRect(-size * 0.035, -size * 0.02, size * 0.07, size * 0.04);
       ctx.restore();
     }
-  } else if (id === "fireworks") {
+  },
+  fireworks(ctx, { x, groundY, size, k, seed, fade }) {
     const colors = ["#fde047", "#f472b6", "#60a5fa"];
     for (let b = 0; b < 3; b++) {
-      const start = b * 0.22,
-        local = (k - start) / 0.6;
+      const local = (k - b * 0.22) / 0.6;
       if (local < 0 || local > 1) continue;
       const bx = x + (b - 1) * size * 0.85,
         by = groundY - size * (1.75 + (b % 2) * 0.35);
       if (local < 0.2) {
         // the rocket going up
-        const q = local / 0.2;
         ctx.fillStyle = "#fff7d6";
         ctx.globalAlpha = 1;
-        ctx.fillRect(bx - 1.5, groundY - size * 0.6 + (by - groundY + size * 0.6) * q, 3, size * 0.12);
+        ctx.fillRect(bx - 1.5, groundY - size * 0.6 + (by - groundY + size * 0.6) * (local / 0.2), 3, size * 0.12);
         continue;
       }
       const q = (local - 0.2) / 0.8,
@@ -439,7 +410,8 @@ export function drawWinEffect(
         ctx.fill();
       }
     }
-  } else if (id === "banner") {
+  },
+  banner(ctx, { x, groundY, size, k, sec, fade }) {
     const unroll = Math.min(1, k / 0.15),
       w = size * 1.8 * unroll,
       hgt = size * 0.34,
@@ -463,24 +435,38 @@ export function drawWinEffect(
     ctx.fillRect(x - w / 2, cy - hgt / 2, w, hgt);
     ctx.fillStyle = "#fcd34d";
     ctx.fillRect(x - w / 2, cy - hgt / 2, w, hgt * 0.14);
-    if (unroll === 1) {
-      ctx.fillStyle = "#3b1d04";
-      ctx.font = "800 " + Math.round(hgt * 0.62) + "px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("VICTORY", x, cy + hgt * 0.04, w * 0.9);
-      for (let i = 0; i < 6; i++) {
-        // glints around it
-        const a = sec * 2 + i * 1.05,
-          gx = x + Math.cos(a) * w * 0.62,
-          gy = cy + Math.sin(a) * hgt * 1.4;
-        ctx.save();
-        ctx.translate(gx, gy);
-        ctx.globalAlpha = fade * (0.5 + 0.5 * Math.sin(sec * 9 + i));
-        star4(ctx, size * 0.05, "#fff7d6");
-        ctx.restore();
-      }
+    if (unroll < 1) return;
+    ctx.fillStyle = "#3b1d04";
+    ctx.font = "800 " + Math.round(hgt * 0.62) + "px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("VICTORY", x, cy + hgt * 0.04, w * 0.9);
+    for (let i = 0; i < 6; i++) {
+      // glints around it
+      const a = sec * 2 + i * 1.05;
+      ctx.save();
+      ctx.translate(x + Math.cos(a) * w * 0.62, cy + Math.sin(a) * hgt * 1.4);
+      ctx.globalAlpha = fade * (0.5 + 0.5 * Math.sin(sec * 9 + i));
+      star(ctx, 4, size * 0.05, 0.3, "#fff7d6");
+      ctx.restore();
     }
-  }
+  },
+};
+export function drawWinEffect(ctx: Ctx, id: string, x: number, groundY: number, size: number, k: number, seed = 1) {
+  const draw = WIN_EFFECTS[id];
+  if (!draw || !(k >= 0 && k <= 1)) return;
+  ctx.save();
+  draw(ctx, { x, groundY, size, k, seed, sec: (k * WIN_EFFECT_MS) / 1000, fade: k > 0.8 ? (1 - k) / 0.2 : 1 });
   ctx.restore();
 }
+
+// The ids of each kind, in the server's order (server/cosmetics.ts; tests/cosmetics.test.ts).
+export const COSMETIC_IDS = {
+  recolor: Object.keys(RECOLORS),
+  petcolor: Object.keys(RECOLORS),
+  accessory: Object.keys(ACCESSORIES),
+  trail: Object.keys(TRAILS),
+  effect: Object.keys(WIN_EFFECTS),
+  taunt: Object.keys(TAUNTS),
+  title: Object.keys(TITLES),
+};

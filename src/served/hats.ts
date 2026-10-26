@@ -3,9 +3,9 @@
 // Each hat is a grid ('.' = empty, letters = colors). span = the grid columns that cover the head's width;
 // sink = how many grid rows the hat comes down over the top of the head (negative floats above it).
 // Grids face right like the character sprites; the overlay mirrors both together.
+import { drawGrid, frameKey, opaqueBox, perSource } from "./pixels.ts";
+import type { Frame } from "./pixels.ts";
 type Hat = { span: [number, number]; sink: number; colors: Record<string, string>; rows: string[] };
-/** A sprite frame's cell in its image, in pixels. */
-export type Frame = { x: number; y: number; w: number; h: number };
 /** Where the head is in a frame, as fractions of it. */
 export type Head = { top: number; left: number; right: number };
 
@@ -74,54 +74,22 @@ const HATS: Record<string, Hat> = {
 
 // Where the head is in one frame, as fractions of the frame: the top opaque row, and the widest opaque
 // row in the top fifth of the figure. Measured once per frame; images the page can't read get a guess.
-const heads = new WeakMap<CanvasImageSource, Map<string, Head>>();
-function headOf(image: CanvasImageSource, frame: Frame): Head {
-  let byFrame = heads.get(image);
-  if (!byFrame) heads.set(image, (byFrame = new Map()));
-  const key = frame.x + "," + frame.y + "," + frame.w + "," + frame.h;
-  if (byFrame.has(key)) return byFrame.get(key)!; // has(key) just said it is there
-  let head: Head = { top: 0, left: 0.25, right: 0.75 };
-  try {
-    const c = document.createElement("canvas");
-    c.width = frame.w;
-    c.height = frame.h;
-    // A null context throws on the next line and the catch keeps the guess.
-    const g = c.getContext("2d", { willReadFrequently: true })!;
-    g.drawImage(image, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
-    const data = g.getImageData(0, 0, frame.w, frame.h).data;
-    const solid = (x: number, y: number) => data[(y * frame.w + x) * 4 + 3]! > 40; // x, y lie inside the frame
-    let top = -1,
-      bottom = -1;
-    for (let y = 0; y < frame.h && top < 0; y++)
-      for (let x = 0; x < frame.w; x++)
-        if (solid(x, y)) {
-          top = y;
-          break;
-        }
-    for (let y = frame.h - 1; y >= 0 && bottom < 0; y--)
-      for (let x = 0; x < frame.w; x++)
-        if (solid(x, y)) {
-          bottom = y;
-          break;
-        }
-    if (top >= 0) {
-      let left = frame.w,
-        right = -1;
-      const last = top + Math.max(2, Math.round((bottom - top) * 0.2));
-      for (let y = top; y <= last; y++)
-        for (let x = 0; x < frame.w; x++)
-          if (solid(x, y)) {
-            left = Math.min(left, x);
-            right = Math.max(right, x + 1);
-          }
-      if (right > left) head = { top: top / frame.h, left: left / frame.w, right: right / frame.w };
-    }
-  } catch {
-    /* cross-origin image: keep the guess */
-  }
-  byFrame.set(key, head);
-  return head;
-}
+const heads = perSource<Head>();
+const headOf = (image: CanvasImageSource, frame: Frame) =>
+  heads(image, frameKey(frame), () => {
+    const body = opaqueBox(image, frame);
+    const band =
+      body &&
+      opaqueBox(
+        image,
+        frame,
+        body.top,
+        Math.min(frame.h - 1, body.top + Math.max(2, Math.round((body.bottom - body.top) * 0.2))),
+      );
+    return band
+      ? { top: body.top / frame.h, left: band.left / frame.w, right: (band.right + 1) / frame.w }
+      : { top: 0, left: 0.25, right: 0.75 };
+  });
 
 // A catalog entry may say where the head is ({top, left, right} as fractions of the cell) when the top of the figure
 // isn't the head, like the turtle's shell.
@@ -152,19 +120,5 @@ export function drawHat(
   const px = ((head.right - head.left) * dw) / (hat.span[1] - hat.span[0]);
   const x0 = dx + head.left * dw - hat.span[0] * px;
   const y0 = dy + head.top * dh + hat.sink * px - hat.rows.length * px;
-  ctx.save();
-  hat.rows.forEach((row, r) => {
-    // One rect per run of a color; a slight overlap hides seams between cells.
-    for (let c = 0; c < row.length;) {
-      const ch = row[c]!; // c < row.length
-      let end = c + 1;
-      while (end < row.length && row[end] === ch) end++;
-      if (ch !== ".") {
-        ctx.fillStyle = hat.colors[ch]!; // every letter in a grid has a color
-        ctx.fillRect(x0 + c * px, y0 + r * px, (end - c) * px + 0.4, px + 0.4);
-      }
-      c = end;
-    }
-  });
-  ctx.restore();
+  drawGrid(ctx, hat.rows, hat.colors, x0, y0, px);
 }
