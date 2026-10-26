@@ -1,4 +1,4 @@
-import { cleanStats, emptyStats, knownHat } from "./upgrades.ts";
+import { cleanStats, emptyStats, knownHat, STATS } from "./upgrades.ts";
 import { petOf } from "./pets.ts";
 import { cleanCosmetics } from "./cosmetics.ts";
 import type { ChatEvent, Config, Cosmetics, Player, ReduceOutput } from "./model.ts";
@@ -81,7 +81,6 @@ export type BotMessage = {
   botPlays?: boolean; // set only by runCommand for the BOT_DEBUG bot account
   [field: string]: unknown;
 };
-/** What an overlay draws for a saved fighter (savedLook). */
 export type Look = ReturnType<typeof savedLook>;
 /** What a chat message did to the game (processChatMessage, advance). */
 export type ChatOutcome = Pick<ReduceOutput, "state" | "result" | "changed" | "visible">;
@@ -202,7 +201,7 @@ export function normalizeProfileRow(row: ProfileRow | null | undefined, config: 
     streak: Number.isInteger(row.streak) ? row.streak : 0,
     dollars: Number.isInteger(row.dollars) ? row.dollars : 0, // PixFray dollars (payDuels, give, giftDollars)
     styleDollars: Number.isInteger(row.style_dollars) ? row.style_dollars : 0, // channel point rewards (server/points.ts)
-    ...petFieldsOf(row),
+    ...petFields(petOf(row.pet, row.pet_custom, row.pet_roll)),
     ...cleanCosmetics(
       // each COSMETIC_COLUMNS column is in PROFILE_COLUMNS
       Object.fromEntries(
@@ -214,9 +213,8 @@ export function normalizeProfileRow(row: ProfileRow | null | undefined, config: 
   };
 }
 
-// The active pet (server/pets.ts): id, tier and boost (a legendary's from the owner's roll); none for a deleted upload.
-function petFieldsOf(row: { pet: string; pet_custom: string | null; pet_roll: string | null }) {
-  const pet = petOf(row.pet, row.pet_custom, row.pet_roll);
+// The active pet (server/pets.ts petOf): id, tier and boost (a legendary's from the owner's roll); none for a deleted upload.
+export function petFields(pet: ReturnType<typeof petOf>) {
   return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };
 }
 
@@ -258,6 +256,7 @@ export function getProfileByUsername(room: ChannelRoom, username: unknown, confi
 }
 
 export function upsertProfile(room: ChannelRoom, profile: ProfileWrite): void {
+  const stats = cleanStats(profile.stats);
   // Twitch logins can be renamed and later reused; free the login if a stale row still holds it.
   room.ctx.storage.sql.exec(
     "UPDATE profiles SET username = '~' || user_id WHERE username = ? COLLATE NOCASE AND user_id <> ?",
@@ -282,15 +281,7 @@ export function upsertProfile(room: ChannelRoom, profile: ProfileWrite): void {
     profile.wins,
     profile.losses,
     Number.isInteger(profile.lastSeen) ? profile.lastSeen : 0,
-    ...(({ power, guard, luck, crit, dodge, counter, vitality }) => [
-      power,
-      guard,
-      luck,
-      crit,
-      dodge,
-      counter,
-      vitality,
-    ])(cleanStats(profile.stats)),
+    ...STATS.map((stat) => stats[stat]), // the column order above
     knownHat(profile.hat) ? profile.hat : "",
     String(profile.lastOpponentId || "").slice(0, 32),
     typeof profile.pet === "string" ? profile.pet : null,
