@@ -13,9 +13,8 @@ const error = params.get("error") || "";
 
 // The overlay lays fighters out in the pixels it gets. Narrow stages render it at least 640px wide (in the stage's own
 // shape: 16:9 wide, 4:5 on phones) and scale it down, so the nameplates keep their room and stay readable.
-// element types from the page HTML
-const stage = $(".stage") as HTMLDivElement,
-  frame = stage.querySelector("iframe") as HTMLIFrameElement;
+const stage = $<HTMLDivElement>(".stage"),
+  frame = $<HTMLIFrameElement>("iframe", stage);
 // the demo loads once the stage comes near the screen, capped at 6 fighters so it stays light on phones
 const demoSrc =
   "/overlay.html?" + new URLSearchParams({ channel: site.defaultChannel, arena: "1", demo: "1", size: "64", cap: "6" });
@@ -58,17 +57,15 @@ const PROBLEMS: Record<string, string | undefined> = {
 };
 
 function show(title: string, text: string, actions: HTMLAnchorElement[] = [], problem = "") {
-  // element types from the page HTML
-  ($("#signup-title") as HTMLHeadingElement).textContent = title;
-  ($("#signup-text") as HTMLParagraphElement).textContent = text; // element type from the page HTML
-  ($("#signup-actions") as HTMLDivElement).replaceChildren(...actions); // element type from the page HTML
+  $<HTMLHeadingElement>("#signup-title").textContent = title;
+  $<HTMLParagraphElement>("#signup-text").textContent = text;
+  $<HTMLDivElement>("#signup-actions").replaceChildren(...actions);
   // the closing band repeats the card's main link as a plain button, so the page ends on the next step with one primary action
-  // element types from the page HTML
-  ($("#ready-actions") as HTMLDivElement).replaceChildren(
+  $<HTMLDivElement>("#ready-actions").replaceChildren(
     ...actions.filter((n) => n.matches("a.btn-primary")).map((n) => n.cloneNode(true)),
   );
-  ($("#ready") as HTMLElement).hidden = !($("#ready-actions") as HTMLDivElement).children.length; // element types from the page HTML
-  const box = $("#signup-problem") as HTMLParagraphElement; // element type from the page HTML
+  $("#ready").hidden = !$<HTMLDivElement>("#ready-actions").children.length;
+  const box = $<HTMLParagraphElement>("#signup-problem");
   box.textContent = problem;
   box.hidden = !problem;
   box.className = "callout small" + (problem ? " warning" : "");
@@ -100,7 +97,7 @@ init();
 // The setup steps scroll past a scene that shows each one: the overlay framed as an OBS source, a bot reply in chat,
 // !challenge and !fight starting a duel, then the ranking pillars. The middle of the window picks the step.
 const steps = [...document.querySelectorAll(".story .step-grid > li")],
-  cap = $("#story-cap") as HTMLElement; // element type from the page HTML
+  cap = $("#story-cap");
 const CAPS = [
   "The overlay is one browser source, drawn over your game.",
   BOT
@@ -114,8 +111,7 @@ let active = -1;
 const narrow = matchMedia("(max-width: 960px)");
 function storyAt() {
   // phones pin the scene as a strip along the top, so the step that counts is the one mid-way down the rest of the screen
-  // element type from the page HTML
-  const top = narrow.matches ? Math.max(0, ($(".story-stage") as HTMLElement).getBoundingClientRect().bottom) : 0;
+  const top = narrow.matches ? Math.max(0, $(".story-stage").getBoundingClientRect().bottom) : 0;
   const mid = (top + innerHeight) * 0.5,
     c = steps.map((li) => {
       const r = li.getBoundingClientRect();
@@ -157,8 +153,7 @@ function storyAt() {
 skyBackdrop();
 if (steps.length === 4) {
   document.documentElement.classList.add("has-story");
-  // element type from the page HTML
-  scrub($("#story-scene") as HTMLCanvasElement, {
+  scrub($<HTMLCanvasElement>("#story-scene"), {
     frames: Array.from({ length: 20 }, (_, i) => "/assets/scene/seq/start-" + String(i).padStart(2, "0") + ".webp"),
     progress: storyAt,
     keys: KEYS,

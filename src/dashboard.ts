@@ -117,12 +117,11 @@ type State = {
 type SpriteHandle = ReturnType<typeof addSprite>;
 
 const SWATCHES = ["#a78bfa", "#60a5fa", "#34d399", "#fbbf24", "#f87171", "#f472b6", "#e5e7eb", "#22d3ee"];
-// as: element types from the page HTML (index.html), here and at every lookup below
-const form = $("#profile-form") as HTMLFormElement,
-  saveBtn = $("#save") as HTMLButtonElement, // element type from the page HTML
-  saveSignin = $("#save-signin") as HTMLAnchorElement, // element type from the page HTML
-  status = $("#save-status") as HTMLParagraphElement; // element type from the page HTML
-const colorInput = $("#color") as HTMLInputElement; // element type from the page HTML
+const form = $<HTMLFormElement>("#profile-form"),
+  saveBtn = $<HTMLButtonElement>("#save"),
+  saveSignin = $<HTMLAnchorElement>("#save-signin"),
+  status = $<HTMLParagraphElement>("#save-status");
+const colorInput = $<HTMLInputElement>("#color");
 // Cosmetic kinds (server/cosmetics.ts): the profile field that wears each, how its tiles look, and its words.
 const KINDS = {
   recolor: { field: "recolor", look: "char", none: "Original colors", noun: "recolor" },
@@ -164,20 +163,20 @@ const state: State = {
   others: [], // the viewer's fighters on other channels, offered when they have none here
   loading: true,
 }; // until the first /api answers arrive
-const stage = addStage($("#preview") as HTMLCanvasElement); // element type from the page HTML
+const stage = addStage($<HTMLCanvasElement>("#preview"));
 // The 3D fighter above the on-stream preview loads after the page works; without WebGL the card keeps the 2D stage.
 let fighter3d: Fighter3D | null = null;
 if (CHANNEL_PICKED && !navigator.connection?.saveData) {
   import("./fighter3d.ts")
     .then(({ createFighter3D }) => {
-      ($("#showcase") as HTMLElement).hidden = false; // element type from the page HTML (a figure)
+      $("#showcase").hidden = false;
       try {
-        fighter3d = createFighter3D($("#preview3d") as HTMLCanvasElement, { zoom: 1.2 }); // element type from the page HTML
+        fighter3d = createFighter3D($<HTMLCanvasElement>("#preview3d"), { zoom: 1.2 });
       } catch {
-        ($("#showcase") as HTMLElement).hidden = true; // element type from the page HTML (a figure)
+        $("#showcase").hidden = true;
         return;
       }
-      ($(".fighter-card") as HTMLElement).classList.add("has-3d"); // element type from the page HTML (an aside)
+      $(".fighter-card").classList.add("has-3d");
       render3d();
     })
     .catch(() => {});
@@ -193,13 +192,12 @@ function render3d(d: Loadout = state.d) {
   } else if (entry) whenImage(entry.url, () => render3d());
   if (pet?.url) whenImage(pet.url, () => render3d());
 }
-onLooksReady($("#preview3d") as HTMLCanvasElement, () => render3d()); // element type from the page HTML
+onLooksReady($<HTMLCanvasElement>("#preview3d"), () => render3d());
 // the intro's lock-on readout: name, then cubes and place in the roster
 function readout(entry: CatalogEntry) {
   const i = pickable().indexOf(entry);
-  ($("#readout-name") as HTMLElement).textContent = entry.label || entry.id; // element type from the page HTML (a b)
-  ($("#readout-sub") as HTMLSpanElement).textContent = // element type from the page HTML
-    i >= 0 ? "Character " + (i + 1) + " of " + pickable().length : "";
+  $("#readout-name").textContent = entry.label || entry.id;
+  $<HTMLSpanElement>("#readout-sub").textContent = i >= 0 ? "Character " + (i + 1) + " of " + pickable().length : "";
 }
 // Picker tiles get voxel thumbnails too (src/voxthumb.ts); until it loads, or without WebGL, they show flat sprites.
 const voxJobs = new Map<HTMLCanvasElement, () => Look | null>();
@@ -211,8 +209,7 @@ function vox(canvas: HTMLCanvasElement, make: () => Look | null) {
   voxThumb?.(canvas, make);
 }
 // a hat, pet or accessory drawing module arriving changes how the tiles' looks draw
-onLooksReady($("#preview3d") as HTMLCanvasElement, () => {
-  // element type from the page HTML
+onLooksReady($<HTMLCanvasElement>("#preview3d"), () => {
   for (const [c, make] of voxJobs) if (c.isConnected) voxThumb?.(c, make);
 });
 if (!navigator.connection?.saveData) {
@@ -393,13 +390,13 @@ function showTab(
   document.documentElement.dataset.tab = name;
   tuckSaveBar();
   for (const t of TABS) {
-    const tab = $("#tab-" + t) as HTMLButtonElement, // element type from the page HTML
+    const tab = $<HTMLButtonElement>("#tab-" + t),
       on = t === name;
     tab.setAttribute("aria-selected", String(on));
     tab.tabIndex = on ? 0 : -1;
-    ($("#panel-" + t) as HTMLDivElement).hidden = !on; // element type from the page HTML
+    $<HTMLDivElement>("#panel-" + t).hidden = !on;
   }
-  if (focus) ($("#tab-" + name) as HTMLButtonElement).focus(); // element type from the page HTML
+  if (focus) $<HTMLButtonElement>("#tab-" + name).focus();
   const part = name === "shop" && showShopPart(hash);
   requestAnimationFrame(() => {
     voxAll?.();
@@ -409,22 +406,19 @@ function showTab(
   if (!scroll) return;
   // A section link scrolls to its section; a plain tab switch keeps the tabs in view (under the sticky stage on phones).
   const target = hash !== name && !part && document.getElementById(hash);
-  const el = target && target.closest("[role=tabpanel]") ? target : ($(".hero-pick .tabs") as HTMLDivElement); // element type from the page HTML
+  const el = target && target.closest("[role=tabpanel]") ? target : $<HTMLDivElement>(".hero-pick .tabs");
   if (el.getBoundingClientRect().top < stickyHeight() || target) el.scrollIntoView({ block: "start" });
 }
 const stickyHeight = () =>
-  // element types from the page HTML (an aside)
-  getComputedStyle($(".hero-card") as HTMLElement).position === "sticky" && matchMedia("(max-width: 900px)").matches
-    ? ($(".hero-card") as HTMLElement).offsetHeight // element type from the page HTML (an aside)
+  getComputedStyle($(".hero-card")).position === "sticky" && matchMedia("(max-width: 900px)").matches
+    ? $(".hero-card").offsetHeight
     : 0;
-// element type from the page HTML
-($(".hero-pick .tabs") as HTMLDivElement).addEventListener("click", (e) => {
+$<HTMLDivElement>(".hero-pick .tabs").addEventListener("click", (e) => {
   // as Element: a click's target is an element
   const t = (e.target as Element).closest("[role=tab]");
   if (t) showTab(t.id.replace("tab-", ""));
 });
-// element type from the page HTML
-($(".hero-pick .tabs") as HTMLDivElement).addEventListener("keydown", (e) => {
+$<HTMLDivElement>(".hero-pick .tabs").addEventListener("keydown", (e) => {
   // as string: indexOf finds no undefined, as in the .js
   const i = TABS.indexOf(document.activeElement?.id?.replace("tab-", "") as string);
   if (i < 0) return;
@@ -441,7 +435,7 @@ document.addEventListener("click", (e) => {
   const a = (e.target as Element).closest("a[href^='#']"); // as Element: a click's target is an element
   const hash = a?.getAttribute("href")!.slice(1), // !: the selector matched a[href^='#'], so it has an href
     tab = hash && tabOf(hash);
-  if (!tab || ($("#fighter") as HTMLElement).hidden) return; // element type from the page HTML (a main)
+  if (!tab || $("#fighter").hidden) return;
   e.preventDefault();
   showTab(tab, { hash });
 });
@@ -455,11 +449,10 @@ addEventListener("hashchange", () => {
 new ResizeObserver(() => {
   const root = document.documentElement,
     card = stickyHeight(),
-    // element type from the page HTML
-    tabs = root.classList.contains("compact") && card ? ($(".hero-pick .tabs") as HTMLDivElement).offsetHeight : 0;
+    tabs = root.classList.contains("compact") && card ? $<HTMLDivElement>(".hero-pick .tabs").offsetHeight : 0;
   root.style.setProperty("--stuck-h", card + "px");
   root.style.scrollPaddingTop = card + tabs + 16 + "px";
-}).observe($(".hero-card") as HTMLElement); // element type from the page HTML (an aside)
+}).observe($(".hero-card"));
 
 // The shop shows one section at a time: its section links act as sub-tabs, so the panel stays one screen long.
 const shopLinks = [...document.querySelectorAll<HTMLAnchorElement>(".jump a")],
@@ -761,8 +754,8 @@ const charThumb = (opts: { hat?: string; looks?: Record<string, string> }) => {
 
 function renderHats() {
   const r = rules(),
-    box = $("#hats") as HTMLDivElement, // element type from the page HTML
-    out = $("#hat-status") as HTMLParagraphElement; // element type from the page HTML
+    box = $<HTMLDivElement>("#hats"),
+    out = $<HTMLParagraphElement>("#hat-status");
   box.replaceChildren(
     ...r.hats.map((hat) => {
       const price = (state.shop?.hatPricePerWin || 0) * hat.wins,
@@ -784,15 +777,15 @@ function renderHats() {
   );
   checkPicked(box, "hat", state.d.hat);
   const locked = r.hats.filter((x) => !owns("hat", x.id)).length;
-  ($("#hat-note") as HTMLSpanElement).textContent = locked // element type from the page HTML
+  $<HTMLSpanElement>("#hat-note").textContent = locked
     ? "(" + locked + (state.shop?.hatPricePerWin ? " unlock with wins or dollars)" : " unlock with wins)")
     : "";
 }
 
 function renderItems(kind: KindKey) {
   const k: Kind = KINDS[kind],
-    box = $("#items-" + kind) as HTMLDivElement, // element type from the page HTML
-    out = $("#status-" + kind) as HTMLParagraphElement, // element type from the page HTML
+    box = $<HTMLDivElement>("#items-" + kind),
+    out = $<HTMLParagraphElement>("#status-" + kind),
     list = state.shop?.items?.[kind];
   if (!list) {
     box.replaceChildren(
@@ -852,15 +845,15 @@ function renderItems(kind: KindKey) {
     box.querySelectorAll(".char-option label > span:first-of-type").forEach((s) => s.classList.add("title-text"));
   checkPicked(box, kind, state.d[k.field]);
   const have = state.owned[kind]?.length || 0;
-  ($("#note-" + kind) as HTMLSpanElement).textContent = list[0]?.price // element type from the page HTML
+  $<HTMLSpanElement>("#note-" + kind).textContent = list[0]?.price
     ? "(" + money(list[0].price) + " each" + (canShop() ? ", you own " + have : "") + ")"
     : "";
 }
 
 // Pets: tier, boost and price; a bought pet adds to the stats on top of the upgrade limit.
 function renderPets() {
-  const box = $("#pet-list") as HTMLDivElement, // element type from the page HTML
-    out = $("#pet-status") as HTMLParagraphElement; // element type from the page HTML
+  const box = $<HTMLDivElement>("#pet-list"),
+    out = $<HTMLParagraphElement>("#pet-status");
   if (!state.shop) {
     box.replaceChildren(
       h("p", { class: "muted small" }, state.loading ? "Loading pets…" : "Pets couldn't load. Reload to try again."),
@@ -909,7 +902,7 @@ function renderPets() {
   };
   box.replaceChildren(option(null), ...state.shop.pets.map(withReroll));
   checkPicked(box, "pet", state.d.pet);
-  ($("#pet-note") as HTMLSpanElement).textContent = canShop() // element type from the page HTML
+  $<HTMLSpanElement>("#pet-note").textContent = canShop()
     ? "(you own " +
       state.owned.pets.length +
       ", you have " +
@@ -917,8 +910,7 @@ function renderPets() {
       (state.profile!.styleDollars ? " in duel dollars; style dollars don't buy pets" : "") + // as above
       ")"
     : "";
-  // element type from the page HTML
-  ($("#petcolor-help") as HTMLParagraphElement).textContent = petById(state.d.pet)
+  $<HTMLParagraphElement>("#petcolor-help").textContent = petById(state.d.pet)
     ? "Tints your pet on stream."
     : "Tints your pet on stream. The samples show a " + (state.shop.pets[0]?.label || "pet") + " until you pick one.";
 }
@@ -932,8 +924,8 @@ function switchBuild(slot: number, start: Loadout | null = null) {
   if (start) state.drafts[slot] = state.d;
 }
 function renderBuilds() {
-  const box = $("#builds") as HTMLFieldSetElement, // element type from the page HTML
-    list = $("#build-list") as HTMLDivElement, // element type from the page HTML
+  const box = $<HTMLFieldSetElement>("#builds"),
+    list = $<HTMLDivElement>("#build-list"),
     slots = state.owned.slots || 1,
     prices = state.shop?.slots?.prices || [];
   box.hidden = !canShop();
@@ -968,30 +960,28 @@ function renderBuilds() {
             "",
             "build slot " + (slots + 1),
             price,
-            $("#status-slot") as HTMLParagraphElement, // element type from the page HTML
+            $<HTMLParagraphElement>("#status-slot"),
             "Add build " + (slots + 1) + " for $" + price,
           ),
         ]
       : []),
   );
-  // element type from the page HTML
-  ($("#build-note") as HTMLSpanElement).textContent = "(" + slots + " of " + (state.shop?.slots?.max || 5) + ")";
+  $<HTMLSpanElement>("#build-note").textContent = "(" + slots + " of " + (state.shop?.slots?.max || 5) + ")";
 }
 
 function renderUpgrades() {
   const r = rules(),
-    list = $("#upgrade-list") as HTMLDivElement, // element type from the page HTML
+    list = $<HTMLDivElement>("#upgrade-list"),
     canEdit = canShop();
   const left = r.points - spentOn(state.d.stats);
-  // element type from the page HTML
-  ($("#points-note") as HTMLSpanElement).textContent = canEdit ? "(" + left + " of " + r.points + " points free)" : "";
+  $<HTMLSpanElement>("#points-note").textContent = canEdit ? "(" + left + " of " + r.points + " points free)" : "";
   const parts = [
     r.fromWins + " from wins",
     r.fromCheckins ? r.fromCheckins + " from check-ins" : "",
     r.fromLosses ? r.fromLosses + " from losses" : "",
   ].filter(Boolean);
   const from = parts.length > 1 ? " You have " + parts.slice(0, -1).join(", ") + " and " + parts.at(-1) + "." : "";
-  ($("#upgrades-help") as HTMLParagraphElement).textContent = canEdit // element type from the page HTML
+  $<HTMLParagraphElement>("#upgrades-help").textContent = canEdit
     ? "Each win, each stream check-in (!checkin in chat) and every " +
       r.lossesPerPoint +
       " losses give a point. Levels 1 to 8 cost 1 point each, and the cost doubles every 8 levels after that. Levels above " +
@@ -1003,7 +993,7 @@ function renderUpgrades() {
       r.lossesPerPoint +
       " losses give an upgrade point.";
   const shown = canEdit ? state.d.stats : emptyStats();
-  const link = $("#points-link") as HTMLAnchorElement; // element type from the page HTML
+  const link = $<HTMLAnchorElement>("#points-link");
   link.hidden = !canEdit || left <= 0;
   link.textContent = left + (left === 1 ? " upgrade point" : " upgrade points") + " to spend";
   list.replaceChildren(
@@ -1086,7 +1076,7 @@ function renderUpgrades() {
     }),
   );
   // Suggested builds: each spreads all the points by its weights; the viewer still presses Save profile.
-  const presets = $("#upgrade-presets") as HTMLDivElement; // element type from the page HTML
+  const presets = $<HTMLDivElement>("#upgrade-presets");
   presets.hidden = !canEdit;
   presets.replaceChildren(
     ...PRESETS.filter(presetReady).map((preset) =>
@@ -1113,7 +1103,7 @@ const groupsOf = (entry: CatalogEntry) =>
 // A viewer's approved sprite (server/sprites.ts) is only for them; state.catalog keeps everyone's for the ranks.
 const pickable = () => state.catalog.filter((e) => !e.owner || e.owner === state.session?.user?.id);
 function renderCharacters() {
-  const box = $("#characters") as HTMLDivElement, // element type from the page HTML
+  const box = $<HTMLDivElement>("#characters"),
     list = pickable();
   if (!list.length) {
     box.replaceChildren(
@@ -1121,14 +1111,13 @@ function renderCharacters() {
     );
     return;
   }
-  ($("#char-count") as HTMLSpanElement).textContent = "(" + list.length + " available)"; // element type from the page HTML
+  $<HTMLSpanElement>("#char-count").textContent = "(" + list.length + " available)";
   const groups = [
     { id: "all", label: "All" },
     ...CHARACTER_GROUPS.filter((g) => list.some((e) => groupsOf(e).includes(g.id))),
     ...(list.some((e) => e.custom) ? [{ id: "custom", label: "Channel originals" }] : []),
   ];
-  // element type from the page HTML
-  ($("#char-groups") as HTMLDivElement).replaceChildren(
+  $<HTMLDivElement>("#char-groups").replaceChildren(
     ...groups.map((g) =>
       h(
         "button",
@@ -1201,44 +1190,39 @@ function filterCharacters() {
     filtered = Boolean(q) || g !== "all";
   let shown = 0;
   // element type from the page HTML; the grid's children are HTML elements (tiles, or the empty note)
-  for (const option of ($("#characters") as HTMLDivElement).children as HTMLCollectionOf<HTMLElement>) {
+  for (const option of $<HTMLDivElement>("#characters").children as HTMLCollectionOf<HTMLElement>) {
     const match =
       (!q || option.dataset.name?.includes(q)) && (g === "all" || option.dataset.groups?.split(" ").includes(g));
     option.hidden = !match;
     if (match) shown++;
   }
   // element type from the page HTML; the group row holds only buttons
-  for (const b of ($("#char-groups") as HTMLDivElement).children as HTMLCollectionOf<HTMLButtonElement>)
+  for (const b of $<HTMLDivElement>("#char-groups").children as HTMLCollectionOf<HTMLButtonElement>)
     b.setAttribute("aria-pressed", String(b.dataset.group === g));
-  ($("#char-empty") as HTMLParagraphElement).hidden = shown > 0; // element type from the page HTML
-  // element types from the page HTML
-  ($("#more-chars") as HTMLButtonElement).hidden =
-    filtered || ($("#characters") as HTMLDivElement).children.length <= 12; // element type from the page HTML
-  if (filtered) ($("#characters") as HTMLDivElement).classList.remove("collapsed"); // element type from the page HTML
-  else showAllChars(($("#more-chars") as HTMLButtonElement).getAttribute("aria-expanded") === "true"); // element type from the page HTML
+  $<HTMLParagraphElement>("#char-empty").hidden = shown > 0;
+  $<HTMLButtonElement>("#more-chars").hidden = filtered || $<HTMLDivElement>("#characters").children.length <= 12;
+  if (filtered) $<HTMLDivElement>("#characters").classList.remove("collapsed");
+  else showAllChars($<HTMLButtonElement>("#more-chars").getAttribute("aria-expanded") === "true");
 }
-// element type from the page HTML
-($("#char-search") as HTMLInputElement).addEventListener("input", (e) => {
+$<HTMLInputElement>("#char-search").addEventListener("input", (e) => {
   // as: the input event's target is that input
   state.filter.q = (e.target as HTMLInputElement).value;
   filterCharacters();
 });
 function showAllChars(all: boolean) {
-  const btn = $("#more-chars") as HTMLButtonElement; // element type from the page HTML
-  ($("#characters") as HTMLDivElement).classList.toggle("collapsed", !all); // element type from the page HTML
+  const btn = $<HTMLButtonElement>("#more-chars");
+  $<HTMLDivElement>("#characters").classList.toggle("collapsed", !all);
   btn.setAttribute("aria-expanded", String(all));
   btn.textContent = all
     ? "Show fewer characters"
-    : "Show all " + ($("#characters") as HTMLDivElement).children.length + " characters"; // element type from the page HTML
+    : "Show all " + $<HTMLDivElement>("#characters").children.length + " characters";
 }
-// element types from the page HTML
-($("#more-chars") as HTMLButtonElement).addEventListener(
-  "click",
-  () => showAllChars(($("#characters") as HTMLDivElement).classList.contains("collapsed")), // element type from the page HTML
+$<HTMLButtonElement>("#more-chars").addEventListener("click", () =>
+  showAllChars($<HTMLDivElement>("#characters").classList.contains("collapsed")),
 );
 
 function renderSwatches() {
-  const box = $("#swatches") as HTMLDivElement; // element type from the page HTML
+  const box = $<HTMLDivElement>("#swatches");
   box.querySelectorAll(".swatch").forEach((n) => n.remove());
   for (const color of SWATCHES) {
     box.insertBefore(
@@ -1281,7 +1265,7 @@ function renderPreview() {
     looks: looks(d),
   });
   render3d();
-  const plate = $("#showcase-plate") as HTMLSpanElement; // element type from the page HTML
+  const plate = $<HTMLSpanElement>("#showcase-plate");
   plate.textContent =
     (user?.displayName || user?.login || "you") + " · " + (state.profile?.elo ?? state.config?.initialElo ?? 1000);
   plate.style.setProperty("--plate", d.color);
@@ -1294,8 +1278,7 @@ function renderPreview() {
     s.setAttribute("aria-pressed", String(s.dataset.color === d.color));
   colorInput.value = d.color;
   const several = (state.owned.slots || 1) > 1;
-  // element type from the page HTML
-  ($("#preview-caption") as HTMLSpanElement).textContent =
+  $<HTMLSpanElement>("#preview-caption").textContent =
     (entry ? entry.label || entry.id : "") + (several ? " · Build " + (state.slot + 1) : "");
   const words = [
     entry?.label,
@@ -1306,27 +1289,25 @@ function renderPreview() {
     d.trail && itemLabel("trail", d.trail) + " trail",
     d.title && "title " + itemLabel("title", d.title),
   ].filter(Boolean);
-  // element type from the page HTML
-  ($("#preview") as HTMLCanvasElement).setAttribute(
+  $<HTMLCanvasElement>("#preview").setAttribute(
     "aria-label",
     "Preview of your fighter on stream: " + (words.join(", ") || "no character yet"),
   );
-  ($("#play-win") as HTMLButtonElement).disabled = !d.winEffect && !d.taunt; // element type from the page HTML
-  // element types from the page HTML
-  ($("#play-win") as HTMLButtonElement).hidden = ($("#play-win") as HTMLButtonElement).disabled; // nothing to preview yet: point to the Shop instead
-  ($("#win-link") as HTMLAnchorElement).hidden = !($("#play-win") as HTMLButtonElement).disabled; // element types from the page HTML
+  $<HTMLButtonElement>("#play-win").disabled = !d.winEffect && !d.taunt;
+  $<HTMLButtonElement>("#play-win").hidden = $<HTMLButtonElement>("#play-win").disabled; // nothing to preview yet: point to the Shop instead
+  $<HTMLAnchorElement>("#win-link").hidden = !$<HTMLButtonElement>("#play-win").disabled;
   renderLoadout();
 }
 // on phones the on-stream strip is tucked over the 3D stage and only shows while a win plays
 let playing = 0;
 function playWin() {
   stage.play();
-  const fig = $(".hero-card .preview") as HTMLElement; // element type from the page HTML (a figure)
+  const fig = $(".hero-card .preview");
   fig.classList.add("is-playing");
   clearTimeout(playing);
   playing = setTimeout(() => fig.classList.remove("is-playing"), 4500);
 }
-($("#play-win") as HTMLButtonElement).addEventListener("click", playWin); // element type from the page HTML
+$<HTMLButtonElement>("#play-win").addEventListener("click", playWin);
 // Desktop: what the fighter is wearing, under the preview. Items only tried on show their price; the total is what buying the look costs.
 const priceOf = (kind: ItemKind, id: string) =>
   kind === "hat"
@@ -1351,7 +1332,7 @@ const EMPTY_LABEL: Partial<Record<ItemKind, string>> = {
   title: "Add a title",
 };
 function renderLoadout() {
-  const box = $("#loadout") as HTMLDListElement | null; // element type from the page HTML, if the page has it
+  const box = $<HTMLDListElement | null>("#loadout");
   if (!box) return;
   const d = state.d,
     entry = entryOf(d.avatar),
@@ -1396,7 +1377,7 @@ function renderLoadout() {
       ];
     }),
   );
-  const t = $("#loadout-total") as HTMLParagraphElement; // element type from the page HTML
+  const t = $<HTMLParagraphElement>("#loadout-total");
   t.hidden = !total;
   t.textContent = total ? "Buying this look costs " + money(total) + ". Duels earn PixFray dollars." : "";
 }
@@ -1452,7 +1433,7 @@ function renderAll() {
   lookSprites.length = 0;
   lookVox.length = 0;
   lookSprites.entry = entryOf(state.d.avatar);
-  checkPicked($("#characters") as HTMLDivElement, "character", state.d.avatar); // element type from the page HTML
+  checkPicked($<HTMLDivElement>("#characters"), "character", state.d.avatar);
   renderBuilds();
   renderUpgrades();
   renderHats();
@@ -1474,21 +1455,18 @@ function applyProfile(p: Profile | null) {
 
 function renderCommands() {
   if (state.config) {
-    ($("#cmd-timeout") as HTMLSpanElement).textContent = seconds(state.config.challengeTimeoutMs); // element type from the page HTML
-    ($("#cmd-rematch") as HTMLSpanElement).textContent = seconds(state.config.rematchDelayMs); // element type from the page HTML
+    $<HTMLSpanElement>("#cmd-timeout").textContent = seconds(state.config.challengeTimeoutMs);
+    $<HTMLSpanElement>("#cmd-rematch").textContent = seconds(state.config.rematchDelayMs);
     const pts = state.config.checkinPoints ?? 1;
-    // element type from the page HTML
-    ($("#cmd-checkin") as HTMLSpanElement).textContent = pts
+    $<HTMLSpanElement>("#cmd-checkin").textContent = pts
       ? "+" + pts + (pts === 1 ? " upgrade point" : " upgrade points")
       : "A check-in";
     const c = state.config,
       win = c.winDollars ?? 5,
       loss = c.lossDollars ?? 3;
-    // element type from the page HTML
-    ($("#cmd-dollars") as HTMLSpanElement).textContent =
+    $<HTMLSpanElement>("#cmd-dollars").textContent =
       win || loss ? money(win) + " for a win and " + money(loss) + " for a loss" : "nothing on this channel right now";
-    // element type from the page HTML
-    ($("#cmd-give") as HTMLTableCellElement).textContent =
+    $<HTMLTableCellElement>("#cmd-give").textContent =
       c.giveEnabled === false
         ? "Giving dollars is off on this channel."
         : "Gives dollars to another fighter while the stream is live: up to " +
@@ -1496,10 +1474,9 @@ function renderCommands() {
           " per stream, after your first " +
           (c.giveMinDuels ?? 5) +
           " duels.";
-    // element type from the page HTML
-    ($("#lb-note") as HTMLParagraphElement).textContent =
+    $<HTMLParagraphElement>("#lb-note").textContent =
       "Ranked duels need a saved profile. Everyone starts at " + state.config.initialElo + " Elo.";
-    ($("#hp-mode-note") as HTMLParagraphElement).hidden = state.config.quickDuel !== false; // element type from the page HTML
+    $<HTMLParagraphElement>("#hp-mode-note").hidden = state.config.quickDuel !== false;
   }
 }
 
@@ -1507,7 +1484,7 @@ function renderCommands() {
 const fresh = () => Boolean(state.profile) && !(state.profile!.wins + state.profile!.losses);
 // Until the first duel: what to type in chat now that the fighter is saved.
 function renderNextStep() {
-  const next = $("#next-step") as HTMLParagraphElement, // element type from the page HTML
+  const next = $<HTMLParagraphElement>("#next-step"),
     show = Boolean(signedIn() && state.profile && !state.off && !dirty() && !lockedWorn().length && fresh());
   next.hidden = !show;
   if (show)
@@ -1537,7 +1514,7 @@ function welcome() {
       (state.profile ? "Your fighter is loaded." : "Pick a fighter and save."),
     "ok",
   );
-  if (!state.profile) ($("#fighter") as HTMLElement).scrollIntoView({ block: "start" }); // element type from the page HTML (a main)
+  if (!state.profile) $("#fighter").scrollIntoView({ block: "start" });
 }
 
 // This browser signed in before: signed out, the page says the preview isn't their fighter (sign-in lasts 30 days).
@@ -1607,7 +1584,7 @@ async function loadOthers() {
   if (state.others.length) renderSave();
 }
 function renderOthers() {
-  const box = $("#others") as HTMLDivElement, // element type from the page HTML
+  const box = $<HTMLDivElement>("#others"),
     list = signedIn() && !state.profile && !state.off ? state.others : [];
   box.hidden = !list.length;
   if (!list.length) return box.replaceChildren();
@@ -1643,16 +1620,16 @@ function useOther(f: Other) {
 
 function renderSignedIn() {
   const s = state.session,
-    note = $("#signin-note") as HTMLParagraphElement; // element type from the page HTML
-  renderWho($("#who") as HTMLDivElement, s, signOut); // element type from the page HTML
+    note = $<HTMLParagraphElement>("#signin-note");
+  renderWho($<HTMLDivElement>("#who"), s, signOut);
   saveBtn.hidden = !signedIn();
   saveSignin.hidden = signedIn() || s?.configured === false;
   saveSignin.textContent =
     knownViewer() || state.profile ? "Sign in to load your fighter" : "Sign in with Twitch to save";
   // one sign-in button: the preview card's, next to what it saves (element type from the page HTML)
-  if (!saveSignin.hidden) ($("#who") as HTMLDivElement).replaceChildren();
+  if (!saveSignin.hidden) $<HTMLDivElement>("#who").replaceChildren();
   note.hidden = signedIn() || Boolean(s?.configured); // the usual signed-out case: the card's hint says what sign-in shares
-  ($("#signin-hint") as HTMLParagraphElement).hidden = saveSignin.hidden; // element type from the page HTML
+  $<HTMLParagraphElement>("#signin-hint").hidden = saveSignin.hidden;
   if (!s)
     note.textContent =
       "Sign-in is unavailable right now, so profiles can't be saved. You can still browse characters and the leaderboard.";
@@ -1662,20 +1639,20 @@ function renderSignedIn() {
   else
     note.textContent =
       "Sign in with Twitch to save your fighter. It shares only your public Twitch name, and ranked duels need a saved profile.";
-  ($("#my-stats") as HTMLDivElement).hidden = !state.profile; // element type from the page HTML
+  $<HTMLDivElement>("#my-stats").hidden = !state.profile;
   if (state.profile) {
     // element type from the page HTML; as unknown as string: textContent turns the number into text, as in the .js
-    ($("#stat-elo") as HTMLDivElement).textContent = state.profile.elo as unknown as string;
-    ($("#stat-wl") as HTMLDivElement).textContent = state.profile.wins + " / " + state.profile.losses; // element type from the page HTML
-    ($("#stat-dollars") as HTMLDivElement).textContent = money(state.profile.dollars); // element type from the page HTML
+    $<HTMLDivElement>("#stat-elo").textContent = state.profile.elo as unknown as string;
+    $<HTMLDivElement>("#stat-wl").textContent = state.profile.wins + " / " + state.profile.losses;
+    $<HTMLDivElement>("#stat-dollars").textContent = money(state.profile.dollars);
     // element type from the page HTML; shown only once channel point rewards added some
-    ($("#stat-style-box") as HTMLDivElement).hidden = !state.profile.styleDollars;
-    ($("#stat-style") as HTMLDivElement).textContent = money(state.profile.styleDollars); // element type from the page HTML
+    $<HTMLDivElement>("#stat-style-box").hidden = !state.profile.styleDollars;
+    $<HTMLDivElement>("#stat-style").textContent = money(state.profile.styleDollars);
     // element type from the page HTML; as unknown as string: textContent turns the number into text, as in the .js
-    ($("#stat-streak") as HTMLDivElement).textContent = (state.profile.streak || 0) as unknown as string;
+    $<HTMLDivElement>("#stat-streak").textContent = (state.profile.streak || 0) as unknown as string;
   }
   // element type from the page HTML; profile!: canShop() needs one
-  ($("#shop-note") as HTMLParagraphElement).textContent =
+  $<HTMLParagraphElement>("#shop-note").textContent =
     (canShop() ? "You have " + money(state.profile!.dollars) + ". " : "") + // profile!: canShop() needs one
     (canShop() && state.profile!.styleDollars // as above
       ? "Your " + money(state.profile!.styleDollars) + " in style dollars from channel points goes first. " // as above
@@ -1685,7 +1662,7 @@ function renderSignedIn() {
 }
 
 function renderLeaderboard() {
-  const tbody = $("#leaderboard tbody") as HTMLTableSectionElement, // element type from the page HTML
+  const tbody = $<HTMLTableSectionElement>("#leaderboard tbody"),
     me = state.session?.user?.id,
     rows = state.leaderboard;
   if (!rows.length) {
@@ -1752,7 +1729,7 @@ function renderLeaderboard() {
 
 // The top three stand on plinths in front of the intro's pillars still, as voxels like the 3D preview; an empty step says how to take it.
 function renderPodium(rows: LeaderRow[]) {
-  const box = $("#podium") as HTMLOListElement; // element type from the page HTML
+  const box = $<HTMLOListElement>("#podium");
   box.hidden = false;
   box.replaceChildren(
     ...[0, 1, 2].map((i) => {
@@ -1799,8 +1776,7 @@ async function loadLeaderboard() {
     state.leaderboard = r.data;
     renderLeaderboard();
   } else
-    // element type from the page HTML
-    ($("#leaderboard tbody") as HTMLTableSectionElement).replaceChildren(
+    $<HTMLTableSectionElement>("#leaderboard tbody").replaceChildren(
       h(
         "tr",
         {},
@@ -1875,7 +1851,7 @@ form.addEventListener("submit", async (event) => {
 
 // The channel is turned off (paused) or was never set up (server/channels.ts).
 function showOff(off: string) {
-  const note = $("#off-note") as HTMLParagraphElement; // element type from the page HTML
+  const note = $<HTMLParagraphElement>("#off-note");
   note.hidden = false;
   if (off === "paused") {
     note.textContent =
@@ -1893,9 +1869,8 @@ function showOff(off: string) {
     h("a", { href: "/play/" }, "pick another channel"),
     ".",
   );
-  // element types from the page HTML (an aside and a div)
-  for (const el of [form, $(".fighter-card") as HTMLElement, $(".hero-pick .tabs") as HTMLDivElement]) el.hidden = true;
-  ($("#panel-ranks") as HTMLDivElement).hidden = false; // element type from the page HTML
+  for (const el of [form, $(".fighter-card"), $<HTMLDivElement>(".hero-pick .tabs")]) el.hidden = true;
+  $<HTMLDivElement>("#panel-ranks").hidden = false;
 }
 
 async function init() {
@@ -1947,7 +1922,7 @@ async function init() {
       api("/api/access/" + CHANNEL).then((r) => parseAnswer(r, parseAccess, "the access check")),
     ]);
     state.profile = profile.ok ? profile.data : null;
-    ($("#admin-link") as HTMLAnchorElement).hidden = !(access.ok && access.data.canManage); // element type from the page HTML
+    $<HTMLAnchorElement>("#admin-link").hidden = !(access.ok && access.data.canManage);
   }
   applyProfile(state.profile);
   if (signedIn())
@@ -1977,17 +1952,15 @@ async function pickChannel() {
   document.title = "PixFray: pick your stream";
   for (const a of document.querySelectorAll(".topbar .nav-cta, .topbar .brand"))
     a.setAttribute("href", a.classList.contains("brand") ? "/" : "/play/");
-  // element types from the page HTML (a main and the page wrapper)
-  for (const el of [$("#fighter") as HTMLElement | null, $("body > .page") as HTMLElement | null])
-    if (el) el.hidden = true;
-  ($("#pick") as HTMLElement).hidden = false; // element type from the page HTML
+  for (const el of [$<HTMLElement | null>("#fighter"), $<HTMLElement | null>("body > .page")]) if (el) el.hidden = true;
+  $("#pick").hidden = false;
   const [session, list] = await Promise.all([
     api("/api/session").then((r) => parseAnswer(r, parseSession, "the session")),
     api("/api/picker"),
   ]);
   // Signing in happens on a channel's page, so the picker shows only who is already signed in.
-  if (session.ok && session.data.user) renderWho($("#who") as HTMLDivElement, session.data, signOut); // element type from the page HTML
-  else ($("#who") as HTMLDivElement).replaceChildren(); // element type from the page HTML
+  if (session.ok && session.data.user) renderWho($<HTMLDivElement>("#who"), session.data, signOut);
+  else $<HTMLDivElement>("#who").replaceChildren();
   // one request brings every channel's top fighters and the looks they wear (server/worker.ts picker())
   const picked: PickerChannel[] =
     list.ok && Array.isArray(list.data?.channels)
@@ -1995,8 +1968,7 @@ async function pickChannel() {
       : site.builtinChannels.map((login) => ({ login, top: [] }));
   const builtin: CatalogEntry[] = list.ok && Array.isArray(list.data?.catalog) ? list.data.catalog : [],
     channels = picked.map((c) => c.login);
-  // element type from the page HTML
-  ($("#channel-list") as HTMLUListElement).replaceChildren(
+  $<HTMLUListElement>("#channel-list").replaceChildren(
     ...picked.map(({ login: c, top, catalog = [] }) => {
       const crew = h("span", { class: "channel-crew", "aria-hidden": "true" }),
         meta = h("span", { class: "channel-meta" });
@@ -2064,10 +2036,10 @@ function notHere(q: string, full: boolean) {
 }
 function channelSearch(listed: string[], full = false) {
   // element types from the page HTML; the list holds only the li rows pickChannel built
-  const input = $("#channel-q") as HTMLInputElement,
-    status = $("#channel-status") as HTMLParagraphElement, // element type from the page HTML
+  const input = $<HTMLInputElement>("#channel-q"),
+    status = $<HTMLParagraphElement>("#channel-status"),
     // the list holds only the li rows pickChannel built
-    rows = [...(($("#channel-list") as HTMLUListElement).children as HTMLCollectionOf<HTMLLIElement>)];
+    rows = [...($<HTMLUListElement>("#channel-list").children as HTMLCollectionOf<HTMLLIElement>)];
   const norm = (s: string) =>
     s
       .trim()
@@ -2096,8 +2068,7 @@ function channelSearch(listed: string[], full = false) {
   input.addEventListener("input", filter);
   filter();
   // Enter opens the exact match, or the only one left.
-  ($("#channel-search") as HTMLFormElement).addEventListener("submit", (e) => {
-    // element type from the page HTML
+  $<HTMLFormElement>("#channel-search").addEventListener("submit", (e) => {
     e.preventDefault();
     const q = norm(input.value),
       visible = rows.filter((li) => !li.hidden);
@@ -2120,7 +2091,7 @@ function liveLanding() {
   import("./fighter3d.ts")
     .then(({ createFighter3D }) => {
       const canvas = h("canvas", { class: "landing-3d", "aria-hidden": "true" });
-      ($("#pick") as HTMLElement).prepend(canvas); // element type from the page HTML
+      $("#pick").prepend(canvas);
       try {
         landing.arena = createFighter3D(canvas, { zoom: 0.8 });
       } catch {
@@ -2129,7 +2100,7 @@ function liveLanding() {
       }
       const cap = h("p", { class: "landing-who", "aria-hidden": "true" });
       canvas.after(cap);
-      ($("#pick") as HTMLElement).classList.add("is-live"); // element type from the page HTML
+      $("#pick").classList.add("is-live");
       // the caption names whose fighter stands on the island, so hovering a row visibly brings that channel's fighter on
       // the row whose fighter is on the island is marked too, so the scene and the list read as one
       landing.show = (entry: CatalogEntry, link = landing.links.get(entry)) => {
@@ -2234,9 +2205,8 @@ function watchSaveBar() {
 // Phones: once the tabs scroll under the stuck preview, it shrinks to a short strip so the choices get the screen.
 // Shrinking moves the page, so it switches back only after scrolling clearly above the tabs.
 function compactPreview() {
-  // element types from the page HTML (an aside and a div)
-  const card = $(".hero-card") as HTMLElement,
-    tabs = $(".tabs") as HTMLDivElement, // element type from the page HTML
+  const card = $(".hero-card"),
+    tabs = $<HTMLDivElement>(".tabs"),
     root = document.documentElement;
   const update = () => {
     if (innerWidth > 900 || !card.classList.contains("has-3d")) return root.classList.remove("compact");

@@ -134,7 +134,9 @@ export function h<K extends keyof HTMLElementTagNameMap>(
       node.append(child instanceof Node ? child : String(child));
   return node;
 }
-export const $ = (selector: string, root: ParentNode = document) => root.querySelector(selector);
+// The element at selector, typed as the caller's page HTML holds it (T includes null where it may be missing).
+export const $ = <T extends Element | null = HTMLElement>(selector: string, root: ParentNode = document) =>
+  root.querySelector(selector) as T; // as T: the caller names the element type, as above
 export function setStatus(node: Element, message: string | null | undefined, kind = "") {
   node.textContent = message || "";
   node.className = "status" + (kind ? " " + kind : "");
