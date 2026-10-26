@@ -20,7 +20,8 @@ test("site config keeps the deployment defaults and built-in channel identity", 
 // A copy of PixFray changes only site.config.js: pages and browser scripts name the site through %SITE_*% tokens
 // (vite.config.ts) or read it at run time, never the original owner, channels or domains.
 test("pages and browser scripts carry no hard-coded owner, channel or domain", async () => {
-  const { readFileSync } = await import("node:fs");
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const dir = (d: string) => readdirSync(new NodeURL("../" + d, import.meta.url)).map((f) => d + "/" + f);
   const files = [
     "index.html",
     "admin/index.html",
@@ -29,12 +30,13 @@ test("pages and browser scripts carry no hard-coded owner, channel or domain", a
     "changelog/index.html",
     "intro/index.html",
     "public/overlay.html",
-    "src/served/overlay.ts",
-    "src/served/upload.ts",
+    ...dir("src/served"),
     "src/dev.ts",
     "src/ui.ts",
     "src/admin.ts",
+    ...dir("src/admin"),
     "src/dashboard.ts",
+    ...dir("src/dashboard"),
     "src/setup.ts",
     "src/start.ts",
     "src/intro/main.ts",

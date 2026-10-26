@@ -1,15 +1,8 @@
-// What the pages receive from api(), checked once where it arrives: the session and access every page reads, the
-// fighter page's profile, shop, leaderboard and channel config, the mod page's /api/admin, leaderboard and live
-// snapshots, the owner page's lists, and the fighter page's sessionStorage draft. Built on src/served/parse.ts (the
-// overlay's half) and in the same style as server/parse.ts: each parser answers { ok: true, value } or
-// { ok: false, error }, checks only the fields the page reads with the types it reads them as, and passes the input
-// object through narrowed, so other fields stay. One bad entry in a list (a duel, a player, a log row) drops only that
-// entry. parseAnswer turns an ok answer whose body fails into a failed one with an error the page shows, and warns
-// once per kind (warnOnce), so a page never renders a half-read body.
-//
-// A few nested panels of /api/admin (history, StreamElements, the bot's status and commands, custom upload usage, the
-// check-in test) and the owner page's Cloudflare versions are checked one level deep: an object or list where the
-// page expects one. Their fields come from server code that builds them field by field.
+// What the pages receive from api() (and the fighter page's sessionStorage draft), checked once where it arrives.
+// Each parser checks only the fields the page reads and passes the object through narrowed; one bad list entry drops
+// only that entry. parseAnswer turns an ok answer whose body fails into a failed one, so a page never renders a
+// half-read body. A few /api/admin panels and the Cloudflare versions are checked one level deep: their fields come
+// from server code that builds them field by field.
 import type { CosmeticKind } from "../server/cosmetics.ts";
 import type { Stats } from "../server/upgrades.ts";
 import { bad, isObject, keepGood, ok, warnOnce } from "./served/parse.ts";
@@ -47,70 +40,100 @@ export const acceptedUnreadable = (r: Answer<unknown>): boolean => !r.ok && r.st
 
 // ---------- field checks ----------
 
-type Check = (v: unknown) => boolean;
-const num: Check = (v) => typeof v === "number" && Number.isFinite(v);
-const str: Check = (v) => typeof v === "string";
-const bool: Check = (v) => typeof v === "boolean";
-const opt =
-  (check: Check): Check =>
-  (v) =>
-    v === undefined || check(v);
+/** A check that narrows: the value is a T when it passes. */
+type Check<T = unknown> = (v: unknown) => v is T;
+const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const str = (v: unknown): v is string => typeof v === "string";
+const bool = (v: unknown): v is boolean => typeof v === "boolean";
+// optional marks the field optional in Infer
+const opt = <T>(check: Check<T>) =>
+  Object.assign((v: unknown): v is T | undefined => v === undefined || check(v), { optional: true as const });
 const orNull =
-  (check: Check): Check =>
-  (v) =>
+  <T>(check: Check<T>) =>
+  (v: unknown): v is T | null =>
     v === null || check(v);
 const listOf =
-  (check: Check): Check =>
-  (v) =>
+  <T>(check: Check<T>) =>
+  (v: unknown): v is T[] =>
     Array.isArray(v) && v.every(check);
 const mapOf =
-  (check: Check): Check =>
-  (v) =>
+  <T>(check: Check<T>) =>
+  (v: unknown): v is Record<string, T> =>
     isObject(v) && Object.values(v).every(check);
 const strList = listOf(str);
 const numMap = mapOf(num);
 
 /** Each field the page reads and the check its value must pass. */
 type Spec = { readonly [field: string]: Check };
+type Of<C> = C extends Check<infer T> ? T : never;
+type Optional<S> = { [K in keyof S]: S[K] extends { optional: true } ? K : never }[keyof S];
+/** The type a spec checks; a field whose check is opt() is optional. */
+type Infer<S> = { [K in Exclude<keyof S, Optional<S>>]: Of<S[K]> } & {
+  [K in Optional<S>]?: Exclude<Of<S[K]>, undefined>;
+};
 /** Why `value` doesn't fit `spec` ("not an object", or the first field that fails), or "" when it fits. */
 function misfit(value: unknown, spec: Spec, what: string) {
   if (!isObject(value)) return what + " is not an object";
   for (const field in spec) if (!spec[field]!(value[field])) return what + "." + field + " has the wrong type"; // !: field is a key of spec
   return "";
 }
-/** A parser for one shape: the value itself when it fits `spec`, the reason when it doesn't. */
-function shape<T>(spec: Spec, what: string) {
+const fits =
+  <S extends Spec>(spec: S) =>
+  (v: unknown): v is Infer<S> =>
+    misfit(v, spec, "") === "";
+/** List fields to read entry by entry: the warning kind and the parser for one entry. */
+type Lists = { readonly [field: string]: readonly [kind: string, parse: (item: unknown) => Parsed<unknown>] };
+/**
+ * A parser for one shape: the value itself when it fits `spec`, the reason when it doesn't. Each entry of a `lists`
+ * field that doesn't parse is dropped (keepGood); the value stays the same object when none is. T is the spec's type
+ * unless a caller names a wider one (list fields, pass-through fields).
+ */
+function shape<S extends Spec, T = Infer<S>>(spec: S, what: string, lists: Lists = {}) {
   return (value: unknown): Parsed<T> => {
     const why = misfit(value, spec, what);
-    // as T: misfit checked every field of T this page reads; the rest pass through as sent
-    return why ? bad(why) : ok(value as T);
+    if (why) return bad(why);
+    // as: misfit answers "" only for an object
+    let out = value as JsonObject;
+    for (const [field, [kind, parse]] of Object.entries(lists)) {
+      const list = out[field];
+      if (!Array.isArray(list)) continue; // an optional list that isn't there
+      const good = keepGood(list, kind, parse);
+      if (good.length < list.length) out = { ...out, [field]: good };
+    }
+    // as T: misfit checked every field of T this page reads and each list entry was parsed; the rest pass through
+    return ok(out as T);
   };
 }
-const fits =
-  (spec: Spec): Check =>
-  (v) =>
-    misfit(v, spec, "") === "";
+/** A parser for a list of one shape; an entry that doesn't parse is dropped. */
+const rows =
+  <S extends Spec>(name: string, kind: string, spec: S, what: string) =>
+  (value: unknown): Parsed<Infer<S>[]> =>
+    Array.isArray(value) ? ok(keepGood(value, kind, shape(spec, what))) : bad(name + " is not a list");
+/** An object's entries that pass `check`; the rest are dropped after one warning for `kind`. */
+function goodValues<T>(value: JsonObject, check: Check<T>, kind: string, why: string): Record<string, T> {
+  // as: each value is checked here
+  if (Object.values(value).every(check)) return value as Record<string, T>;
+  warnOnce(kind, why);
+  return Object.fromEntries(Object.entries(value).filter((e): e is [string, T] => check(e[1])));
+}
+/** What a parser answers with when it succeeds. */
+type Value<P> = P extends (value: unknown) => Parsed<infer T> ? T : never;
 
 // ---------- session and access (every page) ----------
 
 /** /api/session: who is signed in. */
-export type Session = {
-  user?: { id: string; login: string; displayName?: string } | null;
-  configured?: boolean;
-  owner?: boolean;
-};
-const USER: Spec = { id: str, login: str, displayName: opt(str) };
-export const parseSession = shape<Session>(
-  { user: opt(orNull(fits(USER))), configured: opt(bool), owner: opt(bool) },
+export const parseSession = shape(
+  { user: opt(orNull(fits({ id: str, login: str, displayName: opt(str) }))), configured: opt(bool), owner: opt(bool) },
   "session",
 );
+export type Session = Value<typeof parseSession>;
 
 /** /api/access/:channel: whether the viewer may run this channel's duels, and why not. */
-export type Access = { canManage?: boolean; owner?: boolean; broadcaster?: boolean; reason?: string; off?: string };
-export const parseAccess = shape<Access>(
+export const parseAccess = shape(
   { canManage: opt(bool), owner: opt(bool), broadcaster: opt(bool), reason: opt(str), off: opt(str) },
   "access",
 );
+export type Access = Value<typeof parseAccess>;
 
 // ---------- the fighter page (src/dashboard.ts) ----------
 
@@ -120,7 +143,7 @@ export const parseAccess = shape<Access>(
  * set.
  */
 export type Build = { avatar?: string; color?: string; defaultAbility?: string; [field: string]: unknown };
-const BUILD: Spec = { avatar: opt(str), color: opt(str), defaultAbility: opt(str) };
+const BUILD = { avatar: opt(str), color: opt(str), defaultAbility: opt(str) };
 const isBuild = fits(BUILD);
 /**
  * What a fighter owns: pets, hats, each cosmetic kind's items and the number of build slots, plus each legendary pet's
@@ -134,42 +157,25 @@ export type Owned = {
   rerolled: string[];
 } & Record<CosmeticKind, string[]>;
 // slots a number, rolls an object of stat lists, every other list a list of ids
-const isOwned: Check = (v) =>
+const isOwned = (v: unknown): v is Partial<Owned> =>
   isObject(v) &&
   Object.entries(v).every(([kind, list]) =>
-    kind === "slots"
-      ? num(list)
-      : kind === "rolls"
-        ? isObject(list) && Object.values(list).every(strList)
-        : strList(list),
+    kind === "slots" ? num(list) : kind === "rolls" ? mapOf(strList)(list) : strList(list),
   );
-export type Profile = Build & {
-  wins: number;
-  losses: number;
-  bonus?: number;
-  elo: number;
-  // absent on a fighter who never earned any (server/game.ts shownProfile)
-  dollars?: number;
-  // channel point rewards (server/points.ts): spent on anything but pets
-  styleDollars?: number;
-  streak?: number;
-  build?: number;
-  builds?: (Build | null)[];
-  owned?: Partial<Owned>;
-};
-const PROFILE: Spec = {
+const PROFILE = {
   ...BUILD,
   wins: num,
   losses: num,
   elo: num,
-  dollars: opt(num),
-  styleDollars: opt(num),
+  dollars: opt(num), // absent on a fighter who never earned any (server/game.ts shownProfile)
+  styleDollars: opt(num), // channel point rewards (server/points.ts): spent on anything but pets
   bonus: opt(num),
   streak: opt(num),
   build: opt(num),
   builds: opt(Array.isArray),
   owned: opt(isOwned),
 };
+export type Profile = Build & Omit<Infer<typeof PROFILE>, "builds"> & { builds?: (Build | null)[] };
 /**
  * A profile (GET /api/profile, or the profile a save answers with). A saved build that doesn't read as one counts as
  * a slot never saved (null), so the other builds keep their slot numbers.
@@ -193,22 +199,14 @@ export function parseProfileSaved(value: unknown): Parsed<{ profile: Profile }> 
   return profile.ok ? ok({ ...value, profile: profile.value }) : profile;
 }
 /** POST /api/shop/:channel: the dollars and style dollars left and what the fighter owns now. */
-export type Bought = { dollars: number; styleDollars?: number; owned?: Partial<Owned> };
-export const parseBought = shape<Bought>({ dollars: num, styleDollars: opt(num), owned: opt(isOwned) }, "purchase");
+export const parseBought = shape({ dollars: num, styleDollars: opt(num), owned: opt(isOwned) }, "purchase");
 
 /** A shop pet: its id, words, price (null when not for sale), tier, stat boost and, for an upload, its picture. */
-export type ShopPet = {
-  id: string;
-  label: string;
-  price?: number | null;
-  tier: string;
-  boost?: Partial<Stats>;
-  url?: string;
-};
-const SHOP_PET: Spec = { id: str, label: str, tier: str, price: opt(orNull(num)), boost: opt(numMap), url: opt(str) };
+const SHOP_PET = { id: str, label: str, tier: str, price: opt(orNull(num)), boost: opt(numMap), url: opt(str) };
+export type ShopPet = Omit<Infer<typeof SHOP_PET>, "boost"> & { boost?: Partial<Stats> };
 /** A cosmetic for sale; price null when it isn't. */
-export type ShopItem = { id: string; label: string; price?: number | null };
-const SHOP_ITEM: Spec = { id: str, label: str, price: opt(orNull(num)) };
+const SHOP_ITEM = { id: str, label: str, price: opt(orNull(num)) };
+export type ShopItem = Infer<typeof SHOP_ITEM>;
 /** GET /api/shop/:channel, or GET /api/pets/:channel (pets only) when the shop list isn't there. */
 export type Shop = {
   pets: ShopPet[];
@@ -216,63 +214,41 @@ export type Shop = {
   hatPricePerWin?: number;
   slots?: { prices?: (number | null)[]; max?: number };
 };
-const SLOTS: Spec = { prices: opt(listOf(orNull(num))), max: opt(num) };
-export const parseShop = shape<Shop>(
+export const parseShop = shape<Spec, Shop>(
   {
     pets: listOf(fits(SHOP_PET)),
     items: opt(mapOf(listOf(fits(SHOP_ITEM)))),
     hatPricePerWin: opt(num),
-    slots: opt(fits(SLOTS)),
+    slots: opt(fits({ prices: opt(listOf(orNull(num))), max: opt(num) })),
   },
   "shop",
 );
 
-/** The channel config the fighter page reads from /api/state/:channel (server/model.ts Config). */
-export type StateConfig = {
-  initialElo: number;
-  challengeTimeoutMs: number;
-  rematchDelayMs: number;
-  checkinPoints?: number;
-  maxStatLevel?: number;
-  winDollars?: number;
-  lossDollars?: number;
-  giveEnabled?: boolean;
-  giveMaxPerStream?: number;
-  giveMinDuels?: number;
-  quickDuel?: boolean;
-};
-const STATE_CONFIG: Spec = {
-  initialElo: num,
-  challengeTimeoutMs: num,
-  rematchDelayMs: num,
-  checkinPoints: opt(num),
-  maxStatLevel: opt(num),
-  winDollars: opt(num),
-  lossDollars: opt(num),
-  giveEnabled: opt(bool),
-  giveMaxPerStream: opt(num),
-  giveMinDuels: opt(num),
-  quickDuel: opt(bool),
-};
-/** /api/state/:channel, as far as the fighter page reads it: the config. */
-export function parseStateConfig(value: unknown): Parsed<StateConfig> {
-  if (!isObject(value)) return bad("state is not an object");
-  return shape<StateConfig>(STATE_CONFIG, "state.config")(value.config);
-}
+/** /api/state/:channel, as far as the fighter page reads it: the config (server/model.ts Config). */
+const parseConfig = shape(
+  {
+    initialElo: num,
+    challengeTimeoutMs: num,
+    rematchDelayMs: num,
+    checkinPoints: opt(num),
+    maxStatLevel: opt(num),
+    winDollars: opt(num),
+    lossDollars: opt(num),
+    giveEnabled: opt(bool),
+    giveMaxPerStream: opt(num),
+    giveMinDuels: opt(num),
+    quickDuel: opt(bool),
+  },
+  "state.config",
+);
+export type StateConfig = Value<typeof parseConfig>;
+export const parseStateConfig = (value: unknown): Parsed<StateConfig> =>
+  isObject(value) ? parseConfig(value.config) : bad("state is not an object");
 
-/** A leaderboard row (GET /api/leaderboard/:channel); dollars only on the mods' ?private=1 list. */
-export type LeaderRow = {
-  userId: string;
-  username: string;
-  displayName?: string;
-  color: string;
-  avatar: string;
-  elo: number;
-  wins: number;
-  losses: number;
-  dollars?: number;
-};
-const parseLeaderRow = shape<LeaderRow>(
+/** The leaderboard (GET /api/leaderboard/:channel); dollars only on the mods' ?private=1 list. */
+export const parseLeaderboard = rows(
+  "leaderboard",
+  "a leaderboard row",
   {
     userId: str,
     username: str,
@@ -286,15 +262,11 @@ const parseLeaderRow = shape<LeaderRow>(
   },
   "leaderboard row",
 );
-/** The leaderboard: a list of rows; a row that doesn't read is dropped. */
-export function parseLeaderboard(value: unknown): Parsed<LeaderRow[]> {
-  if (!Array.isArray(value)) return bad("leaderboard is not a list");
-  return ok(keepGood(value, "a leaderboard row", parseLeaderRow));
-}
+export type LeaderRow = Value<typeof parseLeaderboard>[number];
 
 /** The fighter page's unsaved edits, kept in sessionStorage over the Twitch sign-in round trip. */
-export type Draft = { d: Build; withProfile?: boolean; at: number };
-const parseDraftValue = shape<Draft>({ d: isBuild, withProfile: opt(bool), at: num }, "draft");
+type Draft = { d: Build; withProfile?: boolean; at: number };
+const parseDraftValue = shape<Spec, Draft>({ d: isBuild, withProfile: opt(bool), at: num }, "draft");
 /** The stored draft text: null when there is none. */
 export function parseDraft(text: string | null): Parsed<Draft | null> {
   if (text === null) return ok(null);
@@ -309,18 +281,7 @@ export function parseDraft(text: string | null): Parsed<Draft | null> {
 
 // ---------- the mod page (src/admin.ts) ----------
 
-export type AdminConfig = {
-  enabled?: boolean;
-  maxDuels: number;
-  maxHp: number;
-  inactivityMs: number;
-  announce?: string;
-  maxOnStream?: number;
-  botEnabled?: boolean;
-  quickDuel?: boolean;
-  abilities?: Record<string, Record<string, number>>;
-};
-const ADMIN_CONFIG: Spec = {
+const ADMIN_CONFIG = {
   enabled: opt(bool),
   maxDuels: num,
   maxHp: num,
@@ -331,16 +292,8 @@ const ADMIN_CONFIG: Spec = {
   quickDuel: opt(bool),
   abilities: opt(mapOf(numMap)),
 };
-export type ChatStatus = {
-  connected?: boolean;
-  source?: string;
-  status?: string;
-  subscriptionId?: string;
-  lastNotificationAt?: number;
-  lastSeen?: number;
-  lastRevocationReason?: string;
-};
-const CHAT_STATUS: Spec = {
+export type AdminConfig = Infer<typeof ADMIN_CONFIG>;
+const CHAT_STATUS = {
   connected: opt(bool),
   source: opt(str),
   status: opt(str),
@@ -349,21 +302,9 @@ const CHAT_STATUS: Spec = {
   lastSeen: opt(num),
   lastRevocationReason: opt(str),
 };
+export type ChatStatus = Infer<typeof CHAT_STATUS>;
 /** A duel as the mod page reads it; a pending duel has no startedAt yet. */
-export type AdminDuel = {
-  id: string;
-  a: string;
-  b: string;
-  status: string;
-  rules?: { maxHp?: number };
-  maxHp?: Record<string, number>;
-  expiresAt: number;
-  startedAt?: number;
-  lastActionAt?: number;
-  hp?: Record<string, number>;
-  round?: number;
-};
-const parseAdminDuel = shape<AdminDuel>(
+const parseAdminDuel = shape(
   {
     id: str,
     a: str,
@@ -379,20 +320,8 @@ const parseAdminDuel = shape<AdminDuel>(
   },
   "duel",
 );
-export type AdminPlayer = {
-  userId: string;
-  username: string;
-  displayName?: string;
-  color: string;
-  registered?: boolean;
-  respawnAt: number;
-  hp: number;
-  elo: number;
-  wins: number;
-  losses: number;
-  lastSeen: number;
-};
-const parseAdminPlayer = shape<AdminPlayer>(
+type AdminDuel = Value<typeof parseAdminDuel>;
+const parseAdminPlayer = shape(
   {
     userId: str,
     username: str,
@@ -408,8 +337,9 @@ const parseAdminPlayer = shape<AdminPlayer>(
   },
   "player",
 );
+export type AdminPlayer = Value<typeof parseAdminPlayer>;
 /** A saved config version; the actor's name and the note are null when none was given. */
-export type HistoryRow = {
+type HistoryRow = {
   version: number;
   config: AdminConfig;
   actorId: string;
@@ -439,12 +369,8 @@ export type BotStatus = {
   heldAt: number;
   heldReason: string;
 };
-export type BotCommands = {
-  commands: { name: string; reply: string }[];
-  counters: { name: string; value: number }[];
-};
 /** Channel point rewards and the newest redemptions (server/points.ts pointsView). */
-export type PointsPanel = {
+type PointsPanel = {
   rewards: { rewardId: string; title: string; cost: number; dollars: number; status?: string; createdAt?: number }[];
   redemptions: {
     id: string;
@@ -457,38 +383,15 @@ export type PointsPanel = {
   }[];
   limits: { titleMax: number; costMax: number; dollarsMax: number; maxRewards: number };
 };
-/** GET /api/admin/:channel: the room's state plus the mod page's panels. */
-export type Admin = {
-  revision: number;
-  config: AdminConfig;
-  configVersion: number;
-  duels: AdminDuel[];
-  players: AdminPlayer[];
-  history?: HistoryRow[];
-  chatStatus?: ChatStatus;
-  chat?: ChatStatus;
-  chatBot?: { login?: string; debug?: boolean } | null;
-  streamelements?: Se | null;
-  seOnly?: boolean;
-  botStatus?: BotStatus | null;
-  customUsage?: { count: number; limit?: number; bytes: number };
-  overlays?: number;
-  modsReady?: boolean;
-  modsLapsed?: boolean;
-  checkinTestAllowed?: boolean;
-  checkinTest?: { until: number; by?: string } | null;
-  botCommands?: BotCommands;
-  points?: PointsPanel;
-  pointsLogin?: string;
-  pointsReady?: boolean;
-  channelState?: string;
-};
-const ADMIN: Spec = {
+/** The room's lists: a duel or player that doesn't read is dropped. */
+const ROOM = { duels: Array.isArray, players: Array.isArray };
+type Room = { duels: AdminDuel[]; players: AdminPlayer[] };
+const ROOM_LISTS: Lists = { duels: ["a duel", parseAdminDuel], players: ["a player", parseAdminPlayer] };
+const ADMIN = {
+  ...ROOM,
   revision: num,
   config: fits(ADMIN_CONFIG),
   configVersion: num,
-  duels: Array.isArray,
-  players: Array.isArray,
   overlays: opt(num),
   chatStatus: opt(fits(CHAT_STATUS)),
   chat: opt(fits(CHAT_STATUS)),
@@ -498,6 +401,8 @@ const ADMIN: Spec = {
   modsLapsed: opt(bool),
   checkinTestAllowed: opt(bool),
   channelState: opt(str),
+  pointsLogin: opt(str),
+  pointsReady: opt(bool),
   // one level deep (see the top of this file)
   history: opt(listOf(isObject)),
   streamelements: opt(orNull(isObject)),
@@ -506,65 +411,39 @@ const ADMIN: Spec = {
   checkinTest: opt(orNull(isObject)),
   botCommands: opt(isObject),
   points: opt(isObject),
-  pointsLogin: opt(str),
-  pointsReady: opt(bool),
 };
-/** The room's lists, with each duel and player that doesn't read dropped. */
-function roomLists<T extends { duels: AdminDuel[]; players: AdminPlayer[] }>(value: T): T {
-  const duels = keepGood(value.duels, "a duel", parseAdminDuel),
-    players = keepGood(value.players, "a player", parseAdminPlayer);
-  return duels.length === value.duels.length && players.length === value.players.length
-    ? value
-    : { ...value, duels, players };
-}
-export function parseAdmin(value: unknown): Parsed<Admin> {
-  const why = misfit(value, ADMIN, "admin");
-  // as Admin: misfit checked each field the page reads (the panels one level deep); roomLists checks each entry
-  return why ? bad(why) : ok(roomLists(value as Admin));
-}
+/** GET /api/admin/:channel: the room's state plus the mod page's panels. */
+export type Admin = Omit<Infer<typeof ADMIN>, keyof OneLevel | keyof Room> & Room & Partial<OneLevel>;
+type OneLevel = {
+  history: HistoryRow[];
+  streamelements: Se | null;
+  botStatus: BotStatus | null;
+  customUsage: { count: number; limit?: number; bytes: number };
+  checkinTest: { until: number; by?: string } | null;
+  botCommands: { commands: { name: string; reply: string }[]; counters: { name: string; value: number }[] };
+  points: PointsPanel;
+};
+export const parseAdmin = shape<Spec, Admin>(ADMIN, "admin", ROOM_LISTS);
 /** A snapshot on the mod page's /api/live socket, as far as it reads one. */
-export type AdminSnapshot = {
-  type: "snapshot";
-  revision: number;
-  paused?: boolean;
-  chat?: ChatStatus;
-  config: AdminConfig;
-  configVersion: number;
-  round?: number;
-  players: AdminPlayer[];
-  duels: AdminDuel[];
-  events?: unknown;
-};
-const ADMIN_SNAPSHOT: Spec = {
-  type: (v) => v === "snapshot",
+const ADMIN_SNAPSHOT = {
+  ...ROOM,
+  type: (v: unknown): v is "snapshot" => v === "snapshot",
   revision: num,
   paused: opt(bool),
   chat: opt(fits(CHAT_STATUS)),
   config: fits(ADMIN_CONFIG),
   configVersion: num,
   round: opt(num),
-  players: Array.isArray,
-  duels: Array.isArray,
 };
-export function parseAdminSnapshot(value: unknown): Parsed<AdminSnapshot> {
-  const why = misfit(value, ADMIN_SNAPSHOT, "snapshot");
-  // as AdminSnapshot: misfit checked each field above; roomLists checks each entry
-  return why ? bad(why) : ok(roomLists(value as AdminSnapshot));
-}
+type AdminSnapshot = Omit<Infer<typeof ADMIN_SNAPSHOT>, keyof Room> & Room & { events?: unknown };
+export const parseAdminSnapshot = shape<Spec, AdminSnapshot>(ADMIN_SNAPSHOT, "snapshot", ROOM_LISTS);
 
 // ---------- the owner page (src/dev.ts) ----------
 
-/** A deploy workflow run (GET /api/dev/runs); GitHub sends null for a missing branch or a run still going. */
-export type Run = {
-  createdAt: string;
-  url: string;
-  title?: string | null;
-  id: number;
-  branch?: string | null;
-  conclusion?: string | null;
-  status: string;
-};
-const parseRun = shape<Run>(
+/** Deploy workflow runs (GET /api/dev/runs); GitHub sends null for a missing branch or a run still going. */
+export const parseRuns = rows(
+  "runs",
+  "a deploy run",
   {
     createdAt: str,
     url: str,
@@ -576,9 +455,6 @@ const parseRun = shape<Run>(
   },
   "run",
 );
-export function parseRuns(value: unknown): Parsed<Run[]> {
-  return Array.isArray(value) ? ok(keepGood(value, "a deploy run", parseRun)) : bad("runs is not a list");
-}
 
 /** One Worker's deployments and versions (GET /api/dev/versions), from the Cloudflare API. */
 export type TargetVersions = {
@@ -595,81 +471,39 @@ const isTargetVersions = fits({
 /** Each target's versions; a target that doesn't read is dropped. */
 export function parseVersions(value: unknown): Parsed<Record<string, TargetVersions>> {
   if (!isObject(value)) return bad("versions is not an object");
-  if (Object.values(value).every(isTargetVersions)) return ok(value as Record<string, TargetVersions>); // as: each value checked just above
-  warnOnce("a deploy target", "its deployments or versions are not lists");
-  // as: only the entries that passed are kept
-  return ok(
-    Object.fromEntries(Object.entries(value).filter(([, v]) => isTargetVersions(v))) as Record<string, TargetVersions>,
-  );
+  const why = "its deployments or versions are not lists";
+  // as: the leaves pass through unchecked (see above)
+  return ok(goodValues(value, isTargetVersions, "a deploy target", why) as Record<string, TargetVersions>);
 }
 
 /** A saved config version on the owner page; the actor's name and the note are null when none was given. */
-export type ConfigVersion = {
-  version: number;
-  at: number;
-  actorName?: string | null;
-  actorId?: string | null;
-  note?: string | null;
-};
-const parseConfigVersion = shape<ConfigVersion>(
+const parseConfigVersion = shape(
   { version: num, at: num, actorName: opt(orNull(str)), actorId: opt(orNull(str)), note: opt(orNull(str)) },
   "config version",
 );
 /** GET /api/dev/settings: the live config, its version and the saved versions. */
-export type Settings = { config: JsonObject | null; configVersion: number; history?: ConfigVersion[] };
-export function parseSettings(value: unknown): Parsed<Settings> {
-  const why = misfit(value, { config: orNull(isObject), configVersion: num, history: opt(Array.isArray) }, "settings");
-  if (why) return bad(why);
-  // as Settings: misfit checked config and configVersion; history is checked entry by entry below
-  const settings = value as Settings;
-  if (!settings.history) return ok(settings);
-  const history = keepGood(settings.history, "a config version", parseConfigVersion);
-  return ok(history.length === settings.history.length ? settings : { ...settings, history });
-}
+type Settings = { config: JsonObject | null; configVersion: number; history?: Value<typeof parseConfigVersion>[] };
+export const parseSettings = shape<Spec, Settings>(
+  { config: orNull(isObject), configVersion: num, history: opt(Array.isArray) },
+  "settings",
+  { history: ["a config version", parseConfigVersion] },
+);
 
 /** A signed-up channel (server/channels.ts): off when pausedAt is set, waiting for approval when review is. */
-export type Channel = {
-  login: string;
-  pausedAt?: number | null;
-  pausedBy?: string;
-  review?: { reasons: string[]; at: number };
-};
-const parseChannel = shape<Channel>(
-  {
-    login: str,
-    pausedAt: opt(orNull(num)),
-    pausedBy: opt(str),
-    review: opt(fits({ reasons: strList, at: num })),
-  },
+const parseChannel = shape(
+  { login: str, pausedAt: opt(orNull(num)), pausedBy: opt(str), review: opt(fits({ reasons: strList, at: num })) },
   "channel",
 );
+export type Channel = Value<typeof parseChannel>;
 /** GET or POST /api/dev/channels: the cap, the built-in channels and the signed-up ones. */
 export type Channels = { max: number; builtin: string[]; channels: Channel[]; progressBatch?: number };
-export function parseChannels(value: unknown): Parsed<Channels> {
-  const why = misfit(
-    value,
-    { max: num, builtin: strList, channels: Array.isArray, progressBatch: opt(num) },
-    "channels",
-  );
-  if (why) return bad(why);
-  // as Channels: misfit checked each field; the channel list is checked entry by entry below
-  const d = value as Channels;
-  const channels = keepGood(d.channels, "a channel", parseChannel);
-  return ok(channels.length === d.channels.length ? d : { ...d, channels });
-}
+export const parseChannels = shape<Spec, Channels>(
+  { max: num, builtin: strList, channels: Array.isArray, progressBatch: opt(num) },
+  "channels",
+  { channels: ["a channel", parseChannel] },
+);
 
 /** One channel's setup progress (GET /api/dev/progress, server/developer.ts /dev/progress). */
-export type Progress = {
-  source?: string;
-  overlays: number;
-  duelModuleOff?: boolean;
-  duelCommands?: boolean;
-  rejectedAt: number;
-  lastCommandAt: number;
-  lastChatAt: number;
-  commandsWorking: number;
-  commands: number;
-};
 const isProgress = fits({
   source: opt(str),
   overlays: num,
@@ -681,29 +515,23 @@ const isProgress = fits({
   commandsWorking: num,
   commands: num,
 });
+export type Progress = Of<typeof isProgress>;
 /** { progress } by login; a channel whose progress doesn't read is left out, as if its room didn't answer. */
-export function parseProgress(value: unknown): Parsed<{ progress: Record<string, Progress> }> {
+export function parseProgress(value: unknown) {
   if (!isObject(value) || !isObject(value.progress)) return bad("progress is not an object");
-  const all = value.progress;
-  if (Object.values(all).every(isProgress)) return ok({ progress: all as Record<string, Progress> }); // as: each value checked just above
-  warnOnce("a channel's setup progress", "a progress field has the wrong type");
-  // as: only the entries that passed are kept
-  return ok({
-    progress: Object.fromEntries(Object.entries(all).filter(([, p]) => isProgress(p))) as Record<string, Progress>,
-  });
+  const why = "a progress field has the wrong type";
+  return ok({ progress: goodValues(value.progress, isProgress, "a channel's setup progress", why) });
 }
 
 /** A log row (GET /api/dev/logs). */
 export type LogRow = { at: number; source: string; message: string; context?: unknown };
-const parseLogRow = shape<LogRow>({ at: num, source: str, message: str }, "log row");
-export function parseLogs(value: unknown): Parsed<LogRow[]> {
-  return Array.isArray(value) ? ok(keepGood(value, "a log row", parseLogRow)) : bad("logs is not a list");
-}
+export const parseLogs: (value: unknown) => Parsed<LogRow[]> = rows(
+  "logs",
+  "a log row",
+  { at: num, source: str, message: str },
+  "log row",
+);
 
 /** One UTC day of a room's counters (GET /api/dev/stats), newest day first. */
-export type StatsDay = { day: string; counts: Record<string, number> };
-const parseStatsDay = shape<StatsDay>({ day: str, counts: numMap }, "stats day");
-export function parseStats(value: unknown): Parsed<StatsDay[]> {
-  if (!isObject(value) || !Array.isArray(value.days)) return bad("stats.days is not a list");
-  return ok(keepGood(value.days, "a stats day", parseStatsDay));
-}
+const parseDays = rows("stats.days", "a stats day", { day: str, counts: numMap }, "stats day");
+export const parseStats = (value: unknown) => parseDays(isObject(value) ? value.days : undefined);

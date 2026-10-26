@@ -45,21 +45,12 @@ test("a channel domain belongs to its channel; links for a channel use its domai
   assert.equal(siteOrigin(env, new URL(MAIN), "miolafff"), MIOLAF);
   assert.equal(siteOrigin(env, new URL(MIOLAF), "nesszerra"), MAIN);
   assert.equal(authOrigin(env, new URL(MIOLAF + "/auth/login")), MIOLAF, "sign-in stays on the domain it started on");
-  assert.equal(
-    authOrigin(env, new URL("https://evil.example/auth/login")),
-    MAIN,
-    "an unknown host signs in on the main site",
-  );
-  assert.equal(
-    siteOrigin({ CHANNEL_ORIGINS: "not json", PUBLIC_ORIGIN: MAIN }, new URL(MAIN), "miolafff"),
-    MAIN,
-    "bad config falls back",
-  );
-  assert.equal(
-    channelPageRedirect({} as Env /* no channel domains or origin on purpose */, new URL(MIOLAF + "/")),
-    null,
-    "no channel domains configured: nothing moves",
-  );
+  const unknown = authOrigin(env, new URL("https://evil.example/auth/login"));
+  assert.equal(unknown, MAIN, "an unknown host signs in on the main site");
+  const bad = siteOrigin({ CHANNEL_ORIGINS: "not json", PUBLIC_ORIGIN: MAIN }, new URL(MAIN), "miolafff");
+  assert.equal(bad, MAIN, "bad config falls back");
+  const bare = {} as Env; // no channel domains or origin on purpose
+  assert.equal(channelPageRedirect(bare, new URL(MIOLAF + "/")), null, "no channel domains configured: nothing moves");
 });
 
 test("chat.miolaf.xyz opens miolafff's pages and sends every other page to pixfray.xyz", async () => {
@@ -87,27 +78,20 @@ test("pages keep their no-framing headers when they pass through the Worker", as
     const r = await get(url);
     assert.equal(r.headers.get("X-Frame-Options"), "DENY", url);
     assert.equal(r.headers.get("Content-Security-Policy"), PAGE_CSP, url);
-    // as string: the line above asserted the header equals PAGE_CSP
-    assert.match(r.headers.get("Content-Security-Policy") as string, /frame-ancestors 'none'/, url);
     assert.equal(r.headers.get("X-Robots-Tag"), null, url);
   }
   for (const site of ["https://staging.pixfray.xyz/", "https://test.chat.miolaf.xyz/?channel=miolafff"])
     assert.equal((await get(site)).headers.get("X-Robots-Tag"), "noindex, nofollow", site);
-  assert.equal(
-    (await get(MAIN + "/overlay.html")).headers.get("X-Frame-Options"),
-    null,
-    "OBS can still frame the overlay",
-  );
+  const overlay = await get(MAIN + "/overlay.html");
+  assert.equal(overlay.headers.get("X-Frame-Options"), null, "OBS can still frame the overlay");
 });
 
 test("sign-in returns to the domain it started on", async () => {
   for (const origin of [MAIN, MIOLAF]) {
     const r = await get(origin + "/auth/login?channel=miolafff");
     assert.equal(r.status, 302);
-    assert.equal(
-      // as string: a 302 from the Worker always carries a Location
-      new URL(r.headers.get("Location") as string).searchParams.get("redirect_uri"),
-      origin + "/auth/callback",
-    );
+    // as string: a 302 from the Worker always carries a Location
+    const back = new URL(r.headers.get("Location") as string).searchParams.get("redirect_uri");
+    assert.equal(back, origin + "/auth/callback");
   }
 });

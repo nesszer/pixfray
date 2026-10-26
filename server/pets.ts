@@ -1,43 +1,15 @@
-// Pets (docs/PROGRESSION_PLAN.md, Stage 3): bought with PixFray dollars, one active per fighter, each with a small
-// stat boost by tier. Built-in pets are drawn in code (src/served/pets.ts, same ids); streamers can upload their own as
-// PNGs (custom_pets, ids "p-..."), picking the tier and the boosted stat. A legendary pet boosts LEGENDARY_ROLL stats
-// rolled for each owner when they buy it (owned_items.roll), with one free reroll (owned_items.rerolled).
-//
-// GET    /api/pets/:channel        public: { pets:[{id,label,tier,boost,price,custom,url?}], hatPricePerWin }
-// GET    /api/pets/:channel/:id    public: an uploaded pet's PNG
-// POST   /api/pets/:channel        canManage: { label, tier, stat, stat2?, image:"<base64 PNG>" } -> 201 {ok, item}
-// DELETE /api/pets/:channel/:id    canManage -> {ok, id}; owners lose it and fighters using it go back to no pet
-import { emptyStats, STATS } from "./upgrades.ts";
+// Pets: bought with PixFray dollars, one active per fighter, a small stat boost by tier. Built-in ones are drawn in
+// src/served/pets.ts (same ids); uploads are custom_pets ("p-..."). A legendary boosts LEGENDARY_ROLL stats rolled per
+// owner on purchase (owned_items.roll), with one free reroll. Routes /api/pets: docs/CONTRACTS.md §2.
+import { cleanStats, emptyStats, STATS } from "./upgrades.ts";
 import { readPng } from "./uploads.ts";
 import type { Stat, Stats } from "./upgrades.ts";
 import type { Config } from "./model.ts";
-import type { Env } from "./env.ts";
+import { bodyOr, fromBase64, json, png, postJson, refuse } from "./http.ts";
 
-/** A built-in pet: the stat (and second stat for epic) its tier boost goes to. */
-export type BuiltinPet = { id: string; label: string; tier: string; stat: Stat; stat2?: Stat };
-/** A profile's pet as petOf reads it. */
-export type PetRef = { id: string; tier: string; boost: Stats };
-/** One entry of a channel's pet catalog (GET /api/pets/:channel). */
-export type PetEntry = {
-  id: string;
-  label: string;
-  tier: string;
-  boost: Stats;
-  price: number | null;
-  custom: boolean;
-  url?: string;
-  width?: number;
-  height?: number;
-};
-/** The config keys pet and hat prices come from (a missing one means not for sale). */
-export type PetPriceConfig = Partial<
-  Pick<
-    Config,
-    "petPriceCommon" | "petPriceUncommon" | "petPriceRare" | "petPriceEpic" | "petPriceLegendary" | "hatPricePerWin"
-  >
->;
+type BuiltinPet = { id: string; label: string; tier: string; stat: Stat; stat2?: Stat };
 /** validatePetUpload's refusal: the HTTP status and the reason the page shows. */
-export type UploadRefusal = {
+type UploadRefusal = {
   status: number;
   reason:
     | "invalid_label"
@@ -49,8 +21,7 @@ export type UploadRefusal = {
     | "image_dimensions";
   error: string;
 };
-/** A checked pet upload, ready to insert. */
-export type PetUpload = {
+type PetUpload = {
   label: string;
   tier: string;
   stat: string;
@@ -59,25 +30,12 @@ export type PetUpload = {
   width: number;
   height: number;
 };
-/**
- * A result T or a refusal R. The result side carries the refusal's fields as optional, with reason typed "" (falsy),
- * so `if (x.reason)` narrows in strict code and, in its true branch, in the loose worker program too (no
- * strictNullChecks: there undefined reads as any and a false branch doesn't narrow, so the refusal side carries T's
- * fields as optional to keep them readable after the check).
- */
+/** A result T or a refusal R: `if (x.reason)` narrows, since T's side types reason "" (falsy). */
 export type OrRefusal<T, R extends { status: number; reason: string; error: string }> =
   | (T & { status?: undefined; reason?: ""; error?: undefined })
   | (R & { [K in Exclude<keyof T, keyof R>]?: undefined });
 /** A custom_pets row as petCatalog selects it. */
-type CustomPetRow = {
-  id: string;
-  label: string;
-  tier: string;
-  stat: string;
-  stat2: string;
-  width: number;
-  height: number;
-};
+type CustomPetRow = Omit<PetUpload, "bytes"> & { id: string };
 /** The Worker's request context for /api/pets (server/worker.ts). */
 export type PetsContext = {
   user: { id: string } | null | undefined;
@@ -87,32 +45,26 @@ export type PetsContext = {
   /** Throws (with status 400 or 413) unless the body is a JSON object. */
   bodyJson(request: Request, limit: number): Promise<{ [field: string]: unknown }>;
 };
-/** What bodyJson throws: an Error with the HTTP status to answer. */
-type HttpError = Error & { status?: number };
 
 export const TIERS: readonly string[] = ["common", "uncommon", "rare", "epic", "legendary"];
-export const TIER_LABELS: Record<string, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
-export const PRICE_KEYS: Record<string, keyof PetPriceConfig> = {
+const PRICE_KEYS = {
   common: "petPriceCommon",
   uncommon: "petPriceUncommon",
   rare: "petPriceRare",
   epic: "petPriceEpic",
   legendary: "petPriceLegendary",
-};
+} as const; // const: each value a literal, so PetPriceConfig names them
+/** The config keys pet and hat prices come from (a missing one means not for sale). */
+type PetPriceConfig = Partial<Pick<Config, (typeof PRICE_KEYS)[keyof typeof PRICE_KEYS] | "hatPricePerWin">>;
 // Common to epic pets boost power, guard or luck; a legendary's rolled stats can be any of STATS.
-export const PET_STATS = ["power", "guard", "luck"] as const satisfies readonly Stat[];
-export const MAX_BOOST = 2; // per stat, on top of the upgrade points (it may go past the channel's maxStatLevel)
-export const CUSTOM_PET_ID = /^p-[a-z0-9-]{1,40}$/;
-export const PET_LIMITS = Object.freeze({ maxPets: 24, maxBytes: 65_536, maxSide: 64, maxLabel: 24 });
+const PET_STATS: readonly unknown[] = ["power", "guard", "luck"] satisfies readonly Stat[];
+const isPetStat = (stat: unknown): stat is Stat => PET_STATS.includes(stat);
+const MAX_BOOST = 2; // per stat, on top of the upgrade points (it may go past the channel's maxStatLevel)
+const CUSTOM_PET_ID = /^p-[a-z0-9-]{1,40}$/;
+const PET_LIMITS = Object.freeze({ maxPets: 24, maxBytes: 65_536, maxSide: 64, maxLabel: 24 });
 const BODY_LIMIT = Math.ceil(PET_LIMITS.maxBytes / 3) * 4 + 4_000;
 
-export const LEGENDARY_ROLL = 4;
+const LEGENDARY_ROLL = 4;
 // Built-in pets: the stat (and second stat for epic) the tier boost goes to. A legendary's stat is unused (rolled).
 export const PETS: BuiltinPet[] = [
   { id: "mouse", label: "Mouse", tier: "common", stat: "power" },
@@ -132,35 +84,21 @@ export const PETS: BuiltinPet[] = [
 ];
 const BUILTIN = new Map(PETS.map((p) => [p.id, p]));
 
-// common/uncommon +1 to one stat, rare +2, epic +2 and +1 to a second stat, legendary +1 to each rolled stat (none
-// before an owner rolls it, as in the catalog). Uncommon is cheaper than rare and looks better than common; its boost
-// matches common on purpose (the plan keeps boosts small so a pet never decides a duel on its own).
+// common/uncommon +1 to one stat, rare +2, epic +2 and +1 to a second, legendary +1 to each rolled stat. Uncommon
+// matches common on purpose: boosts stay small so a pet never decides a duel on its own.
 export function tierBoost(tier: string, stat: string | undefined, stat2?: string, roll: readonly Stat[] = []): Stats {
   const out = emptyStats();
   if (tier === "legendary") {
     for (const key of roll) out[key] = 1;
     return out;
   }
-  // Widened so any string can be looked up
-  if (!(PET_STATS as readonly unknown[]).includes(stat)) return out;
-  // A Stat: PET_STATS.includes(stat) above
-  out[stat as Stat] = tier === "rare" || tier === "epic" ? 2 : TIERS.includes(tier) ? 1 : 0;
-  // Widened for the lookup; the index is a Stat because PET_STATS includes it
-  if (tier === "epic" && (PET_STATS as readonly unknown[]).includes(stat2) && stat2 !== stat) out[stat2 as Stat] = 1;
+  if (!isPetStat(stat)) return out;
+  out[stat] = tier === "rare" || tier === "epic" ? 2 : TIERS.includes(tier) ? 1 : 0;
+  if (tier === "epic" && isPetStat(stat2) && stat2 !== stat) out[stat2] = 1;
   return out;
 }
 
-export function cleanBoost(input?: unknown): Stats {
-  const out = emptyStats();
-  for (const key of STATS) {
-    // Any value: ?. reads undefined from null or undefined, and Number() turns whatever it reads into a number
-    const v = Number((input as Partial<Record<Stat, unknown>> | null | undefined)?.[key]);
-    out[key] = Number.isInteger(v) ? Math.max(0, Math.min(MAX_BOOST, v)) : 0;
-  }
-  return out;
-}
-
-export const builtinPet = (id: string): BuiltinPet | null => BUILTIN.get(id) || null;
+export const cleanBoost = (input?: unknown): Stats => cleanStats(input, MAX_BOOST);
 
 // A legendary roll: LEGENDARY_ROLL different stats in STATS order. A reroll never gives back the same set.
 export function rollLegendary(random: () => number = Math.random, not: readonly Stat[] = []): Stat[] {
@@ -182,14 +120,13 @@ export function parseRoll(text: unknown): Stat[] {
 
 // The pet a profile row points at: a built-in id, or a custom one with "tier:stat:stat2" read from custom_pets, with
 // the owner's roll for a legendary. null when there's no pet or it no longer exists.
-export function petOf(id: string, custom: unknown = "", roll: unknown = ""): PetRef | null {
+export function petOf(id: string, custom: unknown = "", roll: unknown = "") {
   if (!id) return null;
-  const pet = builtinPet(id);
+  const pet = BUILTIN.get(id);
   if (pet) return { id, tier: pet.tier, boost: tierBoost(pet.tier, pet.stat, pet.stat2, parseRoll(roll)) };
   if (!CUSTOM_PET_ID.test(id) || !custom) return null;
-  const [tier, stat, stat2] = String(custom).split(":");
-  // split() always returns at least one element, so tier is a string
-  return TIERS.includes(tier!) ? { id, tier: tier!, boost: tierBoost(tier!, stat, stat2, parseRoll(roll)) } : null;
+  const [tier = "", stat, stat2] = String(custom).split(":");
+  return TIERS.includes(tier) ? { id, tier, boost: tierBoost(tier, stat, stat2, parseRoll(roll)) } : null;
 }
 
 // "+2 power" / "+2 power, +1 guard" / "+1 power, guard and luck" / "+1 guard, crit, dodge and vitality" (same wording
@@ -202,9 +139,9 @@ export function boostText(boost: Stats): string {
   return keys.map((k) => `+${boost[k]} ${k}`).join(", ");
 }
 
-export const petPrice = (tier: string, config: PetPriceConfig | null | undefined): number | null =>
-  // An unknown tier indexes with undefined, which reads undefined, so ?? gives null
-  config?.[PRICE_KEYS[tier] as keyof PetPriceConfig] ?? null;
+const petPrice = (tier: string, config: PetPriceConfig | null | undefined): number | null =>
+  // An unknown tier reads PRICE_KEYS as undefined, and config[undefined] as undefined, so ?? gives null
+  config?.[PRICE_KEYS[tier as keyof typeof PRICE_KEYS]] ?? null;
 // Hats can be bought before the wins unlock them: wins needed x hatPricePerWin. null = not for sale (0 turns it off).
 export const hatPrice = (
   hat: { wins: number } | null | undefined,
@@ -220,7 +157,7 @@ export function ensurePetSchema(sql: SqlStorage): string[] {
   sql.exec(
     "CREATE TABLE IF NOT EXISTS owned_items (user_id TEXT NOT NULL, kind TEXT NOT NULL, item_id TEXT NOT NULL, price INTEGER NOT NULL, bought_at INTEGER NOT NULL, PRIMARY KEY (user_id, kind, item_id))",
   );
-  // v2.11: a legendary pet's rolled stats and whether its free reroll is used. Legendaries bought before roll here.
+  // A legendary pet's rolled stats and whether its free reroll is used. Legendaries bought before roll here.
   const columns = sql
     .exec<{ name: string }>("PRAGMA table_info(owned_items)")
     .toArray()
@@ -244,42 +181,25 @@ export function ensurePetSchema(sql: SqlStorage): string[] {
   return rolled.map((r) => r.user_id);
 }
 
-// The channel's pet catalog with prices from its config: built-ins first, then uploads in upload order.
-export function petCatalog(sql: SqlStorage, channel: string, config: PetPriceConfig | null | undefined): PetEntry[] {
-  const builtins = PETS.map((p): PetEntry => ({
+// The channel's pet catalog (GET /api/pets/:channel): built-ins first, then uploads in upload order.
+export function petCatalog(sql: SqlStorage, channel: string, config: PetPriceConfig | null | undefined) {
+  const entry = (p: BuiltinPet | CustomPetRow, custom: boolean) => ({
     id: p.id,
     label: p.label,
     tier: p.tier,
     boost: tierBoost(p.tier, p.stat, p.stat2),
     price: petPrice(p.tier, config),
-    custom: false,
-  }));
+    custom,
+  });
   const custom = sql
     .exec<CustomPetRow>("SELECT id, label, tier, stat, stat2, width, height FROM custom_pets ORDER BY created_at, id")
     .toArray()
-    .map((r): PetEntry => ({
-      id: r.id,
-      label: r.label,
-      tier: r.tier,
-      boost: tierBoost(r.tier, r.stat, r.stat2),
-      price: petPrice(r.tier, config),
-      custom: true,
-      url: `/api/pets/${channel}/${r.id}`,
-      width: r.width,
-      height: r.height,
-    }));
-  return [...builtins, ...custom];
+    .map((r) => ({ ...entry(r, true), url: `/api/pets/${channel}/${r.id}`, width: r.width, height: r.height }));
+  return [...PETS.map((p) => entry(p, false)), ...custom];
 }
 
-const json = (data: unknown, status = 200): Response =>
-  Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
-const fail = (status: number, reason: string, error: string): Response => json({ ok: false, reason, error }, status);
-
-// Upload body -> { label, tier, stat, stat2, bytes, width, height } or { status, reason, error }.
 // Any request body: ?. and String() read missing fields as ""
-export function validatePetUpload(
-  body: { [field: string]: unknown } | null | undefined,
-): OrRefusal<PetUpload, UploadRefusal> {
+function validatePetUpload(body: { [field: string]: unknown } | null | undefined): OrRefusal<PetUpload, UploadRefusal> {
   const label = String(body?.label || "")
     .trim()
     .replace(/\s+/g, " ");
@@ -288,24 +208,21 @@ export function validatePetUpload(
   const tier = String(body?.tier || "");
   if (!TIERS.includes(tier)) return { status: 400, reason: "invalid_tier", error: "Pick a tier" };
   const stat = tier === "legendary" ? "" : String(body?.stat || "");
-  // Widened so any string can be looked up
-  if (tier !== "legendary" && !(PET_STATS as readonly string[]).includes(stat))
+  if (tier !== "legendary" && !isPetStat(stat))
     return { status: 400, reason: "invalid_stat", error: "Pick the stat it boosts" };
   const stat2 = tier === "epic" ? String(body?.stat2 || "") : "";
-  // Widened so any string can be looked up
-  if (tier === "epic" && (!(PET_STATS as readonly string[]).includes(stat2) || stat2 === stat))
+  if (tier === "epic" && (!isPetStat(stat2) || stat2 === stat))
     return { status: 400, reason: "invalid_stat", error: "Epic pets boost two different stats" };
   const b64 = String(body?.image || "").replace(/^data:[^,]*;base64,/, "");
   if (!b64) return { status: 400, reason: "invalid_image", error: "Choose a PNG image" };
   if (b64.length > Math.ceil(PET_LIMITS.maxBytes / 3) * 4)
     return { status: 413, reason: "image_too_large", error: "The image is larger than 64 KB" };
-  let binary: string;
+  let bytes: Uint8Array<ArrayBuffer>;
   try {
-    binary = atob(b64);
+    bytes = fromBase64(b64);
   } catch {
     return { status: 400, reason: "invalid_image", error: "The image is not valid base64" };
   }
-  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
   let size: { width: number; height: number };
   try {
     size = readPng(bytes);
@@ -313,42 +230,27 @@ export function validatePetUpload(
     // readPng throws only UploadError (an Error)
     return { status: 415, reason: "not_png", error: (error as Error).message };
   }
-  if (size.width > PET_LIMITS.maxSide || size.height > PET_LIMITS.maxSide)
-    return {
-      status: 400,
-      reason: "image_dimensions",
-      error: `Pets are at most ${PET_LIMITS.maxSide}x${PET_LIMITS.maxSide} pixels`,
-    };
+  const side = PET_LIMITS.maxSide;
+  if (size.width > side || size.height > side)
+    return { status: 400, reason: "image_dimensions", error: `Pets are at most ${side}x${side} pixels` };
   return { label, tier, stat, stat2, bytes, width: size.width, height: size.height };
 }
 
-// Worker side. c = { user, id, access(), roomFetch(path, init?), bodyJson(request, limit) }
-export async function handlePets(request: Request, env: Env, c: PetsContext): Promise<Response> {
+// Worker side of /api/pets.
+export async function handlePets(request: Request, c: PetsContext): Promise<Response> {
   if (request.method === "GET") return c.roomFetch(c.id ? "/pets/" + c.id : "/pets");
   const roles = await c.access();
   if (!roles.canManage) return json({ error: roles.reason || "Moderator role required" }, c.user ? 403 : 401);
   if (request.method === "POST" && !c.id) {
-    let body;
-    try {
-      body = await c.bodyJson(request, BODY_LIMIT);
-    } catch (error) {
-      // bodyJson throws an HttpError (status 400 or 413)
-      return (error as HttpError).status === 413
-        ? fail(413, "image_too_large", "The image is larger than 64 KB")
-        : // bodyJson throws an HttpError, as above
-          fail((error as HttpError).status || 400, "invalid_upload", (error as HttpError).message || "Invalid JSON");
-    }
+    const body = await bodyOr(c.bodyJson(request, BODY_LIMIT), ["image_too_large", "The image is larger than 64 KB"]);
+    if (body instanceof Response) return body;
     const checked = validatePetUpload(body);
-    if (checked.reason) return fail(checked.status, checked.reason, checked.error);
-    return c.roomFetch("/pets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // canManage (checked above) is only true for a signed-in user
-      body: JSON.stringify({ ...body, createdBy: c.user!.id }),
-    });
+    if (checked.reason) return refuse(checked.status, checked.reason, checked.error);
+    // canManage (checked above) is only true for a signed-in user
+    return c.roomFetch("/pets", postJson({ ...body, createdBy: c.user!.id }));
   }
   if (request.method === "DELETE" && c.id) {
-    if (!CUSTOM_PET_ID.test(c.id)) return fail(404, "not_found", "Custom pet not found");
+    if (!CUSTOM_PET_ID.test(c.id)) return refuse(404, "not_found", "Custom pet not found");
     return c.roomFetch("/pets/" + c.id, { method: "DELETE" });
   }
   return json({ error: "Method not allowed" }, 405);
@@ -367,34 +269,25 @@ function petId(label: string): string {
   return "p-" + slug + "-" + rand;
 }
 
+type RoomPetsOptions = { path: string; channel: string; config: PetPriceConfig; onDelete?: (id: string) => void };
+
 // Durable Object side: /pets and /pets/<id>. onDelete(id) clears the pet from fighters (channel.ts).
 export async function handleRoomPets(
   room: { ctx: DurableObjectState },
   request: Request,
-  {
-    path,
-    channel,
-    config,
-    onDelete,
-  }: { path: string; channel: string; config: PetPriceConfig; onDelete?: (id: string) => void },
+  { path, channel, config, onDelete }: RoomPetsOptions,
 ): Promise<Response> {
   const sql = room.ctx.storage.sql;
   const id = path.startsWith("/pets/") ? path.slice(6) : "";
   if (!id && request.method === "GET")
     return json({ pets: petCatalog(sql, channel, config), hatPricePerWin: config.hatPricePerWin, limits: PET_LIMITS });
   if (!id && request.method === "POST") {
-    let body;
-    try {
-      // Any JSON: validatePetUpload refuses anything but an object and checks every field it reads; createdBy is
-      // passed through String()
-      body = await request.json<{ [field: string]: unknown }>();
-    } catch {
-      return fail(400, "invalid_upload", "Invalid JSON");
-    }
+    // Any JSON (never undefined): validatePetUpload refuses anything but an object and checks every field it reads
+    const body = await request.json<{ [field: string]: unknown }>().catch(() => undefined);
+    if (body === undefined) return refuse(400, "invalid_upload", "Invalid JSON");
     const pet = validatePetUpload(body);
-    if (pet.reason) return fail(pet.status, pet.reason, pet.error);
+    if (pet.reason) return refuse(pet.status, pet.reason, pet.error);
     const newId = petId(pet.label),
-      now = Date.now(),
       createdBy = String(body.createdBy || "unknown").slice(0, 64);
     const inserted = room.ctx.storage.transactionSync(() => {
       // COUNT(*) always returns one row
@@ -412,35 +305,23 @@ export async function handleRoomPets(
         pet.width,
         pet.height,
         createdBy,
-        now,
+        Date.now(),
       );
       return true;
     });
-    if (!inserted)
-      return fail(
-        409,
-        "pet_limit_reached",
-        `This channel already has ${PET_LIMITS.maxPets} custom pets; delete one first`,
-      );
-    const item = petCatalog(sql, channel, config).find((p) => p.id === newId);
-    return json({ ok: true, item }, 201);
+    const full = `This channel already has ${PET_LIMITS.maxPets} custom pets; delete one first`;
+    if (!inserted) return refuse(409, "pet_limit_reached", full);
+    return json({ ok: true, item: petCatalog(sql, channel, config).find((p) => p.id === newId) }, 201);
   }
   if (id && request.method === "GET") {
     const row =
       CUSTOM_PET_ID.test(id) &&
       sql.exec<{ png: ArrayBuffer }>("SELECT png FROM custom_pets WHERE id = ?", id).toArray()[0];
-    if (!row) return json({ error: "Not found" }, 404);
-    return new Response(row.png, {
-      headers: {
-        "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=300",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+    return row ? png(row.png, "public, max-age=300") : json({ error: "Not found" }, 404);
   }
   if (id && request.method === "DELETE") {
     if (!CUSTOM_PET_ID.test(id) || !sql.exec("SELECT 1 FROM custom_pets WHERE id = ?", id).toArray().length)
-      return fail(404, "not_found", "Custom pet not found");
+      return refuse(404, "not_found", "Custom pet not found");
     room.ctx.storage.transactionSync(() => {
       sql.exec("DELETE FROM custom_pets WHERE id = ?", id);
       sql.exec("DELETE FROM owned_items WHERE kind = 'pet' AND item_id = ?", id);

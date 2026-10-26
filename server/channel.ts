@@ -1,193 +1,49 @@
 import { DurableObject } from "cloudflare:workers";
 import site from "../site.config.js";
-import {
-  chatStatus,
-  createInitialState,
-  defaultConfig,
-  hasOpenDuel,
-  hiddenResults,
-  NEW_ACCOUNT_MS,
-  normalizeGameState,
-  pairRankedLeft,
-  parseGameCommand,
-  reduceGame,
-  shownProfile,
-} from "./game.ts";
-import { handleRoomAssets, ensureUploadSchema, customUsage } from "./uploads.ts";
-import { ensureRankLogSchema, rankBefore } from "./ranklog.ts";
-import { handleRoomDeveloper, ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.ts";
+import { createInitialState, hiddenResults, normalizeGameState, reduceGame, shownProfile } from "./game.ts";
+import { ensureUploadSchema } from "./uploads.ts";
+import { ensureRankLogSchema } from "./ranklog.ts";
+import { ensureDeveloperSchema, logRoomError, logRoomEvent } from "./developer.ts";
 import { count, ensureTrackerSchema, noteAlarm, settleCounts, trace } from "./tracker.ts";
-import { checkChatSubscription, liveStream, sendChatMessage, botDropText } from "./eventsub.ts";
+import { botDropText, checkChatSubscription, sendChatMessage } from "./eventsub.ts";
 import { accountCreatedAt } from "./accounts.ts";
-import { EVENTSUB_DEDUPE_MS, claimMessage, releaseMessage } from "./dedupe.ts";
-import {
-  cleanStats,
-  emptyStats,
-  knownHat,
-  validStats,
-  hatUnlocked,
-  upgradeRules,
-  pointsFor,
-  effectiveStats,
-  spentOn,
-  HATS,
-  STATS,
-} from "./upgrades.ts";
-import { ensurePointsSchema, handleRoomPoints, pointsView } from "./points.ts";
-import { ensurePetSchema, handleRoomPets, petCatalog, petOf, hatPrice, parseRoll, rollLegendary } from "./pets.ts";
-import { ensureSpriteSchema, handleRoomSprites, spriteCatalog } from "./sprites.ts";
-import {
-  COSMETIC_KINDS,
-  COSMETIC_FIELDS,
-  cleanCosmetics,
-  cosmeticItem,
-  cosmeticPrice,
-  cosmeticCatalog,
-  slotPrice,
-  buildOf,
-  MAX_BUILDS,
-} from "./cosmetics.ts";
-import {
-  MAX_BOT_COMMANDS,
-  MAX_COMMAND_REPLY,
-  MAX_COUNTER,
-  COMMAND_COOLDOWN_MS,
-  COMMAND_USER_COOLDOWN_MS,
-  commandName,
-  counterName,
-  commandReplyText,
-  replyCounters,
-  renderCommandReply,
-  replyWorstCase,
-  fitChatLine,
-  MAX_CHAT_LINE,
-} from "./botcommands.ts";
-import {
-  SE_ACTIONS,
-  SE_READ_ACTIONS,
-  DEFAULT_SE_NAMES,
-  SE_SUBSCRIPTION_ID,
-  seCommandText,
-  seReplyText,
-  seTopText,
-  seEloText,
-  seChangelogText,
-  seHelpText,
-  seLookText,
-  seCheckinText,
-  seWalletText,
-  seGiveText,
-  sePetText,
-  seStatsText,
-  seAmount,
-  seTarget,
-  seReminderText,
-  seExpiredText,
-  seResultText,
-  seKeyHash,
-  botNames,
-} from "./streamelements.ts";
-import type { CheckinReply, GiveReply, SeNames } from "./streamelements.ts";
-import {
-  parseBotSent,
-  parseCheckinTest,
-  parseDevChat,
-  parseProfileInput,
-  parseRoomAdminBody,
-  parseRoomDevLive,
-  parseRoomEventsub,
-  parseSeAdmin,
-} from "./parse.ts";
-import type { ProfileInput } from "./parse.ts";
-import type { SendResult } from "./model.ts";
-import type { SpriteRow } from "./sprites.ts";
-import type { CatalogEntry } from "./uploads.ts";
-import type { CosmeticKind } from "./cosmetics.ts";
-import type { Stat } from "./upgrades.ts";
+import { claimMessage, EVENTSUB_DEDUPE_MS, releaseMessage } from "./dedupe.ts";
+import { STATS } from "./upgrades.ts";
+import { ensurePointsSchema } from "./points.ts";
+import { ensurePetSchema } from "./pets.ts";
+import { ensureSpriteSchema } from "./sprites.ts";
+import { botNames, DEFAULT_SE_NAMES, SE_ACTIONS, SE_SUBSCRIPTION_ID, seReminderText } from "./streamelements.ts";
+import type { SeNames } from "./streamelements.ts";
+import type { Duel, GameEvent, GameState, ReduceOutput, Snapshot } from "./model.ts";
 import type { Env } from "./env.ts";
-import type {
-  AdminEvent,
-  ChatEvent,
-  Config,
-  Cosmetics,
-  Duel,
-  GameEvent,
-  GameResult,
-  GameState,
-  Player,
-  ReduceOutput,
-  Snapshot,
-} from "./model.ts";
+import {
+  BOT_REPLIES_PER_30S,
+  normalizeProfileRow,
+  normalizeUsername,
+  PROFILE_COLUMNS,
+  errorText,
+  randomHex,
+  RESULT_RETRY_MS,
+  safeJsonParse,
+  savedLook,
+  timingSafeEqual,
+  upsertProfile,
+} from "./room-shared.ts";
+import { json } from "./http.ts";
+import type { BotMessage, ChatOutcome, Look, ProfileRow, ProfileTable } from "./room-shared.ts";
+import { route } from "./room-routes.ts";
+import { botCommand, checkAccountAge, noteBotSent, postExpired, postResults, processChatMessage } from "./room-bot.ts";
+import { currentStream, payDuels, streamNews, syncPetBoosts } from "./room-economy.ts";
 
-/** A JSON object request body, as readJson parses it; routes check each field they read. */
-type JsonObject = { [field: string]: unknown };
-/** A profiles row: the table the constructor makes, with every column its migrations add. */
-type ProfileTable = {
-  user_id: string;
-  username: string;
-  display_name: string;
-  avatar: string;
-  color: string;
-  default_ability: string;
-  elo: number;
-  wins: number;
-  losses: number;
-  last_seen: number;
-  power: number;
-  guard: number;
-  luck: number;
-  crit: number;
-  dodge: number;
-  counter: number;
-  vitality: number;
-  hat: string;
-  last_opponent: string;
-  bonus_points: number;
-  checkins: number;
-  streak: number;
-  last_stream_seq: number;
-  free_miss_at: number;
-  last_stream: string;
-  dollars: number;
-  style_dollars: number;
-  given_in_stream: number;
-  give_stream: string;
-  pet: string;
-  recolor: string;
-  pet_color: string;
-  accessory: string;
-  trail: string;
-  win_effect: string;
-  taunt: string;
-  title: string;
-  build: number;
-  account_created_at: number;
-  account_checked_at: number;
+export type SeSettings = {
+  secret: string;
+  names: SeNames;
+  lastCommandAt: number;
+  rejectedAt: number;
+  /** When each command (action) last arrived with the right key. */
+  seen: { [action: string]: number };
+  duelModuleOff: boolean;
 };
-/** What a SELECT of PROFILE_COLUMNS returns; getProfile also reads last_opponent. */
-type ProfileRow = Omit<
-  ProfileTable,
-  | "last_opponent"
-  | "last_stream_seq"
-  | "free_miss_at"
-  | "last_stream"
-  | "given_in_stream"
-  | "give_stream"
-  | "account_created_at"
-  | "account_checked_at"
-> & { pet_custom: string | null; pet_roll: string | null; last_opponent?: string };
-/** A saved fighter as normalizeProfileRow builds it: the player plus the columns only the profile keeps. */
-type Profile = Player & { checkins: number; streak: number; dollars: number; styleDollars: number; build: number };
-/** A config_history row. */
-type ConfigHistoryRow = {
-  version: number;
-  config: string;
-  actor_id: string;
-  actor_name: string;
-  at: number;
-  note: string;
-};
-/** The bot_status row (the constructor's DDL). */
 type BotStatusRow = {
   id: number;
   heard_at: number;
@@ -200,209 +56,22 @@ type BotStatusRow = {
   held_at: number;
   held_reason: string;
 };
-/**
- * A chat message as /eventsub, /chat and /dev-chat hand it to the room (server/eventsub.ts): the EventSub envelope
- * fields the room reads, each unchecked until it is read.
- */
-type BotMessage = {
-  messageId?: unknown;
-  messageType?: unknown;
-  subscription?: { id?: unknown; status?: unknown; [field: string]: unknown } | undefined;
-  event?: Partial<ChatEvent> | undefined;
-  botId?: unknown;
-  bot?: unknown;
-  timestamp?: unknown;
-  quick?: unknown;
-  botPlays?: boolean; // set only by runCommand for the BOT_DEBUG bot account
-  [field: string]: unknown;
-};
 /** What the overlay sockets get: the state, or the saved looks that changed. */
 type LiveMessage =
   | (Snapshot & { build: string })
   | { type: "looks"; looks: { [login: string]: Look | null }; reset?: boolean };
-/** What an overlay draws for a saved fighter (savedLook). */
-type Look = ReturnType<typeof savedLook>;
-/** The parsed se_settings row (seSettings). */
-export type SeSettings = {
-  secret: string;
-  names: SeNames;
-  lastCommandAt: number;
-  rejectedAt: number;
-  /** When each command (action) last arrived with the right key. */
-  seen: { [action: string]: number };
-  duelModuleOff: boolean;
-};
-/** What a chat message did to the game (processChatMessage, advance). */
-type ChatOutcome = Pick<ReduceOutput, "state" | "result" | "changed" | "visible">;
-/** A caught value: anything can be thrown, and an Error's message reads best. */
-type Thrown = { message?: unknown } | null | undefined;
-/** What a fighter bought (owned): ids per pet, hat and cosmetic kind, plus build slots. */
-type Owned = { pets: string[]; hats: string[]; slots: number; rolls: { [pet: string]: Stat[] }; rerolled: string[] } & {
-  [kind in CosmeticKind]: string[];
-};
 /** A duel whose result chat may now hear (dueResults): completed, rated and revealed. */
 type DueDuel = Duel & { ratings: NonNullable<Duel["ratings"]>; revealAt: number };
-/** How a bot command reached the room, for its replies and the command log. */
-type BotCtx = { origin: string; settings: SeSettings; subscriptionId: string };
-/** A command as runCommand takes it: from StreamElements (/se), the bot (botCommand) or the test site. */
-type CommandInput = {
-  action?: unknown;
-  userId?: unknown;
-  username?: unknown;
-  displayName?: unknown;
-  target?: unknown;
-  targetRaw?: unknown;
-  amount?: unknown;
-  messageId?: unknown;
-  key?: unknown;
-  [field: string]: unknown;
-};
-/** readJson's answer. Each side names the other's fields as optional, for the loose worker program. */
-type ReadJson = { ok: false; error: string; value?: undefined } | { ok: true; value: JsonObject; error?: undefined };
-/** An event advance takes: any reducer event; the admin fields it logs are absent on the others. */
+/** Any reducer event; the admin fields advance logs are absent on the others. */
 type RoomEvent = GameEvent & { actorId?: unknown; actorName?: unknown; note?: unknown };
-/** The fields upsertProfile writes: a state player, a saved profile or saveProfile's loadout. */
-type ProfileWrite = Pick<
-  Player,
-  | "userId"
-  | "username"
-  | "displayName"
-  | "avatar"
-  | "color"
-  | "defaultAbility"
-  | "elo"
-  | "wins"
-  | "losses"
-  | "lastSeen"
-  | "stats"
-  | "hat"
-> &
-  Partial<Cosmetics> & { pet?: string; lastOpponentId?: string | undefined };
-/** A profile saveProfile answers with: the saved loadout plus the columns only the profiles table keeps. */
-type SavedProfile = ProfileWrite & {
-  bonus: number;
-  checkins: number;
-  streak: number;
-  dollars: number;
-  styleDollars: number;
-  build: number;
-};
-/** saveProfile's answer. */
-type SaveResult =
-  | { ok: false; reason: string | undefined; status?: number; profile?: undefined; state?: undefined }
-  | { ok: true; profile: SavedProfile; state: GameState; reason?: undefined; status?: undefined };
-/** runCommand's answer (the /se body). */
-type CommandReply = { reply: string; reason: string; switchedFrom?: string };
-
 const INTERNAL_HEADER = "X-Mini-Internal";
 const CHANNEL_HEADER = "X-Mini-Channel";
-const USER_HEADER = "X-Mini-User-Id";
-const MAX_PROFILE_ID_LENGTH = 64;
 const MAX_LIVE_SOCKETS = 200;
 const MAX_SOCKETS_PER_CLIENT = 16; // one network can't fill the room and lock OBS out
-const REJECTED_WRITE_MS = 60_000; // a wrong StreamElements key is recorded at most once a minute
-const MAX_CONFIG_HISTORY = 50;
-const CHECKIN_TEST_MS = 15 * 60_000; // check-in test mode switches itself off after this
-const SEEN_WRITE_MS = 60_000; // each command's "last seen" time is written at most once a minute
-const BOT_REPLIES_PER_30S = 18; // the bot's chat replies per channel; Twitch allows 20 per 30 s unless it is a mod
-const BOT_RESERVED_LINES = 4; // of those, kept for the bot's own result and expired-challenge lines
 const RESULT_WINDOW_MS = 120000; // a result line not sent within 2 minutes of its reveal is given up
-const RESULT_RETRY_MS = 5000; // how often the alarm retries a due result line that couldn't go out
-// Hidden bot-channel aliases for words new viewers guess: !accept and !duel, and !top (StreamElements owns it on SE channels).
-const BOT_ALIASES: { [word: string]: string } = { "!accept": "accept", "!duel": "challenge", "!top": "top" };
-// Commands that refuse the bot account as their target, with the reply (outside the BOT_DEBUG test site).
-const BOT_TARGET_ACTIONS: { [action: string]: (names: SeNames) => string } = {
-  challenge: (names) => `The bot doesn't fight (yet)! Name a rival: ${names.challenge || "!challenge"} @name`,
-  give: () => "The bot doesn't take dollars. Give them to a rival!",
-};
-// !fray e2e (BOT_DEBUG): [who, action, target, expected reasons, gate]. B is the bot account, O the opponent. A gate step
-// starts or answers a duel the next steps need, so the run stops when it fails.
-const E2E_STEPS: [who: "B" | "O", action: string, target: "" | "O", want: string[], gate?: boolean][] = [
-  ["B", "help", "", ["help"]],
-  ["B", "look", "", ["look"]],
-  ["B", "changelog", "", ["changelog"]],
-  ["B", "top", "", ["top"]],
-  ["B", "elo", "", ["elo"]],
-  ["B", "elo", "O", ["elo"]],
-  ["B", "wallet", "", ["wallet"]],
-  ["B", "pet", "", ["pet", "no_pet"]],
-  ["B", "stats", "", ["stats"]],
-  ["B", "checkin", "", ["checked_in", "already_checked_in", "not_live"]],
-  ["B", "challenge", "", ["target_required"]],
-  ["B", "challenge", "O", ["challenge"], true],
-  ["O", "decline", "", ["challenge_declined"], true],
-  ["B", "challenge", "O", ["challenge"], true],
-  ["O", "accept", "", ["quick_duel"], true],
-  ["B", "rematch", "", ["challenge", "rematch_cooldown", "respawning", "result_hidden"]],
-  ["B", "give", "O", ["given", "not_live", "too_few_duels", "not_enough", "give_off", "give_cap", "over_cap"]],
-  ["B", "decline", "", ["challenge_not_found"]],
-  ["B", "accept", "", ["challenge_not_found"]],
-];
-const MAX_E2E_LINE = 470; // under the bot's 480-character chat line
-// Joins parts into as few lines as fit max characters each.
-function chatLines(parts: string[], sep: string, max: number): string[] {
-  const out: string[] = [];
-  for (const part of parts) {
-    const last = out.length ? (out[out.length - 1] as string) : null; // out has that many lines
-    if (last !== null && last.length + sep.length + part.length <= max) out[out.length - 1] = last + sep + part;
-    else out.push(part.slice(0, max));
-  }
-  return out;
-}
-const MAX_LOOKS = 20; // logins per /looks call
 const MAX_EVENTSUB_IDS = 5_000;
-// Chat bots never walk into the arena or duel.
-const CHAT_BOTS = new Set([
-  "streamelements",
-  "nightbot",
-  "moobot",
-  "fossabot",
-  "streamlabs",
-  "wizebot",
-  "sery_bot",
-  "soundalerts",
-  "kofistreambot",
-  "botrixoficial",
-  "pixfray",
-]);
-const PRESENCE_REFRESH_MS = 30_000; // chat-only viewers refresh their arena presence at most this often
-const LAST_SEEN_WRITE_MS = 60_000; // chat.lastSeen alone is persisted at most once a minute
 const CHAT_CHECK_MS = 60 * 60_000; // the alarm re-checks the Helix subscription at most hourly
 const CHAT_PENDING_CHECK_MS = 3 * 60_000; // a subscription still awaiting webhook verification is re-checked sooner
-const ACCOUNT_RETRY_MS = 3_600_000; // a failed Twitch account-age lookup is retried after an hour
-const LIVE_CACHE_MS = 60_000; // !checkin asks Twitch whether the channel is live at most once a minute
-const FREE_MISS_MS = 7 * 24 * 60 * 60_000; // a streak survives one missed stream per week
-// Extra points when the streak reaches one of these streams (config.streakBonus).
-const STREAK_MILESTONES = new Map([
-  [3, 1],
-  [7, 1],
-  [14, 1],
-  [30, 1],
-  [60, 2],
-  [100, 3],
-  [200, 5],
-  [365, 10],
-]);
-const MAX_BONUS = 1_000_000; // stored check-in points; a sanity bound, far past any real streak
-const MAX_DOLLARS = 1_000_000; // a wallet never holds more
-const MAX_GIFT = 10_000; // the most a mod can add or take back in one gift
-// Every query that builds a profile with normalizeProfileRow reads these columns.
-const PROFILE_COLUMNS =
-  "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, bonus_points, checkins, streak, dollars, style_dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom, (SELECT roll FROM owned_items o WHERE o.user_id = profiles.user_id AND o.kind = 'pet' AND o.item_id = profiles.pet) AS pet_roll";
-
-function json(data: unknown, status = 200, headers: { [name: string]: string } = {}): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers },
-  });
-}
-
-function text(value: string, status = 200): Response {
-  return new Response(value, {
-    status,
-    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
-  });
-}
 
 function normalizeChannel(value: unknown): string {
   const channel = String(value || "")
@@ -411,117 +80,20 @@ function normalizeChannel(value: unknown): string {
   return /^[a-z0-9_]{1,25}$/.test(channel) ? channel : "";
 }
 
-function validUserId(value: unknown): string {
-  const id = String(value ?? "").trim();
-  return id.length > 0 && id.length <= MAX_PROFILE_ID_LENGTH && /^[a-zA-Z0-9_:-]+$/.test(id) ? id : "";
+// Adds each "name TYPE ..." column the table doesn't have yet.
+function addColumns(sql: SqlStorage, table: string, columns: string[]): void {
+  const have = sql
+    .exec<{ name: string }>(`PRAGMA table_info(${table})`)
+    .toArray()
+    .map((c) => c.name);
+  for (const column of columns)
+    if (!have.includes(column.slice(0, column.indexOf(" ")))) sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
 }
 
-function normalizeUsername(value: unknown): string {
-  return String(value || "")
-    .trim()
-    .replace(/^@/, "")
-    .toLowerCase()
-    .slice(0, 25);
-}
-
-// Stage 4 cosmetics: profile field -> profiles column (server/cosmetics.ts).
-const COSMETIC_COLUMNS: { [field in keyof Cosmetics]: keyof ProfileTable } = {
-  recolor: "recolor",
-  petColor: "pet_color",
-  accessory: "accessory",
-  trail: "trail",
-  winEffect: "win_effect",
-  taunt: "taunt",
-  title: "title",
-};
-
-// Leaderboard order, as in the SQL: Elo, then wins, then name.
-function boardOrder(
-  a: { username: string; elo: number; wins: number },
-  b: { username: string; elo: number; wins: number },
-): number {
-  const x = a.username.toLowerCase(),
-    y = b.username.toLowerCase();
-  return b.elo - a.elo || b.wins - a.wins || (x < y ? -1 : x > y ? 1 : 0);
-}
-
-// What an overlay draws for a viewer with a saved fighter: /looks and the "looks" push send the same fields.
-function savedLook(p: Player) {
-  return {
-    avatar: p.avatar,
-    color: p.color,
-    hat: p.hat || "",
-    pet: p.pet || "",
-    petTier: p.petTier || "",
-    ...cleanCosmetics(p),
-    displayName: p.displayName,
-    elo: p.elo,
-  };
-}
-
-function normalizeProfileRow(row: ProfileRow, config: Config): Profile;
-function normalizeProfileRow(row: ProfileRow | null | undefined, config: Config): Profile | null;
-function normalizeProfileRow(row: ProfileRow | null | undefined, config: Config): Profile | null {
-  if (!row) return null;
-  return {
-    userId: String(row.user_id),
-    username: String(row.username || ""),
-    displayName: String(row.display_name || row.username || ""),
-    avatar: String(row.avatar || "player"),
-    color: String(row.color || "#A78BFA"),
-    defaultAbility: String(row.default_ability || "strike"),
-    hp: config.maxHp,
-    elo: Number.isInteger(row.elo) ? row.elo : config.initialElo,
-    wins: Number.isInteger(row.wins) ? row.wins : 0,
-    losses: Number.isInteger(row.losses) ? row.losses : 0,
-    lastSeen: Number.isInteger(row.last_seen) ? row.last_seen : 0,
-    registered: true,
-    respawnAt: 0,
-    stats: cleanStats(row),
-    hat: knownHat(row.hat) ? row.hat : "",
-    bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0, // check-in points (checkin below)
-    checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
-    streak: Number.isInteger(row.streak) ? row.streak : 0,
-    dollars: Number.isInteger(row.dollars) ? row.dollars : 0, // PixFray dollars (payDuels, give, giftDollars)
-    styleDollars: Number.isInteger(row.style_dollars) ? row.style_dollars : 0, // channel point rewards (server/points.ts)
-    ...petFieldsOf(row),
-    ...cleanCosmetics(
-      // each COSMETIC_COLUMNS column is in PROFILE_COLUMNS
-      Object.fromEntries(
-        Object.entries(COSMETIC_COLUMNS).map(([field, column]) => [field, row[column as keyof ProfileRow]]),
-      ),
-    ),
-    build: Number.isInteger(row.build) ? row.build : 0, // the active build slot (builds table)
-    ...(row.last_opponent ? { lastOpponentId: String(row.last_opponent) } : {}), // only getProfile reads it
-  };
-}
-
-// The active pet (server/pets.ts): its id, tier and boost (a legendary's from the owner's roll); none when it's gone
-// (a deleted upload).
-function petFieldsOf(row: { pet: string; pet_custom: string | null; pet_roll: string | null }) {
-  const pet = petOf(row.pet, row.pet_custom, row.pet_roll);
-  return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };
-}
-
-// T is the object the caller stored; F is what a missing, broken or non-object value reads as.
-function safeJsonParse<T extends object, F = T>(value: string | null | undefined, fallback: F): T | F {
-  try {
-    const parsed: unknown = JSON.parse(value as string); // null and undefined parse or throw into the fallback
-    return parsed && typeof parsed === "object" ? (parsed as T) : fallback; // the caller names what it stored
-  } catch {
-    return fallback;
-  }
-}
-
-function randomHex(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(24)), (x) => x.toString(16).padStart(2, "0")).join("");
-}
-
-function timingSafeEqual(a: unknown, b: unknown): boolean {
-  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
-  let difference = 0;
-  for (let i = 0; i < a.length; i += 1) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return difference === 0;
+function chatCheckDue(state: GameState): number | null {
+  const id = state.chat?.subscriptionId;
+  if (!id || id.startsWith("local-") || id === SE_SUBSCRIPTION_ID) return null;
+  return (Number(state.chat.checkedAt) || 0) + (state.chat.connected ? CHAT_CHECK_MS : CHAT_PENDING_CHECK_MS);
 }
 
 export class ChannelRoom extends DurableObject<Env> {
@@ -530,18 +102,16 @@ export class ChannelRoom extends DurableObject<Env> {
   declare env: Env;
   /** Last time each held-duel reason was logged. */
   declare heldLogged: Record<string, number> | undefined;
-  /** Text command cooldowns (customReply). */
   declare commandCooldowns: Map<string, number> | undefined;
   /** EventSub Message-Id -> receivedAt. */
   declare seenMessages: Map<string, number>;
-  /** Logins whose saved look changed or went away since the last "looks" push (flushLooks). */
+  /** Users whose saved look changed and logins whose look went away since the last "looks" push. */
   declare dirtyLooks: Set<string> | undefined;
   declare goneLooks: Set<string> | undefined;
   /** Every saved look changed (a restore): overlays drop what they cached. */
   declare looksReset: boolean;
   /** The pending setTimeout handle (a number in Workers, a Timeout under Node types), 0 once flushed. */
   declare lookFlush: unknown;
-  /** When the bot's recent chat replies went out (botReplyRoom). */
   declare botReplies: number[] | undefined;
   declare liveCache: { at: number; stream: { id: string; startedAt: number } | null } | undefined;
   /** Duel ids whose expired-challenge line went out. */
@@ -552,14 +122,7 @@ export class ChannelRoom extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
-    this.ctx = ctx;
-    this.env = env;
-    // last time each held-duel reason was logged
-    this.heldLogged = undefined;
-    // text command cooldowns (customReply)
-    this.commandCooldowns = undefined;
-    // Overlays send "ping" every 20 s to catch a half-open socket. The runtime answers "pong" itself, without waking this
-    // object from hibernation or billing its time (src/served/arena-client.ts).
+    // The runtime answers overlays' 20 s "ping" itself, without waking this object (src/served/arena-client.ts).
     if (typeof WebSocketRequestResponsePair === "function")
       ctx.setWebSocketAutoResponse?.(new WebSocketRequestResponsePair("ping", "pong"));
     const sql = this.ctx.storage.sql;
@@ -569,49 +132,31 @@ export class ChannelRoom extends DurableObject<Env> {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT NOT NULL, avatar TEXT NOT NULL, color TEXT NOT NULL, default_ability TEXT NOT NULL, elo INTEGER NOT NULL, wins INTEGER NOT NULL, losses INTEGER NOT NULL, last_seen INTEGER NOT NULL DEFAULT 0)",
     );
-    // v2.5: upgrade points spent from wins (server/upgrades.ts) and the chosen hat.
-    const profileColumns = sql
-      .exec<{ name: string }>("PRAGMA table_info(profiles)")
-      .toArray()
-      .map((c) => c.name);
-    // v2.10: crit, dodge and counter join the upgrade stats; v2.11: vitality.
-    for (const column of STATS)
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-    if (!profileColumns.includes("hat")) sql.exec("ALTER TABLE profiles ADD COLUMN hat TEXT NOT NULL DEFAULT ''");
-    if (!profileColumns.includes("last_opponent"))
-      sql.exec("ALTER TABLE profiles ADD COLUMN last_opponent TEXT NOT NULL DEFAULT ''"); // !rematch
-    // v2.6: !checkin. Check-in points live apart from wins, so a rank reset keeps them; upsertProfile never writes them.
-    for (const column of ["bonus_points", "checkins", "streak", "last_stream_seq", "free_miss_at"])
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-    if (!profileColumns.includes("last_stream"))
-      sql.exec("ALTER TABLE profiles ADD COLUMN last_stream TEXT NOT NULL DEFAULT ''");
-    // v2.7: PixFray dollars, and what each viewer gave away in which stream (!give). upsertProfile never writes them either.
-    for (const column of ["dollars", "given_in_stream"])
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-    if (!profileColumns.includes("give_stream"))
-      sql.exec("ALTER TABLE profiles ADD COLUMN give_stream TEXT NOT NULL DEFAULT ''");
-    // 0.12.0: style dollars from channel point rewards (server/points.ts). They buy looks and build slots, never pets,
-    // and !give never moves them, so channel points can't buy duel strength.
-    if (!profileColumns.includes("style_dollars"))
-      sql.exec("ALTER TABLE profiles ADD COLUMN style_dollars INTEGER NOT NULL DEFAULT 0");
-    // v2.8: the active pet, plus bought items and uploaded pets (server/pets.ts). PROFILE_COLUMNS reads custom_pets.
-    if (!profileColumns.includes("pet")) sql.exec("ALTER TABLE profiles ADD COLUMN pet TEXT NOT NULL DEFAULT ''");
+    const int = (column: string) => column + " INTEGER NOT NULL DEFAULT 0";
+    const str = (column: string) => column + " TEXT NOT NULL DEFAULT ''";
+    // bonus_points live apart from wins so a rank reset keeps them; upsertProfile never writes them or dollars.
+    // style_dollars (channel point rewards) buy looks and build slots, never pets, and !give never moves them.
+    addColumns(sql, "profiles", [
+      ...STATS.map(int),
+      str("hat"),
+      str("last_opponent"), // !rematch
+      ...["bonus_points", "checkins", "streak", "last_stream_seq", "free_miss_at"].map(int),
+      str("last_stream"),
+      int("dollars"),
+      int("given_in_stream"),
+      str("give_stream"),
+      int("style_dollars"),
+      str("pet"),
+    ]);
     const rolled = ensurePetSchema(sql);
-    // v3.1: sprites viewers made from their own images, waiting for a mod or approved (server/sprites.ts).
     ensureSpriteSchema(sql);
-    // v2.9: cosmetics worn (server/cosmetics.ts) and the active build slot. Each slot's loadout is a JSON row in builds;
-    // the profile columns always hold the active one. Bought build slots are owned_items rows of kind "slot".
-    for (const column of ["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"])
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`);
-    if (!profileColumns.includes("build")) sql.exec("ALTER TABLE profiles ADD COLUMN build INTEGER NOT NULL DEFAULT 0");
-    // v3.0: when the fighter's Twitch account was made (0 = not known yet) and when the room last asked Twitch.
-    for (const column of ["account_created_at", "account_checked_at"])
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+    // Each build slot's loadout is a builds row; the profile columns hold the active one. 0 = account age unknown.
+    addColumns(sql, "profiles", [
+      ...["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"].map(str),
+      int("build"),
+      int("account_created_at"),
+      int("account_checked_at"),
+    ]);
     sql.exec(
       "CREATE TABLE IF NOT EXISTS builds (user_id TEXT NOT NULL, slot INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (user_id, slot))",
     );
@@ -631,38 +176,22 @@ export class ChannelRoom extends DurableObject<Env> {
       "CREATE TABLE IF NOT EXISTS bot_reminder (id INTEGER PRIMARY KEY CHECK (id = 1), broadcaster_id TEXT NOT NULL, bot_id TEXT NOT NULL, origin TEXT NOT NULL, next_at INTEGER NOT NULL DEFAULT 0)",
     );
     // results_through: the latest duel revealAt the bot has announced, so a result line goes out once.
-    if (
-      !sql
-        .exec<{ name: string }>("PRAGMA table_info(bot_reminder)")
-        .toArray()
-        .some((c) => c.name === "results_through")
-    )
-      sql.exec("ALTER TABLE bot_reminder ADD COLUMN results_through INTEGER NOT NULL DEFAULT 0");
-    // The bot's own text commands (admin page, Chat commands) and the counters their replies use (server/botcommands.ts).
+    addColumns(sql, "bot_reminder", [int("results_through")]);
     sql.exec(
       "CREATE TABLE IF NOT EXISTS bot_commands (name TEXT PRIMARY KEY, reply TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '')",
     );
     sql.exec("CREATE TABLE IF NOT EXISTS bot_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)");
-    // The bot's health, for the admin page and "!fray debug": the last command heard, reply sent, reply Twitch dropped
-    // (with its reason) and reply the room held back (reply cap, cooldown, old subscription). Totals count since creation.
+    // The bot's health for the admin page and "!fray debug".
     sql.exec(
       "CREATE TABLE IF NOT EXISTS bot_status (id INTEGER PRIMARY KEY CHECK (id = 1), heard_at INTEGER NOT NULL DEFAULT 0, heard TEXT NOT NULL DEFAULT '', sent_at INTEGER NOT NULL DEFAULT 0, sent_total INTEGER NOT NULL DEFAULT 0, failed_at INTEGER NOT NULL DEFAULT 0, failed_total INTEGER NOT NULL DEFAULT 0, failed_reason TEXT NOT NULL DEFAULT '', held_at INTEGER NOT NULL DEFAULT 0, held_reason TEXT NOT NULL DEFAULT '')",
     );
     sql.exec("INSERT OR IGNORE INTO bot_status (id) VALUES (1)");
     sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_ci ON profiles(username COLLATE NOCASE)");
-    // v3.2: rank history, written by triggers on profiles (server/ranklog.ts).
     ensureRankLogSchema(sql, Date.now());
     sql.exec(
       "CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')",
     );
-    // v2.1: keep the actor's display name so history reads well for mods without a profile.
-    if (
-      !sql
-        .exec<{ name: string }>("PRAGMA table_info(config_history)")
-        .toArray()
-        .some((c) => c.name === "actor_name")
-    )
-      sql.exec("ALTER TABLE config_history ADD COLUMN actor_name TEXT NOT NULL DEFAULT ''");
+    addColumns(sql, "config_history", [str("actor_name")]);
     ensureUploadSchema(sql);
     ensureDeveloperSchema(sql);
     ensureTrackerSchema(sql);
@@ -670,27 +199,20 @@ export class ChannelRoom extends DurableObject<Env> {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS se_settings (id INTEGER PRIMARY KEY CHECK (id = 1), secret TEXT NOT NULL, names TEXT NOT NULL)",
     );
-    // v2.4: when a StreamElements command last reached this room with the right key, and with a wrong one, so the admin
-    // page can tell when the bot's commands were copied from another site (test vs production) or an old key.
-    const seColumns = sql
-      .exec<{ name: string }>("PRAGMA table_info(se_settings)")
-      .toArray()
-      .map((c) => c.name);
-    for (const column of ["last_command_at", "rejected_at"])
-      if (!seColumns.includes(column))
-        sql.exec(`ALTER TABLE se_settings ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-    // v2.5: when each command (action) last arrived with the right key, for the setup checklist.
-    if (!seColumns.includes("seen_json"))
-      sql.exec("ALTER TABLE se_settings ADD COLUMN seen_json TEXT NOT NULL DEFAULT '{}'");
-    // and the broadcaster's "StreamElements Duel module is off" tick (nothing can check it for them)
-    if (!seColumns.includes("duel_module_off"))
-      sql.exec("ALTER TABLE se_settings ADD COLUMN duel_module_off INTEGER NOT NULL DEFAULT 0");
-    this.seenMessages = new Map(); // EventSub Message-Id -> receivedAt; commands are also deduped durably by message_id
+    // The last command with the right key and with a wrong one (an old key, or the other site's), per action too,
+    // and the broadcaster's "Duel module is off" tick (nothing can check it for them).
+    addColumns(sql, "se_settings", [
+      int("last_command_at"),
+      int("rejected_at"),
+      "seen_json TEXT NOT NULL DEFAULT '{}'",
+      int("duel_module_off"),
+    ]);
+    this.seenMessages = new Map();
     // Legendary pets ensurePetSchema just rolled: fighters on stage take their rolled boost.
     const stored = rolled.length ? this.readStoredState() : null;
     if (typeof stored?.channel === "string") {
       const state = this.readState(stored.channel);
-      if (this.syncPetBoosts(state, rolled)) {
+      if (syncPetBoosts(this, state, rolled)) {
         state.revision += 1;
         this.writeState(state);
       }
@@ -701,570 +223,13 @@ export class ChannelRoom extends DurableObject<Env> {
     if (!this.authorized(request)) return json({ error: "internal authorization required" }, 403);
     count(this, "requests");
     try {
-      return await this.route(request);
+      return await route(this, request);
     } catch (error) {
       logRoomError(this, error, { path: new URL(request.url).pathname, method: request.method });
       return json({ error: "room error" }, 500);
     } finally {
       settleCounts(this);
     }
-  }
-
-  async route(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname.replace(/\/+$/, "") || "/";
-    const channel = this.requestChannel(request);
-    if (!channel) return json({ error: "invalid or missing channel" }, 400);
-    const stored = this.readStoredState();
-    if (stored && stored.channel !== channel) return json({ error: "channel binding mismatch" }, 409);
-
-    // Owner dev token only (server/worker.ts /api/devtools/:channel/export): every row of the tables a copy needs. BLOBs as {$b64}.
-    if (path === "/export" && request.method === "GET") {
-      const bytes = (v: ArrayBuffer | ArrayBufferView) =>
-        v instanceof ArrayBuffer ? new Uint8Array(v) : new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-      const b64 = (v: unknown) =>
-        v instanceof ArrayBuffer || ArrayBuffer.isView(v)
-          ? {
-              $b64: btoa(Array.from(bytes(v), (c) => String.fromCharCode(c)).join("")),
-            }
-          : v;
-      const out: { [table: string]: unknown } = {};
-      for (const table of [
-        "game_state",
-        "profiles",
-        "config_history",
-        "se_settings",
-        "custom_characters",
-        "builds",
-        "streams",
-        "custom_pets",
-        "owned_items",
-        "viewer_sprites",
-      ])
-        out[table] = this.ctx.storage.sql
-          .exec(`SELECT * FROM ${table}`)
-          .toArray()
-          .map((row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, b64(v)])));
-      return json(out);
-    }
-    if (path === "/state" && request.method === "GET") {
-      const changed = this.advance(channel, { type: "tick" }, Date.now());
-      if (changed.changed) {
-        this.broadcast(changed.state);
-        await this.scheduleAlarm(changed.state);
-      }
-      return json(this.publicState(changed.state));
-    }
-
-    // The catalog is the mods' uploads plus approved viewer sprites (each with the `owner` who alone may wear it).
-    if (path === "/catalog" && request.method === "GET") {
-      const custom = await (await handleRoomAssets(this, request, { path, channel })).json<CatalogEntry[]>(); // the /catalog list
-      return json([...custom, ...spriteCatalog(this.ctx.storage.sql, channel)]);
-    }
-    if (path === "/sprites" || path.startsWith("/sprites/") || path.startsWith("/asset/v-")) {
-      let changed: GameState | null = null;
-      const response = await handleRoomSprites(this, request, {
-        path,
-        url,
-        channel,
-        hooks: {
-          approved: (row, previous) => {
-            changed = this.wearSprite(channel, row, previous) || changed;
-          },
-          removed: (id) => {
-            changed = this.dropSprite(channel, id) || changed;
-          },
-        },
-      });
-      if (changed) this.broadcast(changed);
-      return response;
-    }
-    if (path === "/catalog" || path === "/asset" || path.startsWith("/asset/"))
-      return handleRoomAssets(this, request, { path, channel });
-    if (path.startsWith("/dev/")) return handleRoomDeveloper(this, request, { path, channel, url });
-    if (path === "/points" || path.startsWith("/points/"))
-      return handleRoomPoints(this, request, { path, channel, maxDollars: MAX_DOLLARS });
-    if (path === "/pets" || path.startsWith("/pets/")) {
-      // A deleted upload leaves the fighters using it with no pet; the stored profiles are cleared by handleRoomPets.
-      let cleared: GameState | null = null;
-      const response = await handleRoomPets(this, request, {
-        path,
-        channel,
-        config: this.readState(channel).config,
-        onDelete: (id) => {
-          const state = this.readState(channel);
-          let hit = false;
-          for (const p of state.players)
-            if (p.pet === id) {
-              Object.assign(p, { pet: "", petTier: "", petBoost: emptyStats() });
-              hit = true;
-            }
-          if (hit) {
-            state.revision += 1;
-            this.writeState(state);
-            cleared = state;
-          }
-        },
-      });
-      if (cleared) this.broadcast(cleared);
-      return response;
-    }
-    // The shop list with this channel's prices (public): pets, hat price per win, cosmetics and build slot prices.
-    if (path === "/shop" && request.method === "GET") {
-      const config = this.readState(channel).config;
-      return json({
-        pets: petCatalog(this.ctx.storage.sql, channel, config),
-        hatPricePerWin: config.hatPricePerWin,
-        items: cosmeticCatalog(config),
-        slots: { max: MAX_BUILDS, prices: Array.from({ length: MAX_BUILDS - 1 }, (_, i) => slotPrice(i + 1, config)) },
-      });
-    }
-    // Buy a pet, a hat, a cosmetic or a build slot with PixFray dollars (signed-in viewer; the Worker sets the user header).
-    if (path === "/shop" && request.method === "POST") {
-      const body = await this.readJson(request);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const userId = validUserId(request.headers.get(USER_HEADER));
-      if (!userId || userId !== validUserId(body.value.userId))
-        return json({ error: "profile identity mismatch" }, 403);
-      // the Worker's parseShopBuy passed only a string id; a reroll looks it up and finds nothing else
-      const bought =
-        body.value.kind === "reroll"
-          ? this.reroll(channel, userId, String(body.value.id))
-          : this.buy(channel, userId, body.value);
-      if (bought.ok && "state" in bought && bought.state) this.broadcast(bought.state);
-      return json(
-        bought.ok ? bought : { ...bought, error: bought.reason },
-        bought.ok
-          ? 200
-          : bought.reason === "no_fighter"
-            ? 404
-            : ["not_enough", "owned", "max_slots", "price_changed", "rerolled", "in_duel"].includes(bought.reason)
-              ? 409
-              : 400,
-      );
-    }
-
-    if (path === "/admin" && request.method === "GET") {
-      const state = this.readState(channel);
-      this.seedConfigHistory(state);
-      const history = this.ctx.storage.sql
-        .exec<ConfigHistoryRow>(
-          "SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC LIMIT ?",
-          MAX_CONFIG_HISTORY,
-        )
-        .toArray()
-        .map((row) => ({
-          version: row.version,
-          config: safeJsonParse(row.config, {}),
-          actorId: row.actor_id,
-          actorName: row.actor_name,
-          at: row.at,
-          note: row.note,
-        }));
-      return json({
-        ...this.publicState(state),
-        chatStatus: chatStatus(state),
-        history,
-        customUsage: customUsage(this),
-        streamelements: this.seSettings(),
-        overlays: this.ctx.getWebSockets("overlay").length,
-        checkinTest: this.checkinTest(),
-        botCommands: this.botCommands(),
-        botStatus: this.botStatus(),
-        points: pointsView(this),
-      });
-    }
-
-    // Dollars and style dollars are private: the Worker asks for them (?private=1) only for mods and the owner.
-    if (path === "/leaderboard" && request.method === "GET") {
-      const board = this.leaderboard(channel);
-      return json(url.searchParams.get("private") === "1" ? board : board.map(({ dollars, styleDollars, ...p }) => p));
-    }
-
-    // Saved looks by login for the overlay (?u=a,b,c, at most 20): only viewers with a saved fighter are listed.
-    if (path === "/looks" && request.method === "GET") {
-      const logins = [
-        ...new Set(
-          String(url.searchParams.get("u") || "")
-            .split(",")
-            .map(normalizeUsername)
-            .filter((u) => /^[a-z0-9_]+$/.test(u)),
-        ),
-      ].slice(0, MAX_LOOKS);
-      if (!logins.length) return json({});
-      const state = this.readState(channel),
-        config = state.config,
-        hidden = hiddenResults(state, Date.now()),
-        out: { [login: string]: Look } = {};
-      const rows = this.ctx.storage.sql
-        .exec<ProfileRow>(
-          `SELECT ${PROFILE_COLUMNS} FROM profiles WHERE lower(username) IN (${logins.map(() => "?").join(",")})`,
-          ...logins,
-        )
-        .toArray();
-      for (const row of rows) {
-        const p = shownProfile(normalizeProfileRow(row, config), hidden);
-        out[p.username.toLowerCase()] = savedLook(p);
-      }
-      return json(out);
-    }
-
-    if (path === "/profile" && request.method === "GET") {
-      const userId = validUserId(url.searchParams.get("userId"));
-      if (!userId) return json({ error: "valid userId required" }, 400);
-      const state = this.readState(channel);
-      const hidden = hiddenResults(state, Date.now());
-      // shownProfile hands a null profile back unchanged, as the check below expects
-      const profile = shownProfile(this.getProfile(userId, state.config) as Profile, hidden);
-      if (!profile) return json(null);
-      // A knocked-out fighter (hp 0, respawnAt) would give away a result the stream hasn't shown yet.
-      const active = !hidden.has(userId) && state.players.find((item) => item.userId === userId);
-      return json({
-        ...profile,
-        ...(active ? { hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : {}),
-        upgrades: upgradeRules(profile, state.config.maxStatLevel),
-        owned: this.owned(userId),
-        builds: this.builds(profile),
-      });
-    }
-
-    if (path === "/profile" && request.method === "POST") {
-      const body = await this.readJson(request);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const actorId = validUserId(request.headers.get(USER_HEADER));
-      const requestedId = validUserId(body.value.userId);
-      const login = normalizeUsername(body.value.username) || actorId || "?";
-      const logCtx = { channel, action: "save", userId: actorId, user: login };
-      if (!actorId || !requestedId || actorId !== requestedId) {
-        logRoomEvent(this, "warn", `${login} profile not saved: identity_mismatch`, {
-          ...logCtx,
-          reason: "identity_mismatch",
-        });
-        return json({ error: "profile identity mismatch" }, 403);
-      }
-      const input = parseProfileInput(body.value);
-      const result: SaveResult = input.ok
-        ? this.saveProfile(channel, actorId, input.value)
-        : { ok: false, reason: input.error };
-      if (!result.ok) {
-        logRoomEvent(this, "warn", `${login} profile not saved: ${result.reason}`, {
-          ...logCtx,
-          reason: result.reason,
-        });
-        return json({ error: result.reason }, result.status || 400);
-      }
-      logRoomEvent(this, "command", `${login} saved profile`, { ...logCtx, reason: "saved" });
-      this.broadcast(result.state);
-      await this.scheduleAlarm(result.state);
-      const shown = shownProfile(result.profile, hiddenResults(result.state, Date.now()));
-      return json({
-        profile: {
-          ...shown,
-          upgrades: upgradeRules(shown, result.state.config.maxStatLevel),
-          owned: this.owned(actorId),
-          builds: this.builds(shown),
-        },
-        revision: result.state.revision,
-      });
-    }
-
-    if (path === "/admin" && request.method === "POST") {
-      const body = await this.readJson(request);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const actorId = validUserId(body.value.actorId);
-      if (!actorId) return json({ error: "authorized actor required" }, 403);
-      const admin = parseRoomAdminBody(body.value);
-      if (!admin.ok) return json({ ok: false, reason: admin.error, error: admin.error }, 400);
-      const { action } = admin.value,
-        actorName = admin.value.actorName.slice(0, 48);
-      let payload: JsonObject = admin.value.payload;
-      let note = "";
-      if (action === "giftDollars") {
-        const gift = this.giftDollars(channel, payload, actorId, actorName);
-        return json(
-          gift.ok ? gift : { ...gift, error: gift.reason },
-          gift.ok ? 200 : gift.reason === "profile_not_found" ? 404 : 400,
-        );
-      }
-      if (action === "resetPair") {
-        const out = this.resetPair(channel, payload.a, payload.b, actorId, actorName);
-        return json(
-          out.ok ? out : { ...out, error: out.reason },
-          out.ok ? 200 : out.reason === "profile_not_found" ? 404 : 400,
-        );
-      }
-      if (action === "saveCommand" || action === "deleteCommand" || action === "setCounter") {
-        const out = this.editBotCommands(channel, action, payload, actorName || actorId);
-        return json(
-          out.ok ? { ...out, botCommands: this.botCommands() } : { ...out, error: out.reason },
-          out.ok ? 200 : 400,
-        );
-      }
-      if (action === "rollbackConfig") {
-        const version = Number(payload.version);
-        const row = Number.isInteger(version)
-          ? this.ctx.storage.sql
-              .exec<Pick<ConfigHistoryRow, "config">>("SELECT config FROM config_history WHERE version = ?", version)
-              .toArray()[0]
-          : null;
-        if (!row)
-          return json({ ok: false, reason: "config_version_not_found", error: "config_version_not_found" }, 404);
-        // A version saved before a setting existed has no value for it; it goes back to its default, not the current value.
-        payload = { patch: { ...defaultConfig(), ...safeJsonParse(row.config, {}) } };
-        note = "rollback to v" + version;
-      }
-      // restoreRank {userId, before}: the fighter's last recorded rank before that time (server/ranklog.ts).
-      if (action === "restoreRank" && Number.isInteger(payload.before)) {
-        const rank = rankBefore(this.ctx.storage.sql, validUserId(payload.userId) || "", payload.before);
-        if (!rank) return json({ ok: false, reason: "no_rank_history", error: "no_rank_history" }, 404);
-        payload = { userId: payload.userId, ...rank };
-      }
-      const targetId = validUserId(payload.userId);
-      const targetProfile = targetId ? this.getProfile(targetId, this.readState(channel).config) : null;
-      const event: AdminEvent = {
-        type: "admin",
-        actorId,
-        actorName,
-        action: action === "rollbackConfig" ? "config" : action,
-        payload,
-        targetProfile,
-        // parseAdminBody checked the note is a string when sent; a rolled-back version's patch has none
-        note: note || (typeof payload.note === "string" ? payload.note : "").slice(0, 200),
-      };
-      const result = this.advance(channel, event, Date.now());
-      if (!result.result.ok)
-        return json(
-          { ...result.result, error: result.result.reason },
-          result.result.reason === "unauthorized"
-            ? 403
-            : result.result.reason === "config_version_conflict"
-              ? 409
-              : 400,
-        );
-      this.broadcast(result.state);
-      await this.scheduleAlarm(result.state);
-      return json({ ...result.result, revision: result.state.revision });
-    }
-
-    if (path === "/live" && request.method === "GET")
-      return this.upgrade(request, "live", channel, url.searchParams.get("role") === "overlay");
-
-    // Worker-only routes (never reachable from /api/admin): verified EventSub messages and subscription bookkeeping.
-    // What Twitch said about the bot's replies to one command, posted by the Worker after sending them.
-    if (path === "/bot-sent" && request.method === "POST") {
-      const body = await this.readJson(request);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const sent = parseBotSent(body.value);
-      if (!sent.ok) return json({ error: sent.error }, 400);
-      this.noteBotSent(channel, sent.value.results.slice(0, 10));
-      return json({ ok: true });
-    }
-    if (path === "/eventsub" && request.method === "POST") {
-      const body = await this.readJson(request);
-      if (!body.ok) return json({ error: body.error }, 400);
-      // the Worker forwards a verified EventSub body, its event cut down by slimEvent
-      const msg = parseRoomEventsub(body.value);
-      if (!msg.ok) return json({ error: msg.error }, 400);
-      return this.eventsub(channel, msg.value, url.searchParams.get("origin") || "");
-    }
-    // StreamElements custom commands, forwarded by the Worker from GET /api/se/<channel>/<action>.
-    if (path === "/se" && request.method === "POST") {
-      const body = await this.readJson(request);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const res = await this.streamElements(channel, body.value, url.searchParams.get("origin") || "");
-      // The Worker keeps the current key's hash for a minute, so random keys are refused there without waking this room.
-      const secret = this.seSettings()?.secret;
-      if (secret) res.headers.set("X-Se-Key", await seKeyHash(secret));
-      return res;
-    }
-    if (path === "/se-admin" && request.method === "POST") {
-      const read = await this.readJson(request);
-      if (!read.ok) return json({ error: read.error }, 400);
-      const body = parseSeAdmin(read.value);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const current = this.seSettings();
-      if (body.value.action === "rotateSeKey") {
-        this.writeSeSettings(randomHex(), current.names);
-        this.ctx.storage.sql.exec(
-          "UPDATE se_settings SET last_command_at = 0, rejected_at = 0, seen_json = '{}' WHERE id = 1",
-        ); // a new key starts unheard
-      } else if (body.value.action === "setSeNames") {
-        const input = body.value.names;
-        const names: SeNames = {};
-        for (const action of SE_ACTIONS) {
-          const name = String(
-            // SE_ACTIONS are DEFAULT_SE_NAMES's keys
-            input[action] ?? current.names[action] ?? DEFAULT_SE_NAMES[action as keyof typeof DEFAULT_SE_NAMES],
-          ).trim();
-          if (!/^!?[a-z0-9_]{1,24}$/i.test(name)) return json({ error: `Invalid command name for ${action}` }, 400);
-          names[action] = (name.startsWith("!") ? name : "!" + name).toLowerCase();
-        }
-        if (new Set(Object.values(names)).size !== SE_ACTIONS.length)
-          return json({ error: "Each action needs its own command name" }, 400);
-        this.writeSeSettings(current.secret, names);
-      } else if (body.value.action === "setDuelModuleOff") {
-        this.ctx.storage.sql.exec("UPDATE se_settings SET duel_module_off = ? WHERE id = 1", body.value.value ? 1 : 0);
-      } else return json({ error: "unknown StreamElements action" }, 400);
-      return json({ ok: true, streamelements: this.seSettings() });
-    }
-    // Check-in test mode (mods, via /api/admin action checkinTest): {on:true} for CHECKIN_TEST_MS, {on:false} ends it.
-    if (path === "/checkin-test" && request.method === "POST") {
-      const read = await this.readJson(request);
-      if (!read.ok) return json({ error: read.error }, 400);
-      const body = parseCheckinTest(read.value);
-      if (!body.ok) return json({ error: body.error }, 400);
-      if (body.value.on)
-        this.ctx.storage.sql.exec(
-          "INSERT OR REPLACE INTO checkin_test (id, until, by_name) VALUES (1, ?, ?)",
-          Date.now() + CHECKIN_TEST_MS,
-          body.value.by.slice(0, 48),
-        );
-      else this.ctx.storage.sql.exec("DELETE FROM checkin_test");
-      return json({ ok: true, checkinTest: this.checkinTest() });
-    }
-    // Test site only (worker dev token): one chat line as if Twitch had delivered it on the current subscription.
-    if (path === "/dev-chat" && request.method === "POST") {
-      if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
-      const read = await this.readJson(request);
-      if (!read.ok) return json({ error: read.error }, 400);
-      const body = parseDevChat(read.value);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const { userId, username, displayName, text: line } = body.value;
-      const now = Date.now(),
-        messageId = "dev:" + randomHex().slice(0, 24);
-      const msg: BotMessage = {
-        messageId,
-        timestamp: now,
-        subscription: { id: this.readState(channel).chat.subscriptionId || "" },
-        event: {
-          chatter_user_id: userId,
-          chatter_user_login: username,
-          chatter_user_name: displayName,
-          message_id: messageId,
-          message: { text: line },
-        },
-      };
-      await this.checkAccountAge(userId);
-      const result = this.processChatMessage(channel, msg, now, await this.streamNews(channel, line, now));
-      if (result.visible) this.broadcast(result.state);
-      if (result.changed) await this.scheduleAlarm(result.state);
-      const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
-      if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
-      const devGive = /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(line.trim()) as
-        | (RegExpExecArray & [string, string])
-        | null; // group 1 is required, so a match has it
-      if (devGive) {
-        // the reply is the line a StreamElements bot would post
-        const who = displayName || username,
-          uid = validUserId(userId),
-          devTarget = normalizeUsername(String(devGive[2] || "").replace(/^@/, ""));
-        if (devGive[1].toLowerCase() === "pet") {
-          const self = !devTarget || devTarget === normalizeUsername(username),
-            info = this.petInfo(channel, self ? { userId: uid } : { username: devTarget });
-          return json({
-            pet: info,
-            reply: sePetText(info, { who, target: self ? "" : devTarget, origin: "", channel }),
-          });
-        }
-        if (devGive[1].toLowerCase() === "wallet") {
-          const wallet = this.wallet(channel, uid);
-          return json({ wallet, reply: seWalletText(wallet, { who, origin: "", channel }) });
-        }
-        const given = await this.give(channel, { userId: uid, target: devTarget, amount: seAmount(devGive[3]) }, now);
-        return json({
-          ...given,
-          reply: seGiveText(given, { who, target: devTarget, origin: "", channel, names: this.seSettings().names }),
-        });
-      }
-      if (/^!checkin(?:\s|$)/i.test(line.trim())) {
-        const checked = await this.checkin(channel, { userId: validUserId(userId) }, now);
-        return json({
-          ...checked,
-          reply: seCheckinText(checked, { who: displayName || username, origin: "", channel }),
-        });
-      }
-      const parsed = parseGameCommand(line); // the reply is the line a StreamElements bot would post
-      // other actions keep their own name
-      const action = parsed
-        ? ({ duel: "challenge" } as { [action: string]: string | undefined })[parsed.action] || parsed.action
-        : "";
-      return json({
-        ...r,
-        revision: result.state.revision,
-        reply: parsed
-          ? seReplyText({
-              result: r,
-              state: result.state,
-              actorId: userId,
-              action,
-              target: parsed.target,
-              names: this.seSettings().names,
-              origin: "",
-              now,
-            })
-          : "",
-      });
-    }
-    // Test site only: add style dollars to a saved fighter (or take them back), as a channel point redemption would.
-    if (path === "/dev-style" && request.method === "POST") {
-      if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
-      const read = await this.readJson(request);
-      if (!read.ok) return json({ error: read.error }, 400);
-      const { userId, amount } = read.value,
-        sql = this.ctx.storage.sql;
-      if (typeof userId !== "string" || typeof amount !== "number" || !Number.isInteger(amount))
-        return json({ error: "userId and amount required" }, 400);
-      const row = sql
-        .exec<{ style_dollars: number }>("SELECT style_dollars FROM profiles WHERE user_id = ?", userId)
-        .toArray()[0];
-      if (!row) return json({ error: "no_fighter" }, 404);
-      const styleDollars = Math.max(0, Math.min(MAX_DOLLARS, row.style_dollars + amount));
-      sql.exec("UPDATE profiles SET style_dollars = ? WHERE user_id = ?", styleDollars, userId);
-      return json({ ok: true, userId, styleDollars });
-    }
-    // Test site only: pretend the channel is live ({live:true}, a new stream id unless streamId is given), offline
-    // ({live:false}), or ask Twitch again ({live:null}).
-    if (path === "/dev-live" && request.method === "POST") {
-      if (!this.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
-      const read = await this.readJson(request);
-      if (!read.ok) return json({ error: read.error }, 400);
-      const body = parseRoomDevLive(read.value);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const { live, streamId } = body.value,
-        sql = this.ctx.storage.sql;
-      if (typeof live !== "boolean") sql.exec("DELETE FROM dev_live");
-      else
-        sql.exec(
-          "INSERT OR REPLACE INTO dev_live (id, stream_id, started_at) VALUES (1, ?, ?)",
-          live ? "dev-" + (/^[a-z0-9_-]{1,36}$/i.test(streamId) ? streamId : randomHex().slice(0, 12)) : "",
-          Date.now(),
-        );
-      const row = sql.exec<{ stream_id: string }>("SELECT stream_id FROM dev_live WHERE id = 1").toArray()[0];
-      return json({ ok: true, live: row ? Boolean(row.stream_id) : null, streamId: row?.stream_id || "" });
-    }
-    if (path === "/chat" && request.method === "GET") return json(chatStatus(this.readState(channel)));
-    if (path === "/chat" && request.method === "POST") {
-      const body = await this.readJson(request);
-      if (!body.ok) return json({ error: body.error }, 400);
-      const event: GameEvent | null =
-        body.value.action === "connected"
-          ? {
-              type: "chat_subscription",
-              subscriptionId: body.value.subscriptionId,
-              status: body.value.status,
-              createdAt: body.value.createdAt,
-            }
-          : body.value.action === "disconnected"
-            ? { type: "chat_disconnected", reason: body.value.reason }
-            : null;
-      if (!event) return json({ error: "unknown chat action" }, 400);
-      const result = this.advance(channel, event, Date.now());
-      if (result.visible) this.broadcast(result.state);
-      await this.scheduleAlarm(result.state);
-      return json({ ...result.result, revision: result.state.revision, chatStatus: chatStatus(result.state) });
-    }
-
-    return text("Not found", 404);
   }
 
   authorized(request: Request): boolean {
@@ -1309,10 +274,14 @@ export class ChannelRoom extends DurableObject<Env> {
       const result = reduceGame(state, event, now);
       for (const userId of result.dirtyProfileIds) {
         const profile = result.state.players.find((item) => item.userId === userId);
-        if (profile?.registered) this.upsertProfile(profile);
+        if (profile?.registered) upsertProfile(this, profile);
       }
-      if (this.payDuels(result.state) || result.changed) this.writeState(result.state);
-      if (result.resetAllRanks) this.resetAllRanks(result.state.config.initialElo);
+      if (payDuels(this, result.state) || result.changed) this.writeState(result.state);
+      if (result.resetAllRanks) {
+        this.ctx.storage.sql.exec("UPDATE profiles SET elo = ?, wins = 0, losses = 0", result.state.config.initialElo);
+        this.looksReset = true;
+        this.flushLooksSoon();
+      }
       for (const userId of result.rankResetIds || []) {
         this.ctx.storage.sql.exec(
           "UPDATE profiles SET elo = ?, wins = 0, losses = 0 WHERE user_id = ?",
@@ -1344,19 +313,11 @@ export class ChannelRoom extends DurableObject<Env> {
         );
       }
       for (const userId of result.deletedProfileIds || []) this.deleteProfile(userId);
-      if (result.result?.reason === "config_updated") {
-        this.recordConfigVersion(
-          result.state.configVersion,
-          result.state.config,
-          event.actorId,
-          event.note || "",
-          now,
-          event.actorName,
-        );
-      }
+      if (result.result?.reason === "config_updated")
+        this.recordConfigVersion(result.state, event.actorId, event.note || "", now, event.actorName);
       return result;
     });
-    // after the commit, so a rolled-back reduce logs nothing it didn't do (its error is logged by fetch or alarm)
+    // after the commit, so a rolled-back reduce logs nothing it didn't do
     this.traceEvents(channel, out.state, since);
     return out;
   }
@@ -1375,28 +336,18 @@ export class ChannelRoom extends DurableObject<Env> {
     }
   }
 
-  // Config history keeps every version so mods can review and roll back (see docs/CONTRACTS.md).
   seedConfigHistory(state: GameState): void {
-    // COUNT(*) always returns one row
-    const [{ n }] = this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM config_history").toArray() as [
-      { n: number },
-    ];
-    if (!n) this.recordConfigVersion(state.configVersion, state.config, "system", "initial", Date.now());
+    const n = this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM config_history").toArray()[0]?.n;
+    if (!n) this.recordConfigVersion(state, "system", "initial", Date.now());
   }
 
-  recordConfigVersion(
-    version: number,
-    config: Config,
-    actorId: unknown,
-    note: unknown,
-    now: number,
-    actorName: unknown = "",
-  ): void {
-    const sql = this.ctx.storage.sql;
+  recordConfigVersion(state: GameState, actorId: unknown, note: unknown, now: number, actorName: unknown = ""): void {
+    const sql = this.ctx.storage.sql,
+      version = state.configVersion;
     sql.exec(
       "INSERT OR REPLACE INTO config_history (version, config, actor_id, actor_name, at, note) VALUES (?, ?, ?, ?, ?, ?)",
       version,
-      JSON.stringify(config),
+      JSON.stringify(state.config),
       String(actorId || "system"),
       String(actorName || ""),
       now,
@@ -1405,285 +356,19 @@ export class ChannelRoom extends DurableObject<Env> {
     sql.exec("DELETE FROM config_history WHERE version <= ?", version - 200);
   }
 
-  async readJson(request: Request): Promise<ReadJson> {
-    const length = Number(request.headers.get("content-length") || 0);
-    if (length > 16 * 1024) return { ok: false, error: "request body too large" };
-    try {
-      const value = await request.json<JsonObject | null>(); // any JSON: only an object gets past the check below
-      if (!value || typeof value !== "object" || Array.isArray(value))
-        return { ok: false, error: "JSON object required" };
-      return { ok: true, value };
-    } catch {
-      return { ok: false, error: "invalid JSON" };
-    }
-  }
-
-  saveProfile(channel: string, userId: string, input: ProfileInput): SaveResult {
-    const username = normalizeUsername(input.username);
-    const displayName = (input.displayName || username).trim().slice(0, 48);
-    const avatar = (input.avatar || "player").trim().slice(0, 64);
-    const color = /^#[0-9a-f]{6}$/i.test(input.color) ? input.color.toUpperCase() : "";
-    const defaultAbility = ["strike", "heavy", "heal"].includes(input.defaultAbility) ? input.defaultAbility : "";
-    if (!username || !/^[a-z0-9_]{1,25}$/.test(username) || !displayName || !avatar || !color || !defaultAbility) {
-      return { ok: false, reason: "invalid_profile" };
-    }
-
-    const now = Date.now();
-    let since = 0;
-    const out = this.ctx.storage.transactionSync((): SaveResult => {
-      const state = this.readState(channel);
-      since = state.revision;
-      const existing = this.getProfile(userId, state.config);
-      // Upgrades and hat: optional in the request (left out = keep the saved ones), checked against the wins the stream
-      // has shown, so a save can't reveal a duel result the overlay hasn't played yet.
-      const hidden = hiddenResults(state, now).get(userId);
-      const wins = Math.max(0, (existing?.wins || 0) - (hidden?.wins || 0)),
-        losses = Math.max(0, (existing?.losses || 0) - (hidden?.losses || 0));
-      const stats =
-        input.stats === undefined ? existing?.stats : validStats(input.stats, { wins, bonus: existing?.bonus, losses });
-      if (stats === null) return { ok: false, reason: "invalid_upgrades" };
-      const hat = input.hat === undefined ? existing?.hat || "" : input.hat;
-      const owns = (kind: string, id: string) =>
-        this.ctx.storage.sql
-          .exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id)
-          .toArray().length > 0;
-      if (hat !== (existing?.hat || "") && !hatUnlocked(hat, wins) && !(knownHat(hat) && owns("hat", hat)))
-        return { ok: false, reason: knownHat(hat) ? "hat_locked" : "invalid_profile" };
-      // Pet: "" (none) or one the fighter bought that still exists.
-      const petId = input.pet === undefined ? existing?.pet || "" : input.pet;
-      const custom = petId
-        ? this.ctx.storage.sql
-            .exec<{ c: string | null }>(
-              "SELECT tier || ':' || stat || ':' || stat2 AS c FROM custom_pets WHERE id = ?",
-              petId,
-            )
-            .toArray()[0]?.c
-        : "";
-      const roll = petId
-        ? this.ctx.storage.sql
-            .exec<{ roll: string }>(
-              "SELECT roll FROM owned_items WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
-              userId,
-              petId,
-            )
-            .toArray()[0]?.roll
-        : "";
-      const pet = petId ? petOf(petId, custom, roll) : null;
-      if (petId && (!pet || !owns("pet", petId))) return { ok: false, reason: "pet_locked" };
-      // Cosmetics: "" (none) or one the fighter bought. Left out = keep the saved one.
-      const cosmetics: Partial<Cosmetics> = {};
-      for (const kind of COSMETIC_KINDS) {
-        const field = COSMETIC_FIELDS[kind],
-          id = input[field] === undefined ? existing?.[field] || "" : input[field];
-        if (typeof id !== "string" || (id && !cosmeticItem(kind, id))) return { ok: false, reason: "invalid_profile" };
-        if (id && id !== (existing?.[field] || "") && !owns(kind, id)) return { ok: false, reason: "item_locked" };
-        cosmetics[field] = id;
-      }
-      // Build slot: the one this loadout is saved to, which becomes the active one. Left out = the active slot.
-      const build = input.build === undefined ? existing?.build || 0 : input.build;
-      if (!Number.isInteger(build) || build < 0 || build >= this.buildSlots(userId))
-        return { ok: false, reason: "invalid_build" };
-      const profile = {
-        ...(existing || {
-          userId,
-          username,
-          displayName,
-          avatar,
-          color,
-          defaultAbility,
-          hp: state.config.maxHp,
-          elo: state.config.initialElo,
-          wins: 0,
-          losses: 0,
-          lastSeen: 0,
-          registered: true,
-          respawnAt: 0,
-        }),
-        userId,
-        username,
-        displayName,
-        avatar,
-        color,
-        defaultAbility,
-        stats: stats || cleanStats(),
-        hat,
-        pet: pet ? pet.id : "",
-        petTier: pet ? pet.tier : "",
-        petBoost: pet ? pet.boost : emptyStats(),
-        ...cosmetics,
-        build,
-        registered: true,
-      };
-      const result = reduceGame(state, { type: "profile_saved", profile }, now);
-      if (!result.result.ok) return { ok: false, reason: result.result.reason, status: 400 };
-      this.writeState(result.state);
-      const active = result.state.players.find((item) => item.userId === userId);
-      this.upsertProfile(active || profile);
-      this.ctx.storage.sql.exec("UPDATE profiles SET build = ? WHERE user_id = ?", build, userId);
-      this.ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO builds (user_id, slot, data) VALUES (?, ?, ?)",
-        userId,
-        build,
-        JSON.stringify(buildOf(profile)),
-      );
-      // The state player has no streak, check-in count or dollars; they live only in the profiles table.
-      const saved = {
-        ...(active || profile),
-        build,
-        bonus: existing?.bonus || 0,
-        checkins: existing?.checkins || 0,
-        streak: existing?.streak || 0,
-        dollars: existing?.dollars || 0,
-        styleDollars: existing?.styleDollars || 0,
-      };
-      return { ok: true, profile: saved, state: result.state };
-    });
-    if (out.ok) this.traceEvents(channel, out.state, since);
-    return out;
-  }
-
-  // An approved viewer sprite goes on its uploader's saved fighter, and replaces their previous sprite in every build
-  // slot. Returns the new game state when the overlay needs it, else null.
-  wearSprite(channel: string, row: SpriteRow, previous: string): GameState | null {
-    const sql = this.ctx.storage.sql;
-    if (previous)
-      sql.exec(
-        "UPDATE builds SET data = json_set(data, '$.avatar', ?) WHERE user_id = ? AND json_extract(data, '$.avatar') = ?",
-        row.id,
-        row.userId,
-        previous,
-      );
-    const existing = this.getProfile(row.userId, this.readState(channel).config);
-    if (!existing) return null;
-    const saved = this.saveProfile(channel, row.userId, {
-      username: existing.username,
-      displayName: existing.displayName,
-      color: existing.color,
-      defaultAbility: existing.defaultAbility,
-      avatar: row.id,
-    });
-    return saved.ok ? saved.state : null;
-  }
-
-  // A removed viewer sprite: fighters wearing it, saved or on stage, go back to the default character.
-  dropSprite(channel: string, id: string): GameState | null {
-    const sql = this.ctx.storage.sql;
-    for (const row of sql.exec<{ user_id: string }>("SELECT user_id FROM profiles WHERE avatar = ?", id).toArray())
-      this.lookChanged(row.user_id);
-    sql.exec("UPDATE profiles SET avatar = 'player' WHERE avatar = ?", id);
-    sql.exec(
-      "UPDATE builds SET data = json_set(data, '$.avatar', 'player') WHERE json_extract(data, '$.avatar') = ?",
-      id,
-    );
-    const state = this.readState(channel);
-    let hit = false;
-    for (const p of state.players)
-      if (p.avatar === id) {
-        p.avatar = "player";
-        hit = true;
-      }
-    if (!hit) return null;
-    state.revision += 1;
-    this.writeState(state);
-    return state;
-  }
-
-  getProfile(userId: string, config: Config): Profile | null {
-    const row = this.ctx.storage.sql
-      .exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS}, last_opponent FROM profiles WHERE user_id = ?`, userId)
-      .toArray()[0];
-    return normalizeProfileRow(row, config);
-  }
-
-  getProfileByUsername(username: unknown, config: Config): Profile | null {
-    const name = normalizeUsername(username);
-    if (!name) return null;
-    const row = this.ctx.storage.sql
-      .exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`, name)
-      .toArray()[0];
-    return normalizeProfileRow(row, config);
-  }
-
-  upsertProfile(profile: ProfileWrite): void {
-    // Twitch logins can be renamed and later reused; free the login if a stale row still holds it.
-    this.ctx.storage.sql.exec(
-      "UPDATE profiles SET username = '~' || user_id WHERE username = ? COLLATE NOCASE AND user_id <> ?",
-      profile.username,
-      profile.userId,
-    );
-    this.ctx.storage.sql.exec(
-      "INSERT INTO profiles (user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, last_opponent, pet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '')) " +
-        "ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, avatar = excluded.avatar, color = excluded.color, default_ability = excluded.default_ability, elo = excluded.elo, wins = excluded.wins, losses = excluded.losses, last_seen = excluded.last_seen, " +
-        "power = excluded.power, guard = excluded.guard, luck = excluded.luck, crit = excluded.crit, dodge = excluded.dodge, counter = excluded.counter, vitality = excluded.vitality, hat = excluded.hat, " +
-        // A game state player from before pets has no pet field; keep the stored one then.
-        "pet = CASE WHEN ? IS NULL THEN profiles.pet ELSE excluded.pet END, " +
-        // A website save carries no opponent; keep the stored one.
-        "last_opponent = CASE WHEN excluded.last_opponent <> '' THEN excluded.last_opponent ELSE profiles.last_opponent END",
-      profile.userId,
-      profile.username,
-      profile.displayName,
-      profile.avatar,
-      profile.color,
-      profile.defaultAbility,
-      profile.elo,
-      profile.wins,
-      profile.losses,
-      Number.isInteger(profile.lastSeen) ? profile.lastSeen : 0,
-      ...(({ power, guard, luck, crit, dodge, counter, vitality }) => [
-        power,
-        guard,
-        luck,
-        crit,
-        dodge,
-        counter,
-        vitality,
-      ])(cleanStats(profile.stats)),
-      knownHat(profile.hat) ? profile.hat : "",
-      String(profile.lastOpponentId || "").slice(0, 32),
-      typeof profile.pet === "string" ? profile.pet : null,
-      typeof profile.pet === "string" ? profile.pet : null,
-    );
-    // A game state player from before cosmetics has none of the fields; keep the stored ones then.
-    if (typeof profile.recolor === "string") {
-      const worn = cleanCosmetics(profile);
-      this.ctx.storage.sql.exec(
-        `UPDATE profiles SET ${Object.values(COSMETIC_COLUMNS)
-          .map((c) => c + " = ?")
-          .join(", ")} WHERE user_id = ?`,
-        ...Object.keys(COSMETIC_COLUMNS).map((f) => worn[f as keyof Cosmetics]), // COSMETIC_COLUMNS's keys
-        profile.userId,
-      );
-    }
-    this.lookChanged(profile.userId);
-  }
-
   deleteProfile(userId: string): void {
     const login = this.ctx.storage.sql
       .exec<{ username: string }>("SELECT username FROM profiles WHERE user_id = ?", userId)
       .toArray()[0]?.username;
-    if (login) this.lookGone(login);
+    if (login) (this.goneLooks ||= new Set()).add(login.toLowerCase());
+    this.flushLooksSoon();
     this.ctx.storage.sql.exec("DELETE FROM profiles WHERE user_id = ?", userId);
     this.ctx.storage.sql.exec("DELETE FROM owned_items WHERE user_id = ?", userId);
     this.ctx.storage.sql.exec("DELETE FROM builds WHERE user_id = ?", userId);
   }
 
-  resetAllRanks(initialElo: number): void {
-    this.ctx.storage.sql.exec("UPDATE profiles SET elo = ?, wins = 0, losses = 0", initialElo);
-    this.looksReset = true;
-    this.flushLooksSoon();
-  }
-
-  // ---------- look sync ----------
-  // Every write to a saved fighter (website save, duel result, approved or removed sprite, rank reset, delete) is pushed
-  // to open overlays as one {type:"looks"} message per turn of the event loop. It carries only viewers the active list
-  // doesn't: snapshots already carry those, and a pushed look (masked while a duel result is hidden) must not overwrite
-  // them. looks maps login -> look, or null for a deleted fighter; reset: every saved look is stale (all ranks reset).
   lookChanged(userId: unknown): void {
     (this.dirtyLooks ||= new Set()).add(String(userId));
-    this.flushLooksSoon();
-  }
-  lookGone(login: string): void {
-    (this.goneLooks ||= new Set()).add(String(login).toLowerCase());
     this.flushLooksSoon();
   }
   flushLooksSoon(): void {
@@ -1716,6 +401,7 @@ export class ChannelRoom extends DurableObject<Env> {
     const state = this.readState(channel),
       hidden = hiddenResults(state, Date.now()),
       looks: { [login: string]: Look | null } = {};
+    // Players on stage are skipped: snapshots carry them, and a masked look must not overwrite them.
     const listed = new Set(state.players.map((p) => p.userId)),
       wanted = ids.filter((id) => !listed.has(id));
     for (const login of gone) looks[login] = null;
@@ -1733,67 +419,7 @@ export class ChannelRoom extends DurableObject<Env> {
       }
     }
     if (!reset && !Object.keys(looks).length) return;
-    const message = JSON.stringify({ type: "looks", looks, ...(reset ? { reset: true } : {}) } satisfies LiveMessage);
-    for (const ws of sockets) {
-      if (ws.readyState !== WebSocket.OPEN) continue;
-      try {
-        ws.send(message);
-      } catch {}
-    }
-  }
-
-  leaderboard(channel: string) {
-    const state = this.readState(channel);
-    const rows = this.ctx.storage.sql
-      .exec<ProfileRow>(
-        `SELECT ${PROFILE_COLUMNS} FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC LIMIT 100`,
-      )
-      .toArray();
-    const hidden = hiddenResults(state, Date.now());
-    const out = rows.map((row) => {
-      const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
-      const active = !hidden.has(profile.userId) && state.players.find((item) => item.userId === profile.userId);
-      return active ? { ...profile, hp: active.hp, lastSeen: active.lastSeen, respawnAt: active.respawnAt } : profile;
-    });
-    return hidden.size ? out.sort(boardOrder) : out; // same order as the SQL, on the numbers shown
-  }
-
-  // One saved profile with its leaderboard place (same order as leaderboard()), or null.
-  eloLookup(channel: string, { userId = "", username = "" }: { userId?: string; username?: string }) {
-    const sql = this.ctx.storage.sql;
-    const row = (
-      userId
-        ? sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, userId)
-        : sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`, username)
-    ).toArray()[0];
-    if (!row) return null;
-    const state = this.readState(channel),
-      hidden = hiddenResults(state, Date.now());
-    const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
-    let ahead = Number(
-      sql
-        .exec<{ n: number }>(
-          "SELECT COUNT(*) AS n FROM profiles WHERE user_id != ? AND (elo > ? OR (elo = ? AND wins > ?) OR (elo = ? AND wins = ? AND username COLLATE NOCASE < ?))",
-          profile.userId,
-          profile.elo,
-          profile.elo,
-          profile.wins,
-          profile.elo,
-          profile.wins,
-          row.username,
-        )
-        .toArray()[0]!.n, // COUNT(*) always returns one row
-    );
-    // The count used everyone's saved numbers; swap in the shown ones for fighters whose result is still hidden.
-    for (const id of hidden.keys()) {
-      if (id === profile.userId) continue;
-      const other = sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, id).toArray()[0];
-      if (!other) continue;
-      const saved = normalizeProfileRow(other, state.config);
-      ahead += Number(boardOrder(shownProfile(saved, hidden), profile) < 0) - Number(boardOrder(saved, profile) < 0);
-    }
-    const total = sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM profiles").toArray()[0]!.n; // one row, as above
-    return { profile, rank: ahead + 1, total: Number(total) };
+    this.sendLive({ type: "looks", looks, ...(reset ? { reset: true } : {}) }, sockets);
   }
 
   publicState(state: GameState): Snapshot & { build: string } {
@@ -1838,9 +464,7 @@ export class ChannelRoom extends DurableObject<Env> {
         spare.close(1013, "room full");
       } catch {}
     }
-    const pair = new WebSocketPair();
-    const client = pair[0];
-    const server = pair[1];
+    const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, [kind, ...(clientTag ? [clientTag] : []), ...(overlay ? ["overlay"] : [])]); // "overlay": OBS browser sources, counted for /admin
     server.serializeAttachment({ kind, channel });
     const result = this.advance(channel, { type: "tick" }, Date.now());
@@ -1921,14 +545,15 @@ export class ChannelRoom extends DurableObject<Env> {
         { type: "chat_disconnected", reason: String(msg.subscription?.status || "revoked") },
         now,
       );
-    } else if (kind === "notification" && msg.bot === true) return this.botCommand(channel, msg, origin);
+    } else if (kind === "notification" && msg.bot === true) return botCommand(this, channel, msg, origin);
     else if (kind === "notification") {
-      await this.checkAccountAge(msg.event?.chatter_user_id);
-      result = this.processChatMessage(
+      await checkAccountAge(this, msg.event?.chatter_user_id);
+      result = processChatMessage(
+        this,
         channel,
         msg,
         now,
-        await this.streamNews(channel, msg.event?.message?.text, now),
+        await streamNews(this, channel, msg.event?.message?.text, now),
       );
     } else return json({ ok: true, ignored: true });
     if (result.visible) this.broadcast(result.state);
@@ -1952,7 +577,7 @@ export class ChannelRoom extends DurableObject<Env> {
       if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept; // StreamElements' Duel module owns !accept
       if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top; // and its built-in !top can't be replaced
       if (names.give === "!give") names.give = DEFAULT_SE_NAMES.give; // nor its !givepoints alias !give
-      if (names.help === "!minichat") names.help = DEFAULT_SE_NAMES.help; // the old name, from before the rename to PixFray
+      if (names.help === "!minichat") names.help = DEFAULT_SE_NAMES.help; // its name before PixFray
       const stored = safeJsonParse<{ [action: string]: unknown }>(row.seen_json, {}),
         seen: { [action: string]: number } = {};
       for (const action of SE_ACTIONS) if (Number(stored?.[action]) > 0) seen[action] = Number(stored[action]);
@@ -1990,1120 +615,9 @@ export class ChannelRoom extends DurableObject<Env> {
     );
   }
 
-  // One StreamElements command. It goes through the same path as a Twitch chat message, then gets a one-line reply.
-  async streamElements(channel: string, input: CommandInput, origin: string): Promise<Response> {
-    const settings = this.seSettings();
-    if (!timingSafeEqual(String(input.key || ""), settings.secret)) {
-      if (Date.now() - settings.rejectedAt > REJECTED_WRITE_MS)
-        this.ctx.storage.sql.exec("UPDATE se_settings SET rejected_at = ? WHERE id = 1", Date.now());
-      return json({ reply: "PixFray: wrong key. Copy the commands again from the admin page." }, 403);
-    }
-    // The bot answers every command itself, so StreamElements posts nothing (no double replies) and keeps the chat source.
-    if (this.botSource(this.readState(channel))) return json({ reply: "" });
-    // includes() is true only for one of those strings
-    const action = SE_ACTIONS.includes(input.action as string) ? (input.action as string) : "";
-    if (action && Date.now() - (settings.seen[action] || 0) > SEEN_WRITE_MS) {
-      this.ctx.storage.sql.exec(
-        "UPDATE se_settings SET last_command_at = ?, seen_json = ? WHERE id = 1",
-        Date.now(),
-        JSON.stringify({ ...settings.seen, [action]: Date.now() }),
-      );
-    } else this.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ? WHERE id = 1", Date.now());
-    return this.runCommand(channel, input, origin, settings, { kind: "se", subscriptionId: SE_SUBSCRIPTION_ID });
-  }
-
-  // A chat line read by the PixFray bot. Its first word is matched against the channel's command names (the same names
-  // StreamElements uses); anything else, like another bot's command, gets no reply. Replies are capped per 30 s.
-  async botCommand(channel: string, msg: BotMessage, origin: string): Promise<Response> {
-    const ev: Partial<ChatEvent> = msg.event && typeof msg.event === "object" ? msg.event : {};
-    const words = String(ev.message?.text || "")
-      .trim()
-      .split(/\s+/);
-    const se = this.seSettings(),
-      settings = { ...se, names: botNames(se.names) };
-    const first = (words[0] || "").toLowerCase();
-    // "!pay" stays an alias of !give, the name it had while StreamElements' !give (!givepoints) was in the way.
-    let action =
-      SE_ACTIONS.find((a) => String(settings.names[a] || "").toLowerCase() === first) ||
-      (first === "!pay" ? "give" : "");
-    const custom =
-      action || !first.startsWith("!")
-        ? null
-        : this.ctx.storage.sql
-            .exec<{ name: string; reply: string }>("SELECT name, reply FROM bot_commands WHERE name = ?", first)
-            .toArray()[0];
-    // Words new viewers guess (!accept, !duel, !top) work as hidden aliases, unless the channel made them its own commands.
-    if (
-      !action &&
-      !custom &&
-      BOT_ALIASES[first] &&
-      !Object.values(settings.names).some((n) => String(n).toLowerCase() === first)
-    )
-      action = BOT_ALIASES[first];
-    // !resetpair @a @b (broadcaster or a mod) has a fixed name, like !fray debug.
-    const resetPair = first === "!resetpair" && !action && !custom;
-    if (!action && !custom && !resetPair) return json({ ok: true, reason: "not_command", reply: "" });
-    const subscriptionId = String(msg.subscription?.id || "");
-    const state = this.readState(channel);
-    if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) {
-      this.noteBotHeld(channel, "unknown_subscription", { subscriptionId: subscriptionId.slice(0, 64) });
-      return json({ ok: true, reason: "unknown_subscription", reply: "" });
-    }
-    const before = this.botStatus();
-    this.noteBotHeard(`${normalizeUsername(ev.chatter_user_login) || "?"} ${first}`);
-    this.rememberReminder(String(ev.broadcaster_user_id || ""), validUserId(msg.botId), origin);
-    if (!state.chat.connected) {
-      // Twitch only notifies enabled subscriptions, so this confirms a pending one
-      const verified = this.advance(channel, { type: "chat_verified", subscriptionId }, Date.now());
-      if (verified.visible) this.broadcast(verified.state);
-      await this.scheduleAlarm(verified.state);
-    }
-    // "!fray off" / "!fray on" (broadcaster or a mod) turns the whole bot off or on in this channel; while it's off,
-    // every other command gets no reply.
-    const chatterId = validUserId(ev.chatter_user_id),
-      boss = chatterId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
-    const toggle = action === "help" && boss ? String(words[1] || "").toLowerCase() : "";
-    const off = state.config.botEnabled === false;
-    if (toggle === "on" || toggle === "off") {
-      if (off !== (toggle === "off")) {
-        const set = this.advance(
-          channel,
-          {
-            type: "admin",
-            actorId: chatterId,
-            actorName: String(ev.chatter_user_login || "").slice(0, 48),
-            action: "config",
-            payload: { patch: { botEnabled: toggle === "on" } },
-            note: "bot " + toggle + " (chat)",
-          },
-          Date.now(),
-        );
-        if (!set.result.ok) return json({ ok: false, reason: set.result.reason, reply: "" });
-        this.broadcast(set.state);
-        await this.scheduleAlarm(set.state);
-      }
-      return this.sendBotLines(
-        [
-          toggle === "on"
-            ? `PixFray bot is on. Type ${settings.names.help} to play.`
-            : `PixFray bot is off: it ignores commands until the broadcaster or a mod types ${settings.names.help} on.`,
-        ],
-        channel,
-      );
-    }
-    if (off) return json({ ok: true, reason: "bot_off", reply: "" });
-    // The alarm posts each result at its reveal time; any result it missed goes out now, before this reply.
-    await this.postResults(channel, Date.now());
-    if (custom) {
-      // A reply the cap would drop doesn't start the cooldown or add to its counters.
-      if (!this.botReplyRoom(Date.now())) return this.sendBotLines([custom.name], channel);
-      const line = this.customReply(custom, ev, words, Date.now());
-      if (!line) this.noteBotHeld(channel, "cooldown", { command: custom.name }, false);
-      return this.sendBotLines([line], channel);
-    }
-    if (resetPair) {
-      const actor = String(ev.chatter_user_login || "").slice(0, 48);
-      if (!boss) return this.sendBotLines(["Only the broadcaster or a mod can use !resetpair."], channel);
-      if (!words[1] || !words[2])
-        return this.sendBotLines(["Type !resetpair @name @name to reset a pair's ranked duels."], channel);
-      const out = this.resetPair(channel, words[1], words[2], chatterId, actor);
-      return this.sendBotLines(
-        [
-          out.ok
-            ? `Ranked duels reset for ${out.a} and ${out.b}: ${typeof out.left === "number" ? out.left + " left this stream" : "no limit on this channel"}.`
-            : out.reason === "profile_not_found"
-              ? `@${normalizeUsername(String(out.missing || "").replace(/^@/, ""))} has no saved fighter on this channel.`
-              : "Pick two different fighters: !resetpair @name @name",
-        ],
-        channel,
-      );
-    }
-    // "!fray debug" (broadcaster, mods or the bot account): the bot's health in one line, as the admin page shows it.
-    if (action === "help" && String(words[1] || "").toLowerCase() === "debug") {
-      const userId = validUserId(ev.chatter_user_id),
-        allowed =
-          userId === validUserId(msg.botId) || userId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
-      return this.sendBotLines(
-        [
-          allowed
-            ? this.botStatusLine(state, before, Date.now())
-            : "PixFray debug: only the broadcaster or a mod can use !fray debug.",
-        ],
-        channel,
-      );
-    }
-    const input = {
-      action,
-      userId: ev.chatter_user_id,
-      username: ev.chatter_user_login,
-      displayName: ev.chatter_user_name,
-      target: seTarget(words[1]),
-      targetRaw: words[1] || "",
-      ...(action === "give" ? { amount: String(words[2] || "").slice(0, 16) } : {}),
-      messageId: String(ev.message_id || msg.messageId || ""),
-    };
-    // BOT_DEBUG (test site): the bot account also plays. "!fray spar" and "!fray e2e" replace the help reply.
-    const botId = this.env?.BOT_DEBUG === "1" ? validUserId(msg.botId) : "";
-    const mode = botId && action === "help" ? String(words[1] || "").toLowerCase() : "";
-    let lines: string[];
-    if (mode === "spar" || mode === "e2e")
-      lines = await this.botDebug(channel, mode, { ev, words, botId, origin, settings, subscriptionId });
-    else if (
-      !botId &&
-      BOT_TARGET_ACTIONS[action] &&
-      input.target &&
-      this.getProfileByUsername(input.target, state.config)?.userId === validUserId(msg.botId)
-    ) {
-      // The bot account isn't a fighter or a wallet (yet; it may become a boss viewers fight together). The test site's
-      // sparring bot (BOT_DEBUG) still plays.
-      lines = [BOT_TARGET_ACTIONS[action]!(settings.names)]; // checked in the condition above
-    } else {
-      const since = this.readState(channel).revision;
-      const out = await (
-        await this.runCommand(channel, input, origin, settings, { kind: "bot", subscriptionId })
-      ).json<CommandReply>(); // runCommand's answer
-      const expired = this.expiredLines(this.readState(channel), since);
-      lines = [
-        ...expired,
-        out.reply,
-        ...(botId && validUserId(input.userId) !== botId
-          ? await this.botAnswer(channel, input, out, { botId, origin, settings, subscriptionId })
-          : []),
-      ];
-      return this.sendBotLines(lines, channel, { system: expired.length });
-    }
-    return this.sendBotLines(lines, channel);
-  }
-
-  // The bot's reply lines that fit under BOT_REPLIES_PER_30S, as the Worker expects them: { reply, replies }.
-  // Replies to commands stop BOT_RESERVED_LINES short of the cap; the bot's own lines (results, expired challenges;
-  // the first `system` lines) may use the rest, so a chatter spamming commands can't crowd out who won.
-  // How many more command replies fit under the cap right now.
-  botReplyRoom(now: number): number {
-    return Math.max(
-      0,
-      BOT_REPLIES_PER_30S - BOT_RESERVED_LINES - (this.botReplies || []).filter((at) => now - at < 30000).length,
-    );
-  }
-
-  sendBotLines(lines: string[], channel = "", { system = 0 }: { system?: number } = {}): Response {
-    const now = Date.now(),
-      sent: string[] = [];
-    this.botReplies = (this.botReplies || []).filter((at) => now - at < 30000);
-    for (const [i, line] of lines.entries()) {
-      if (!line) continue;
-      if (this.botReplies.length >= BOT_REPLIES_PER_30S - (i < system ? 0 : BOT_RESERVED_LINES)) {
-        if (i < system) continue;
-        break;
-      }
-      this.botReplies.push(now);
-      sent.push(line);
-    }
-    const cut = lines.filter(Boolean).length - sent.length;
-    if (cut) this.noteBotHeld(channel, "reply_limit", { cut });
-    if (!sent.length)
-      return json({ ok: true, reason: lines.some(Boolean) ? "reply_limit" : "no_reply", reply: "", replies: [] });
-    return json({ ok: true, reply: sent[0], replies: sent });
-  }
-
-  // One command played by the bot account (BOT_DEBUG), through the same path as a chat line. Returns { reply, reason }.
-  async botPlays(
-    channel: string,
-    bot: Profile,
-    action: string,
-    target: string,
-    { origin, settings, subscriptionId, kind = "bot", amount }: BotCtx & { kind?: string; amount?: unknown },
-  ): Promise<CommandReply> {
-    const input = {
-      action,
-      userId: bot.userId,
-      username: bot.username,
-      displayName: bot.displayName || bot.username,
-      target,
-      targetRaw: target ? "@" + target : "",
-      ...(amount !== undefined ? { amount: String(amount) } : {}),
-    };
-    return (
-      await this.runCommand(channel, input, origin, settings, { kind, subscriptionId, botPlays: true })
-    ).json<CommandReply>(); // runCommand's answer
-  }
-
-  // Sparring partner (BOT_DEBUG): a challenge or rematch aimed at the bot is accepted, and dollars paid to it are paid back.
-  async botAnswer(
-    channel: string,
-    input: CommandInput,
-    out: CommandReply,
-    ctx: BotCtx & { botId: string },
-  ): Promise<string[]> {
-    const config = this.readState(channel).config,
-      bot = this.getProfile(ctx.botId, config);
-    if (!bot) return [];
-    const userId = validUserId(input.userId);
-    if (this.readState(channel).duels.some((d) => d.status === "pending" && d.a === userId && d.b === ctx.botId))
-      return [(await this.botPlays(channel, bot, "accept", "", ctx)).reply];
-    if (input.action === "give" && out.reason === "given" && normalizeUsername(input.target) === bot.username) {
-      return [
-        (await this.botPlays(channel, bot, "give", normalizeUsername(input.username), { ...ctx, amount: input.amount }))
-          .reply,
-      ];
-    }
-    return [];
-  }
-
-  // "!fray spar": the bot challenges whoever asked. "!fray e2e [@name]" (broadcaster, mods or the bot account): the bot
-  // plays every chat command once against @name (default: whoever asked) and posts which steps passed.
-  async botDebug(
-    channel: string,
-    mode: string,
-    {
-      ev,
-      words,
-      botId,
-      origin,
-      settings,
-      subscriptionId,
-    }: BotCtx & { ev: Partial<ChatEvent>; words: string[]; botId: string },
-  ): Promise<string[]> {
-    const config = this.readState(channel).config,
-      bot = this.getProfile(botId, config);
-    const userId = validUserId(ev.chatter_user_id),
-      username = normalizeUsername(ev.chatter_user_login);
-    if (!bot)
-      return [
-        `PixFray debug: the bot account has no saved fighter here yet. Sign in as the bot at ${origin}/?channel=${channel} and save one.`,
-      ];
-    const ctx = { origin, settings, subscriptionId };
-    if (mode === "spar") {
-      if (userId === botId)
-        return ["PixFray debug: the bot can't spar with itself. Type !fray spar from another account."];
-      return [(await this.botPlays(channel, bot, "challenge", username, ctx)).reply];
-    }
-    const allowed = userId === botId || userId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
-    if (!allowed) return ["PixFray debug: only the broadcaster or a mod can run !fray e2e."];
-    const named = seTarget(words[2]);
-    const opponent = named
-      ? this.getProfileByUsername(named, config)
-      : userId === botId
-        ? null
-        : this.getProfile(userId, config);
-    if (!opponent)
-      return [
-        named
-          ? `PixFray debug: @${named} has no saved fighter here.`
-          : userId === botId
-            ? "PixFray debug: name the opponent: !fray e2e @name"
-            : `PixFray debug: @${username} has no saved fighter here. Save one at ${origin}/?channel=${channel}`,
-      ];
-    if (opponent.userId === botId) return ["PixFray debug: the opponent can't be the bot itself."];
-    return this.botE2e(channel, bot, opponent, { ...ctx, kind: "e2e" });
-  }
-
-  async botE2e(channel: string, bot: Profile, opponent: Profile, ctx: BotCtx & { kind: string }): Promise<string[]> {
-    const names = ctx.settings.names,
-      results: { label: string; action: string; ok: boolean; reason: string; want: string[] }[] = [];
-    const player = { B: bot, O: opponent };
-    for (const [who, action, target, want, gate] of E2E_STEPS) {
-      const actor = player[who],
-        aimed = target ? player[target].username : "";
-      const out = await this.botPlays(channel, actor, action, aimed, {
-        ...ctx,
-        amount: action === "give" ? 1 : undefined,
-      });
-      const ok = Boolean(out.reply) && want.includes(out.reason);
-      const label =
-        String(names[action] || action).replace(/^!/, "") +
-        (aimed ? " @" + aimed : "") +
-        (who === "O" ? " by " + opponent.username : "");
-      results.push({ label, action, ok, reason: out.reason, want });
-      // A rematch the game allowed leaves a challenge open; the opponent declines it so the run ends clean.
-      if (action === "rematch" && out.reason === "challenge")
-        await this.botPlays(channel, opponent, "decline", "", ctx);
-      if (!ok && gate) break; // the steps after this one need its duel
-    }
-    const passed = results.filter((r) => r.ok).length,
-      stopped = results.length < E2E_STEPS.length;
-    const head =
-      `PixFray e2e, ${bot.username} vs ${opponent.username}: ${passed} of ${E2E_STEPS.length} steps passed` +
-      (stopped ? `, stopped early (a duel or cooldown between them is still running; try again in 30 s).` : ".");
-    const parts = results.map((r) =>
-      r.ok
-        ? `${r.label} ok${r.reason !== r.action ? " (" + r.reason + ")" : ""}`
-        : `FAIL ${r.label}: got ${r.reason || "no reply"}, want ${r.want.join("|")}`,
-    );
-    logRoomEvent(this, "command", `e2e ${bot.username} vs ${opponent.username}: ${passed}/${E2E_STEPS.length}`, {
-      channel,
-      via: "e2e",
-      passed,
-      steps: E2E_STEPS.length,
-      results,
-    });
-    return [head, ...chatLines(parts, " · ", MAX_E2E_LINE)];
-  }
-
-  // The command itself, shared by StreamElements and the bot. source: { kind: "se" | "bot", subscriptionId }.
-  async runCommand(
-    channel: string,
-    input: CommandInput,
-    origin: string,
-    settings: SeSettings,
-    source: { kind: string; subscriptionId: string; botPlays?: boolean },
-  ): Promise<Response> {
-    // includes() is true only for one of those strings
-    const action = SE_ACTIONS.includes(input.action as string) ? (input.action as string) : "";
-    const userId = validUserId(input.userId);
-    const username = normalizeUsername(input.username);
-    const target = normalizeUsername(input.target);
-    const now = Date.now();
-    const names = settings.names;
-    let state0 = this.readState(channel);
-    // The first command with the right key makes StreamElements the chat source, unless a mod turned chat off on
-    // purpose (Disconnect chat; "Use StreamElements" turns it back on). SE_ONLY (test site) always switches.
-    let switchedFrom = "";
-    const turnedOff = state0.chat.status === "disconnected" && state0.chat.createdAt > 0;
-    if (
-      source.kind === "se" &&
-      state0.chat.subscriptionId !== SE_SUBSCRIPTION_ID &&
-      (this.env?.SE_ONLY === "1" || !turnedOff)
-    ) {
-      switchedFrom = state0.chat.subscriptionId || ""; // a Twitch EventSub subscription the Worker deletes
-      const switched = this.advance(
-        channel,
-        { type: "chat_subscription", subscriptionId: SE_SUBSCRIPTION_ID, status: "enabled", createdAt: now },
-        now,
-      );
-      if (switched.visible) this.broadcast(switched.state);
-      await this.scheduleAlarm(switched.state);
-      state0 = switched.state;
-    }
-    // Every command is logged with what came in, what the game decided and what the bot said.
-    const done = (reply: string, reason: string, extra: JsonObject = {}) => {
-      logRoomEvent(
-        this,
-        "command",
-        // the action as sent, whatever its type, reads as text in the log
-        `${username || "?"} ${(input.action as string) || "?"}${target ? " @" + target : ""} -> ${reason}`,
-        {
-          channel,
-          via: source.kind,
-          user: username,
-          userId,
-          action: input.action,
-          t: String(input.targetRaw || "").slice(0, 80),
-          target,
-          reason,
-          reply,
-          ...extra,
-        },
-      );
-      return json({ reply, ...(source.kind === "se" ? {} : { reason }), ...(switchedFrom ? { switchedFrom } : {}) }); // the bot reads reason
-    };
-    if (!action) return done(`Lost in the arena? Type ${names.help}`, "unknown_action");
-    if (!userId || !username)
-      return done(
-        "PixFray: this command is missing sender details. Copy it again from the admin page.",
-        "missing_sender",
-      );
-    if (action === "checkin") {
-      // works while duels are paused: it only needs the stream to be live
-      const checked = await this.checkin(channel, { userId }, now);
-      return done(
-        // the sender's name as sent; short() reads it through String()
-        seCheckinText(checked, {
-          who: (input.displayName as string) || username,
-          origin,
-          channel,
-        }),
-        checked.reason,
-        checked.reason === "checked_in" ? { streak: checked.streak, points: checked.points } : {},
-      );
-    }
-    if (action === "wallet") {
-      // like !elo, it works while duels are paused
-      const wallet = this.wallet(channel, userId);
-      return done(
-        // the sender's name as sent; short() reads it through String()
-        seWalletText(wallet, {
-          who: (input.displayName as string) || username,
-          origin,
-          channel,
-        }),
-        wallet ? "wallet" : "no_fighter",
-      );
-    }
-    if (action === "pet") {
-      // like !wallet, it works while duels are paused
-      const self = !target || target === username,
-        info = this.petInfo(channel, self ? { userId } : { username: target });
-      return done(
-        // the sender's name as sent; short() reads it through String()
-        sePetText(info, {
-          who: (input.displayName as string) || username,
-          target: self ? "" : target,
-          origin,
-          channel,
-        }),
-        info ? (info.pet ? "pet" : "no_pet") : "no_fighter",
-      );
-    }
-    if (action === "stats") {
-      // like !pet, it works while duels are paused
-      const self = !target || target === username,
-        info = this.statsInfo(channel, self ? { userId } : { username: target, asker: userId });
-      return done(
-        // the sender's name as sent; short() reads it through String()
-        seStatsText(info, {
-          who: (input.displayName as string) || username,
-          target: self ? "" : target,
-          origin,
-          channel,
-        }),
-        info ? "stats" : "no_fighter",
-      );
-    }
-    if (action === "give") {
-      const given = await this.give(channel, { userId, target, amount: seAmount(input.amount) }, now);
-      return done(
-        // the sender's name as sent; short() reads it through String()
-        seGiveText(given, { who: (input.displayName as string) || username, target, origin, channel, names }),
-        given.reason,
-        given.reason === "given" ? { amount: given.amount } : {},
-      );
-    }
-    if (SE_READ_ACTIONS.includes(action)) {
-      if (action === "help") return done(seHelpText({ names, origin, channel }), "help");
-      if (action === "changelog") return done(seChangelogText({ origin }), "changelog");
-      if (action === "look")
-        return done(
-          seLookText({
-            // the sender's name as sent; short() reads it through String()
-            who: (input.displayName as string) || username,
-            hasFighter: Boolean(this.getProfile(userId, state0.config)),
-            origin,
-            channel,
-          }),
-          "look",
-        );
-      if (action === "top") return done(seTopText(this.leaderboard(channel).slice(0, 5), { origin, channel }), "top");
-      const found = this.eloLookup(channel, target ? { username: target } : { userId });
-      return done(
-        // the sender's name as sent; short() reads it through String()
-        seEloText(found, {
-          self: !target,
-          askerName: (input.displayName as string) || username,
-          target,
-          origin,
-          channel,
-        }),
-        found ? "elo" : "elo_not_found",
-      );
-    }
-    if (!state0.chat.connected || state0.chat.subscriptionId !== source.subscriptionId)
-      return done(
-        seReplyText({
-          result: { ok: false, reason: "chat_offline" },
-          state: state0,
-          actorId: userId,
-          action,
-          target,
-          names,
-          origin,
-          now,
-        }),
-        "chat_offline",
-      );
-    if (action === "challenge" && !target)
-      return done(
-        seReplyText({
-          result: { ok: false, reason: "target_required" },
-          state: state0,
-          actorId: userId,
-          action,
-          target,
-          names,
-          origin,
-          now,
-        }),
-        "target_required",
-      );
-    const messageId = source.kind + ":" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));
-    const msg: BotMessage = {
-      messageId,
-      timestamp: now,
-      quick: true,
-      // The test site's bot account plays its own commands although its login is a known chat bot.
-      ...(this.env?.BOT_DEBUG === "1" && source.botPlays ? { botPlays: true } : {}),
-      subscription: { id: source.subscriptionId },
-      event: {
-        chatter_user_id: userId,
-        chatter_user_login: username,
-        chatter_user_name: String(input.displayName || username).slice(0, 48),
-        message_id: messageId,
-        message: { text: seCommandText(action, target) },
-      },
-    };
-    await this.checkAccountAge(userId);
-    const result = this.processChatMessage(
-      channel,
-      msg,
-      Date.now(),
-      await this.streamNews(channel, msg.event?.message?.text, now),
-    );
-    if (result.visible) this.broadcast(result.state);
-    if (result.changed) await this.scheduleAlarm(result.state);
-    const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
-    if (r.reason === "quick_duel" || r.reason === "duel_completed") this.checkSavedProfiles(result.state, r.duelId);
-    const actorRegistered =
-      r.reason !== "ranked_sign_in_required" ||
-      this.ctx.storage.sql.exec("SELECT 1 FROM profiles WHERE user_id = ?", userId).toArray().length > 0;
-    return done(
-      seReplyText({
-        result: r,
-        state: result.state,
-        actorId: userId,
-        action,
-        target,
-        names,
-        origin,
-        now,
-        actorRegistered,
-      }),
-      r.reason || (r.ok ? action : "error"),
-      r.swings
-        ? {
-            duelId: r.duelId,
-            // other outcomes use their first letter (each outcome is a non-empty word)
-            swings: r.swings
-              .map(
-                (s) =>
-                  s.die + (({ crit: "x" } as { [outcome: string]: string | undefined })[s.outcome] || s.outcome[0]!),
-              )
-              .join(" "),
-          }
-        : {},
-    );
-  }
-
-  // !checkin: once per stream, only while Twitch says the channel is live. Gives config.checkinPoints, plus the
-  // STREAK_MILESTONES extra when the streak reaches a milestone. A streak counts this channel's streams with
-  // check-ins (the streams table) in a row; one missed stream a week is forgiven. Points are stored apart from wins (bonus_points), so a rank reset keeps them.
-  async checkin(channel: string, { userId }: { userId: string }, now = Date.now()): Promise<CheckinReply> {
-    if (!userId || !this.getProfile(userId, this.readState(channel).config)) return { reason: "no_fighter" };
-    let stream: { id: string; startedAt: number } | null;
-    try {
-      stream = await this.currentStream(channel, now);
-    } catch (error) {
-      logRoomEvent(this, "warn", "twitch stream lookup failed", {
-        channel,
-        error: String((error as Thrown)?.message || error).slice(0, 200), // anything can be thrown
-      });
-      return { reason: "twitch_error" };
-    }
-    // Test mode while offline: the check-in a next stream would give, worked out the same way but never saved.
-    const test = !stream && Boolean(this.checkinTest(now));
-    if (!stream && !test) return { reason: "not_live" };
-    return this.ctx.storage.transactionSync((): CheckinReply => {
-      const sql = this.ctx.storage.sql,
-        state = this.readState(channel),
-        config = state.config;
-      const row = sql
-        .exec<
-          Pick<
-            ProfileTable,
-            | "wins"
-            | "losses"
-            | "bonus_points"
-            | "streak"
-            | "last_stream"
-            | "last_stream_seq"
-            | "free_miss_at"
-            | "power"
-            | "guard"
-            | "luck"
-            | "crit"
-            | "dodge"
-            | "counter"
-            | "vitality"
-          >
-        >(
-          "SELECT wins, losses, bonus_points, streak, last_stream, last_stream_seq, free_miss_at, power, guard, luck, crit, dodge, counter, vitality FROM profiles WHERE user_id = ?",
-          userId,
-        )
-        .toArray()[0];
-      if (!row) return { reason: "no_fighter" };
-      // stream! : without a stream, test is true (checked above)
-      if (!test && row.last_stream === stream!.id) return { reason: "already_checked_in", streak: row.streak };
-      if (!test)
-        sql.exec(
-          "INSERT OR IGNORE INTO streams (stream_id, started_at) VALUES (?, ?)",
-          stream!.id, // not a test, so there is a stream
-          stream!.startedAt || now, // as above
-        );
-      const seq = test
-        ? (sql.exec<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM streams").toArray()[0]?.seq || 0) + 1
-        : // not a test, so there is a stream, and its row was inserted just above
-          sql.exec<{ seq: number }>("SELECT seq FROM streams WHERE stream_id = ?", stream!.id).toArray()[0]!.seq;
-      const missed = row.last_stream_seq > 0 ? seq - row.last_stream_seq - 1 : -1;
-      const freeMiss = missed === 1 && now - row.free_miss_at >= FREE_MISS_MS;
-      const streak = missed === 0 || freeMiss ? row.streak + 1 : 1;
-      const extra = config.streakBonus ? STREAK_MILESTONES.get(streak) || 0 : 0;
-      const milestone = extra > 0;
-      const points = config.checkinPoints + extra;
-      const bonus = Math.min(MAX_BONUS, row.bonus_points + points);
-      // The total counts only wins the stream has shown, like !wallet: a quick duel still playing doesn't give it away.
-      const hidden = hiddenResults(state, now).get(userId);
-      const earned = { wins: row.wins - (hidden?.wins || 0), bonus, losses: row.losses - (hidden?.losses || 0) };
-      const total = pointsFor(earned),
-        unspent = Math.max(0, total - spentOn(effectiveStats(row, earned)));
-      if (test) return { reason: "checked_in", test: true, streak, points, milestone, freeMiss, total, unspent };
-      sql.exec(
-        "UPDATE profiles SET bonus_points = ?, checkins = checkins + 1, streak = ?, last_stream = ?, last_stream_seq = ?, free_miss_at = ? WHERE user_id = ?",
-        bonus,
-        streak,
-        stream!.id, // not a test, so there is a stream
-        seq,
-        freeMiss ? now : row.free_miss_at,
-        userId,
-      );
-      const active = state.players.find((p) => p.userId === userId);
-      if (active) {
-        active.bonus = bonus;
-        this.writeState(state);
-      } // the next duel counts the new points
-      return { reason: "checked_in", streak, points, milestone, freeMiss, total, unspent };
-    });
-  }
-
-  // !wallet: dollars, upgrade points and streak as the stream has shown them (a quick duel's payout stays hidden too).
-  wallet(channel: string, userId: string) {
-    const state = this.readState(channel);
-    // shownProfile passes null (no fighter) through
-    const profile =
-      userId && shownProfile(this.getProfile(userId, state.config) as Profile, hiddenResults(state, Date.now()));
-    return profile
-      ? { dollars: profile.dollars, style: profile.styleDollars, points: pointsFor(profile), streak: profile.streak }
-      : null;
-  }
-
-  // !give @name amount: dollars from one saved fighter to another, only while the channel is live. Limits (config):
-  // giveEnabled, giveMinDuels finished duels first, and at most giveMaxPerStream given per stream.
-  async give(
-    channel: string,
-    { userId, target, amount }: { userId: string; target: string; amount: number | null },
-    now = Date.now(),
-  ): Promise<GiveReply> {
-    const config = this.readState(channel).config;
-    if (!config.giveEnabled) return { reason: "give_off" };
-    const giver = userId && this.getProfile(userId, config);
-    if (!giver) return { reason: "no_fighter" };
-    if (!target || !Number.isInteger(amount) || amount < 1) return { reason: "give_usage" };
-    const to = this.getProfileByUsername(target, config);
-    if (!to) return { reason: "target_not_found" };
-    if (to.userId === giver.userId) return { reason: "self_give" };
-    let stream: { id: string; startedAt: number } | null;
-    try {
-      stream = await this.currentStream(channel, now);
-    } catch (error) {
-      logRoomEvent(this, "warn", "twitch stream lookup failed", {
-        channel,
-        error: String((error as Thrown)?.message || error).slice(0, 200), // anything can be thrown
-      });
-      return { reason: "twitch_error" };
-    }
-    if (!stream) return { reason: "not_live" };
-    return this.ctx.storage.transactionSync((): GiveReply => {
-      const sql = this.ctx.storage.sql,
-        state = this.readState(channel),
-        cfg = state.config;
-      const row = sql
-        .exec<Pick<ProfileTable, "wins" | "losses" | "dollars" | "give_stream" | "given_in_stream">>(
-          "SELECT wins, losses, dollars, give_stream, given_in_stream FROM profiles WHERE user_id = ?",
-          giver.userId,
-        )
-        .toArray()[0];
-      if (!row) return { reason: "no_fighter" };
-      // Spend only what the stream has shown: a quick duel's payout or result still hidden doesn't count yet.
-      const h = hiddenResults(state, now).get(giver.userId) || { wins: 0, losses: 0, dollars: 0 };
-      const duels = row.wins + row.losses - h.wins - h.losses,
-        dollars = Math.max(0, row.dollars - h.dollars);
-      if (duels < cfg.giveMinDuels) return { reason: "too_few_duels", duels, need: cfg.giveMinDuels };
-      const given = row.give_stream === stream.id ? row.given_in_stream : 0,
-        left = Math.max(0, cfg.giveMaxPerStream - given);
-      if (!left) return { reason: "give_cap", max: cfg.giveMaxPerStream };
-      if (amount > left) return { reason: "over_cap", left, max: cfg.giveMaxPerStream };
-      if (amount > dollars) return { reason: "not_enough", dollars };
-      // A wallet holds at most MAX_DOLLARS; a gift that wouldn't fit is refused rather than losing the rest.
-      const room =
-        MAX_DOLLARS -
-        (sql.exec<{ dollars: number }>("SELECT dollars FROM profiles WHERE user_id = ?", to.userId).toArray()[0]
-          ?.dollars || 0);
-      if (amount > room) return { reason: "target_full", to: to.displayName || to.username, room: Math.max(0, room) };
-      sql.exec(
-        "UPDATE profiles SET dollars = dollars - ?, give_stream = ?, given_in_stream = ? WHERE user_id = ?",
-        amount,
-        stream.id,
-        given + amount,
-        giver.userId,
-      );
-      sql.exec("UPDATE profiles SET dollars = dollars + ? WHERE user_id = ?", amount, to.userId);
-      return {
-        reason: "given",
-        amount,
-        to: to.displayName || to.username,
-        dollars: dollars - amount,
-        left: left - amount,
-      };
-    });
-  }
-
-  // What a fighter bought: { pets: [ids], hats: [ids], <cosmetic kind>: [ids], slots: build slots (1 free + bought) }.
-  owned(userId: string): Owned {
-    const out: Owned = {
-      pets: [],
-      hats: [],
-      // one empty list per cosmetic kind
-      ...(Object.fromEntries(COSMETIC_KINDS.map((k): [CosmeticKind, string[]] => [k, []])) as {
-        [kind in CosmeticKind]: string[];
-      }),
-      slots: 1,
-      rolls: {},
-      rerolled: [],
-    };
-    for (const r of this.ctx.storage.sql
-      .exec<{ kind: string; item_id: string; roll: string; rerolled: number }>(
-        "SELECT kind, item_id, roll, rerolled FROM owned_items WHERE user_id = ? ORDER BY bought_at",
-        userId,
-      )
-      .toArray()) {
-      if (r.kind === "pet") {
-        out.pets.push(r.item_id);
-        if (r.roll) out.rolls[r.item_id] = parseRoll(r.roll);
-        if (r.rerolled) out.rerolled.push(r.item_id);
-      } else if (r.kind === "hat") out.hats.push(r.item_id);
-      else if (r.kind === "slot") out.slots += 1;
-      // a cosmetic kind; any other reads undefined and is skipped
-      else if (out[r.kind as CosmeticKind]) out[r.kind as CosmeticKind].push(r.item_id);
-    }
-    return out;
-  }
-
-  buildSlots(userId: string): number {
-    return (
-      1 +
-      this.ctx.storage.sql
-        .exec<{ n: number }>("SELECT COUNT(*) AS n FROM owned_items WHERE user_id = ? AND kind = 'slot'", userId)
-        .toArray()[0]!.n // COUNT(*) always returns one row
-    );
-  }
-
-  // Every build slot's loadout, in slot order; null for a bought slot that was never saved. The active slot is
-  // always the profile itself (a fighter saved before builds has no row yet).
-  builds(profile: { readonly [field: string]: unknown; userId: string; build?: number | undefined }) {
-    const out = Array.from({ length: this.buildSlots(profile.userId) }, (): JsonObject | null => null);
-    const pets = new Set(this.owned(profile.userId).pets);
-    for (const r of this.ctx.storage.sql
-      .exec<{ slot: number; data: string }>("SELECT slot, data FROM builds WHERE user_id = ?", profile.userId)
-      .toArray()) {
-      if (r.slot >= out.length) continue;
-      const build = safeJsonParse<{ pet?: unknown; [field: string]: unknown }, null>(r.data, null);
-      // a pet id that isn't a string is never owned
-      if (build?.pet && !pets.has(build.pet as string)) build.pet = ""; // an uploaded pet a mod deleted since this build was saved
-      out[r.slot] = build;
-    }
-    if ((profile.build || 0) < out.length) out[profile.build || 0] = buildOf(profile);
-    return out;
-  }
-
-  // Shop: a pet (price by tier, config) or a hat before its wins unlock it (hatPrice). Pays with the dollars the
-  // stream has shown, like give(). A pet takes duel dollars only; anything else spends style dollars (channel point
-  // rewards) first, then dollars. Buying doesn't equip; the dashboard selects it and the viewer saves.
-  buy(
-    channel: string,
-    userId: string,
-    { kind, id, price: expected }: { kind?: unknown; id?: unknown; price?: unknown },
-  ) {
-    return this.ctx.storage.transactionSync(() => {
-      const sql = this.ctx.storage.sql,
-        state = this.readState(channel),
-        config = state.config,
-        now = Date.now();
-      const row = sql
-        .exec<Pick<ProfileTable, "wins" | "dollars" | "style_dollars">>(
-          "SELECT wins, dollars, style_dollars FROM profiles WHERE user_id = ?",
-          userId,
-        )
-        .toArray()[0];
-      if (!row) return { ok: false, reason: "no_fighter" };
-      const h = hiddenResults(state, now).get(userId) || { wins: 0, dollars: 0 };
-      let price: number | null = null;
-      const pet = kind === "pet" ? petCatalog(sql, channel, config).find((p) => p.id === id) : undefined;
-      if (kind === "pet") price = pet?.price ?? null;
-      else if (kind === "hat") {
-        const hat = HATS.find((x) => x.id && x.id === id);
-        if (hat && hatUnlocked(hat.id, row.wins - h.wins)) return { ok: false, reason: "already_unlocked" };
-        if (hat && hatPrice(hat, config) === null) return { ok: false, reason: "hats_not_for_sale" };
-        price = hat ? hatPrice(hat, config) : null;
-      } else if (kind === "slot") {
-        const slots = this.buildSlots(userId);
-        if (slots >= MAX_BUILDS) return { ok: false, reason: "max_slots" };
-        price = slotPrice(slots, config);
-        id = String(slots + 1); // the slot number it adds, so each bought slot is its own owned_items row
-        // includes() is true only for a cosmetic kind; cosmeticItem finds no item for an id that isn't a string
-      } else if (COSMETIC_KINDS.includes(kind as CosmeticKind))
-        price = cosmeticItem(kind as CosmeticKind, id as string) ? cosmeticPrice(kind as CosmeticKind, config) : null;
-      if (price === null) return { ok: false, reason: "unknown_item" };
-      if (
-        sql.exec("SELECT 1 FROM owned_items WHERE user_id = ? AND kind = ? AND item_id = ?", userId, kind, id).toArray()
-          .length
-      )
-        return { ok: false, reason: "owned" };
-      // The page sends the price it showed; a mod may have changed it since, and the viewer should see the new one first.
-      if (expected !== undefined && expected !== price) return { ok: false, reason: "price_changed", price };
-      const dollars = Math.max(0, row.dollars - h.dollars),
-        fromStyle = kind === "pet" ? 0 : Math.min(row.style_dollars, price),
-        fromDollars = price - fromStyle;
-      if (fromDollars > dollars)
-        return { ok: false, reason: "not_enough", price, dollars, styleDollars: row.style_dollars };
-      sql.exec(
-        "UPDATE profiles SET dollars = dollars - ?, style_dollars = style_dollars - ? WHERE user_id = ?",
-        fromDollars,
-        fromStyle,
-        userId,
-      );
-      sql.exec(
-        "INSERT INTO owned_items (user_id, kind, item_id, price, bought_at, roll) VALUES (?, ?, ?, ?, ?, ?)",
-        userId,
-        kind,
-        id,
-        price,
-        now,
-        pet?.tier === "legendary" ? rollLegendary().join(",") : "",
-      );
-      logRoomEvent(this, "command", userId + " bought " + kind + " " + id + " for " + price, {
-        channel,
-        action: "buy",
-        userId,
-        kind,
-        id,
-        price,
-        fromStyle,
-      });
-      return {
-        ok: true,
-        reason: "bought",
-        kind,
-        id,
-        price,
-        dollars: dollars - fromDollars,
-        styleDollars: row.style_dollars - fromStyle,
-        owned: this.owned(userId),
-      };
-    });
-  }
-
-  // A legendary pet's one free reroll (shop kind "reroll"): new rolled stats, never the same set. Refused while that pet
-  // is in an open duel, like a build change. state is the stage to broadcast when the pet is out.
-  reroll(channel: string, userId: string, id: string) {
-    return this.ctx.storage.transactionSync(() => {
-      const sql = this.ctx.storage.sql,
-        state = this.readState(channel);
-      const fighter = sql
-        .exec<Pick<ProfileTable, "dollars" | "style_dollars">>(
-          "SELECT dollars, style_dollars FROM profiles WHERE user_id = ?",
-          userId,
-        )
-        .toArray()[0];
-      if (!fighter) return { ok: false, reason: "no_fighter" };
-      const pet = petCatalog(sql, channel, state.config).find((p) => p.id === id);
-      const row =
-        pet?.tier === "legendary"
-          ? sql
-              .exec<{ roll: string; rerolled: number }>(
-                "SELECT roll, rerolled FROM owned_items WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
-                userId,
-                id,
-              )
-              .toArray()[0]
-          : undefined;
-      if (!row) return { ok: false, reason: "unknown_item" };
-      if (row.rerolled) return { ok: false, reason: "rerolled" };
-      const out = state.players.some((p) => p.userId === userId && p.pet === id);
-      if (out && hasOpenDuel(state, userId)) return { ok: false, reason: "in_duel" };
-      const roll = rollLegendary(Math.random, parseRoll(row.roll));
-      sql.exec(
-        "UPDATE owned_items SET roll = ?, rerolled = 1 WHERE user_id = ? AND kind = 'pet' AND item_id = ?",
-        roll.join(","),
-        userId,
-        id,
-      );
-      logRoomEvent(this, "command", userId + " rerolled pet " + id + " to " + roll.join(","), {
-        channel,
-        action: "reroll",
-        userId,
-        id,
-      });
-      const changed = out && this.syncPetBoosts(state, [userId]);
-      if (changed) {
-        state.revision += 1;
-        this.writeState(state);
-      }
-      const dollars = Math.max(0, fighter.dollars - (hiddenResults(state, Date.now()).get(userId)?.dollars || 0));
-      return {
-        ok: true,
-        reason: "rerolled",
-        kind: "reroll",
-        id,
-        dollars,
-        styleDollars: fighter.style_dollars,
-        owned: this.owned(userId),
-        state: changed ? state : null,
-      };
-    });
-  }
-
-  // Fighters on stage whose active pet's stored roll differs from their boost take the stored one; true when any did.
-  syncPetBoosts(state: GameState, userIds: readonly string[]): boolean {
-    let changed = false;
-    for (const p of state.players) {
-      if (!p.pet || !userIds.includes(p.userId)) continue;
-      const saved = this.getProfile(p.userId, state.config);
-      if (saved?.pet !== p.pet || JSON.stringify(saved.petBoost) === JSON.stringify(p.petBoost)) continue;
-      p.petBoost = saved.petBoost;
-      changed = true;
-    }
-    return changed;
-  }
-
-  // !pet [@name]: a saved fighter's active pet as the catalog names it, or null when there's no such fighter.
-  // !stats [@name]: the upgrade levels that count in duels, unspent points and the pet's boost, as the stream has shown
-  // them (a quick duel still playing doesn't give its win away, like !wallet).
-  statsInfo(
-    channel: string,
-    { userId = "", username = "", asker = "" }: { userId?: string; username?: string; asker?: string },
-  ) {
-    const state = this.readState(channel);
-    const found = userId ? this.getProfile(userId, state.config) : this.getProfileByUsername(username, state.config);
-    if (!found) return null;
-    const profile = shownProfile(found, hiddenResults(state, Date.now()));
-    const own = effectiveStats(profile.stats, profile);
-    return {
-      name: profile.displayName || profile.username,
-      stats: effectiveStats(own, profile, null, state.config.maxStatLevel),
-      unspent: Math.max(0, pointsFor(profile) - spentOn(own)),
-      petBoost: profile.petBoost,
-      rankedLeft: asker && asker !== profile.userId ? pairRankedLeft(state, asker, profile.userId) : null,
-    };
-  }
-
-  petInfo(channel: string, { userId = "", username = "" }: { userId?: string; username?: string }) {
-    const config = this.readState(channel).config;
-    const profile = userId ? this.getProfile(userId, config) : this.getProfileByUsername(username, config);
-    if (!profile) return null;
-    const item = profile.pet
-      ? petCatalog(this.ctx.storage.sql, channel, config).find((p) => p.id === profile.pet)
-      : null;
-    return {
-      name: profile.displayName || profile.username,
-      pet: item ? { label: item.label, tier: item.tier, boost: profile.petBoost } : null, // a legendary's own roll
-    };
-  }
-
-  // Mod gift from the admin page: adds dollars to a saved fighter, or takes them back with a negative amount (never below 0).
-  giftDollars(channel: string, payload: JsonObject, actorId: string, actorName: string) {
-    const amount = Number(payload.amount);
-    if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > MAX_GIFT)
-      return { ok: false, reason: "invalid_amount" };
-    const name = normalizeUsername(String(payload.username || "").replace(/^@/, ""));
-    const sql = this.ctx.storage.sql;
-    const row = name
-      ? sql
-          .exec<{ user_id: string; username: string; display_name: string; dollars: number }>(
-            "SELECT user_id, username, display_name, dollars FROM profiles WHERE username = ? COLLATE NOCASE",
-            name,
-          )
-          .toArray()[0]
-      : null;
-    if (!row) return { ok: false, reason: "profile_not_found" };
-    const dollars = Math.max(0, Math.min(MAX_DOLLARS, row.dollars + amount));
-    sql.exec("UPDATE profiles SET dollars = ? WHERE user_id = ?", dollars, row.user_id);
-    logRoomEvent(this, "command", `${actorName || actorId} gift ${amount} -> ${row.username}`, {
-      channel,
-      action: "giftDollars",
-      actorId,
-      actorName,
-      userId: row.user_id,
-      user: row.username,
-      amount,
-      dollars,
-    });
-    return {
-      ok: true,
-      reason: "dollars_gifted",
-      username: row.username,
-      displayName: row.display_name,
-      amount,
-      dollars,
-    };
-  }
-
-  // Mods start one pair's ranked count for this stream over (game.ts resetPair), by Twitch login, from the mod page or
-  // !resetpair @a @b in chat.
-  resetPair(channel: string, a: unknown, b: unknown, actorId: string, actorName: string) {
-    const config = this.readState(channel).config,
-      find = (name: unknown) =>
-        this.getProfileByUsername(normalizeUsername(String(name || "").replace(/^@/, "")), config);
-    const one = find(a),
-      two = find(b);
-    if (!one || !two)
-      return { ok: false, reason: "profile_not_found", missing: one ? String(b || "") : String(a || "") };
-    const out = this.advance(
-      channel,
-      { type: "admin", actorId, actorName, action: "resetPair", payload: { a: one.userId, b: two.userId } },
-      Date.now(),
-    );
-    if (!out.result.ok) return { ok: false, reason: out.result.reason || "invalid_pair" };
-    logRoomEvent(this, "command", `${actorName || actorId} reset pair ${one.username} ${two.username}`, {
-      channel,
-      action: "resetPair",
-      actorId,
-      actorName,
-      a: one.username,
-      b: two.username,
-      amount: out.result.amount,
-    });
-    return {
-      ok: true,
-      reason: "pair_reset",
-      a: one.displayName || one.username,
-      b: two.displayName || two.username,
-      left: pairRankedLeft(out.state, one.userId, two.userId),
-    };
-  }
-
-  // Dollars for finished duels: game.ts finishDuel sets duel.payout, and this adds it to the saved profiles once
-  // (duel.paid). Called inside the transaction that wrote the result; returns true when the state needs writing.
-  payDuels(state: GameState): boolean {
-    let paid = false;
-    // paid is the room's own mark, kept on the duel but not part of the game's Duel type
-    for (const duel of state.duels as (Duel & { paid?: boolean })[]) {
-      if (!duel.payout || duel.paid) continue;
-      for (const [id, amount] of Object.entries(duel.payout))
-        this.ctx.storage.sql.exec(
-          "UPDATE profiles SET dollars = MIN(?, dollars + ?) WHERE user_id = ?",
-          MAX_DOLLARS,
-          amount,
-          id,
-        );
-      duel.paid = true;
-      paid = true;
-    }
-    return paid;
-  }
-
-  // The bot's health row (bot_status), as the admin page reads it.
   botStatus() {
-    const r =
-      this.ctx.storage.sql.exec<BotStatusRow>("SELECT * FROM bot_status WHERE id = 1").toArray()[0] ||
-      ({} as Partial<BotStatusRow>); // no row: every field falls back below
+    const r: Partial<BotStatusRow> =
+      this.ctx.storage.sql.exec<BotStatusRow>("SELECT * FROM bot_status WHERE id = 1").toArray()[0] || {};
     return {
       heardAt: r.heard_at || 0,
       heard: r.heard || "",
@@ -3120,269 +634,8 @@ export class ChannelRoom extends DurableObject<Env> {
     };
   }
 
-  noteBotHeard(what: string): void {
-    this.ctx.storage.sql.exec(
-      "UPDATE bot_status SET heard_at = ?, heard = ? WHERE id = 1",
-      Date.now(),
-      String(what).slice(0, 80),
-    );
-  }
-
-  // A reply the room didn't send. Logged as a warning at most once a minute per reason (cooldowns aren't logged).
-  noteBotHeld(channel: string, reason: string, context: JsonObject = {}, log = true): void {
-    const now = Date.now(),
-      last = (this.heldLogged ||= {});
-    this.ctx.storage.sql.exec("UPDATE bot_status SET held_at = ?, held_reason = ? WHERE id = 1", now, reason);
-    count(this, "bot_held");
-    count(this, "bot_held_" + reason);
-    trace(this, "chat", "bot held: " + reason, { channel, reason, ...context }, false);
-    if (!log || now - (last[reason] || 0) < 60_000) return;
-    last[reason] = now;
-    logRoomEvent(this, "warn", "bot reply held back: " + reason, { channel, via: "bot", reason, ...context });
-  }
-
-  // What Twitch said about the bot's lines ({sent, reason} each, from sendChatMessage). A dropped or failed line is
-  // logged as a warning with Twitch's reason; sent lines only update the status.
-  noteBotSent(channel: string, results: (Partial<SendResult> | null | undefined)[], via = "reply"): void {
-    const sql = this.ctx.storage.sql,
-      now = Date.now();
-    // an empty list of results to add these to
-    for (const r of ([] as (Partial<SendResult> | null | undefined)[]).concat(results || [])) {
-      if (r?.sent === true) {
-        sql.exec("UPDATE bot_status SET sent_at = ?, sent_total = sent_total + 1 WHERE id = 1", now);
-        count(this, "bot_sent");
-        trace(this, "chat", "bot " + via + " sent", { channel, via });
-        continue;
-      }
-      count(this, "bot_failed");
-      const reason = String(r?.reason || "unknown").slice(0, 200);
-      sql.exec(
-        "UPDATE bot_status SET failed_at = ?, failed_total = failed_total + 1, failed_reason = ? WHERE id = 1",
-        now,
-        reason,
-      );
-      logRoomEvent(this, "warn", "bot " + via + " dropped: " + botDropText(reason), { channel, via: "bot", reason });
-    }
-  }
-
-  // "!fray debug": the health line, from the status before this command was heard.
-  botStatusLine(state: GameState, s: ReturnType<ChannelRoom["botStatus"]>, now: number): string {
-    const ago = (at: number) => (at ? agoText(now - at) : "never");
-    const every = Number(state.config.reminderMin) || 0,
-      due = every
-        ? this.ctx.storage.sql.exec<{ next_at: number }>("SELECT next_at FROM bot_reminder WHERE id = 1").toArray()[0]
-            ?.next_at
-        : 0;
-    return [
-      "PixFray debug: chat " + (state.chat.connected ? "connected" : "not connected"),
-      "last command " + (s.heard ? s.heard + " " + ago(s.heardAt) : "never"),
-      `replies ${s.sent} sent, ${s.failed} dropped` +
-        (s.failedAt ? ` (last drop ${ago(s.failedAt)}: ${botDropText(s.failedReason)})` : ""),
-      `${s.recent}/${s.cap} replies in 30 s`,
-      s.heldAt ? `last held back ${ago(s.heldAt)}: ${s.heldReason}` : "",
-      "reminder " +
-        (every ? `every ${every} min` + (due ? `, next in ${agoText(Math.max(0, due - now))}` : "") : "off"),
-    ]
-      .filter(Boolean)
-      .join(" · ");
-  }
-
-  // The bot's text commands and counters, for the admin page.
-  botCommands() {
-    const sql = this.ctx.storage.sql;
-    return {
-      commands: sql
-        .exec<{ name: string; reply: string }>("SELECT name, reply FROM bot_commands ORDER BY name")
-        .toArray()
-        .map((r) => ({ name: r.name, reply: r.reply })),
-      counters: sql
-        .exec<{ name: string; value: number }>("SELECT name, value FROM bot_counters ORDER BY name")
-        .toArray()
-        .map((r) => ({ name: r.name, value: r.value })),
-      max: MAX_BOT_COMMANDS,
-    };
-  }
-
-  // Admin page: saveCommand {name, reply, oldName?}, deleteCommand {name}, setCounter {name, value}. A name can't be a
-  // PixFray command's (the channel's names, their defaults and !pay). A counter first used in a reply starts at 0.
-  editBotCommands(channel: string, action: string, payload: JsonObject, actorName: string) {
-    const sql = this.ctx.storage.sql;
-    if (action === "setCounter") {
-      const name = counterName(payload.name),
-        value = Number(payload.value);
-      if (!name) return { ok: false, reason: "invalid_counter_name" };
-      if (!Number.isInteger(value) || value < 0 || value > MAX_COUNTER)
-        return { ok: false, reason: "invalid_counter_value" };
-      sql.exec(
-        "INSERT INTO bot_counters (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value",
-        name,
-        value,
-      );
-      logRoomEvent(this, "command", `${actorName} counter ${name} = ${value}`, { channel, action });
-      return { ok: true, reason: "counter_saved" };
-    }
-    const name = commandName(payload.name);
-    if (!name) return { ok: false, reason: "invalid_command_name" };
-    if (action === "deleteCommand") {
-      sql.exec("DELETE FROM bot_commands WHERE name = ?", name);
-      logRoomEvent(this, "command", `${actorName} deleted ${name}`, { channel, action });
-      return { ok: true, reason: "command_deleted" };
-    }
-    const reply = commandReplyText(payload.reply);
-    if (!reply) return { ok: false, reason: "empty_command_reply" };
-    if (reply.length > MAX_COMMAND_REPLY) return { ok: false, reason: "command_reply_too_long" };
-    const taken = new Set(
-      ["!pay", ...Object.values(botNames(this.seSettings().names)), ...Object.values(DEFAULT_SE_NAMES)].map((n) =>
-        String(n).toLowerCase(),
-      ),
-    );
-    if (taken.has(name)) return { ok: false, reason: "command_name_taken" };
-    const oldName = commandName(payload.oldName);
-    const exists = sql.exec("SELECT 1 FROM bot_commands WHERE name = ?", name).toArray().length > 0;
-    if (exists && oldName !== name) return { ok: false, reason: "command_exists" };
-    const total = sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM bot_commands").toArray()[0]!.n; // COUNT(*) always returns one row
-    if (!exists && !oldName && total >= MAX_BOT_COMMANDS) return { ok: false, reason: "too_many_commands" };
-    if (oldName && oldName !== name) sql.exec("DELETE FROM bot_commands WHERE name = ?", oldName);
-    sql.exec(
-      "INSERT INTO bot_commands (name, reply, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET reply = excluded.reply, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-      name,
-      reply,
-      Date.now(),
-      actorName,
-    );
-    for (const counter of replyCounters(reply))
-      sql.exec("INSERT OR IGNORE INTO bot_counters (name, value) VALUES (?, 0)", counter);
-    logRoomEvent(this, "command", `${actorName} saved ${name}`, { channel, action });
-    const longest = replyWorstCase(reply);
-    return {
-      ok: true,
-      reason: "command_saved",
-      name,
-      ...(longest > MAX_CHAT_LINE ? { warning: "reply_may_be_cut", longest, max: MAX_CHAT_LINE } : {}),
-    };
-  }
-
-  // A text command's reply, or "" during its cooldown (COMMAND_COOLDOWN_MS for everyone, COMMAND_USER_COOLDOWN_MS per
-  // chatter). Counters change only when the reply is sent.
-  customReply(row: { name: string; reply: string }, ev: Partial<ChatEvent>, words: string[], now: number): string {
-    const user = String(ev.chatter_user_id || ""),
-      cool = (this.commandCooldowns ||= new Map());
-    if (now < (cool.get(row.name) || 0) || now < (cool.get(row.name + " " + user) || 0)) return "";
-    if (cool.size > 500) for (const [key, until] of cool) if (until <= now) cool.delete(key);
-    cool.set(row.name, now + COMMAND_COOLDOWN_MS);
-    cool.set(row.name + " " + user, now + COMMAND_USER_COOLDOWN_MS);
-    const sql = this.ctx.storage.sql;
-    return fitChatLine(
-      renderCommandReply(row.reply, {
-        user: String(ev.chatter_user_name || ev.chatter_user_login || ""),
-        toUser: words[1] || "",
-        count: (name, add) =>
-          add
-            ? sql
-                .exec<{ value: number }>(
-                  "INSERT INTO bot_counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = MIN(value + 1, ?) RETURNING value",
-                  name,
-                  MAX_COUNTER,
-                )
-                .toArray()[0]!.value // RETURNING gives the upserted row
-            : (sql.exec<{ value: number }>("SELECT value FROM bot_counters WHERE name = ?", name).toArray()[0]?.value ??
-              0),
-      }),
-    );
-  }
-
-  // Check-in test mode: {until, by} while on, else null. An expired row reads as off.
-  checkinTest(now = Date.now()) {
-    const row = this.ctx.storage.sql
-      .exec<{ until: number; by_name: string }>("SELECT until, by_name FROM checkin_test WHERE id = 1")
-      .toArray()[0];
-    return row && row.until > now ? { until: row.until, by: row.by_name } : null;
-  }
-
-  // The channel's live stream {id, startedAt} or null. Twitch's answer is kept for a minute; a failed lookup throws.
-  async currentStream(channel: string, now: number): Promise<{ id: string; startedAt: number } | null> {
-    if (this.env?.DEV_TOOLS_TOKEN) {
-      const dev = this.ctx.storage.sql
-        .exec<{ stream_id: string; started_at: number }>("SELECT stream_id, started_at FROM dev_live WHERE id = 1")
-        .toArray()[0];
-      if (dev) return dev.stream_id ? { id: dev.stream_id, startedAt: dev.started_at } : null;
-    }
-    if (this.liveCache && now - this.liveCache.at < LIVE_CACHE_MS) return this.liveCache.stream;
-    const stream = await liveStream(this.env, channel);
-    this.liveCache = { at: now, stream };
-    return stream;
-  }
-
-  // The live check for a chat line that can start a duel (game.ts noteStream): {id, startedAt}, null offline, or
-  // undefined (another command, no Twitch app, or Twitch didn't answer) so the room keeps its last answer.
-  async streamNews(
-    channel: string,
-    text: unknown,
-    now: number,
-  ): Promise<{ id: string; startedAt: number } | null | undefined> {
-    const action = parseGameCommand(text)?.action;
-    if (action !== "duel" && action !== "accept" && action !== "rematch") return undefined;
-    const dev =
-      Boolean(this.env?.DEV_TOOLS_TOKEN) &&
-      this.ctx.storage.sql.exec("SELECT 1 FROM dev_live WHERE id = 1").toArray().length > 0;
-    if (!dev && !this.env?.TWITCH_CLIENT_ID) return undefined;
-    try {
-      return await this.currentStream(channel, now);
-    } catch (error) {
-      // anything can be thrown
-      logRoomEvent(this, "warn", `live check failed: ${String((error as Thrown)?.message || error).slice(0, 80)}`, {
-        channel,
-      });
-      return undefined;
-    }
-  }
-
-  // A saved fighter's Twitch account age, asked once (again after ACCOUNT_RETRY_MS while Twitch doesn't answer).
-  async checkAccountAge(userId: unknown): Promise<void> {
-    const id = validUserId(userId),
-      sql = this.ctx.storage.sql,
-      now = Date.now();
-    if (!id || !this.env?.TWITCH_CLIENT_ID) return;
-    const row = sql
-      .exec<Pick<ProfileTable, "account_created_at" | "account_checked_at">>(
-        "SELECT account_created_at, account_checked_at FROM profiles WHERE user_id = ?",
-        id,
-      )
-      .toArray()[0];
-    if (!row || row.account_created_at > 0 || now - row.account_checked_at < ACCOUNT_RETRY_MS) return;
-    sql.exec("UPDATE profiles SET account_checked_at = ? WHERE user_id = ?", now, id);
-    try {
-      const at = await this.lookupAccount(id);
-      if (at > 0) sql.exec("UPDATE profiles SET account_created_at = ? WHERE user_id = ?", at, id);
-    } catch (error) {
-      // anything can be thrown
-      logRoomEvent(
-        this,
-        "warn",
-        `account age lookup failed: ${String((error as Thrown)?.message || error).slice(0, 80)}`,
-        {
-          userId: id,
-        },
-      );
-    }
-  }
-
   lookupAccount(userId: string): Promise<number> {
     return accountCreatedAt(this.env, userId);
-  }
-
-  // Of these user ids, the ones whose Twitch account is younger than NEW_ACCOUNT_MS. Unknown ages count as old.
-  newAccounts(ids: unknown[], now: number): string[] {
-    const list = [...new Set(ids.map(validUserId).filter(Boolean))];
-    if (!list.length) return [];
-    return this.ctx.storage.sql
-      .exec<{ user_id: string }>(
-        `SELECT user_id FROM profiles WHERE account_created_at > ? AND user_id IN (${list.map(() => "?").join(", ")})`,
-        now - NEW_ACCOUNT_MS,
-        ...list,
-      )
-      .toArray()
-      .map((r) => r.user_id);
   }
 
   // After a finished duel the stored profiles must match the game state, or the next command undoes the result.
@@ -3408,131 +661,6 @@ export class ChannelRoom extends DurableObject<Env> {
     }
   }
 
-  // One channel.chat.message: a presence update, plus a game command when the text parses as one.
-  // No chat replies; rejected commands are logged to the room event list.
-  processChatMessage(
-    channel: string,
-    msg: BotMessage,
-    now: number,
-    stream?: { id: string; startedAt: number } | null,
-  ): ChatOutcome {
-    const ev: Partial<ChatEvent> = msg.event && typeof msg.event === "object" ? msg.event : {};
-    const userId = validUserId(ev.chatter_user_id);
-    const username = normalizeUsername(ev.chatter_user_login);
-    const displayName = String(ev.chatter_user_name || username)
-      .trim()
-      .slice(0, 48);
-    const textValue = String(ev.message?.text || "").slice(0, 512);
-    const color = /^#[0-9a-f]{6}$/i.test(ev.color || "") ? ev.color!.toUpperCase() : ""; // test() passed, so it is set
-    const subscriptionId = String(msg.subscription?.id || "");
-    let since = 0;
-    const outcome = this.ctx.storage.transactionSync((): ChatOutcome => {
-      let state = this.readState(channel);
-      since = state.revision;
-      const none = (reason: string): ChatOutcome => ({
-        state,
-        result: { ok: false, reason },
-        changed: false,
-        visible: false,
-      });
-      if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) return none("unknown_subscription");
-      const steps: ReduceOutput[] = [];
-      const step = (event: GameEvent) => {
-        const r = reduceGame(state, event, now);
-        state = r.state;
-        steps.push(r);
-        return r;
-      };
-      // Twitch only notifies enabled subscriptions, so a notification also confirms a pending one.
-      if (!state.chat.connected) step({ type: "chat_verified", subscriptionId });
-      let main: { result: GameResult } | null = null;
-      if (!userId || !/^[a-z0-9_]{1,25}$/.test(username) || !displayName)
-        main = { result: { ok: false, reason: "invalid_event" } };
-      else if (CHAT_BOTS.has(username) && msg.botPlays !== true) main = { result: { ok: false, reason: "chat_bot" } };
-      else {
-        const userProfile = this.getProfile(userId, state.config);
-        // Registered players keep their saved look; other chatters take their Twitch name color.
-        const profile = userProfile
-          ? { ...userProfile, username, displayName }
-          : { userId, username, displayName, ...(color ? { color } : {}) };
-        const parsed = parseGameCommand(textValue);
-        if (parsed) {
-          const lastId =
-            parsed.action === "rematch"
-              ? state.players.find((p) => p.userId === userId)?.lastOpponentId || userProfile?.lastOpponentId
-              : "";
-          const targetProfile = parsed.target
-            ? this.getProfileByUsername(parsed.target, state.config)
-            : lastId
-              ? this.getProfile(lastId, state.config)
-              : null;
-          const challengers = state.duels.filter((d) => d.status === "pending" && d.b === userId).map((d) => d.a);
-          const newAccounts = this.newAccounts([userId, targetProfile?.userId, lastId, ...challengers], now);
-          main = step({
-            type: "command",
-            messageId: String(ev.message_id || msg.messageId).slice(0, 64),
-            userId,
-            username,
-            displayName,
-            text: textValue,
-            timestamp: Number(msg.timestamp),
-            profile,
-            targetProfile,
-            newAccounts,
-            quick: subscriptionId === SE_SUBSCRIPTION_ID || msg.quick === true,
-            rolls: Array.from({ length: 120 }, () => Math.random()), // 5 slots of 24 (settleQuickDuel)
-            ...(stream !== undefined ? { stream } : {}),
-          });
-          if (!main.result.ok && main.result.reason !== "duplicate")
-            step({
-              type: "command_rejected",
-              userId,
-              command: parsed.action,
-              reason: main.result.reason,
-              retryAt: main.result.retryAt,
-            });
-        } else {
-          const active = state.players.find((item) => item.userId === userId);
-          const fresh =
-            active &&
-            now - active.lastSeen < PRESENCE_REFRESH_MS &&
-            active.displayName === displayName &&
-            (userProfile || !color || active.color === color);
-          if (!fresh) main = step({ type: "presence", userId, username, displayName, profile });
-        }
-        const updated = state.players.find((item) => item.userId === userId);
-        if (
-          updated?.registered &&
-          userProfile &&
-          (updated.username !== userProfile.username || updated.displayName !== userProfile.displayName)
-        )
-          this.upsertProfile(updated);
-        if (main?.result?.reason === "duel_completed" || main?.result?.reason === "quick_duel") {
-          // save Elo, wins and losses
-          const duel = state.duels.find((item) => item.id === main!.result.duelId); // checked in the condition above
-          for (const id of duel ? [duel.a, duel.b] : []) {
-            const participant = state.players.find((item) => item.userId === id);
-            if (participant?.registered) this.upsertProfile(participant);
-          }
-        }
-      }
-      let changed = this.payDuels(state) || steps.some((r) => r.changed);
-      if (changed || now - (Number(state.chat.lastSeen) || 0) >= LAST_SEEN_WRITE_MS) {
-        state.chat.lastSeen = now;
-        this.writeState(state);
-        changed = true;
-      }
-      return {
-        state,
-        result: main?.result || { ok: true, reason: "presence_fresh" },
-        changed,
-        visible: steps.some((r) => r.visible),
-      };
-    });
-    if (outcome.changed) this.traceEvents(channel, outcome.state, since);
-    return outcome;
-  }
-
   async webSocketError(ws: WebSocket): Promise<void> {
     try {
       ws.close(1011, "Socket error");
@@ -3540,11 +668,15 @@ export class ChannelRoom extends DurableObject<Env> {
   }
 
   broadcast(state: GameState): void {
-    const message = JSON.stringify(this.publicState(state) satisfies LiveMessage);
-    for (const ws of this.ctx.getWebSockets("live")) {
+    this.sendLive(this.publicState(state));
+  }
+
+  sendLive(message: LiveMessage, sockets = this.ctx.getWebSockets("live")): void {
+    const text = JSON.stringify(message);
+    for (const ws of sockets) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       try {
-        ws.send(message);
+        ws.send(text);
       } catch {}
     }
   }
@@ -3556,20 +688,18 @@ export class ChannelRoom extends DurableObject<Env> {
     if (chatDue !== null) due.push({ at: chatDue, why: "chat_check" });
     for (const duel of state.duels) {
       if (duel.status === "pending") due.push({ at: duel.expiresAt + 1, why: "challenge_expiry" });
-      else if (duel.status === "active")
+      else if (duel.status === "active" && duel.lastActionAt !== undefined)
         due.push({
-          at: duel.lastActionAt! + (duel.rules?.inactivityMs || state.config.inactivityMs) + 1, // set when a duel starts
+          at: duel.lastActionAt + (duel.rules?.inactivityMs || state.config.inactivityMs) + 1,
           why: "duel_inactivity",
         });
     }
     for (const profile of state.players) if (profile.respawnAt > 0) due.push({ at: profile.respawnAt, why: "respawn" });
     for (const lock of state.rematchLocks) due.push({ at: lock.until, why: "rematch_lock" });
-    // a bot channel announces each duel's result once the stream has played it
     if (this.botSource(state) && state.config.botEnabled !== false)
-      for (const duel of state.duels)
-        // revealAt! : set when a duel completes
-        if (duel.status === "completed" && duel.revealAt! > now)
-          due.push({ at: duel.revealAt! + 1, why: "result_reveal" });
+      for (const { status, revealAt } of state.duels)
+        if (status === "completed" && revealAt !== undefined && revealAt > now)
+          due.push({ at: revealAt + 1, why: "result_reveal" });
     if (this.dueResults(state, now).length) due.push({ at: now + RESULT_RETRY_MS, why: "result_retry" }); // one that couldn't go out yet
     const reminder = this.reminderDue(state);
     if (reminder) due.push({ at: reminder, why: "reminder" });
@@ -3611,91 +741,40 @@ export class ChannelRoom extends DurableObject<Env> {
       channel,
     );
     try {
-      await this.alarmTasks(channel);
+      const since = this.readState(channel).revision;
+      let result = this.advance(channel, { type: "tick" }, Date.now());
+      if (result.changed) this.broadcast(result.state);
+      const state = result.state;
+      const chatDue = chatCheckDue(state);
+      if (chatDue !== null && Date.now() >= chatDue) {
+        // Only a definite answer disconnects (missing, failed or revoked); a failed Helix call just waits for the next check.
+        // A subscription still pending verification stays pending; one that failed verification is recorded as such.
+        const status = await checkChatSubscription(this.env, state.chat.subscriptionId);
+        const subscriptionId = state.chat.subscriptionId;
+        if (this.readState(channel).chat.subscriptionId === subscriptionId) {
+          const event: GameEvent =
+            status === "enabled" && !state.chat.connected
+              ? { type: "chat_verified", subscriptionId }
+              : !status || status === "enabled" || status === "webhook_callback_verification_pending"
+                ? { type: "chat_checked" }
+                : { type: "chat_disconnected", reason: status === "missing" ? "subscription_missing" : status };
+          result = this.advance(channel, event, Date.now());
+          let visible = result.visible;
+          if (event.type === "chat_verified") {
+            result = this.advance(channel, { type: "chat_checked" }, Date.now());
+            visible ||= result.visible;
+          }
+          if (visible) this.broadcast(result.state);
+        }
+      }
+      await postExpired(this, channel, since);
+      await postResults(this, channel, Date.now());
+      await this.postReminder(channel, Date.now());
     } catch (error) {
       logRoomError(this, error, { path: "alarm", method: "ALARM" });
     }
     await this.scheduleAlarm(this.readState(channel));
     settleCounts(this, true);
-  }
-
-  async alarmTasks(channel: string): Promise<void> {
-    const since = this.readState(channel).revision;
-    let result = this.advance(channel, { type: "tick" }, Date.now());
-    if (result.changed) this.broadcast(result.state);
-    const state = result.state;
-    const chatDue = chatCheckDue(state);
-    if (chatDue !== null && Date.now() >= chatDue) {
-      // Only a definite answer disconnects (missing, failed or revoked); a failed Helix call just waits for the next check.
-      // A subscription still pending verification stays pending; one that failed verification is recorded as such.
-      const status = await checkChatSubscription(this.env, state.chat.subscriptionId);
-      if (this.readState(channel).chat.subscriptionId === state.chat.subscriptionId) {
-        const subscriptionId = state.chat.subscriptionId;
-        const event: GameEvent =
-          !status || status === "webhook_callback_verification_pending"
-            ? { type: "chat_checked" }
-            : status === "enabled"
-              ? state.chat.connected
-                ? { type: "chat_checked" }
-                : { type: "chat_verified", subscriptionId }
-              : { type: "chat_disconnected", reason: status === "missing" ? "subscription_missing" : status };
-        result = this.advance(channel, event, Date.now());
-        let visible = result.visible;
-        if (event.type === "chat_verified") {
-          result = this.advance(channel, { type: "chat_checked" }, Date.now());
-          visible ||= result.visible;
-        }
-        if (visible) this.broadcast(result.state);
-      }
-    }
-    await this.postExpired(channel, since);
-    await this.postResults(channel, Date.now());
-    await this.postReminder(channel, Date.now());
-  }
-
-  // "Challenge expired" lines for challenges that ran out after revision `since`, on a channel the bot reads. Each is said
-  // once: the alarm and a later command can both notice the same one.
-  expiredLines(state: GameState, since: number): string[] {
-    if (!this.botSource(state)) return [];
-    this.expiredSaid ||= new Set();
-    const names = botNames(this.seSettings().names),
-      lines: string[] = [];
-    const name = (id: string) => {
-      const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config);
-      return p?.displayName || p?.username || "someone";
-    };
-    for (const e of state.events) {
-      if (e.type !== "challenge_expired" || Number(e.id) <= since || this.expiredSaid.has(e.id)) continue;
-      this.expiredSaid.add(e.id);
-      // a challenge_expired event names both fighters' ids
-      lines.push(
-        seExpiredText({
-          a: name(e.a as string),
-          b: name(e.b as string),
-          timeoutMs: state.config.challengeTimeoutMs,
-          names,
-        }),
-      );
-    }
-    if (this.expiredSaid.size > 200) this.expiredSaid = new Set([...this.expiredSaid].slice(-100));
-    return lines;
-  }
-
-  // Posts the expired-challenge lines from the alarm as the bot (there is no chat line to answer), under the reply cap.
-  async postExpired(channel: string, since: number): Promise<void> {
-    await this.postBotLines(channel, this.expiredLines(this.readState(channel), since));
-  }
-
-  // The result of each duel the stream has now played (revealAt passed in the last 2 minutes), once, from the alarm.
-  // The "Fight on" reply says to watch the stream; this line follows the replay, so chat never spoils it.
-  // A line held back by the reply cap or refused by Twitch stays due and is tried again (the alarm wakes every
-  // RESULT_RETRY_MS) until it is 2 minutes old. A bot command also posts due results first, in case the alarm missed one.
-  async postResults(channel: string, now: number): Promise<void> {
-    if (this.postingResults) return this.postingResults; // the alarm and a command at once: post each line once
-    this.postingResults = this.postResultsOnce(channel, now).finally(() => {
-      this.postingResults = null;
-    });
-    return this.postingResults;
   }
 
   dueResults(state: GameState, now: number): DueDuel[] {
@@ -3719,95 +798,6 @@ export class ChannelRoom extends DurableObject<Env> {
           now - d.revealAt < RESULT_WINDOW_MS,
       )
       .sort((x, y) => x.revealAt - y.revealAt);
-  }
-
-  async postResultsOnce(channel: string, now: number): Promise<void> {
-    const state = this.readState(channel),
-      due = this.dueResults(state, now);
-    if (!due.length) return;
-    const sql = this.ctx.storage.sql,
-      row = sql
-        .exec<{ broadcaster_id: string; bot_id: string }>(
-          "SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1",
-        )
-        .toArray()[0];
-    if (!row?.broadcaster_id || !row?.bot_id) return;
-    const name = (id: string) => {
-      const p = state.players.find((x) => x.userId === id) || this.getProfile(id, state.config);
-      return p?.displayName || p?.username || "someone";
-    };
-    for (const d of due) {
-      // in reveal order; one that can't go out now stops the rest, so chat keeps the order
-      const loser = d.winnerId === d.a ? d.b : d.a;
-      const line = seResultText({
-        winner: name(d.winnerId as string), // a completed duel has a winner
-        loser: name(loser),
-        w: d.ratings[d.winnerId as string], // as above
-        l: d.ratings[loser],
-        decision: d.decision,
-        flawless: d.flawless,
-        unrated: d.unrated,
-        lastRanked: d.lastRanked,
-      });
-      const { replies } = await this.sendBotLines([line], channel, { system: 1 }).json<{ replies: string[] }>(); // sendBotLines's answer
-      if (!replies.length) return;
-      // A failed call (network, Twitch 5xx or 429 after its retries) is tried again; a line Twitch read and dropped
-      // (AutoMod, chat settings) would be dropped again, so it counts as done.
-      let out: SendResult,
-        failed = false;
-      try {
-        out = await sendChatMessage(this.env, {
-          broadcasterId: row.broadcaster_id,
-          senderId: row.bot_id,
-          message: replies[0]!, // checked non-empty above
-        });
-      } catch (error) {
-        out = { sent: false, reason: String((error as Thrown)?.message || error) }; // anything can be thrown
-        failed = true;
-      }
-      this.noteBotSent(channel, [out]);
-      if (failed) return;
-      sql.exec("UPDATE bot_reminder SET results_through = MAX(results_through, ?) WHERE id = 1", d.revealAt);
-    }
-  }
-
-  // Lines the bot posts on its own (no chat line to answer), under the reply cap.
-  async postBotLines(channel: string, lines: string[]): Promise<void> {
-    if (!lines.length || this.readState(channel).config.botEnabled === false) return;
-    const row = this.ctx.storage.sql
-      .exec<{ broadcaster_id: string; bot_id: string }>("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1")
-      .toArray()[0];
-    if (!row?.broadcaster_id || !row?.bot_id) return;
-    const { replies } = await this.sendBotLines(lines, channel, { system: lines.length }).json<{ replies: string[] }>(); // sendBotLines's answer
-    for (const message of replies) {
-      try {
-        this.noteBotSent(channel, [
-          await sendChatMessage(this.env, { broadcasterId: row.broadcaster_id, senderId: row.bot_id, message }),
-        ]);
-      } catch (error) {
-        this.noteBotSent(channel, [{ sent: false, reason: String((error as Thrown)?.message || error) }]); // anything can be thrown
-      }
-    }
-  }
-
-  // Saves who the reminder posts as (the bot) and in which channel, from a bot command. Writes only when something changed.
-  rememberReminder(broadcasterId: unknown, botId: string, origin: unknown): void {
-    broadcasterId = validUserId(broadcasterId);
-    if (!broadcasterId || !botId) return;
-    origin = String(origin || "").slice(0, 200);
-    const sql = this.ctx.storage.sql,
-      row = sql
-        .exec<{ broadcaster_id: string; bot_id: string; origin: string }>(
-          "SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1",
-        )
-        .toArray()[0];
-    if (row && row.broadcaster_id === broadcasterId && row.bot_id === botId && row.origin === origin) return;
-    sql.exec(
-      "INSERT INTO bot_reminder (id, broadcaster_id, bot_id, origin) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET broadcaster_id = excluded.broadcaster_id, bot_id = excluded.bot_id, origin = excluded.origin",
-      broadcasterId,
-      botId,
-      origin,
-    );
   }
 
   // When the next !fray reminder is due, or 0: only with the bot connected, a known bot account, the bot on and config.reminderMin > 0.
@@ -3842,35 +832,16 @@ export class ChannelRoom extends DurableObject<Env> {
         .toArray()[0]!; // reminderDue answers 0 without the row
     sql.exec("UPDATE bot_reminder SET next_at = ? WHERE id = 1", now + state.config.reminderMin * 60000);
     try {
-      if (!(await this.currentStream(channel, now))) return;
+      if (!(await currentStream(this, channel, now))) return;
       const out = await sendChatMessage(this.env, {
         broadcasterId: row.broadcaster_id,
         senderId: row.bot_id,
         message: seReminderText({ names: botNames(this.seSettings().names), origin: row.origin, channel }),
       });
       if (out.sent) logRoomEvent(this, "command", "bot reminder sent", { channel, via: "reminder" });
-      this.noteBotSent(channel, [out], "reminder");
+      noteBotSent(this, channel, [out], "reminder");
     } catch (error) {
-      this.noteBotSent(channel, [{ sent: false, reason: String((error as Thrown)?.message || error) }], "reminder"); // anything can be thrown
+      noteBotSent(this, channel, [{ sent: false, reason: errorText(error) }], "reminder");
     }
   }
-}
-
-// Next Helix check time, or null: hourly while connected, every few minutes while a subscription awaits verification.
-function chatCheckDue(state: GameState): number | null {
-  const id = state.chat?.subscriptionId;
-  if (!id || id.startsWith("local-") || id === SE_SUBSCRIPTION_ID) return null;
-  return (Number(state.chat.checkedAt) || 0) + (state.chat.connected ? CHAT_CHECK_MS : CHAT_PENDING_CHECK_MS);
-}
-
-// "45 s", "12 min", "3 h", "2 d": how long ago (or until) for the bot's one-line status.
-function agoText(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return s < 90
-    ? s + " s"
-    : s < 5400
-      ? Math.round(s / 60) + " min"
-      : s < 172800
-        ? Math.round(s / 3600) + " h"
-        : Math.round(s / 86400) + " d";
 }

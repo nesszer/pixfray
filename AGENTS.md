@@ -15,7 +15,7 @@ before relying on memory. Don't guess commands, flags or file locations: they ar
 | Install | `bun install` (Bun runs packages and scripts; tools need Node 22.18+) |
 | Dev server | `bun run dev`, then http://127.0.0.1:5173 (`.dev.vars` holds throwaway local values only) |
 | Before every commit | `bun run check` (format, lint, types, unit tests; the pre-commit hook adds gitleaks) |
-| Unit tests | `bun run test:unit`, port tools `bun run test:port` |
+| Unit tests | `bun run test:unit` |
 | Smoke test | `bun run test` (needs the dev server) |
 | Everything | `bun run test:all` (unit, builds, workerd upload, browser tests, local e2e duel) |
 | Deploy to staging | `bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.test.json` |
@@ -40,25 +40,25 @@ It is not wrangler: never `wrangler deploy` or `--env`.
   refuses on its own.
 - **Every behavior change gets a unit test** in `tests/*.test.ts` and a doc update: routes, rules and config in
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
-- **Strict TypeScript.** New code is `.ts` with `.ts` imports. A port PR changes no runtime code
-  (`bun run port-check`). Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
-- **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.ts`. Don't set `HEADLESS=1`.
+- **Strict TypeScript.** New code is `.ts` with `.ts` imports, and `bun run typecheck` fails a TS
+  file outside the strict programs. Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
+- **Browser tests run headed with GPU flags** via `launchChrome()` in `tests/chrome.ts`. Don't set `HEADLESS=1`.
 - **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in
   `public/dashboard.css` (tokens, classes, one gold accent, lock-on selection) and the patterns reviews keep catching.
   Claude Code loads it here: @DESIGN.md
 
 ## Where things go
 
-- **Channel setting (mods change it on the admin page):** `DEFAULT_CONFIG` and the type list in
-  `validateConfigPatch` in `server/game.ts`; a field in a `GROUPS` entry in `src/admin.ts`; the reads in
-  `server/channel.ts`; a test with a valid patch and an `invalid_config_<key>` rejection; `docs/CONTRACTS.md` §7.
-- **Bot chat command:** `botCommand` in `server/channel.ts`; command names and reply texts in
+- **Channel setting (mods change it on the mod page):** `DEFAULT_CONFIG` in `server/model.ts`,
+  `CONFIG_CHECKS` in `server/game.ts`; a `GROUPS` field in `src/admin/rules.ts`; reads in `server/room-*.ts`, `channel.ts`;
+  a test with a valid patch and an `invalid_config_<key>` rejection; `docs/CONTRACTS.md` §7.
+- **Bot chat command:** `botCommand` or `QUICK_COMMANDS` in `server/room-bot.ts`; names and texts in
   `server/streamelements.ts` (`botNames()`, `DEFAULT_SE_NAMES`, `se*Text`). Mods' own text commands are
   `server/botcommands.ts`.
 - **Who is a mod in chat:** `ev.mod`, set once from the badges (`MOD_BADGES`: broadcaster, moderator,
   lead_moderator) in `slimEvent` in `server/eventsub.ts`.
   Don't read badges anywhere else. Admin-page access is a separate Helix check in `server/auth.ts`.
-- **Refusing the bot as a target:** the single `BOT_TARGET_ACTIONS` check in `server/channel.ts`. Keep it one check;
+- **Refusing the bot as a target:** the single `BOT_TARGET_ACTIONS` check in `server/room-bot.ts`. Keep it one check;
   the bot may become a co-op boss later.
 
 ## Known failure patterns
@@ -82,24 +82,24 @@ Each one has happened here. Check for it by name before calling work done.
 ## Docs index
 
 ```
-[Design]|DESIGN.md: reader per page, structure, copy, tokens, motion, overlay, responsive, primitives, avoid list, verify
+[Design]|DESIGN.md: readers, copy, tokens, motion, overlay, primitives, avoid list, verify
 [PixFray docs]|root: ./docs
 |README.md: map of these docs
-|STREAMER_SETUP.md: /start sign-in, OBS overlay, adding the bot, mods, viewer sprites, StreamElements, troubleshooting, turning PixFray or the bot off
+|STREAMER_SETUP.md: sign-in, OBS overlay, the bot, mods, viewer sprites, StreamElements, troubleshooting, turning off
 |DUELS.md: chat commands, duel rolls, dollars, ranked vs unrated, mod and broadcaster controls
 |PAGES.md: every page and overlay URL option (channel size cap arena announce sound bubbles fx demo debug)
-|CONTRACTS.md: §1 conventions|§2 HTTP routes, channel registry, admin actions|§3 overlay socket /api/live|§4 EventSub /api/eventsub|§5 characters, catalog|§6 game rules|§7 config and balance|§8 modules, signatures|§9 tests and build
+|CONTRACTS.md: §1 conventions|§2 routes, registry, admin actions|§3 /api/live|§4 /api/eventsub|§5 characters|§6 game rules|§7 config|§8 modules, signatures|§9 tests, build
 |TWITCH_SETUP.md: Twitch app, EventSub chat, PixFray bot account
 |SELF_HOSTING.md: site.config.js, Twitch app, secrets, deploy, limits
-|DEVELOPMENT.md: local dev, test suites, port-check rules, live chat env vars
+|DEVELOPMENT.md: local dev, test suites, TypeScript programs, live chat env vars
 |DEVTOOLS.md: test-site tools (bot fighters, scripted duels, alt account in real chat, OBS)
 |LIVE_FIX.md: release flow, owner page fix/deploy/rollback, backups
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
-[Code]|server/: worker.ts routes|channel.ts ChannelRoom DO (state, bot commands, alarms)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|tracker.ts logs|points.ts|upgrades.ts pets.ts cosmetics.ts
-|src/: admin.ts mod page|dashboard.ts channel page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
-|src/served/: overlay.ts|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
-|tests/: *.test.ts unit|fakes.ts doubles|port/ port tools|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
-|scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
+[Code]|server/: worker.ts routes|http.ts replies|channel.ts ChannelRoom|room-routes.ts routes, admin|room-bot.ts chat|room-economy.ts shop|room-shared.ts|game.ts rules, config|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts sprites.ts developer.ts security.ts ratelimit.ts dedupe.ts tracker.ts points.ts upgrades.ts pets.ts cosmetics.ts
+|src/: admin.ts admin/ mod page|dashboard.ts dashboard/ fighter page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
+|src/served/: overlay.ts entry, overlay-*.ts|pixels.ts canvas|text.ts helpers|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
+|tests/: *.test.ts unit|fakes.ts worker-fakes.ts doubles|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
+|scripts/: strict-check.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
 ```
 
 ## Changing this file

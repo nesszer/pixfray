@@ -1,7 +1,5 @@
-// The PixFray bot's own text commands, set on the admin page (Chat commands): a name like !sens and the line the bot
-// answers with. A reply may use ${user} (who typed it), ${touser} (the @name after the command, else ${user}),
-// ${count name} (adds 1 to counter "name" and shows it) and ${getcount name} (shows it). $(...) works the same, as in
-// StreamElements.
+// The bot's own text commands (admin page, Chat commands). A reply may use ${user}, ${touser} (the @name after the
+// command, else ${user}), ${count name} (adds 1 and shows it) and ${getcount name}; $(...) works the same, as in SE.
 
 export const MAX_BOT_COMMANDS = 50;
 export const MAX_COMMAND_REPLY = 400;
@@ -64,13 +62,9 @@ export function renderCommandReply(
   });
 }
 
-// The longest a reply can get once filled in: a name is up to 25 characters, a counter up to 10 digits.
+// The longest a reply can get once filled in: a name is up to 25 characters, a counter up to MAX_COUNTER (10 digits).
 export function replyWorstCase(reply: unknown): number {
-  return String(reply).replace(VARIABLE, (whole: string, kind: string, name: string | undefined) => {
-    kind = kind.toLowerCase();
-    if (kind === "count" || kind === "getcount") return name ? "0".repeat(String(MAX_COUNTER).length) : whole;
-    return "x".repeat(25);
-  }).length;
+  return renderCommandReply(reply, { user: "x".repeat(25), count: () => MAX_COUNTER }).length;
 }
 
 // A line cut to MAX_CHAT_LINE characters at a word break, with "…" when cut.

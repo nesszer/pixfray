@@ -1,12 +1,12 @@
 // Turns any picture into a PixFray sprite in the browser, with no AI: find the subject (src/autosprite.ts), shrink it
 // to fighter size with a small Oklab palette, add a dark outline in a shade of the colors it borders and double the
-// pixels. The result is a PNG of at most 128x128 that server/sprites.ts accepts. The steps work on plain {width, height, data} images, so tests run them without a DOM.
-import { subjectMask, labOf, kmeans, d3, toRgb } from "./autosprite.ts";
+// pixels. The result is a PNG of at most 128x128 that server/sprites.ts accepts.
+import { subjectMask, labOf, kmeans, nearest, rim, toRgb } from "./autosprite.ts";
 
 export const SPRITE_MAX = 128;
-export const SOURCE_MAX = 512; // pictures are decoded at most this size before any step
+const SOURCE_MAX = 512; // pictures are decoded at most this size before any step
 export const REDRAW_MAX = 504; // the AI model takes images under 512 px a side
-export const FILE_MAX = 10 * 1024 * 1024;
+const FILE_MAX = 10 * 1024 * 1024;
 /** A plain RGBA image in ImageData's shape (4 bytes a pixel), so tests run the steps without a DOM. */
 export type Img = { width: number; height: number; data: Uint8ClampedArray };
 /** A rectangle inside an image, in pixels. */
@@ -26,22 +26,8 @@ export function fitSize(width: number, height: number, max: number) {
 
 // True when the picture already has a cut-out (enough see-through pixels on its border).
 export function hasCutout(img: Img) {
-  const { width: w, height: h, data: d } = img;
-  let clear = 0,
-    n = 0;
-  const at = (x: number, y: number) => {
-    n++;
-    if (d[(y * w + x) * 4 + 3]! < 128) clear++; // in range: x and y are on the border
-  };
-  for (let x = 0; x < w; x++) {
-    at(x, 0);
-    at(x, h - 1);
-  }
-  for (let y = 1; y < h - 1; y++) {
-    at(0, y);
-    at(w - 1, y);
-  }
-  return clear / n > 0.3;
+  const { border } = rim(img.width, img.height);
+  return border.filter((p) => img.data[p * 4 + 3]! < 128).length / border.length > 0.3; // in range: p is a pixel
 }
 
 // Clears the background: the subject finder in src/autosprite.ts decides what is subject, and everything else turns
@@ -150,22 +136,7 @@ export function spritify(
   const { centers } = kmeans(pts, wts, colors),
     K = centers.length / 3;
   // a little more chroma: pixel art palettes read brighter than photos
-  for (let c = 0; c < K; c++) {
-    centers[c * 3 + 1]! *= 1.12;
-    centers[c * 3 + 2]! *= 1.12;
-  }
-  const nearest = (p: number) => {
-    let bk = 0,
-      bd = Infinity;
-    for (let c = 0; c < K; c++) {
-      const v = d3(lab, p * 3, centers, c * 3);
-      if (v < bd) {
-        bd = v;
-        bk = c;
-      }
-    }
-    return bk;
-  };
+  for (let i = 0; i < centers.length; i++) if (i % 3) centers[i]! *= 1.12;
 
   // each sprite cell at least 45% covered takes the palette color with the most pixels, boosted when its lightness
   // stands out from the cell's (thin dark lines and bright eyes survive the shrink)
@@ -189,7 +160,7 @@ export function spritify(
           tot++;
           if (!solid(p)) continue;
           cover++;
-          cnt[nearest(p)]!++;
+          cnt[nearest(lab, p, centers)]!++;
           Lsum += lab[p * 3]!;
         }
       if (!tot || cover / tot < 0.45) continue;
@@ -249,15 +220,8 @@ export function spritify(
       if (!edge) continue;
       const nb = [get(cx - 1, cy), get(cx + 1, cy), get(cx, cy - 1), get(cx, cy + 1)].filter((v) => v >= 0);
       if (!nb.length) continue;
-      let L = 0,
-        a = 0,
-        b = 0;
-      for (const v of nb) {
-        L += centers[v * 3]!;
-        a += centers[v * 3 + 1]!;
-        b += centers[v * 3 + 2]!;
-      }
-      out.data.set(toRgb(Math.min(0.22, (L / nb.length) * 0.3), (a / nb.length) * 0.5, (b / nb.length) * 0.5), o);
+      const avg = (j: number) => nb.reduce((s, v) => s + centers[v * 3 + j]!, 0) / nb.length;
+      out.data.set(toRgb(Math.min(0.22, avg(0) * 0.3), avg(1) * 0.5, avg(2) * 0.5), o);
       out.data[o + 3] = 255;
     }
   return enlarge(out, 2);
@@ -283,30 +247,40 @@ export async function decodeBase64(b64: string, max = SOURCE_MAX) {
 }
 function drawBitmap(bitmap: ImageBitmap, max: number) {
   const { width, height } = fitSize(bitmap.width, bitmap.height, max);
-  const canvas = new OffscreenCanvas(width, height),
-    ctx = canvas.getContext("2d", { willReadFrequently: true }) as OffscreenCanvasRenderingContext2D; // a new canvas always has a 2D context
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(bitmap, 0, 0, width, height);
+  const img = resample(bitmap, width, height, true);
   bitmap.close?.();
+  return img;
+}
+const context = (canvas: OffscreenCanvas, options?: CanvasRenderingContext2DSettings) =>
+  canvas.getContext("2d", options) as OffscreenCanvasRenderingContext2D; // as: a new canvas always has a 2D context
+/** `source` drawn at width x height with high-quality smoothing, read back. */
+function resample(source: CanvasImageSource, width: number, height: number, willReadFrequently = false) {
+  const ctx = context(new OffscreenCanvas(width, height), { willReadFrequently });
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, width, height);
   return ctx.getImageData(0, 0, width, height);
+}
+/** An image shrunk to fit max x max; the image itself when its width already fits. */
+export function shrink(img: Img, max: number) {
+  const { width, height } = fitSize(img.width, img.height, max);
+  return width === img.width ? img : resample(toCanvas(img), width, height);
+}
+/** An image on a canvas of its own size. */
+function toCanvas(img: Img) {
+  const canvas = new OffscreenCanvas(img.width, img.height);
+  context(canvas).putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
+  return canvas;
 }
 
 // An image -> base64 PNG, or JPEG for the AI's input (smaller upload; flattened onto white).
 export async function encode(img: Img, type = "image/png") {
   const canvas = new OffscreenCanvas(img.width, img.height),
-    ctx = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D; // a new canvas always has a 2D context
+    ctx = context(canvas);
   if (type === "image/jpeg") {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, img.width, img.height);
   }
-  const tmp = new OffscreenCanvas(img.width, img.height);
-  // as: a new canvas always has a 2D context
-  (tmp.getContext("2d") as OffscreenCanvasRenderingContext2D).putImageData(
-    new ImageData(new Uint8ClampedArray(img.data), img.width, img.height),
-    0,
-    0,
-  );
-  ctx.drawImage(tmp, 0, 0);
+  ctx.drawImage(toCanvas(img), 0, 0);
   const blob = await canvas.convertToBlob({ type, quality: 0.9 });
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let s = "";
@@ -320,19 +294,7 @@ export function paint(canvas: HTMLCanvasElement, img: Img | null | undefined) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!img) return;
   const k = Math.max(1, Math.floor(Math.min(canvas.width / img.width, canvas.height / img.height)));
-  const tmp = new OffscreenCanvas(img.width, img.height);
-  // as: a new canvas always has a 2D context
-  (tmp.getContext("2d") as OffscreenCanvasRenderingContext2D).putImageData(
-    new ImageData(new Uint8ClampedArray(img.data), img.width, img.height),
-    0,
-    0,
-  );
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(
-    tmp,
-    Math.round((canvas.width - img.width * k) / 2),
-    canvas.height - img.height * k,
-    img.width * k,
-    img.height * k,
-  );
+  const x = Math.round((canvas.width - img.width * k) / 2);
+  ctx.drawImage(toCanvas(img), x, canvas.height - img.height * k, img.width * k, img.height * k);
 }

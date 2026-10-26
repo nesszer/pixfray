@@ -35,13 +35,19 @@ function body(extra: Record<string, unknown> = {}) {
 }
 /** What validateUpload throws: an UploadError (not exported) with the HTTP status and a reason code. */
 type Rejection = { status: number; reason: string; message: string };
-function rejects(fn: () => unknown, status: number, reason: string) {
-  assert.throws(fn, (e: Rejection) => {
-    assert.equal(e.reason, reason, e.message);
-    assert.equal(e.status, status);
-    return true;
-  });
+/** Each case is [fields over body(), status, reason]: validateUpload must refuse it with exactly that. */
+function refuses(cases: [Record<string, unknown>, number, string][]) {
+  for (const [extra, status, reason] of cases)
+    assert.throws(
+      () => validateUpload(body(extra)),
+      (e: Rejection) => {
+        assert.equal(e.reason, reason, e.message);
+        assert.equal(e.status, status);
+        return true;
+      },
+    );
 }
+const frame = (x: number, w = 64, h = 64) => [{ x, y: 0, w, h }];
 
 // ---------- server validation ----------
 test("a good PNG atlas passes and produces catalog metadata", () => {
@@ -51,80 +57,64 @@ test("a good PNG atlas passes and produces catalog metadata", () => {
   assert.equal(r.meta.frames.length, 4);
   assert.equal(r.meta.combatFallback, "effects", "no attack frames -> effects flag");
   assert.deepEqual(r.meta.anchor, { x: 0.5, y: 1 });
-  const withAttack = validateUpload(
-    body({ animations: { walk: strip(64, 64, 2), attack: [{ x: 128, y: 0, w: 64, h: 64 }] } }),
-  );
+  const withAttack = validateUpload(body({ animations: { walk: strip(64, 64, 2), attack: frame(128) } }));
   assert.equal(withAttack.meta.combatFallback, undefined);
   assert.equal(validateUpload(body({ atlas: "data:image/png;base64," + b64(makePng(256, 64)) })).png.width, 256);
 });
 
 test("non-PNG bytes are rejected by signature and IHDR checks, whatever they claim to be", () => {
-  rejects(() => validateUpload(body({ atlas: b64(Buffer.from("GIF89a" + "x".repeat(80))) })), 415, "not_png");
-  rejects(
-    () => validateUpload(body({ atlas: b64(Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Array(80).fill(0)])) })),
-    415,
-    "not_png",
-  );
   const png = makePng(256, 64);
   const badCrc = Buffer.from(png);
   badCrc[20] ^= 1; // height byte changed, IHDR CRC no longer matches
-  rejects(() => validateUpload(body({ atlas: b64(badCrc) })), 415, "not_png");
-  rejects(() => validateUpload(body({ atlas: b64(Buffer.concat([png, Buffer.from("trailing")])) })), 415, "not_png");
-  rejects(() => validateUpload(body({ atlas: b64(png.subarray(0, png.length - 12)) })), 415, "not_png"); // no IEND
-  rejects(() => validateUpload(body({ atlas: "***not base64***" })), 400, "invalid_upload");
-  rejects(() => validateUpload(body({ atlas: undefined })), 400, "invalid_upload");
+  const notPng = [
+    Buffer.from("GIF89a" + "x".repeat(80)),
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Array(80).fill(0)]), // JPEG
+    badCrc,
+    Buffer.concat([png, Buffer.from("trailing")]),
+    png.subarray(0, png.length - 12), // no IEND
+  ];
+  refuses([
+    ...notPng.map((bytes): [Record<string, unknown>, number, string] => [{ atlas: b64(bytes) }, 415, "not_png"]),
+    [{ atlas: "***not base64***" }, 400, "invalid_upload"],
+    [{ atlas: undefined }, 400, "invalid_upload"],
+  ]);
 });
 
 test("an atlas over 1.5 MB is rejected", () => {
   const big = makePng(256, 64, { extra: [["tEXt", Buffer.alloc(UPLOAD_LIMITS.maxAtlasBytes, 0x41)]] });
   assert.ok(big.length > UPLOAD_LIMITS.maxAtlasBytes);
   assert.doesNotThrow(() => readPng(big), "it is still a structurally valid PNG");
-  rejects(() => validateUpload(body({ atlas: b64(big) })), 413, "atlas_too_large");
+  refuses([[{ atlas: b64(big) }, 413, "atlas_too_large"]]);
   const justUnder = makePng(256, 64);
   const pad = UPLOAD_LIMITS.maxAtlasBytes - justUnder.length - 12;
   const atLimit = makePng(256, 64, { extra: [["tEXt", Buffer.alloc(pad, 0x41)]] });
   assert.equal(atLimit.length, UPLOAD_LIMITS.maxAtlasBytes);
   assert.equal(validateUpload(body({ atlas: b64(atLimit) })).bytes.length, UPLOAD_LIMITS.maxAtlasBytes);
-  assert.ok(
-    UPLOAD_BODY_LIMIT >= Math.ceil(UPLOAD_LIMITS.maxAtlasBytes / 3) * 4,
-    "the body limit fits a full-size base64 atlas",
-  );
+  const fullAtlas = Math.ceil(UPLOAD_LIMITS.maxAtlasBytes / 3) * 4;
+  assert.ok(UPLOAD_BODY_LIMIT >= fullAtlas, "the body limit fits a full-size base64 atlas");
 });
 
 test("frame limits: 24 frames, 128 x 128, inside the atlas, known animations only", () => {
   const wide = b64(makePng(1024, 384));
   const grid = (n: number) =>
     Array.from({ length: n }, (_, i) => ({ x: (i % 8) * 128, y: Math.floor(i / 8) * 128, w: 128, h: 128 }));
-  assert.equal(
-    validateUpload(body({ atlas: wide, frames: grid(24), animations: { walk: grid(24) } })).meta.frames.length,
-    24,
-  );
-  rejects(
-    () =>
-      validateUpload(body({ atlas: wide, frames: grid(24), animations: { attack: [{ x: 0, y: 0, w: 64, h: 64 }] } })),
-    400,
-    "too_many_frames",
-  );
-  rejects(() => validateUpload(body({ atlas: wide, frames: grid(25) })), 400, "invalid_frames");
-  rejects(
-    () => validateUpload(body({ atlas: b64(makePng(300, 64)), frames: [{ x: 0, y: 0, w: 129, h: 64 }] })),
-    400,
-    "frame_too_large",
-  );
-  rejects(() => validateUpload(body({ frames: [{ x: 200, y: 0, w: 64, h: 64 }] })), 400, "frame_out_of_bounds");
-  rejects(() => validateUpload(body({ frames: [{ x: -1, y: 0, w: 64, h: 64 }] })), 400, "frame_out_of_bounds");
-  rejects(() => validateUpload(body({ frames: [{ x: 0.5, y: 0, w: 64, h: 64 }] })), 400, "invalid_frames");
-  rejects(() => validateUpload(body({ frames: [] })), 400, "invalid_frames");
-  rejects(() => validateUpload(body({ animations: { dance: strip(64, 64, 1) } })), 400, "invalid_animation");
-  rejects(
-    () => validateUpload(body({ atlas: b64(makePng(1025, 8)), frames: [{ x: 0, y: 0, w: 8, h: 8 }] })),
-    400,
-    "atlas_dimensions",
-  );
-  rejects(() => validateUpload(body({ label: "   " })), 400, "invalid_label");
-  rejects(() => validateUpload(body({ label: "x".repeat(33) })), 400, "invalid_label");
-  rejects(() => validateUpload(body({ fps: 0 })), 400, "invalid_fps");
-  rejects(() => validateUpload(body({ mode: "gif" })), 400, "invalid_upload");
+  const { meta } = validateUpload(body({ atlas: wide, frames: grid(24), animations: { walk: grid(24) } }));
+  assert.equal(meta.frames.length, 24);
+  refuses([
+    [{ atlas: wide, frames: grid(24), animations: { attack: frame(0) } }, 400, "too_many_frames"],
+    [{ atlas: wide, frames: grid(25) }, 400, "invalid_frames"],
+    [{ atlas: b64(makePng(300, 64)), frames: frame(0, 129) }, 400, "frame_too_large"],
+    [{ frames: frame(200) }, 400, "frame_out_of_bounds"],
+    [{ frames: frame(-1) }, 400, "frame_out_of_bounds"],
+    [{ frames: frame(0.5) }, 400, "invalid_frames"],
+    [{ frames: [] }, 400, "invalid_frames"],
+    [{ animations: { dance: strip(64, 64, 1) } }, 400, "invalid_animation"],
+    [{ atlas: b64(makePng(1025, 8)), frames: frame(0, 8, 8) }, 400, "atlas_dimensions"],
+    [{ label: "   " }, 400, "invalid_label"],
+    [{ label: "x".repeat(33) }, 400, "invalid_label"],
+    [{ fps: 0 }, 400, "invalid_fps"],
+    [{ mode: "gif" }, 400, "invalid_upload"],
+  ]);
 });
 
 // ---------- room storage ----------
@@ -254,58 +244,32 @@ const post = (data: unknown) =>
     headers: { "Content-Type": "application/json" },
     body: typeof data === "string" ? data : JSON.stringify(data),
   });
+const remove = (id: string) => new Request("https://x/api/assets/nesszerra/" + id, { method: "DELETE" });
+const gate = (request: Request, ctx: UploadsContext) => handleUploads(request, {} as Env /* reads no binding */, ctx);
 
 test("the worker checks roles and limits before the room is touched", async () => {
-  const anon = workerCtx({ canManage: false, user: null });
-  assert.equal((await handleUploads(post(body()), {} as Env /* the gate reads no binding */, anon)).status, 401);
+  assert.equal((await gate(post(body()), workerCtx({ canManage: false, user: null }))).status, 401);
   const viewer = workerCtx({ canManage: false, user: { id: "2" } });
-  assert.equal((await handleUploads(post(body()), {} as Env /* the gate reads no binding */, viewer)).status, 403);
+  assert.equal((await gate(post(body()), viewer)).status, 403);
   assert.equal(viewer.calls.length, 0);
 
   const mod = workerCtx();
-  const notPng = await handleUploads(
-    post(body({ atlas: b64(Buffer.from("GIF89a" + "x".repeat(80))) })),
-    {} as Env /* the gate reads no binding */,
-    mod,
-  );
+  const notPng = await gate(post(body({ atlas: b64(Buffer.from("GIF89a" + "x".repeat(80))) })), mod);
   assert.equal(notPng.status, 415);
   // Loose: the JSON error reply; the test reads its reason
   assert.equal((await notPng.json<Loose>()).reason, "not_png");
-  const huge = await handleUploads(
-    post('{"atlas":"' + "A".repeat(UPLOAD_BODY_LIMIT) + '"}'),
-    {} as Env /* the gate reads no binding */,
-    mod,
-  );
-  assert.equal(huge.status, 413);
+  assert.equal((await gate(post('{"atlas":"' + "A".repeat(UPLOAD_BODY_LIMIT) + '"}'), mod)).status, 413);
   assert.equal(mod.calls.length, 0);
 
-  const ok = await handleUploads(
-    post({ ...body(), createdBy: "forged" }),
-    {} as Env /* the gate reads no binding */,
-    mod,
-  );
-  assert.equal(ok.status, 201);
+  assert.equal((await gate(post({ ...body(), createdBy: "forged" }), mod)).status, 201);
   assert.equal(must(mod.calls[0]).path, "/asset");
   assert.equal(must(mod.calls[0]).body.createdBy, "1", "createdBy is the session user, never the body");
 
   const del = workerCtx({ id: "c-knight-abc123" });
-  await handleUploads(
-    new Request("https://x/api/assets/nesszerra/c-knight-abc123", { method: "DELETE" }),
-    {} as Env /* the gate reads no binding */,
-    del,
-  );
+  await gate(remove("c-knight-abc123"), del);
   assert.deepEqual([must(del.calls[0]).path, must(del.calls[0]).init.method], ["/asset/c-knight-abc123", "DELETE"]);
   const badId = workerCtx({ id: "adventurer" });
-  assert.equal(
-    (
-      await handleUploads(
-        new Request("https://x/api/assets/nesszerra/adventurer", { method: "DELETE" }),
-        {} as Env /* the gate reads no binding */,
-        badId,
-      )
-    ).status,
-    404,
-  );
+  assert.equal((await gate(remove("adventurer"), badId)).status, 404);
   assert.equal(badId.calls.length, 0);
 });
 

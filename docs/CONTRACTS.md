@@ -62,6 +62,11 @@ stored one in this browser (`localStorage` `pixfray:channel`, src/intro/back.ts)
 send `X-Robots-Tag: noindex, nofollow`. Hashed bundles under `/assets/build/` are cached for a year (`immutable`);
 everything else is revalidated.
 
+Channel routes `/api/<route>/<channel>[/<id>]` dispatch through one `ROUTES` table in server/worker.ts, whose keys
+also build the path pattern (`CHANNEL_ROUTE`). The gates in `handle()` run first (channel state, the WebSocket
+upgrade, the write limit); read-only routes are wrapped in `getOnly`, which answers 405 to any other method, HEAD
+included. JSON answers, refusals, thrown HTTP errors and body reads come from server/http.ts (§8).
+
 | Method | Path | Auth | Request | Success response | Errors |
 |---|---|---|---|---|---|
 | GET | `/auth/login[?channel=x][&connect=1\|mods\|bot][&next=<page>]` | none | none | 302 to Twitch. The OAuth `state` is the pending sign-in itself, sealed with `AUTH_SECRET` (AES-GCM, 10 minutes) and echoed in the `mini_oauth` cookie, so starting a sign-in writes nothing to AuthStore. `next` is the page to come back to, with its query and `#tab` (the pages send their own address); anything that isn't a path on this site, or is under `/auth/` or `/api/`, becomes `/` (`safeNext` in server/auth.ts). Without `channel` and with `next=/admin/` (the bare mod page) the sign-in names no channel and comes back to `/admin/?signed_in=1`, where the Worker sends a streamer to their own channel. `connect=1` (nesszerra only) asks for the EventSub chat scopes; `connect=mods` asks the channel's broadcaster for `moderation:read` and comes back to `/admin/?channel=x&mods=connected\|denied\|wrong_account#chat` | 403 channel not set up, 403 `connect=1` on a channel other than the default one, 503 when Twitch is not configured |
@@ -235,7 +240,7 @@ of drop logs one `console.warn` per page load. Fields a client doesn't read pass
 makes the overlay fetch its own page again (at most every 30 s), so a server that sends a shape an old overlay
 can't read still reloads that overlay to the new code.
 
-Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.ts`):
+Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` on `ChannelRoom` in `server/channel.ts`):
 
 ```
 Looks = {type:"looks", looks:{[login]: Look|null}, reset?:true}
@@ -571,14 +576,36 @@ subset of fields. Versioning works like this:
 
 | Lane | Owns | Contract |
 |---|---|---|
-| A (backend core) | `server/worker.ts`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
+| A (backend core) | `server/worker.ts`, `server/http.ts`, `server/channel.ts` with `server/room-*.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
 | B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.ts` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.ts`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
 | E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.ts` | The signatures below |
 
-Keep these signatures; worker.ts and channel.ts call them.
+The channel Durable Object is split along these seams; each room module takes the `ChannelRoom` as its first argument:
+
+| File | Holds |
+|---|---|
+| `server/channel.ts` | `ChannelRoom`: storage and schema setup, headers and limits, state load and save, the live sockets and looks push, `alarm()` |
+| `server/room-routes.ts` | `route(room, request)`: the DO's paths in one `ROUTES` table plus `PREFIXES`; `ADMIN_ACTIONS` and `ADMIN_PAYLOADS` tables for `POST /admin`; profile save, sprites, leaderboard |
+| `server/room-bot.ts` | `botCommand` (the one `BOT_TARGET_ACTIONS` check), `QUICK_COMMANDS` shared by the bot and dev chat, `processChatMessage`, custom commands, result and expiry lines |
+| `server/room-economy.ts` | `checkin`, wallet, `give`, shop `buy` and builds, pets, `payDuels`, the live-stream lookup |
+| `server/room-shared.ts` | Row and message types, profile reads and writes, `own`, `errorText` |
+| `src/served/overlay.ts` | Overlay entry; `overlay-stage`, `-sprites`, `-move`, `-duels`, `-fx`, `-draw`, `-sync` (version reload), `-demo`; `pixels.ts` canvas helpers (`opaqueBox`, `drawGrid`, `Frame`), also used by `src/ui.ts` |
+| `src/intro/main.ts` | Home page entry; `page.ts` the page without 3D (loader, ladder, scroll mapping), `film.ts` the post-processing pass, `world.ts` the arena scene |
+| `src/admin/characters.ts` | Uploads; takes `formatBytes` and `LIMITS` from `src/served/atlas.ts` |
+
+Keep these signatures; worker.ts and the room modules call them.
 
 ```js
+// server/http.ts (Lane A): shared by the Worker routes and the rooms
+export const json(data, status = 200)            // no-store, nosniff
+export const refuse(status, reason, error?)      // -> {ok:false, reason, error}
+export const httpError(message, status, extra?)  // an HttpError the Worker's catch answers with that status
+export async function readBody(request, limit)   // raw bytes; 413 past limit
+export async function bodyJson(request, limit?)  // a JSON object ({} for an empty body); 400 or 413 otherwise
+export async function bodyOr(read, tooLarge, invalid?)  // bodyJson's failure as a refusal
+export const png(bytes, cache), postJson(body), toBase64(bytes), fromBase64(text), concat(parts)
+
 // server/uploads.ts (Lane D)
 export const UPLOAD_LIMITS, CUSTOM_ID;
 export async function handleUploads(request, env, c)
@@ -617,11 +644,18 @@ export function parseArenaSnapshot(value), parseLooksMessage(value), parseLook(v
   parseDemoMessage(value), keepGood(list, kind, parse), warnOnce(kind, error)
 // parseDemoMessage answers null for a message with no demoPaused field (a browser extension's), which the demo
 // ignores without a warning; one with a demoPaused that isn't true or false still warns once
+// src/served/text.ts (Lane B, served as /text.js): the overlay's pure helpers, kept off the canvas for Node tests
+export function channelName(value), parseCap(value, fallback = 100), effectiveCap(urlCap, serverMax), parseCommand(text), sanitizeColor(value),
+  stripExtraMarks(text), truncateText(text, max, ellipsis = ""), clipName(text), readableColor(hex, minContrast?),
+  overlayVersionFromUrl(url), overlayVersionFromHtml(html)
 // src/parse.ts (Lane B, bundled into the pages): /api/session, /api/access, the fighter page's profile, shop, state
 // config, leaderboard and stored draft, the mod page's /api/admin and snapshots, the owner page's lists
 export function parseAnswer(r, parse, kind)  // an ok answer whose body fails -> {ok:false, data:{error: UNREADABLE}}
 export function acceptedUnreadable(r)        // true for that case (a 2xx it couldn't read): the write may have gone through
 // the fighter page's profile save and shop purchase then say so and keep the button off, so a purchase can't run twice
+// src/ui.ts: shared page helpers ($, on, busy, api, dataTable, setStatus, tabKey). src/admin.ts and src/dashboard.ts are
+// the entries; each tab lives in src/admin/ (stream, arena, rules, characters, channel) or src/dashboard/ (fighter,
+// picker, shop, ranks, save), with the page's shared state in its state.ts
 ```
 
 `roomFetch` adds the internal secret and channel headers. `room.ctx.storage.sql` is the DO's SQLite.
@@ -635,45 +669,10 @@ gitleaks git --config .gitleaks.toml --redact .   # secret scan; CI scans the wh
 bun run audit              # bun audit --audit-level=high; CI fails on a high or critical advisory
 bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
-bun run typecheck          # tsc on five strict programs split by globals (strict options in tsconfig.base.json):
-                           # tsconfig.worker.json (Workers types: server/), tsconfig.web.json (DOM types: src/,
-                           # types/dom.ts), tsconfig.node.json (Workers and Node: scripts/, build configs, unit
-                           # tests of Worker modules and tests/fakes.ts), tsconfig.node-dom.json (DOM and Node:
-                           # unit tests of DOM modules, Playwright code, the character build) and
-                           # tsconfig.node-all.json (Workers, DOM and Node: tests that import both); then
-                           # port-check --strict-list. It requires every TypeScript file in the program tsc reads
-                           # from some strict config. It fails a tsc error reading any of them, a strict option
-                           # off in any, a .d.ts, .d.mts or .d.cts
-                           # under skipLibCheck, and in any code file in those programs a comment with
-                           # @ts-nocheck (any letter case) or eslint-disable / oxlint-disable (any form).
-bun run port-check         # node scripts/port-check.ts --base origin/main. Exits 1 on a difference or problem,
-                           # 2 on bad usage; CI runs it on pushes to and PRs from port/ branches
-                           # (docs/DEVELOPMENT.md has every rule).
-                           # - Pairs and compares every changed file and checks relative imports at head.
-                           # - Builds the merge base (in .port-check/<sha>/, git-ignored, never deleted by the
-                           #   tool, refused when it no longer holds the base tree) and the working tree with
-                           #   bunx cf build, offline, and compares every .cloudflare/output file (JS without
-                           #   comments, the rest byte for byte).
-                           # - Leaves tsconfig*.json changes to that build diff, but fails a new root
-                           #   tsconfig.json. For each strict config the merge base has (any of the five),
-                           #   the head's resolved compilerOptions for it
-                           #   (tsc --showConfig) must equal the base's; only its files list may change.
-                           # - In tests/, scripts/, cloudflare.config.ts and vite.config.ts, passes a string
-                           #   naming a moved file's new path.
-                           # - Treats public/ as served as written: its code keeps its path and stays
-                           #   JavaScript, and every file there compares byte for byte.
-                           # - Fails bytes that change but decode the same.
-                           # - Fails, and skips the builds, on a path committed at .port-check in any letter
-                           #   case, on anything in .port-check/ besides <sha> and <sha>.partial folders, and
-                           #   on a symlink or junction at .port-check, .port-check/<sha>, .cloudflare or
-                           #   .wrangler.
-node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
-                                        # refuses files under public/ and never rewrites one: it lists each
-                                        # line there that names a renamed file as file:line
+bun run typecheck          # tsc on the five strict programs, then node scripts/strict-check.ts, which fails a
+                           # TypeScript file in no program, a strict option off, a .d.ts in a program, and
+                           # @ts-nocheck or an eslint-disable / oxlint-disable comment (docs/DEVELOPMENT.md)
 bun run test:unit          # node --import ./tests/register.ts --test "tests/*.test.ts"
-bun run test:port          # node --test tests/port/port-check.test.ts: port-check and port-rename against fixture
-                           # repos in one new OS temp folder per run (the build tests run bunx cf build); not in
-                           # check, for speed; CI runs it next to bun run check
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test
 node tests/build-versions.ts   # after a build: each served module is at the output root, and every reference
@@ -690,21 +689,24 @@ bun run test:all           # everything below, in order (scripts/test-all.ts)
   real Worker (it needs `MINI_AUTH_SECRET`, which scripts/test-all.ts reads from `.dev.vars`
   without printing it) and drives the overlay, dashboard, admin and dev pages.
 - The overlay draws the arena only with `arena=1` (the OBS URL from the setup page adds it).
+- Worker unit tests share `tests/worker-fakes.ts`: the bound `SECRETS`, `namespace()` room fakes, `realRooms()`
+  (real ChannelRooms on `node:sqlite`) and `roomCall()`, `memoryAuth()` and `sqliteAuth()` stores, `signIn()`,
+  `req()` / `call()` for same-origin requests, and `twitchApi()` / `twitchSignIn()` for mocked Twitch calls.
 - Served modules: `src/served/<name>.js` or `.ts` is served at `/<name>.js` as JavaScript, types stripped by
   oxc and comments kept (`scripts/lib/served.ts`, the `served-modules` steps in `vite.config.ts`); a name with
   both a `.js` and a `.ts` source fails. `bun run dev` serves them as `text/javascript` with `Cache-Control: no-cache`
   and no version. The build writes them to the output root and rewrites each `./<name>.ts` or `./<name>.js`
   between them, and in `public/*.html`, to `./<name>.js?v=<hash>`: the first 10 hex digits of a SHA-256 over
   each module's name and served code. The overlay compares the `?v=` it was loaded with against the one in
-  `overlay.html` after a deploy and reloads itself between duels when they differ (`overlayVersionFromUrl`).
-  Pages bundled by Vite (`src/ui.ts`, `src/admin.ts`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
+  `overlay.html` after a deploy and reloads itself between duels when they differ (`overlayVersionFromUrl` in `src/served/text.ts`).
+  Pages bundled by Vite (`src/ui.ts`, `src/admin/characters.ts`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
   `/upload.js` by full URL at run time, without a version. URLs, `public/overlay.html` and `public/_headers`
   stay as they are; `src/dev.ts` is the owner page's bundled entry (`admin/dev/index.html`).
-- Bindings: ASSETS, ROOMS, AUTH, `CF_VERSION_METADATA` (version metadata), `PUBLIC_ORIGIN`
-  (the EventSub callback and OAuth redirect origin), `OWNER_TWITCH_ID` (text, nesszerra's Twitch id; left out under `MINI_LOCAL_TEST=1`) and the secrets
-  `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET`, `INTERNAL_SECRET`. `GITHUB_TOKEN`,
-  `GITHUB_REPO`, `CF_API_TOKEN` and `CF_ACCOUNT_ID` are optional secrets set with
-  `cf` or the dashboard (docs/LIVE_FIX.md); they are not declared, because declared secrets are
-  required at deploy time. `CHANNEL_ORIGINS` (JSON text from `channelDomains`; left out under
-  `MINI_LOCAL_TEST=1`; anything but a JSON object of URLs means no channel domains), `CHAT_BOT` and `BOT_LOGIN` (from `site.config.js` `bot`, per environment),
-  and on the test site only `BOT_DEBUG` and the secret `DEV_TOOLS_TOKEN`.
+- Bindings (`cloudflare.config.ts`): ASSETS, ROOMS, AUTH, `BACKUPS` (D1 `<worker>-backups`, filled
+  daily at 09:00 UTC by server/backups.ts; not under `cf dev`), `CF_VERSION_METADATA`, `PUBLIC_ORIGIN` (the EventSub callback and OAuth redirect origin), the secrets
+  `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET` and `INTERNAL_SECRET`, `CHAT_BOT` and `BOT_LOGIN`
+  (from `site.config.js` `bot`), and on the test site only `BOT_DEBUG` and the secret `DEV_TOOLS_TOKEN`.
+  `OWNER_TWITCH_ID` (the owner's Twitch id) and `CHANNEL_ORIGINS` (JSON text from `channelDomains`; anything but a
+  JSON object of URLs means no channel domains) are left out under `MINI_LOCAL_TEST=1`. `GITHUB_TOKEN`,
+  `GITHUB_REPO`, `CF_API_TOKEN` and `CF_ACCOUNT_ID` are optional secrets set outside the config
+  (docs/LIVE_FIX.md); declared secrets would be required at deploy time.

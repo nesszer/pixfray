@@ -12,9 +12,8 @@ type Filter = { key: string; operation: string; type: string; value?: string };
 const argv = process.argv.slice(2);
 const flags: Record<string, string> = {};
 for (let i = 0; i < argv.length; i++) {
-  const m = /^--([a-z]+)(?:=(.*))?$/.exec(argv[i]!); // !: i < argv.length
-  // !: group 1 always matches; a flag without "=" takes the next argument
-  if (m) flags[m[1]!] = m[2] ?? argv[++i] ?? "";
+  const m = /^--([a-z]+)(?:=(.*))?$/.exec(argv[i] ?? "");
+  if (m) flags[m[1] ?? ""] = m[2] ?? argv[++i] ?? ""; // a flag without "=" takes the next argument
 }
 if ("help" in flags || argv[0] === "help") {
   console.log("node scripts/logs.ts [--mode test] [--channel <login>] [--source <log>] [--hours 6] [--limit 100]");
@@ -25,14 +24,13 @@ const script = flags.mode === "test" ? siteConfig.workers.test : siteConfig.work
 const hours = Math.min(72, Math.max(0.1, Number(flags.hours) || 6)); // Workers Logs keeps 3 days
 const limit = Math.min(2000, Math.max(1, Number(flags.limit) || 100));
 
+const eq = (key: string, value: string): Filter => ({ key, operation: "eq", type: "string", value });
 const filters: Filter[] = [
-  { key: "$workers.scriptName", operation: "eq", type: "string", value: script },
+  eq("$workers.scriptName", script),
   // the bare field name matches the parsed JSON field (checked on staging: "source.log" matches nothing)
-  flags.source
-    ? { key: "log", operation: "eq", type: "string", value: flags.source }
-    : { key: "log", operation: "exists", type: "string" },
+  flags.source ? eq("log", flags.source) : { key: "log", operation: "exists", type: "string" },
+  ...(flags.channel ? [eq("channel", flags.channel)] : []),
 ];
-if (flags.channel) filters.push({ key: "channel", operation: "eq", type: "string", value: flags.channel });
 
 const to = Date.now(),
   from = to - hours * 3_600_000,
@@ -77,6 +75,5 @@ for (const e of events) {
   const extra = Object.keys(rest).length ? " " + JSON.stringify(rest) : "";
   console.log(`${at} ${String(log).padEnd(7)} ${String(message ?? "")}${extra}`);
 }
-console.error(
-  `${events.length} lines from ${script}, last ${hours} h${flags.channel ? ", channel " + flags.channel : ""}`,
-);
+const channel = flags.channel ? ", channel " + flags.channel : "";
+console.error(`${events.length} lines from ${script}, last ${hours} h${channel}`);

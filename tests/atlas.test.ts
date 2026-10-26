@@ -1,7 +1,5 @@
-// Lane D: the browser atlas packer (src/served/atlas.ts) against the server's upload limits and validation
-// (server/uploads.ts). Its own file because it imports both a Worker module and a DOM module
-// (tsconfig.node-all.json).
-// Run with: node --import ./tests/register.ts --test tests/atlas.test.ts
+// The browser atlas packer (src/served/atlas.ts) against the server's upload limits and validation (server/uploads.ts).
+// Its own file because it imports both a Worker module and a DOM module (tsconfig.node-all.json).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { UPLOAD_LIMITS, validateUpload } from "../server/uploads.ts";
@@ -13,16 +11,7 @@ import { must } from "./fakes.ts";
 type FakeContext2D = Pick<CanvasRenderingContext2D, "imageSmoothingEnabled" | "clearRect" | "drawImage">;
 
 test("browser limits match the server limits", () => {
-  for (const k of [
-    "maxFrames",
-    "frameSize",
-    "maxAtlasBytes",
-    "maxCharacters",
-    "maxAtlasSide",
-    "maxLabel",
-    "mime",
-  ] satisfies (keyof typeof LIMITS)[])
-    assert.equal(LIMITS[k], UPLOAD_LIMITS[k], k);
+  assert.deepEqual(LIMITS, UPLOAD_LIMITS);
 });
 
 test("pngInfo reads the size and rejects non-PNG bytes", () => {
@@ -33,15 +22,12 @@ test("pngInfo reads the size and rejects non-PNG bytes", () => {
 
 test("checkFrames enforces the frame count and size limits", () => {
   assert.deepEqual(checkFrames({ walk: [{ w: 64, h: 64 }] }), []);
-  // as string: these groups break a limit, so checkFrames returns at least one message (match fails the test if not)
-  assert.match(checkFrames({})[0] as string, /at least one/);
+  assert.match(must(checkFrames({})[0]), /at least one/);
   assert.match(
-    // as string: as above
-    checkFrames({ walk: Array(20).fill({ w: 8, h: 8 }), attack: Array(5).fill({ w: 8, h: 8 }) })[0] as string,
+    must(checkFrames({ walk: Array(20).fill({ w: 8, h: 8 }), attack: Array(5).fill({ w: 8, h: 8 }) })[0]),
     /at most 24/,
   );
-  // as string: as above
-  assert.match(checkFrames({ idle: [{ w: 129, h: 10 }] })[0] as string, /129 x 10/);
+  assert.match(must(checkFrames({ idle: [{ w: 129, h: 10 }] })[0]), /129 x 10/);
 });
 
 test("planAtlas packs frames bottom-centre into a uniform grid", () => {

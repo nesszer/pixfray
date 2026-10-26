@@ -13,9 +13,9 @@ export const ANIMATION_SLOTS = Object.freeze(["idle", "walk", "attack", "ko"] as
 export type Slot = (typeof ANIMATION_SLOTS)[number];
 type Size = { w: number; h: number };
 type Cell = { x: number; y: number; w: number; h: number };
-export type Groups = Partial<Record<Slot, Size[]>>;
+type Groups = Partial<Record<Slot, Size[]>>;
 export type AtlasPlan = ReturnType<typeof planAtlas>;
-export const ATLAS_COLUMNS = 8; // 8 x 128 = 1024 px wide at most; 24 frames -> 3 rows.
+const ATLAS_COLUMNS = 8; // 8 x 128 = 1024 px wide at most; 24 frames -> 3 rows.
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 // Reads width and height from PNG bytes (signature + IHDR). Returns null when the bytes are not a PNG.
@@ -37,22 +37,11 @@ export function checkFrames(groups: Groups, limits: { maxFrames: number; frameSi
   const all = ANIMATION_SLOTS.flatMap((slot) => (groups[slot] || []).map((f, i) => ({ ...f, slot, i })));
   if (!all.length) problems.push("Add at least one PNG frame.");
   if (all.length > limits.maxFrames)
-    problems.push("Use at most " + limits.maxFrames + " frames in total (you have " + all.length + ").");
+    problems.push(`Use at most ${limits.maxFrames} frames in total (you have ${all.length}).`);
   for (const f of all) {
     if (f.w > limits.frameSize || f.h > limits.frameSize)
       problems.push(
-        f.slot +
-          " frame " +
-          (f.i + 1) +
-          " is " +
-          f.w +
-          " x " +
-          f.h +
-          " px; the limit is " +
-          limits.frameSize +
-          " x " +
-          limits.frameSize +
-          ".",
+        `${f.slot} frame ${f.i + 1} is ${f.w} x ${f.h} px; the limit is ${limits.frameSize} x ${limits.frameSize}.`,
       );
   }
   return problems;
@@ -129,5 +118,5 @@ export function uploadBody(
 }
 
 export function formatBytes(n: number) {
-  return n >= 1048576 ? (n / 1048576).toFixed(2) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B";
+  return n >= 1048576 ? `${(n / 1048576).toFixed(2)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
 }

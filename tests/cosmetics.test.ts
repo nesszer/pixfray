@@ -10,12 +10,8 @@ test("cosmetic ids: the overlay drawings (src/served/cosmetics.ts) match the ser
     const ids = server.COSMETICS[kind].map((x) => x.id);
     assert.deepEqual(client.COSMETIC_IDS[kind], ids, kind);
   }
-  assert.deepEqual(
-    Object.keys(client.TAUNTS),
-    server.COSMETICS.taunt.map((x) => x.id),
-  );
-  assert.deepEqual(
-    Object.values(client.TITLES),
-    server.COSMETICS.title.map((x) => x.label),
-  );
+  const taunts = server.COSMETICS.taunt.map((x) => x.id);
+  const titles = server.COSMETICS.title.map((x) => x.label);
+  assert.deepEqual(Object.keys(client.TAUNTS), taunts);
+  assert.deepEqual(Object.values(client.TITLES), titles);
 });

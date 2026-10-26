@@ -1,14 +1,8 @@
-// What the browser receives, checked once where it arrives: the /api/live socket and /api/state (arena-client.ts),
-// /api/looks, the overlay's saved chat looks in localStorage and the demo's postMessage (overlay.ts). Pages import
-// these helpers too (src/parse.ts adds the page routes). Like server/parse.ts, each parser answers
-// { ok: true, value } or { ok: false, error } and checks only the fields the browser reads, with the types it reads
-// them as; other fields pass through untouched. A value that passes is the input object itself, narrowed, so extra
-// fields (a snapshot's build, a duel's rules) stay and nothing is copied. One bad entry in a list (a player, a duel, an event) drops only
-// that entry, so an odd old event kept in the room's last 50 can't freeze the overlay; a bad frame is dropped whole
-// and the page keeps its last good state. warnOnce logs each kind of drop once per page load, not once per frame.
-//
-// This file is served as /parse.js next to the overlay (docs/CONTRACTS.md §8), so it imports nothing at runtime
-// from outside src/served/.
+// What the browser receives, checked once where it arrives (the /api/live socket, /api/state, /api/looks, the
+// overlay's saved chat looks and the demo's postMessage); pages import these too. Each parser answers
+// { ok: true, value } or { ok: false, error }, checks only the fields the browser reads, and passes the input itself
+// through, narrowed. One bad entry in a list drops only that entry, so an odd old event can't freeze the overlay;
+// warnOnce logs each kind of drop once per page load. Served as /parse.js, so no runtime imports from outside src/served/.
 
 /** A JSON object, as JSON.parse returns it. */
 export type JsonObject = { [field: string]: unknown };
@@ -22,12 +16,8 @@ export const optString = (v: unknown): v is string | undefined => v === undefine
 export const optNumber = (v: unknown): v is number | undefined =>
   v === undefined || (typeof v === "number" && Number.isFinite(v));
 export const optBoolean = (v: unknown): v is boolean | undefined => v === undefined || typeof v === "boolean";
-export const optObject = (v: unknown): v is JsonObject | undefined => v === undefined || isObject(v);
-export const isNumberMap = (v: unknown): v is Record<string, number> =>
+const isNumberMap = (v: unknown): v is Record<string, number> =>
   isObject(v) && Object.values(v).every((n) => typeof n === "number" && Number.isFinite(n));
-/** A list of objects, each one passing the check. */
-export const isListOf = <T>(v: unknown, check: (item: unknown) => item is T): v is T[] =>
-  Array.isArray(v) && v.every(check);
 
 const warned = new Set<string>();
 /** Logs a dropped input once per kind per page load: a broken stream would otherwise log on every frame. */
@@ -71,50 +61,17 @@ const isRating = (v: unknown): v is Rating => isObject(v) && !badField(v, RATING
 const isRatings = (v: unknown): v is Record<string, Rating> | null | undefined =>
   v == null || (isObject(v) && Object.values(v).every(isRating));
 
-/** A fighter in the snapshot, or a saved look from /api/looks or a looks push. */
-export type ArenaProfile = {
-  userId?: string | undefined;
-  username?: string | undefined;
-  displayName?: string | undefined;
-  registered?: boolean | undefined;
-  avatar?: string | undefined;
-  color?: string | undefined;
-  hat?: string | undefined;
-  pet?: string | undefined;
-  petTier?: string | undefined;
-  defaultAbility?: string | undefined;
-  recolor?: string | undefined;
-  petColor?: string | undefined;
-  accessory?: string | undefined;
-  trail?: string | undefined;
-  winEffect?: string | undefined;
-  taunt?: string | undefined;
-  title?: string | undefined;
-  elo?: number | undefined;
-  lastSeen?: number | undefined;
-  respawnAt?: number | undefined;
-  // the overlay's lookOf copies the look fields by name
-  [field: string]: unknown;
-};
-const PROFILE_STRINGS = [
-  "userId",
-  "username",
-  "displayName",
-  "avatar",
-  "color",
-  "hat",
-  "pet",
-  "petTier",
-  "defaultAbility",
-  "recolor",
-  "petColor",
-  "accessory",
-  "trail",
-  "winEffect",
-  "taunt",
-  "title",
-] as const;
+/** The cosmetic ids a profile wears (cosmetics.ts draws them; an unknown id draws nothing). */
+export const COSMETIC_FIELDS = ["recolor", "petColor", "accessory", "trail", "winEffect", "taunt", "title"] as const;
+export type CosmeticField = (typeof COSMETIC_FIELDS)[number];
+/** The string fields of a saved look. */
+export const LOOK_STRINGS = ["avatar", "color", "hat", "pet", "petTier", "defaultAbility", ...COSMETIC_FIELDS] as const;
+const PROFILE_STRINGS = ["userId", "username", "displayName", ...LOOK_STRINGS] as const;
 const PROFILE_NUMBERS = ["elo", "lastSeen", "respawnAt"] as const;
+/** A fighter in the snapshot, or a saved look from /api/looks or a looks push. */
+export type ArenaProfile = { [K in (typeof PROFILE_STRINGS)[number]]?: string | undefined } & {
+  [K in (typeof PROFILE_NUMBERS)[number]]?: number | undefined;
+} & { registered?: boolean | undefined; [field: string]: unknown };
 
 const isLook = (v: unknown): v is ArenaProfile =>
   isObject(v) &&
@@ -168,62 +125,26 @@ export function parseArenaDuel(value: unknown): Parsed<ArenaDuel> {
   return isDuel(value) ? ok(value) : bad(isObject(value) ? "a duel field has the wrong type" : "duel is not an object");
 }
 
+const EVENT_IDS = ["id", "duelId", "a", "b", "declinedBy", "userId", "targetId", "winnerId", "loserId"] as const;
+const EVENT_WORDS = ["ability", "unrated", "decision", "reason"] as const;
+const EVENT_NUMBERS = ["at", "round", "die", "amount", "respawnAt"] as const;
+const EVENT_BOOLEANS = ["counter", "miss", "crit", "luckyCrit", "dodged", "finisher", "flawless"] as const;
 /** A game log event (server/model.ts GameLogEvent) with the fields the overlay reads. */
-export type ArenaEvent = {
-  id?: string | undefined;
+export type ArenaEvent = { [K in (typeof EVENT_IDS | typeof EVENT_WORDS)[number]]?: string | undefined } & {
+  [K in (typeof EVENT_NUMBERS)[number]]?: number | undefined;
+} & { [K in (typeof EVENT_BOOLEANS)[number]]?: boolean | undefined } & {
   type: string;
-  at?: number | undefined;
-  duelId?: string | undefined;
-  a?: string | undefined;
-  b?: string | undefined;
-  declinedBy?: string | undefined;
-  round?: number | undefined;
   hp?: Record<string, number> | undefined;
   maxHp?: Record<string, number> | undefined;
-  userId?: string | undefined;
-  targetId?: string | undefined;
-  die?: number | undefined;
-  counter?: boolean | undefined;
-  miss?: boolean | undefined;
-  ability?: string | undefined;
-  amount?: number | undefined;
-  crit?: boolean | undefined;
-  luckyCrit?: boolean | undefined;
-  dodged?: boolean | undefined;
-  finisher?: boolean | undefined;
-  winnerId?: string | undefined;
-  loserId?: string | undefined;
-  respawnAt?: number | undefined;
-  unrated?: string | undefined;
   ratings?: Record<string, Rating> | null | undefined;
-  decision?: string | undefined;
-  flawless?: boolean | undefined;
-  reason?: string | undefined;
   /** How often a player_respawned event has waited for a replay (set by the overlay). */
   tries?: number;
 };
-const EVENT_STRINGS = [
-  "id",
-  "duelId",
-  "a",
-  "b",
-  "declinedBy",
-  "userId",
-  "targetId",
-  "ability",
-  "winnerId",
-  "loserId",
-  "unrated",
-  "decision",
-  "reason",
-] as const;
-const EVENT_NUMBERS = ["at", "round", "die", "amount", "respawnAt"] as const;
-const EVENT_BOOLEANS = ["counter", "miss", "crit", "luckyCrit", "dodged", "finisher", "flawless"] as const;
 const isEvent = (v: unknown): v is ArenaEvent =>
   isObject(v) &&
   typeof v.type === "string" &&
   v.type !== "" &&
-  !badField(v, EVENT_STRINGS, optString) &&
+  !badField(v, [...EVENT_IDS, ...EVENT_WORDS], optString) &&
   !badField(v, EVENT_NUMBERS, optNumber) &&
   !badField(v, EVENT_BOOLEANS, optBoolean) &&
   (v.hp === undefined || isNumberMap(v.hp)) &&

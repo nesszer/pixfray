@@ -2,14 +2,10 @@
 import test from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import worker from "../server/worker.ts";
 import type { Env } from "../server/env.ts";
-import { asEnv, asExecutionContext, must } from "./fakes.ts";
-import type { Loose } from "./fakes.ts";
-import { createHmac } from "node:crypto";
-import { digest } from "../server/auth.ts";
 import { forgetChannel } from "../server/channels.ts";
-import { makePng } from "./upload-helpers.ts";
 import {
   eventsubSecret,
   signEventsub,
@@ -18,180 +14,79 @@ import {
   sendChatMessages,
   botDropText,
 } from "../server/eventsub.ts";
+import { asEnv, asExecutionContext, must, type Loose } from "./fakes.ts";
+import { makePng } from "./upload-helpers.ts";
+import { ORIGIN, SECRETS, memoryAuth, namespace, signedIn, req, call, status, twitchApi } from "./worker-fakes.ts";
+import type { StubInit } from "./worker-fakes.ts";
 
-/** What the room and AuthStore fakes receive; the Worker sends JSON bodies as strings. */
-type FakeInit = { method?: string; body?: string; headers?: HeadersInit };
-type FakeStub = { fetch(url: string, options?: FakeInit): Promise<Response> };
-/** A namespace fake: ids are the names themselves, and get returns a stub for that name. */
-type FakeNamespace = { idFromName(name: string): string; get(name: string): FakeStub };
-/** The bindings under test: an Env for the Worker whose namespaces the tests also call by channel name. */
-type TestEnv = Env & { ROOMS: FakeNamespace; AUTH: FakeNamespace };
 type Fixture = ReturnType<typeof environment>;
-/** The init a mocked global fetch receives from the Worker's Twitch calls. */
-type FetchInit = { method?: string; body?: string; headers?: Record<string, string> };
+type RoomFetch = (channel: string, url: string, init: StubInit) => Promise<Response>;
 
 function environment() {
-  // Loose: stored values, which the tests read by property
+  // Loose: stored values and forwarded room calls, which the tests read by property
   const entries = new Map<string, Loose>(),
-    // Loose: forwarded room calls, which the tests read by property
     forwarded: Loose[] = [];
-  const env = {
-    AUTH_SECRET: "test-only-auth-key",
-    INTERNAL_SECRET: "test-only-internal-key",
-    TWITCH_CLIENT_ID: "test-app",
-    TWITCH_CLIENT_SECRET: "test-secret",
-    AUTH: {
-      idFromName: (x: string) => x,
-      get: () => ({
-        async fetch(url: string, options: { method?: string; body: string }) {
-          const u = new URL(url),
-            key = u.searchParams.get("key") as string, // the Worker's AuthStore calls always carry a key
-            method = options.method;
-          if (u.pathname === "/list")
-            return Response.json(
-              [...entries].filter(([k]) => k.startsWith(key)).map(([k, value]) => ({ key: k, value })),
-            );
-          if (u.pathname === "/consume") {
-            const value = entries.get(key) ?? null;
-            entries.delete(key);
-            return Response.json(value);
-          }
-          if (method === "GET") return Response.json(entries.get(key) ?? null);
-          if (method === "DELETE") {
-            entries.delete(key);
-            return Response.json({ ok: true });
-          }
-          const { value, expires } = JSON.parse(options.body);
-          // The same expiry cap as the real AuthStore (server/auth.ts).
-          if (
-            !Number.isFinite(expires) ||
-            expires > Date.now() + (/^(channel|modsconnected|bot):/.test(key) ? 21 * 365 : 100) * 86400000
-          )
-            return Response.json({ error: "Invalid expiry" }, { status: 400 });
-          entries.set(key, value);
-          return Response.json({ ok: true });
-        },
-      }),
-    },
-    ROOMS: {
-      idFromName: (x: string) => x,
-      get: (channel: string) => ({
-        async fetch(url: string, options: FakeInit = {}) {
-          const path = new URL(url).pathname;
-          forwarded.push({ channel, path, options, body: options.body ? JSON.parse(options.body) : undefined });
-          if (path === "/catalog") return Response.json([{ id: "c-robot" }]);
-          if (path === "/admin" && (options.method || "GET") === "GET")
-            return Response.json({ revision: 3, history: [] });
-          return Response.json({ path });
-        },
-      }),
-    },
-    ASSETS: { fetch: async () => Response.json([{ id: "player" }]) },
+  const room: RoomFetch = async (channel, url, options) => {
+    const path = new URL(url).pathname;
+    forwarded.push({ channel, path, options, body: options.body ? JSON.parse(options.body) : undefined });
+    if (path === "/catalog") return Response.json([{ id: "c-robot" }]);
+    if (path === "/admin" && (options.method || "GET") === "GET") return Response.json({ revision: 3, history: [] });
+    return Response.json({ path });
   };
-  // partial bindings (each test adds what its route reads), and the namespaces stay callable by name
-  return { env: asEnv(env) as TestEnv, entries, forwarded };
-}
-async function signedIn(f: Fixture, owner = false) {
-  const cookie = (owner ? "1" : "2").repeat(64),
-    user = { id: owner ? "1" : "2", login: owner ? "nesszerra" : "viewer", displayName: "V" };
-  f.entries.set("owner:nesszerra", { id: "1" });
-  f.entries.set("session:" + (await digest(cookie)), { user });
-  return "mini_session=" + cookie;
+  const env = asEnv({
+    ...SECRETS,
+    AUTH: memoryAuth(entries),
+    ROOMS: namespace(room),
+    ASSETS: { fetch: async () => Response.json([{ id: "player" }]) },
+  });
+  /** Answers room calls with `fetch`, which may hand any call back to the default room. */
+  const rooms = (fetch: (channel: string, url: string, init: StubInit, next: RoomFetch) => Promise<Response>) => {
+    env.ROOMS = namespace((c, u, o) => fetch(c, u, o, room));
+  };
+  const st = (...args: Parameters<typeof req>) => status(env, ...args);
+  const json = async (...args: Parameters<typeof req>) => (await call(env, ...args)).body;
+  return { env, entries, forwarded, rooms, st, json };
 }
 const b64png = (w: number, h: number) => Buffer.from(makePng(w, h)).toString("base64");
-function req(path: string, method = "GET", data?: unknown, cookie?: string, extra: Record<string, string> = {}) {
-  const headers = {
-    ...(cookie ? { Cookie: cookie } : {}),
-    ...(method !== "GET" ? { Origin: "https://chat.miolaf.xyz", "Content-Type": "application/json" } : {}),
-    ...extra,
-  };
-  return new Request("https://chat.miolaf.xyz" + path, {
-    method,
-    headers,
-    ...(data !== undefined ? { body: typeof data === "string" ? data : JSON.stringify(data) } : {}),
-  });
-}
+const look = { avatar: "c-robot", color: "#aabbcc", defaultAbility: "heal" },
+  basic = { avatar: "player", color: "#aabbcc", defaultAbility: "heal" };
 
 test("admin dashboard data requires a mod or the owner", async () => {
   const f = environment();
-  assert.equal((await worker.fetch(req("/api/admin/nesszerra"), f.env)).status, 401);
-  assert.equal(
-    (await worker.fetch(req("/api/admin/nesszerra", "GET", undefined, await signedIn(f)), f.env)).status,
-    403,
-  );
-  const r = await worker.fetch(req("/api/admin/nesszerra", "GET", undefined, await signedIn(f, true)), f.env);
-  assert.equal(r.status, 200);
-  const body = await r.json<Loose>(); // Loose: the JSON reply, read by property
-  assert.equal(body.revision, 3);
-  assert.equal(body.access.canManage, true);
+  assert.equal(await f.st("/api/admin/nesszerra"), 401);
+  assert.equal(await f.st("/api/admin/nesszerra", "GET", undefined, await signedIn(f)), 403);
+  const r = await call(f.env, "/api/admin/nesszerra", "GET", undefined, await signedIn(f, true));
+  assert.deepEqual([r.status, r.body.revision, r.body.access.canManage], [200, 3, true]);
 });
 
 test("admin actions carry the session user as actor, never a forged one", async () => {
   const f = environment(),
     cookie = await signedIn(f, true);
-  const r = await worker.fetch(
-    req("/api/admin/nesszerra", "POST", { actorId: "forged", action: "resetRound" }, cookie),
-    f.env,
-  );
-  assert.equal(r.status, 200);
+  assert.equal(await f.st("/api/admin/nesszerra", "POST", { actorId: "forged", action: "resetRound" }, cookie), 200);
   assert.equal(f.forwarded.at(-1).body.actorId, "1");
 });
 
 test("custom character uploads are gated; atlas reads are public", async () => {
   const f = environment();
-  assert.equal((await worker.fetch(req("/api/assets/nesszerra"), f.env)).status, 401);
-  assert.equal((await worker.fetch(req("/api/assets/nesszerra", "POST", {}, await signedIn(f)), f.env)).status, 403);
-  const bad = await worker.fetch(req("/api/assets/nesszerra", "POST", {}, await signedIn(f, true)), f.env);
-  assert.equal(bad.status, 400, "an empty upload is rejected in the Worker before reaching the room");
-  assert.equal((await bad.json<Loose>()).reason, "invalid_label"); // Loose: the JSON reply, read by property
-  const pub = await worker.fetch(req("/api/assets/nesszerra/c-robot"), f.env);
-  assert.equal(pub.status, 200);
+  assert.equal(await f.st("/api/assets/nesszerra"), 401);
+  assert.equal(await f.st("/api/assets/nesszerra", "POST", {}, await signedIn(f)), 403);
+  const bad = await call(f.env, "/api/assets/nesszerra", "POST", {}, await signedIn(f, true));
+  assert.deepEqual([bad.status, bad.body.reason], [400, "invalid_label"], "an empty upload stops in the Worker");
+  assert.equal(await f.st("/api/assets/nesszerra/c-robot"), 200);
   assert.equal(f.forwarded.at(-1).path, "/asset/c-robot");
-});
-
-test("developer routes are owner-only", async () => {
-  const f = environment();
-  assert.equal((await worker.fetch(req("/api/dev/diagnostics"), f.env)).status, 401);
-  assert.equal(
-    (await worker.fetch(req("/api/dev/diagnostics", "GET", undefined, await signedIn(f)), f.env)).status,
-    403,
-  );
-  const ok = await worker.fetch(req("/api/dev/diagnostics", "GET", undefined, await signedIn(f, true)), f.env);
-  assert.equal(ok.status, 200);
-  assert.equal((await worker.fetch(req("/api/dev/deploy", "POST", {}, await signedIn(f, true)), f.env)).status, 501);
 });
 
 test("catalog merges static and custom characters; profiles may pick either", async () => {
   const f = environment(),
     cookie = await signedIn(f);
-  const cat = await (await worker.fetch(req("/api/catalog/nesszerra"), f.env)).json<Loose>(); // Loose: the JSON reply, read by property
-  assert.deepEqual(
-    cat.map((x: { id: string }) => x.id),
-    ["player", "c-robot"],
-  );
-  const ok = await worker.fetch(
-    req("/api/profile/nesszerra", "POST", { avatar: "c-robot", color: "#aabbcc", defaultAbility: "heal" }, cookie),
-    f.env,
-  );
-  assert.equal(ok.status, 200);
-  assert.equal(
-    (
-      await worker.fetch(
-        req("/api/profile/nesszerra", "POST", { avatar: "ghost", color: "#aabbcc", defaultAbility: "heal" }, cookie),
-        f.env,
-      )
-    ).status,
-    400,
-  );
-  assert.equal(
-    (
-      await worker.fetch(
-        req("/api/profile/nesszerra", "POST", { avatar: "player", color: "red", defaultAbility: "heal" }, cookie),
-        f.env,
-      )
-    ).status,
-    400,
-  );
+  const ids = (await f.json("/api/catalog/nesszerra")).map((x: { id: string }) => x.id);
+  assert.deepEqual(ids, ["player", "c-robot"]);
+  for (const [body, code] of [
+    [look, 200],
+    [{ ...look, avatar: "ghost" }, 400],
+    [{ ...basic, color: "red" }, 400],
+  ] as const)
+    assert.equal(await f.st("/api/profile/nesszerra", "POST", body, cookie), code);
 });
 
 test("a saved fighter is indexed per viewer, and /others lists their look on other channels", async () => {
@@ -202,167 +97,119 @@ test("a saved fighter is indexed per viewer, and /others lists their look on oth
     miolafff: { avatar: "cowgirl", color: "#F87171", defaultAbility: "heal", lastSeen: 100, hat: "crown" },
     newstreamer: { avatar: "dog", color: "#FBBF24", defaultAbility: "strike", lastSeen: 200 },
   };
-  const rooms = f.env.ROOMS.get;
-  f.env.ROOMS = {
-    idFromName: (x) => x,
-    get: (channel) => ({
-      async fetch(url, options = {}) {
-        const u = new URL(url);
-        if (u.pathname === "/profile" && (options.method || "GET") === "GET") {
-          f.forwarded.push({ channel, path: "/profile" });
-          return Response.json(u.searchParams.get("userId") === "2" ? saved[channel] || null : null);
-        }
-        return rooms(channel).fetch(url, options);
-      },
-    }),
-  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
+  f.rooms(async (channel, url, options, next) => {
+    const u = new URL(url);
+    if (u.pathname !== "/profile" || (options.method || "GET") !== "GET") return next(channel, url, options);
+    f.forwarded.push({ channel, path: "/profile" });
+    return Response.json(u.searchParams.get("userId") === "2" ? saved[channel] || null : null);
+  });
   f.entries.set("channel:newstreamer", { id: "77", login: "newstreamer", enabledAt: 1 });
-  assert.equal((await worker.fetch(req("/api/profile/nesszerra/others"), f.env)).status, 401);
-  assert.equal((await worker.fetch(req("/api/profile/nesszerra/other", "GET", undefined, cookie), f.env)).status, 404);
-  assert.equal((await worker.fetch(req("/api/profile/nesszerra/others", "POST", {}, cookie), f.env)).status, 404);
+  assert.equal(await f.st("/api/profile/nesszerra/others"), 401);
+  assert.equal(await f.st("/api/profile/nesszerra/other", "GET", undefined, cookie), 404);
+  assert.equal(await f.st("/api/profile/nesszerra/others", "POST", {}, cookie), 404);
+  const others = async () =>
+    (await f.json("/api/profile/nesszerra/others", "GET", undefined, cookie)).fighters as { channel: string }[];
   // Before any save the index is empty: only the built-in channels are checked, never this one.
-  let r = await (
-    await worker.fetch(req("/api/profile/nesszerra/others", "GET", undefined, cookie), f.env)
-  ).json<Loose>(); // Loose: the JSON reply, read by property
   assert.deepEqual(
-    r.fighters,
+    await others(),
     [{ channel: "miolafff", avatar: "cowgirl", color: "#F87171", defaultAbility: "heal", lastSeen: 100 }],
     "base look only, no gear",
   );
   assert.equal(f.entries.has("fighters:2"), false);
   // A save on newstreamer puts it first in the index; then it is listed too, newest first.
   f.forwarded.length = 0;
-  assert.equal(
-    (
-      await worker.fetch(
-        req(
-          "/api/profile/newstreamer",
-          "POST",
-          { avatar: "c-robot", color: "#aabbcc", defaultAbility: "heal" },
-          cookie,
-        ),
-        f.env,
-      )
-    ).status,
-    200,
-  );
+  assert.equal(await f.st("/api/profile/newstreamer", "POST", look, cookie), 200);
   assert.deepEqual(f.entries.get("fighters:2"), { channels: ["newstreamer"] });
-  assert.equal(
-    (
-      await worker.fetch(
-        req("/api/profile/nesszerra", "POST", { avatar: "c-robot", color: "#aabbcc", defaultAbility: "heal" }, cookie),
-        f.env,
-      )
-    ).status,
-    200,
-  );
+  assert.equal(await f.st("/api/profile/nesszerra", "POST", look, cookie), 200);
   assert.deepEqual(f.entries.get("fighters:2"), { channels: ["nesszerra", "newstreamer"] });
-  r = await (await worker.fetch(req("/api/profile/nesszerra/others", "GET", undefined, cookie), f.env)).json();
-  assert.deepEqual(
-    r.fighters.map((x: { channel: string }) => x.channel),
-    ["newstreamer", "miolafff"],
-  );
-  assert.ok(
-    !f.forwarded.some((x) => x.channel === "nesszerra" && x.path === "/profile" && !x.body),
-    "this channel is not asked",
-  );
+  const listed = (await others()).map((x) => x.channel);
+  assert.deepEqual(listed, ["newstreamer", "miolafff"]);
+  const asked = f.forwarded.some((x) => x.channel === "nesszerra" && x.path === "/profile" && !x.body);
+  assert.ok(!asked, "this channel is not asked");
   // A channel that was turned off is skipped.
   f.entries.delete("channel:newstreamer");
   forgetChannel("newstreamer");
-  r = await (await worker.fetch(req("/api/profile/nesszerra/others", "GET", undefined, cookie), f.env)).json();
-  assert.deepEqual(
-    r.fighters.map((x: { channel: string }) => x.channel),
-    ["miolafff"],
-  );
+  const left = (await others()).map((x) => x.channel);
+  assert.deepEqual(left, ["miolafff"]);
 });
 
 test("malformed and oversized bodies are rejected before reaching a room", async () => {
   const f = environment(),
     cookie = await signedIn(f);
-  assert.equal((await worker.fetch(req("/api/profile/nesszerra", "POST", "null", cookie), f.env)).status, 400);
-  assert.equal((await worker.fetch(req("/api/profile/nesszerra", "POST", "[1]", cookie), f.env)).status, 400);
-  assert.equal((await worker.fetch(req("/api/profile/nesszerra", "POST", "{bad", cookie), f.env)).status, 400);
-  assert.equal(
-    (
-      await worker.fetch(
-        req("/api/profile/nesszerra", "POST", JSON.stringify({ avatar: "x".repeat(5000) }), cookie),
-        f.env,
-      )
-    ).status,
-    413,
-  );
+  for (const [body, code] of [
+    ["null", 400],
+    ["[1]", 400],
+    ["{bad", 400],
+    [JSON.stringify({ avatar: "x".repeat(5000) }), 413],
+  ] as const)
+    assert.equal(await f.st("/api/profile/nesszerra", "POST", body, cookie), code, body.slice(0, 10));
   assert.equal(f.forwarded.length, 0);
 });
 
 test("live sockets require a WebSocket upgrade; the relay routes are gone", async () => {
-  const f = environment(),
-    owner = await signedIn(f, true);
-  assert.equal((await worker.fetch(req("/api/live/nesszerra"), f.env)).status, 426);
-  assert.equal(
-    (await worker.fetch(req("/api/relay/nesszerra", "GET", undefined, undefined, { Upgrade: "websocket" }), f.env))
-      .status,
-    404,
-  );
-  assert.equal((await worker.fetch(req("/api/relay/code", "POST", {}, owner), f.env)).status, 404);
+  const f = environment();
+  assert.equal(await f.st("/api/live/nesszerra"), 426);
+  assert.equal(await f.st("/api/relay/nesszerra", "GET", undefined, undefined, { Upgrade: "websocket" }), 404);
+  assert.equal(await f.st("/api/relay/code", "POST", {}, await signedIn(f, true)), 404);
   assert.equal(f.forwarded.length, 0);
+});
+
+test("unknown routes and channels that are not enabled", async () => {
+  const f = environment();
+  assert.equal(await f.st("/api/leaderboard/somechannel"), 403);
+  assert.equal(await f.st("/api/state/nesszerra", "DELETE"), 405);
 });
 
 // ---------- Twitch EventSub webhook ----------
 const NOW = Date.parse("2026-10-01T12:00:00Z");
-async function eventsub(
-  f: Fixture,
-  body: unknown,
-  {
-    type = "notification",
-    id = "msg-" + Math.random().toString(16).slice(2),
-    at = NOW,
-    sign = true,
-    signature,
-    headers = {},
-  }: {
-    type?: string;
-    id?: string;
-    at?: number;
-    sign?: boolean;
-    signature?: string;
-    headers?: Record<string, string>;
-  } = {},
-) {
+type Delivery = {
+  type?: string;
+  id?: string;
+  at?: number;
+  sign?: boolean;
+  signature?: string;
+  headers?: Record<string, string>;
+  origin?: string;
+  ctx?: ExecutionContext;
+};
+async function eventsub(f: Fixture, body: unknown, options: Delivery = {}) {
+  const { type = "notification", id = "msg-" + Math.random().toString(16).slice(2), at = NOW } = options;
   const raw = typeof body === "string" ? body : JSON.stringify(body),
     timestamp = new Date(at).toISOString().replace("Z", "123456Z");
   const sig =
-    signature ??
-    (sign ? await signEventsub(await eventsubSecret(f.env), id, timestamp, raw) : "sha256=" + "0".repeat(64));
+    options.signature ??
+    (options.sign === false
+      ? "sha256=" + "0".repeat(64)
+      : await signEventsub(await eventsubSecret(f.env), id, timestamp, raw));
   // no Origin and no cookie, like Twitch
-  return worker.fetch(
-    new Request("https://chat.miolaf.xyz/api/eventsub", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Twitch-Eventsub-Message-Id": id,
-        "Twitch-Eventsub-Message-Timestamp": timestamp,
-        "Twitch-Eventsub-Message-Signature": sig,
-        "Twitch-Eventsub-Message-Type": type,
-        "Twitch-Eventsub-Subscription-Type": "channel.chat.message",
-        "Twitch-Eventsub-Subscription-Version": "1",
-        ...headers,
-      },
-      body: raw,
-    }),
-    f.env,
-  );
+  const request = new Request((options.origin ?? ORIGIN) + "/api/eventsub", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Twitch-Eventsub-Message-Id": id,
+      "Twitch-Eventsub-Message-Timestamp": timestamp,
+      "Twitch-Eventsub-Message-Signature": sig,
+      "Twitch-Eventsub-Message-Type": type,
+      "Twitch-Eventsub-Subscription-Type": "channel.chat.message",
+      "Twitch-Eventsub-Subscription-Version": "1",
+      ...options.headers,
+    },
+    body: raw,
+  });
+  return worker.fetch(request, f.env, options.ctx);
 }
 /** A chat notification; tests add the optional fields a message can carry. */
 type ChatBody = {
-  subscription: { id: string; status: string; type: string };
+  subscription: { id: string; status: string; type: string; condition?: object };
   event: {
+    broadcaster_user_id?: string;
     broadcaster_user_login: string;
     chatter_user_id: string;
     chatter_user_login: string;
     chatter_user_name: string;
     message_id: string;
     message: { text: string; fragments?: object[] };
-    color: string;
+    color?: string;
     badges?: { set_id: string; id: string; info: string }[];
     reply?: { parent_message_body: string };
   };
@@ -385,22 +232,14 @@ test("eventsub: the secret is derived from AUTH_SECRET; signed notifications rea
   const f = environment();
   const expected = createHmac("sha256", f.env.AUTH_SECRET).update("mini-chat:eventsub:v1").digest("hex");
   assert.equal(await eventsubSecret(f.env), expected);
-  const res = await eventsub(f, chatBody(), { id: "n-1" });
-  assert.equal(res.status, 204);
-  const sent = f.forwarded.at(-1);
+  assert.equal((await eventsub(f, chatBody(), { id: "n-1" })).status, 204);
+  const { channel, path, body } = f.forwarded.at(-1);
   assert.deepEqual(
-    [
-      sent.channel,
-      sent.path,
-      sent.body.messageId,
-      sent.body.messageType,
-      sent.body.subscription.id,
-      sent.body.timestamp,
-    ],
+    [channel, path, body.messageId, body.messageType, body.subscription.id, body.timestamp],
     ["nesszerra", "/eventsub", "n-1", "notification", "sub-1", NOW],
     "nanosecond fractions are truncated to milliseconds",
   );
-  assert.equal(sent.body.event.message.text, "!strike");
+  assert.equal(body.event.message.text, "!strike");
   // a disabled channel is accepted (204) but never routed
   const before = f.forwarded.length;
   assert.equal((await eventsub(f, chatBody("somechannel"))).status, 204);
@@ -410,8 +249,6 @@ test("eventsub: the secret is derived from AUTH_SECRET; signed notifications rea
 test("eventsub: bad signatures, stale or future timestamps, missing headers and oversized bodies are refused", async (t) => {
   t.mock.method(Date, "now", () => NOW);
   const f = environment();
-  assert.equal((await eventsub(f, chatBody(), { sign: false })).status, 403);
-  assert.equal((await eventsub(f, chatBody(), { signature: "nonsense" })).status, 403);
   // a valid signature for a different body
   const other = await signEventsub(
     await eventsubSecret(f.env),
@@ -419,15 +256,20 @@ test("eventsub: bad signatures, stale or future timestamps, missing headers and 
     new Date(NOW).toISOString().replace("Z", "123456Z"),
     "{}",
   );
-  assert.equal((await eventsub(f, chatBody(), { id: "x", signature: other })).status, 403);
-  assert.equal((await eventsub(f, chatBody(), { at: NOW - 601_000 })).status, 403, "older than 10 minutes");
-  assert.equal((await eventsub(f, chatBody(), { at: NOW + 61_000 })).status, 403, "more than 1 minute in the future");
-  assert.equal((await eventsub(f, chatBody(), { at: NOW - 590_000 })).status, 204);
-  assert.equal((await eventsub(f, chatBody(), { headers: { "Twitch-Eventsub-Message-Id": "" } })).status, 400);
+  for (const [options, code, why] of [
+    [{ sign: false }, 403, "unsigned"],
+    [{ signature: "nonsense" }, 403, "nonsense signature"],
+    [{ id: "x", signature: other }, 403, "another body's signature"],
+    [{ at: NOW - 601_000 }, 403, "older than 10 minutes"],
+    [{ at: NOW + 61_000 }, 403, "more than 1 minute in the future"],
+    [{ at: NOW - 590_000 }, 204, "inside the window"],
+    [{ headers: { "Twitch-Eventsub-Message-Id": "" } }, 400, "no message id"],
+  ] satisfies [Delivery, number, string][])
+    assert.equal((await eventsub(f, chatBody(), options)).status, code, why);
   assert.equal((await eventsub(f, "x".repeat(64 * 1024 + 1))).status, 413);
   assert.equal((await eventsub(f, "{not json")).status, 400);
   assert.equal(f.forwarded.length, 1);
-  assert.equal((await worker.fetch(new Request("https://chat.miolaf.xyz/api/eventsub"), f.env)).status, 405);
+  assert.equal((await worker.fetch(new Request(ORIGIN + "/api/eventsub"), f.env)).status, 405);
 });
 
 test("eventsub: verification answers the challenge as text/plain; revocation is forwarded; unknown types are ignored", async (t) => {
@@ -445,35 +287,29 @@ test("eventsub: verification answers the challenge as text/plain; revocation is 
   assert.match(must(res.headers.get("content-type")), /^text\/plain/);
   assert.equal(await res.text(), "pogchamp-kappa-360noscope");
   assert.equal(f.forwarded.at(-1).body.messageType, "webhook_callback_verification");
-  const revoked = await eventsub(
-    f,
-    { subscription: { id: "sub-1", status: "authorization_revoked" } },
-    { type: "revocation" },
-  );
-  assert.equal(revoked.status, 204);
-  assert.deepEqual(
-    [f.forwarded.at(-1).body.messageType, f.forwarded.at(-1).body.subscription.status],
-    ["revocation", "authorization_revoked"],
-  );
+  const revoked = { subscription: { id: "sub-1", status: "authorization_revoked" } };
+  assert.equal((await eventsub(f, revoked, { type: "revocation" })).status, 204);
+  const { body } = f.forwarded.at(-1);
+  assert.deepEqual([body.messageType, body.subscription.status], ["revocation", "authorization_revoked"]);
   const n = f.forwarded.length;
   assert.equal((await eventsub(f, { subscription: {} }, { type: "something_new" })).status, 204);
   assert.equal(f.forwarded.length, n);
 });
 
-test("eventsub: a room failure is not acknowledged, so Twitch retries", async (t) => {
+test("eventsub: a room failure is not acknowledged, so Twitch retries; a room 4xx is acknowledged", async (t) => {
   t.mock.method(Date, "now", () => NOW);
   const f = environment();
-  f.env.ROOMS = {
-    idFromName: (x) => x,
-    get: () => ({ fetch: async () => new Response("boom", { status: 500 }) }),
-  } as FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
+  f.rooms(async () => new Response("boom", { status: 500 }));
   assert.equal((await eventsub(f, chatBody())).status, 503);
+  // a room refusing a validly signed message must not turn into a Twitch retry loop
+  f.rooms(async () => Response.json({ error: "request body too large" }, { status: 400 }));
+  assert.equal((await eventsub(f, chatBody())).status, 204);
 });
 
-test("eventsub: an emote-heavy message (~30 KB) is forwarded as a few hundred bytes; a room 4xx is acknowledged", async (t) => {
+test("eventsub: an emote-heavy message (~30 KB) is forwarded as a few hundred bytes", async (t) => {
   t.mock.method(Date, "now", () => NOW);
-  const f = environment();
-  const body = chatBody();
+  const f = environment(),
+    body = chatBody();
   const emote = {
     type: "emote",
     text: "Kappa",
@@ -486,37 +322,25 @@ test("eventsub: an emote-heavy message (~30 KB) is forwarded as a few hundred by
     },
     mention: null,
   };
+  const space = { type: "text", text: " ", cheermote: null, emote: null, mention: null };
   body.event.message = {
     text: "!strike " + "Kappa ".repeat(80),
-    fragments: Array.from({ length: 120 }, (_, i) =>
-      i % 2 ? { type: "text", text: " ", cheermote: null, emote: null, mention: null } : emote,
-    ),
+    fragments: [...Array.from({ length: 120 }, (_, i) => (i % 2 ? space : emote)), ...Array(60).fill(emote)],
   };
   body.event.badges = Array.from({ length: 20 }, () => ({ set_id: "subscriber", id: "12", info: "12" }));
   body.event.reply = { parent_message_body: "x".repeat(500) };
-  must(body.event.message.fragments).push(...Array.from({ length: 60 }, () => emote));
   const raw = JSON.stringify(body);
   assert.ok(raw.length > 28_000 && raw.length < 64 * 1024, "body is " + raw.length + " bytes");
   assert.equal((await eventsub(f, body)).status, 204);
-  const sent = f.forwarded.at(-1);
+  const sent = f.forwarded.at(-1),
+    event = sent.body.event;
   assert.ok(sent.options.body.length < 1500, "room payload is " + sent.options.body.length + " bytes");
-  assert.equal(sent.body.event.message.text, body.event.message.text.slice(0, 512));
-  assert.equal(sent.body.event.message.fragments, undefined);
+  assert.equal(event.message.text, body.event.message.text.slice(0, 512));
+  assert.equal(event.message.fragments, undefined);
   assert.deepEqual(
-    [
-      sent.body.event.chatter_user_id,
-      sent.body.event.chatter_user_login,
-      sent.body.event.color,
-      sent.body.event.message_id,
-    ],
+    [event.chatter_user_id, event.chatter_user_login, event.color, event.message_id],
     ["7", "viewer", "#FF0000", "chat-1"],
   );
-  // a room refusing a validly signed message must not turn into a Twitch retry loop
-  f.env.ROOMS = {
-    idFromName: (x) => x,
-    get: () => ({ fetch: async () => Response.json({ error: "request body too large" }, { status: 400 }) }),
-  } as FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
-  assert.equal((await eventsub(f, chatBody())).status, 204);
 });
 
 test("eventsub: broadcaster, moderator and lead moderator badges mark the chatter as a mod; others do not", async (t) => {
@@ -542,29 +366,22 @@ function helixMock(
   { subscriptions = [], create = 202 }: { subscriptions?: object[]; create?: number } = {},
 ) {
   const calls: Loose[] = []; // Loose: call records the tests read by property
-  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: FetchInit = {}) => {
-    const u = new URL(String(url)),
-      method = init.method || "GET";
-    calls.push({
-      method,
-      url: u,
-      body: typeof init.body === "string" ? JSON.parse(init.body) : undefined,
-      auth: init.headers?.Authorization,
-    });
-    if (u.host === "id.twitch.tv") return Response.json({ access_token: "app-token-1", expires_in: 5000 });
+  twitchApi(t, (url, init) => {
+    const method = init.method || "GET";
+    calls.push({ method, url, body: init.body ? JSON.parse(init.body) : undefined, auth: init.headers?.Authorization });
     if (method === "GET") return Response.json({ data: subscriptions, pagination: {} });
     if (method === "DELETE") return new Response(null, { status: 204 });
     if (create !== 202) return Response.json({ message: "missing authorization" }, { status: create });
-    return Response.json(
-      {
-        data: [{ id: "sub-new", status: "webhook_callback_verification_pending", created_at: "2026-10-01T12:00:00Z" }],
-      },
-      { status: 202 },
-    );
+    const data = [
+      { id: "sub-new", status: "webhook_callback_verification_pending", created_at: "2026-10-01T12:00:00Z" },
+    ];
+    return Response.json({ data }, { status: 202 });
   });
-  return calls;
+  const deleted = () => calls.filter((c) => c.method === "DELETE").map((c) => c.url.searchParams.get("id"));
+  const created = () => calls.filter((c) => c.method === "POST" && c.url.host === "api.twitch.tv");
+  return { calls, deleted, created };
 }
-const callback = "https://chat.miolaf.xyz/api/eventsub";
+const callback = ORIGIN + "/api/eventsub";
 const sub = (id: string, extra: object = {}) => ({
   id,
   status: "enabled",
@@ -575,11 +392,12 @@ const sub = (id: string, extra: object = {}) => ({
   created_at: "2026-09-30T00:00:00Z",
   ...extra,
 });
+const connect = async (f: Fixture, extra: object = {}) =>
+  call(f.env, "/api/admin/nesszerra", "POST", { action: "connectChat", ...extra }, await signedIn(f, true));
 
 test("connectChat creates exactly one webhook with the broadcaster condition and deletes stale ones", async (t) => {
-  const f = environment(),
-    owner = await signedIn(f, true);
-  const calls = helixMock(t, {
+  const f = environment();
+  const helix = helixMock(t, {
     subscriptions: [
       sub("old-revoked", { status: "authorization_revoked" }),
       sub("wrong-user", { condition: { broadcaster_user_id: "1", user_id: "9" } }),
@@ -589,19 +407,16 @@ test("connectChat creates exactly one webhook with the broadcaster condition and
       }),
     ],
   });
-  const res = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
-  assert.equal(res.status, 200);
-  assert.deepEqual(
-    calls.filter((c) => c.method === "DELETE").map((c) => c.url.searchParams.get("id")),
-    ["old-revoked", "wrong-user"],
-  );
-  const created = calls.find((c) => c.method === "POST" && c.url.host === "api.twitch.tv");
+  assert.equal((await connect(f)).status, 200);
+  assert.deepEqual(helix.deleted(), ["old-revoked", "wrong-user"]);
+  const created = helix.created()[0];
   assert.deepEqual(created.body.condition, { broadcaster_user_id: "1", user_id: "1" });
+  const { type, version, transport } = created.body;
   assert.deepEqual(
-    [created.body.type, created.body.version, created.body.transport.method, created.body.transport.callback],
+    [type, version, transport.method, transport.callback],
     ["channel.chat.message", "1", "webhook", callback],
   );
-  assert.equal(created.body.transport.secret, await eventsubSecret(f.env));
+  assert.equal(transport.secret, await eventsubSecret(f.env));
   assert.equal(created.auth, "Bearer app-token-1");
   assert.deepEqual(f.forwarded.at(-1).body, {
     action: "connected",
@@ -615,234 +430,148 @@ test("connectChat creates exactly one webhook with the broadcaster condition and
 });
 
 test("connectChat keeps an existing matching webhook instead of creating another", async (t) => {
-  const f = environment(),
-    owner = await signedIn(f, true);
-  const calls = helixMock(t, {
+  const f = environment();
+  const { calls } = helixMock(t, {
     subscriptions: [sub("keep-me"), sub("dupe-pending", { status: "webhook_callback_verification_pending" })],
   });
-  assert.equal(
-    (await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env)).status,
-    200,
-  );
-  assert.deepEqual(
-    calls
-      .filter((c) => c.method !== "GET" && c.url.host === "api.twitch.tv")
-      .map((c) => c.method + " " + (c.url.searchParams.get("id") || "")),
-    ["DELETE dupe-pending"],
-  );
+  assert.equal((await connect(f)).status, 200);
+  const writes = calls
+    .filter((c) => c.method !== "GET" && c.url.host === "api.twitch.tv")
+    .map((c) => c.method + " " + (c.url.searchParams.get("id") || ""));
+  assert.deepEqual(writes, ["DELETE dupe-pending"]);
   assert.equal(f.forwarded.at(-1).body.subscriptionId, "keep-me");
 });
 
 test("connectChat: a live subscription for the same channel on the other site is a clear 409 unless taken over", async (t) => {
-  const f = environment(),
-    owner = await signedIn(f, true);
-  const other = { method: "webhook", callback: "https://test.chat.miolaf.xyz/api/eventsub" };
-  const calls = helixMock(t, {
+  const f = environment();
+  const helix = helixMock(t, {
     subscriptions: [
-      sub("on-test-site", { transport: other }),
+      sub("on-test-site", { transport: { method: "webhook", callback: "https://test.chat.miolaf.xyz/api/eventsub" } }),
       sub("dead-elsewhere", {
         status: "webhook_callback_verification_failed",
         transport: { method: "webhook", callback: "https://old.example/api/eventsub" },
       }),
     ],
   });
-  const res = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
-  assert.equal(res.status, 409);
-  const body = await res.json<Loose>(); // Loose: the JSON reply, read by property
-  assert.equal(body.connectedElsewhere, "https://test.chat.miolaf.xyz");
+  const res = await connect(f);
+  assert.deepEqual([res.status, res.body.connectedElsewhere], [409, "https://test.chat.miolaf.xyz"]);
   assert.match(
-    body.error,
+    res.body.error,
     /Chat is connected to https:\/\/test\.chat\.miolaf\.xyz\. Only one site can receive chat at a time/,
   );
-  assert.equal(
-    calls.some((c) => c.method !== "GET" && c.url.host === "api.twitch.tv"),
-    false,
-    "nothing is deleted or created without takeover",
-  );
-  assert.equal(
-    f.forwarded.some((x) => x.path === "/chat" && x.body),
-    false,
-  );
+  const wrote = helix.calls.some((c) => c.method !== "GET" && c.url.host === "api.twitch.tv");
+  assert.equal(wrote, false, "nothing is deleted or created without takeover");
+  const told = f.forwarded.some((x) => x.path === "/chat" && x.body);
+  assert.equal(told, false);
   // takeover deletes the other site's subscription (and dead ones for this channel), then creates ours
-  const taken = await worker.fetch(
-    req("/api/admin/nesszerra", "POST", { action: "connectChat", takeover: true }, owner),
-    f.env,
-  );
-  assert.equal(taken.status, 200);
-  assert.deepEqual(
-    calls.filter((c) => c.method === "DELETE").map((c) => c.url.searchParams.get("id")),
-    ["on-test-site", "dead-elsewhere"],
-  );
-  assert.equal(calls.filter((c) => c.method === "POST" && c.url.host === "api.twitch.tv").length, 1);
+  assert.equal((await connect(f, { takeover: true })).status, 200);
+  assert.deepEqual(helix.deleted(), ["on-test-site", "dead-elsewhere"]);
+  assert.equal(helix.created().length, 1);
   assert.equal(f.forwarded.at(-1).body.subscriptionId, "sub-new");
   // the owner dev settings route takes the same option
-  const dev = await worker.fetch(req("/api/dev/settings", "POST", { action: "connectChat" }, owner), f.env);
-  assert.deepEqual([dev.status, (await dev.json<Loose>()).connectedElsewhere], [409, "https://test.chat.miolaf.xyz"]); // Loose: the JSON reply, read by property
+  const dev = await call(f.env, "/api/dev/settings", "POST", { action: "connectChat" }, await signedIn(f, true));
+  assert.deepEqual([dev.status, dev.body.connectedElsewhere], [409, "https://test.chat.miolaf.xyz"]);
 });
 
 test("connectChat: a Helix 409 on create (raced by another site) is the same clear conflict", async (t) => {
-  const f = environment(),
-    owner = await signedIn(f, true);
+  const f = environment();
   helixMock(t, { create: 409 });
-  const res = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
-  assert.equal(res.status, 409);
-  const body = await res.json<Loose>(); // Loose: the JSON reply, read by property
-  assert.equal(body.connectedElsewhere, "another site");
-  assert.match(body.error, /Only one site can receive chat at a time/);
+  const res = await connect(f);
+  assert.deepEqual([res.status, res.body.connectedElsewhere], [409, "another site"]);
+  assert.match(res.body.error, /Only one site can receive chat at a time/);
 });
 
 test("connectChat: a Twitch authorization error tells the owner to reconnect Twitch", async (t) => {
-  const f = environment(),
-    owner = await signedIn(f, true);
+  const f = environment();
   helixMock(t, { create: 403 });
-  const res = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
-  assert.equal(res.status, 403);
-  const body = await res.json<Loose>(); // Loose: the JSON reply, read by property
-  assert.equal(body.reconnect, "/auth/login?connect=1");
-  assert.match(body.error, /Reconnect Twitch at \/auth\/login\?connect=1/);
-  assert.equal(
-    f.forwarded.some((x) => x.path === "/chat" && x.body),
-    false,
-    "the room is not told anything",
-  );
+  const res = await connect(f);
+  assert.deepEqual([res.status, res.body.reconnect], [403, "/auth/login?connect=1"]);
+  assert.match(res.body.error, /Reconnect Twitch at \/auth\/login\?connect=1/);
+  const told = f.forwarded.some((x) => x.path === "/chat" && x.body);
+  assert.equal(told, false, "the room is not told anything");
 });
 
 test("disconnectChat deletes the subscription and pauses the room; viewers cannot manage chat", async (t) => {
-  const f = environment(),
-    owner = await signedIn(f, true);
-  const rooms = f.env.ROOMS;
-  f.env.ROOMS = {
-    idFromName: (x) => x,
-    get: (c) => ({
-      fetch: async (url, o = {}) =>
-        new URL(url).pathname === "/chat" && !o.body
-          ? Response.json({ connected: true, subscriptionId: "sub-9" })
-          : rooms.get(c).fetch(url, o),
-    }),
-  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
-  const calls = helixMock(t);
-  assert.equal(
-    (await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "disconnectChat" }, owner), f.env)).status,
-    200,
+  const f = environment();
+  f.rooms(async (c, url, o, next) =>
+    new URL(url).pathname === "/chat" && !o.body
+      ? Response.json({ connected: true, subscriptionId: "sub-9" })
+      : next(c, url, o),
   );
-  assert.deepEqual(
-    calls.filter((c) => c.method === "DELETE").map((c) => c.url.searchParams.get("id")),
-    ["sub-9"],
-  );
+  const helix = helixMock(t);
+  const owner = await signedIn(f, true);
+  assert.equal(await f.st("/api/admin/nesszerra", "POST", { action: "disconnectChat" }, owner), 200);
+  assert.deepEqual(helix.deleted(), ["sub-9"]);
   assert.deepEqual(f.forwarded.at(-1).body, { action: "disconnected", reason: "disconnected" });
-  const viewer = await signedIn(f);
-  assert.equal(
-    (await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, viewer), f.env)).status,
-    403,
-  );
+  assert.equal(await f.st("/api/admin/nesszerra", "POST", { action: "connectChat" }, await signedIn(f)), 403);
 });
 
 test("local test mode marks chat connected without Twitch only for a loopback cf dev", async (t) => {
-  const calls = helixMock(t);
+  const { calls } = helixMock(t);
   const f = environment(),
-    owner = await signedIn(f, true);
-  Object.assign(f.env, { MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: "http://127.0.0.1:5199" });
-  const local = (path: string, data: unknown) =>
-    new Request("http://127.0.0.1:5199" + path, {
-      method: "POST",
-      headers: { Origin: "http://127.0.0.1:5199", Cookie: owner, "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
-  assert.equal((await worker.fetch(local("/api/admin/nesszerra", { action: "connectChat" }), f.env)).status, 200);
+    owner = await signedIn(f, true),
+    local = "http://127.0.0.1:5199";
+  Object.assign(f.env, { MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: local });
+  const connectLocal = () =>
+    worker.fetch(
+      new Request(local + "/api/admin/nesszerra", {
+        method: "POST",
+        headers: { Origin: local, Cookie: owner, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "connectChat" }),
+      }),
+      f.env,
+    );
+  assert.equal((await connectLocal()).status, 200);
   assert.match(f.forwarded.at(-1).body.subscriptionId, /^local-[a-f0-9]{16}$/);
   assert.equal(calls.length, 0, "no Twitch calls in local test mode");
   // the same flag on a public origin does nothing: production must talk to Twitch
-  assert.equal(
-    localTestMode(
-      asEnv({ MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: "https://chat.miolaf.xyz" }),
-      new URL("https://chat.miolaf.xyz/"),
-    ),
-    false,
-  );
-  assert.equal(
-    localTestMode(
-      asEnv({ MINI_LOCAL_TEST: "1", PUBLIC_ORIGIN: "http://127.0.0.1:5199" }),
-      new URL("https://chat.miolaf.xyz/"),
-    ),
-    false,
-  );
-  assert.equal(
-    localTestMode(
-      asEnv({ MINI_LOCAL_TEST: "true", PUBLIC_ORIGIN: "http://127.0.0.1:5199" }),
-      new URL("http://127.0.0.1:5199/"),
-    ),
-    false,
-  );
+  for (const [flag, origin, url] of [
+    ["1", ORIGIN, ORIGIN],
+    ["1", local, ORIGIN],
+    ["true", local, local],
+  ])
+    assert.equal(localTestMode(asEnv({ MINI_LOCAL_TEST: flag, PUBLIC_ORIGIN: origin }), new URL(url + "/")), false);
   // an http origin without local test mode is refused before calling Twitch
   delete f.env.MINI_LOCAL_TEST;
-  assert.equal((await worker.fetch(local("/api/admin/nesszerra", { action: "connectChat" }), f.env)).status, 400);
+  assert.equal((await connectLocal()).status, 400);
 });
 
-test("unknown routes and channels that are not enabled", async () => {
-  const f = environment();
-  assert.equal((await worker.fetch(req("/api/nope"), f.env)).status, 404);
-  assert.equal((await worker.fetch(req("/api/leaderboard/somechannel"), f.env)).status, 403);
-  assert.equal((await worker.fetch(req("/api/state/nesszerra", "DELETE"), f.env)).status, 405);
-});
-
+// ---------- Dev token (test site only) ----------
 const DEV = "dev-token-for-tests-0123456789abcdefghij";
-function devReq(path: string, data?: unknown, token = DEV, extra: Record<string, string> = {}) {
+function devReq(path: string, data?: unknown, token = DEV) {
   return new Request("https://test.chat.miolaf.xyz" + path, {
     method: data === undefined ? "GET" : "POST",
-    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", ...extra },
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     ...(data !== undefined ? { body: JSON.stringify(data) } : {}),
   });
 }
+const dev = async (f: Fixture, ...args: Parameters<typeof devReq>) =>
+  (await worker.fetch(devReq(...args), f.env)).status;
 
 test("dev token (test site only): a missing binding, a wrong token or no token is refused", async () => {
   const f = environment();
   f.entries.set("owner:nesszerra", { id: "1" });
   // production: no DEV_TOOLS_TOKEN binding, so even a well-formed token is refused and devtools do not exist
-  assert.equal((await worker.fetch(devReq("/api/dev/diagnostics"), f.env)).status, 401);
-  assert.equal(
-    (
-      await worker.fetch(
-        devReq("/api/devtools/nesszerra/chat", { userId: "t1", username: "testbot_a", text: "!fight" }),
-        f.env,
-      )
-    ).status,
-    401,
-  );
-  assert.equal(
-    (
-      await worker.fetch(
-        req(
-          "/api/devtools/nesszerra/chat",
-          "POST",
-          { userId: "t1", username: "testbot_a", text: "hi" },
-          await signedIn(f, true),
-        ),
-        f.env,
-      )
-    ).status,
-    404,
-    "an owner session alone does not open devtools",
-  );
+  assert.equal(await dev(f, "/api/dev/diagnostics"), 401);
+  const chat = await dev(f, "/api/devtools/nesszerra/chat", { userId: "t1", username: "testbot_a", text: "!fight" });
+  assert.equal(chat, 401);
+  const line = { userId: "t1", username: "testbot_a", text: "hi" };
+  const session = await f.st("/api/devtools/nesszerra/chat", "POST", line, await signedIn(f, true));
+  assert.equal(session, 404, "an owner session alone does not open devtools");
   f.env.DEV_TOOLS_TOKEN = DEV;
-  assert.equal(
-    (await worker.fetch(devReq("/api/dev/diagnostics", undefined, DEV.slice(0, -1) + "x"), f.env)).status,
-    401,
-  );
-  assert.equal((await worker.fetch(devReq("/api/dev/diagnostics", undefined, "short"), f.env)).status, 401);
-  assert.equal((await worker.fetch(req("/api/admin/nesszerra"), f.env)).status, 401);
+  assert.equal(await dev(f, "/api/dev/diagnostics", undefined, DEV.slice(0, -1) + "x"), 401);
+  assert.equal(await dev(f, "/api/dev/diagnostics", undefined, "short"), 401);
+  assert.equal(await f.st("/api/admin/nesszerra"), 401);
   // a token shorter than 32 characters in the binding never matches
   f.env.DEV_TOOLS_TOKEN = "x".repeat(31);
-  assert.equal((await worker.fetch(devReq("/api/dev/diagnostics", undefined, "x".repeat(31)), f.env)).status, 401);
+  assert.equal(await dev(f, "/api/dev/diagnostics", undefined, "x".repeat(31)), 401);
   assert.equal(f.forwarded.length, 0, "nothing reached a room");
 });
 
 test("channel export (dev token only): room tables plus mod access, for a site of its own", async () => {
   const f = environment();
-  assert.equal(
-    (await worker.fetch(req("/api/devtools/miolafff/export", "GET", undefined, await signedIn(f, true)), f.env)).status,
-    404,
-    "an owner session alone cannot export",
-  );
+  const session = await f.st("/api/devtools/miolafff/export", "GET", undefined, await signedIn(f, true));
+  assert.equal(session, 404, "an owner session alone cannot export");
   f.env.DEV_TOOLS_TOKEN = DEV;
   f.entries.set("broadcaster:miolafff", { sealed: "x" });
   f.entries.set("modsconnected:miolafff", { at: 5 });
@@ -857,128 +586,57 @@ test("channel export (dev token only): room tables plus mod access, for a site o
       auth: { broadcaster: { sealed: "x" }, modsconnected: { at: 5 } },
     },
   );
-  assert.deepEqual(
-    { channel: f.forwarded.at(-1).channel, method: f.forwarded.at(-1).options.method },
-    { channel: "miolafff", method: undefined },
-  );
-  assert.equal((await worker.fetch(devReq("/api/devtools/miolafff/export", {}), f.env)).status, 405);
+  const last = f.forwarded.at(-1);
+  assert.deepEqual([last.channel, last.options.method], ["miolafff", undefined]);
+  assert.equal(await dev(f, "/api/devtools/miolafff/export", {}), 405);
 });
 
 test("dev token (test site only): the right token acts as the owner and can seed profiles and chat lines", async () => {
-  const f = environment();
+  const f = environment(),
+    bot = { userId: "testbot:a", username: "testbot_a" };
   f.entries.set("owner:nesszerra", { id: "1" });
   f.env.DEV_TOOLS_TOKEN = DEV;
-  assert.equal((await worker.fetch(devReq("/api/dev/diagnostics"), f.env)).status, 200);
-  const admin = await worker.fetch(
-    devReq("/api/admin/nesszerra", { action: "removePlayer", userId: "testbot:a" }),
-    f.env,
-  );
-  assert.equal(admin.status, 200, "no Origin header needed with a token");
-  assert.equal(f.forwarded.at(-1).body.actorId, "1");
-  const settings = await worker.fetch(
-    devReq("/api/dev/settings", { action: "config", payload: { patch: { quickDuel: false } } }),
-    f.env,
-  );
-  assert.notEqual(settings.status, 403, "dev routes skip the Origin check with a token too");
-  const p = await worker.fetch(
-    devReq("/api/devtools/nesszerra/profile", {
-      userId: "testbot:a",
-      username: "TestBot_A",
-      avatar: "player",
-      color: "#22aa44",
-      defaultAbility: "heavy",
-    }),
-    f.env,
-  );
-  assert.equal(p.status, 200);
-  assert.equal(f.forwarded.at(-1).path, "/profile");
-  assert.equal(
-    f.forwarded.at(-1).options.headers["X-Mini-User-Id"] ??
-      new Headers(f.forwarded.at(-1).options.headers).get("X-Mini-User-Id"),
-    "testbot:a",
-  );
-  assert.equal(f.forwarded.at(-1).body.username, "testbot_a");
-  const c = await worker.fetch(
-    devReq("/api/devtools/miolafff/chat", { userId: "testbot:a", username: "testbot_a", text: "!fight" }),
-    f.env,
-  );
-  assert.equal(c.status, 200);
+  const last = () => f.forwarded.at(-1);
+  assert.equal(await dev(f, "/api/dev/diagnostics"), 200);
+  const removed = await dev(f, "/api/admin/nesszerra", { action: "removePlayer", userId: "testbot:a" });
+  assert.equal(removed, 200, "no Origin needed");
+  assert.equal(last().body.actorId, "1");
+  const settings = await dev(f, "/api/dev/settings", { action: "config", payload: { patch: { quickDuel: false } } });
+  assert.notEqual(settings, 403, "dev routes skip the Origin check with a token too");
+  const seeded = {
+    userId: "testbot:a",
+    username: "TestBot_A",
+    avatar: "player",
+    color: "#22aa44",
+    defaultAbility: "heavy",
+  };
+  assert.equal(await dev(f, "/api/devtools/nesszerra/profile", seeded), 200);
   assert.deepEqual(
-    { channel: f.forwarded.at(-1).channel, path: f.forwarded.at(-1).path, text: f.forwarded.at(-1).body.text },
-    { channel: "miolafff", path: "/dev-chat", text: "!fight" },
+    [last().path, new Headers(last().options.headers).get("X-Mini-User-Id"), last().body.username],
+    ["/profile", "testbot:a", "testbot_a"],
   );
-  assert.equal(
-    (await worker.fetch(devReq("/api/devtools/nesszerra/profile", { userId: "bad id!", username: "x" }), f.env)).status,
-    400,
-  );
-  assert.equal(
-    (await worker.fetch(devReq("/api/devtools/nesszerra/profile", { userId: "t", username: "x", color: "red" }), f.env))
-      .status,
-    400,
-  );
-  assert.equal(
-    (await worker.fetch(devReq("/api/devtools/somechannel/chat", { userId: "t", username: "x", text: "hi" }), f.env))
-      .status,
-    403,
-  );
-  assert.equal((await worker.fetch(devReq("/api/devtools/nesszerra/nope", {}), f.env)).status, 404);
+  assert.equal(await dev(f, "/api/devtools/miolafff/chat", { ...bot, text: "!fight" }), 200);
+  assert.deepEqual([last().channel, last().path, last().body.text], ["miolafff", "/dev-chat", "!fight"]);
   // Bots buy and bring pets through the same room calls as signed-in viewers.
-  assert.equal(
-    (
-      await worker.fetch(
-        devReq("/api/devtools/nesszerra/shop", { userId: "testbot:a", username: "testbot_a", kind: "pet", id: "fox" }),
-        f.env,
-      )
-    ).status,
-    200,
-  );
-  assert.deepEqual(
-    { path: f.forwarded.at(-1).path, body: f.forwarded.at(-1).body },
-    { path: "/shop", body: { userId: "testbot:a", kind: "pet", id: "fox" } },
-  );
-  assert.equal(
-    (
-      await worker.fetch(
-        devReq("/api/devtools/nesszerra/shop", { userId: "testbot:a", username: "testbot_a", kind: "car", id: "fox" }),
-        f.env,
-      )
-    ).status,
-    400,
-  );
+  assert.equal(await dev(f, "/api/devtools/nesszerra/shop", { ...bot, kind: "pet", id: "fox" }), 200);
+  assert.deepEqual([last().path, last().body], ["/shop", { userId: "testbot:a", kind: "pet", id: "fox" }]);
   // Style dollars reach the room as a whole amount; anything else stops at the Worker.
-  await worker.fetch(
-    devReq("/api/devtools/nesszerra/style", { userId: "testbot:a", username: "testbot_a", amount: 200 }),
-    f.env,
-  );
-  assert.deepEqual(
-    { path: f.forwarded.at(-1).path, body: f.forwarded.at(-1).body },
-    { path: "/dev-style", body: { userId: "testbot:a", amount: 200 } },
-  );
-  for (const amount of [1.5, "200", 100001])
-    assert.equal(
-      (
-        await worker.fetch(
-          devReq("/api/devtools/nesszerra/style", { userId: "testbot:a", username: "testbot_a", amount }),
-          f.env,
-        )
-      ).status,
-      400,
-      String(amount),
-    );
-  await worker.fetch(
-    devReq("/api/devtools/nesszerra/profile", { userId: "testbot:a", username: "testbot_a", pet: "fox" }),
-    f.env,
-  );
-  assert.equal(f.forwarded.at(-1).body.pet, "fox");
-  assert.equal(
-    (
-      await worker.fetch(
-        devReq("/api/devtools/nesszerra/profile", { userId: "testbot:a", username: "testbot_a", pet: 7 }),
-        f.env,
-      )
-    ).status,
-    400,
-  );
+  await dev(f, "/api/devtools/nesszerra/style", { ...bot, amount: 200 });
+  assert.deepEqual([last().path, last().body], ["/dev-style", { userId: "testbot:a", amount: 200 }]);
+  await dev(f, "/api/devtools/nesszerra/profile", { ...bot, pet: "fox" });
+  assert.equal(last().body.pet, "fox");
+  for (const [path, data, code] of [
+    ["nesszerra/profile", { userId: "bad id!", username: "x" }, 400],
+    ["nesszerra/profile", { userId: "t", username: "x", color: "red" }, 400],
+    ["somechannel/chat", { userId: "t", username: "x", text: "hi" }, 403],
+    ["nesszerra/nope", {}, 404],
+    ["nesszerra/shop", { ...bot, kind: "car", id: "fox" }, 400],
+    ["nesszerra/style", { ...bot, amount: 1.5 }, 400],
+    ["nesszerra/style", { ...bot, amount: "200" }, 400],
+    ["nesszerra/style", { ...bot, amount: 100001 }, 400],
+    ["nesszerra/profile", { ...bot, pet: 7 }, 400],
+  ] as const)
+    assert.equal(await dev(f, "/api/devtools/" + path, data), code, path + " " + JSON.stringify(data));
 });
 
 test("dev token binding: declared for the test deploy only, never for production", async () => {
@@ -991,133 +649,55 @@ test("dev token binding: declared for the test deploy only, never for production
 });
 
 test("pets: the catalog and images are public; uploads and deletes need a mod; the shop needs sign-in", async () => {
-  const f = environment();
-  assert.equal((await worker.fetch(req("/api/pets/nesszerra"), f.env)).status, 200);
-  assert.equal(f.forwarded.at(-1).path, "/pets");
-  await worker.fetch(req("/api/pets/nesszerra/p-blob-abc123"), f.env);
-  assert.equal(f.forwarded.at(-1).path, "/pets/p-blob-abc123");
-  assert.equal((await worker.fetch(req("/api/pets/nesszerra", "POST", {}), f.env)).status, 401);
-  assert.equal((await worker.fetch(req("/api/pets/nesszerra", "POST", {}, await signedIn(f)), f.env)).status, 403);
+  const f = environment(),
+    last = () => f.forwarded.at(-1);
+  assert.equal(await f.st("/api/pets/nesszerra"), 200);
+  assert.equal(last().path, "/pets");
+  await f.st("/api/pets/nesszerra/p-blob-abc123");
+  assert.equal(last().path, "/pets/p-blob-abc123");
+  assert.equal(await f.st("/api/pets/nesszerra", "POST", {}), 401);
+  assert.equal(await f.st("/api/pets/nesszerra", "POST", {}, await signedIn(f)), 403);
   const owner = await signedIn(f, true),
     sent = f.forwarded.length;
-  const bad = await worker.fetch(req("/api/pets/nesszerra", "POST", { label: "Blob", tier: "mythic" }, owner), f.env);
-  assert.equal((await bad.json<Loose>()).reason, "invalid_tier"); // Loose: the JSON reply, read by property
-  assert.equal(
-    (await worker.fetch(req("/api/pets/nesszerra/fox", "DELETE", undefined, owner), f.env)).status,
-    404,
-    "built-in pets cannot be deleted",
-  );
+  const mythic = await f.json("/api/pets/nesszerra", "POST", { label: "Blob", tier: "mythic" }, owner);
+  assert.equal(mythic.reason, "invalid_tier");
+  const fox = await f.st("/api/pets/nesszerra/fox", "DELETE", undefined, owner);
+  assert.equal(fox, 404, "built-in pets cannot be deleted");
   assert.equal(f.forwarded.length, sent, "rejected uploads and deletes never reach the room");
-  assert.equal(
-    (await worker.fetch(req("/api/pets/nesszerra/p-blob-abc123", "DELETE", undefined, owner), f.env)).status,
-    200,
-  );
-  assert.equal(f.forwarded.at(-1).path, "/pets/p-blob-abc123");
+  assert.equal(await f.st("/api/pets/nesszerra/p-blob-abc123", "DELETE", undefined, owner), 200);
+  assert.equal(last().path, "/pets/p-blob-abc123");
 
-  assert.equal((await worker.fetch(req("/api/shop/nesszerra", "POST", { kind: "pet", id: "fox" }), f.env)).status, 401);
+  assert.equal(await f.st("/api/shop/nesszerra", "POST", { kind: "pet", id: "fox" }), 401);
   const viewer = await signedIn(f);
-  assert.equal(
-    (await worker.fetch(req("/api/shop/nesszerra", "POST", { kind: "car", id: "fox" }, viewer), f.env)).status,
-    400,
-  );
-  assert.equal(
-    (await worker.fetch(req("/api/shop/nesszerra", "POST", { kind: "pet", id: "x".repeat(65) }, viewer), f.env)).status,
-    400,
-  );
-  for (const price of ["30", -1, 1.5, null])
-    assert.equal(
-      (await worker.fetch(req("/api/shop/nesszerra", "POST", { kind: "pet", id: "fox", price }, viewer), f.env)).status,
-      400,
-      "price " + price,
-    );
-  assert.equal((await worker.fetch(req("/api/shop/nesszerra", "GET"), f.env)).status, 200, "the shop list is public");
-  assert.equal(f.forwarded.at(-1).path, "/shop");
-  assert.equal((await worker.fetch(req("/api/shop/nesszerra/x", "GET"), f.env)).status, 405);
-  assert.equal(
-    (await worker.fetch(req("/api/shop/nesszerra", "POST", { kind: "trail", id: "flames" }, viewer), f.env)).status,
-    200,
-  );
-  assert.equal((await worker.fetch(req("/api/shop/nesszerra", "POST", { kind: "slot" }, viewer), f.env)).status, 200);
-  assert.deepEqual(f.forwarded.at(-1).body, { userId: "2", kind: "slot", id: "" });
-  assert.equal(
-    (
-      await worker.fetch(
-        req("/api/shop/nesszerra", "POST", { kind: "pet", id: "fox", userId: "forged" }, viewer),
-        f.env,
-      )
-    ).status,
-    200,
-  );
-  assert.deepEqual(f.forwarded.at(-1).body, { userId: "2", kind: "pet", id: "fox" });
-  assert.equal(f.forwarded.at(-1).path, "/shop");
-  assert.equal(
-    (
-      await worker.fetch(
-        req(
-          "/api/profile/nesszerra",
-          "POST",
-          { avatar: "player", color: "#aabbcc", defaultAbility: "heal", pet: 7 },
-          viewer,
-        ),
-        f.env,
-      )
-    ).status,
-    400,
-  );
-  assert.equal(
-    (
-      await worker.fetch(
-        req(
-          "/api/profile/nesszerra",
-          "POST",
-          { avatar: "player", color: "#aabbcc", defaultAbility: "heal", pet: "fox" },
-          viewer,
-        ),
-        f.env,
-      )
-    ).status,
-    200,
-  );
-  assert.equal(f.forwarded.at(-1).body.pet, "fox");
+  const shop = (body: object) => f.st("/api/shop/nesszerra", "POST", body, viewer),
+    save = (body: object) => f.st("/api/profile/nesszerra", "POST", { ...basic, ...body }, viewer);
+  for (const body of [
+    { kind: "car", id: "fox" },
+    { kind: "pet", id: "x".repeat(65) },
+    ...["30", -1, 1.5, null].map((price) => ({ kind: "pet", id: "fox", price })),
+  ])
+    assert.equal(await shop(body), 400, JSON.stringify(body));
+  assert.equal(await f.st("/api/shop/nesszerra", "GET"), 200, "the shop list is public");
+  assert.equal(last().path, "/shop");
+  assert.equal(await f.st("/api/shop/nesszerra/x", "GET"), 405);
+  assert.equal(await shop({ kind: "trail", id: "flames" }), 200);
+  assert.equal(await shop({ kind: "slot" }), 200);
+  assert.deepEqual(last().body, { userId: "2", kind: "slot", id: "" });
+  assert.equal(await shop({ kind: "pet", id: "fox", userId: "forged" }), 200);
+  assert.deepEqual([last().path, last().body], ["/shop", { userId: "2", kind: "pet", id: "fox" }]);
+  assert.equal(await save({ pet: 7 }), 400);
+  assert.equal(await save({ pet: "fox" }), 200);
+  assert.equal(last().body.pet, "fox");
   // Cosmetics and the build slot ride along; the room checks ownership.
   for (const bad of [{ title: 7 }, { trail: "x".repeat(33) }, { build: 5 }, { build: 1.5 }, { build: "1" }])
-    assert.equal(
-      (
-        await worker.fetch(
-          req(
-            "/api/profile/nesszerra",
-            "POST",
-            { avatar: "player", color: "#aabbcc", defaultAbility: "heal", ...bad },
-            viewer,
-          ),
-          f.env,
-        )
-      ).status,
-      400,
-      JSON.stringify(bad),
-    );
-  assert.equal(
-    (
-      await worker.fetch(
-        req(
-          "/api/profile/nesszerra",
-          "POST",
-          { avatar: "player", color: "#aabbcc", defaultAbility: "heal", title: "legend", winEffect: "", build: 2 },
-          viewer,
-        ),
-        f.env,
-      )
-    ).status,
-    200,
-  );
-  assert.deepEqual(
-    (({ title, winEffect, build, trail }) => [title, winEffect, build, trail])(f.forwarded.at(-1).body),
-    ["legend", "", 2, undefined],
-  );
+    assert.equal(await save(bad), 400, JSON.stringify(bad));
+  assert.equal(await save({ title: "legend", winEffect: "", build: 2 }), 200);
+  const { title, winEffect, build, trail } = last().body;
+  assert.deepEqual([title, winEffect, build, trail], ["legend", "", 2, undefined]);
 });
 
 // ---------- PixFray chat bot (CHAT_BOT) ----------
-const botBody = (text: string) => ({
+const botBody = (text: string): ChatBody => ({
   subscription: {
     id: "sub-bot",
     status: "enabled",
@@ -1134,54 +714,33 @@ const botBody = (text: string) => ({
     message: { text },
   },
 });
-
-test("chat bot: only commands reach the room; its reply is sent as the bot, threaded, never as a command", async (t) => {
+/** The bot's fixture: rooms answer every command with `reply`, Helix accepts every chat post. */
+function botEnvironment(t: TestContext, reply: string) {
   t.mock.method(Date, "now", () => NOW);
   const f = environment(),
-    waits: Promise<unknown>[] = [];
-  f.env.ROOMS = {
-    idFromName: (x) => x,
-    get: (channel) => ({
-      async fetch(url, options = {}) {
-        f.forwarded.push({ channel, url, body: JSON.parse(options.body as string) }); // bot commands always carry a body
-        return Response.json({ ok: true, reply: "!ranks are at pixfray" });
-      },
-    }),
-  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
-  const ctx = asExecutionContext({ waitUntil: (p) => waits.push(p) });
-  const post = async (body: object) => {
-    const raw = JSON.stringify(body),
-      timestamp = new Date(NOW).toISOString(),
-      id = "m-" + Math.random();
-    return worker.fetch(
-      new Request("https://staging.pixfray.xyz/api/eventsub", {
-        method: "POST",
-        headers: {
-          "Twitch-Eventsub-Message-Id": id,
-          "Twitch-Eventsub-Message-Timestamp": timestamp,
-          "Twitch-Eventsub-Message-Signature": await signEventsub(await eventsubSecret(f.env), id, timestamp, raw),
-          "Twitch-Eventsub-Message-Type": "notification",
-          "Twitch-Eventsub-Subscription-Type": "channel.chat.message",
-        },
-        body: raw,
-      }),
-      f.env,
-      ctx,
-    );
-  };
-  const helix: Loose[] = []; // Loose: Helix posts the test reads by property
-  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: FetchInit = {}) => {
-    if (String(url).startsWith("https://id.twitch.tv"))
-      return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    helix.push({ url: String(url), body: JSON.parse(init.body as string) }); // Helix chat posts always carry a body
+    waits: Promise<unknown>[] = [],
+    helix: Loose[] = []; // Loose: Helix posts the test reads by property
+  f.rooms(async (channel, url, options) => {
+    f.forwarded.push({ channel, url, body: JSON.parse(String(options.body)) }); // bot commands always carry a body
+    return Response.json({ ok: true, reply });
+  });
+  twitchApi(t, (url, init) => {
+    helix.push({ url: String(url), body: JSON.parse(String(init.body)) }); // Helix chat posts always carry a body
     return Response.json({ data: [{ message_id: "r1", is_sent: true }] });
   });
+  const ctx = asExecutionContext({ waitUntil: (p) => waits.push(p) });
+  const post = (body: object, type = "notification") =>
+    eventsub(f, body, { type, origin: "https://staging.pixfray.xyz", ctx });
+  return { f, waits, helix, post };
+}
+
+test("chat bot: only commands reach the room; its reply is sent as the bot, threaded, never as a command", async (t) => {
+  const { f, waits, helix, post } = botEnvironment(t, "!ranks are at pixfray");
   assert.equal((await post(botBody("hello chat"))).status, 204);
   assert.equal(f.forwarded.length, 0, "plain chat costs no room request");
   assert.equal((await post(botBody("  !ranks"))).status, 204);
   assert.equal(f.forwarded.length, 1);
-  assert.equal(f.forwarded[0].body.bot, true);
-  assert.equal(f.forwarded[0].body.botId, "99");
+  assert.deepEqual([f.forwarded[0].body.bot, f.forwarded[0].body.botId], [true, "99"]);
   assert.match(f.forwarded[0].url, /\/eventsub\?origin=https%3A%2F%2F/);
   await Promise.all(waits);
   assert.equal(helix.length, 1);
@@ -1208,48 +767,10 @@ test("chat bot: drop reasons read as words", () => {
 });
 
 test("chat bot: a signed-up channel gets its verification, and the bot answers on its own channel", async (t) => {
-  t.mock.method(Date, "now", () => NOW);
-  const f = environment(),
-    waits: Promise<unknown>[] = [];
+  const { f, waits, helix, post } = botEnvironment(t, "solo has 1000 elo");
   f.env.CHAT_BOT = "1";
   f.entries.set("channel:solo", { id: "42", login: "solo", enabledAt: NOW });
   f.entries.set("bot:twitch", { id: "42", login: "solo" });
-  f.env.ROOMS = {
-    idFromName: (x) => x,
-    get: (channel) => ({
-      async fetch(url, options = {}) {
-        f.forwarded.push({ channel, url, body: JSON.parse(options.body as string) }); // bot commands always carry a body
-        return Response.json({ ok: true, reply: "solo has 1000 elo" });
-      },
-    }),
-  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
-  const post = async (body: object, type = "notification") => {
-    const raw = JSON.stringify(body),
-      timestamp = new Date(NOW).toISOString(),
-      id = "m-" + Math.random();
-    return worker.fetch(
-      new Request("https://staging.pixfray.xyz/api/eventsub", {
-        method: "POST",
-        headers: {
-          "Twitch-Eventsub-Message-Id": id,
-          "Twitch-Eventsub-Message-Timestamp": timestamp,
-          "Twitch-Eventsub-Message-Signature": await signEventsub(await eventsubSecret(f.env), id, timestamp, raw),
-          "Twitch-Eventsub-Message-Type": type,
-          "Twitch-Eventsub-Subscription-Type": "channel.chat.message",
-        },
-        body: raw,
-      }),
-      f.env,
-      asExecutionContext({ waitUntil: (p) => waits.push(p) }),
-    );
-  };
-  const helix: Loose[] = []; // Loose: Helix posts the test reads by property
-  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: FetchInit = {}) => {
-    if (String(url).startsWith("https://id.twitch.tv"))
-      return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    helix.push({ url: String(url), body: JSON.parse(init.body as string) }); // Helix chat posts always carry a body
-    return Response.json({ data: [{ message_id: "r1", is_sent: true }] });
-  });
   const condition = { broadcaster_user_id: "42", user_id: "42" };
   const verify = await post(
     {
@@ -1264,24 +785,16 @@ test("chat bot: a signed-up channel gets its verification, and the bot answers o
     "webhook_callback_verification",
   );
   assert.equal(await verify.text(), "abc");
-  assert.deepEqual(
-    f.forwarded.map((x) => x.channel),
-    ["nesszerra", "miolafff", "solo"],
-    "the signed-up room hears its verification",
-  );
+  const heard = f.forwarded.map((x) => x.channel);
+  assert.deepEqual(heard, ["nesszerra", "miolafff", "solo"], "the signed-up room hears its verification");
   f.forwarded.length = 0;
-  const line = (login: string, text: string) => ({
-    subscription: { id: "sub-solo", status: "enabled", type: "channel.chat.message", condition },
-    event: {
-      broadcaster_user_id: "42",
-      broadcaster_user_login: login,
-      chatter_user_id: "42",
-      chatter_user_login: "solo",
-      chatter_user_name: "solo",
-      message_id: "chat-42",
-      message: { text },
-    },
-  });
+  const line = (login: string, text: string) => {
+    const body = botBody(text);
+    body.subscription = { id: "sub-solo", status: "enabled", type: "channel.chat.message", condition };
+    Object.assign(body.event, { broadcaster_user_id: "42", broadcaster_user_login: login, chatter_user_id: "42" });
+    Object.assign(body.event, { chatter_user_login: "solo", chatter_user_name: "solo", message_id: "chat-42" });
+    return body;
+  };
   assert.equal((await post(line("stranger", "!elo"))).status, 204);
   assert.equal(f.forwarded.length, 0, "a channel that never signed up is ignored");
   assert.equal((await post(line("solo", "!elo"))).status, 204);
@@ -1290,66 +803,63 @@ test("chat bot: a signed-up channel gets its verification, and the bot answers o
   assert.equal(f.forwarded[0].body.bot, true, "the bot is also the broadcaster here");
   assert.equal(f.forwarded[0].body.botId, "42");
   await Promise.all(waits);
-  assert.deepEqual(
-    helix.map((x) => x.body.sender_id),
-    ["42"],
-  );
+  const senders = helix.map((x) => x.body.sender_id);
+  assert.deepEqual(senders, ["42"]);
 });
 
 test("chat bot: Connect chat subscribes as the signed-in bot account, and asks for it first", async (t) => {
-  const f = environment(),
-    owner = await signedIn(f, true);
+  const f = environment();
   Object.assign(f.env, { CHAT_BOT: "1", BOT_LOGIN: "pixbot", OWNER_TWITCH_ID: "1" });
-  const calls = helixMock(t, {
+  const helix = helixMock(t, {
     subscriptions: [
       sub("broadcaster-self"),
       sub("other-channel", { condition: { broadcaster_user_id: "5", user_id: "99" } }),
     ],
   });
-  const first = await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env);
+  const first = await connect(f);
   assert.equal(first.status, 409);
-  assert.match((await first.json<Loose>()).error, /\/auth\/login\?bot=1/); // Loose: the JSON reply, read by property
+  assert.match(first.body.error, /\/auth\/login\?bot=1/);
   f.entries.set("bot:twitch", { id: "99", login: "pixbot" });
-  assert.equal(
-    (await worker.fetch(req("/api/admin/nesszerra", "POST", { action: "connectChat" }, owner), f.env)).status,
-    200,
-  );
-  const created = calls.find((c) => c.method === "POST" && c.url.host === "api.twitch.tv");
-  assert.deepEqual(created.body.condition, { broadcaster_user_id: "1", user_id: "99" });
+  assert.equal((await connect(f)).status, 200);
+  assert.deepEqual(helix.created()[0].body.condition, { broadcaster_user_id: "1", user_id: "99" });
   assert.deepEqual(
-    calls.filter((c) => c.method === "DELETE").map((c) => c.url.searchParams.get("id")),
+    helix.deleted(),
     ["broadcaster-self"],
     "the channel's old self-read subscription goes; another channel's bot subscription stays",
   );
-  const view = await (await worker.fetch(req("/api/admin/nesszerra", "GET", undefined, owner), f.env)).json<Loose>(); // Loose: the JSON reply, read by property
+  const view = await f.json("/api/admin/nesszerra", "GET", undefined, await signedIn(f, true));
   assert.deepEqual(view.chatBot, { login: "pixbot", debug: false });
 });
 
 test("chat bot: bot sign-in needs CHAT_BOT and asks for the chat scopes", async () => {
   const f = environment();
-  assert.equal((await worker.fetch(req("/auth/login?bot=1"), f.env)).status, 403);
+  const scope = async (path: string) =>
+    new URL(must((await worker.fetch(req(path), f.env)).headers.get("Location"))).searchParams.get("scope");
+  assert.equal(await f.st("/auth/login?bot=1"), 403);
   Object.assign(f.env, { CHAT_BOT: "1", BOT_LOGIN: "pixbot" });
-  const res = await worker.fetch(req("/auth/login?bot=1"), f.env);
-  assert.equal(res.status, 302);
-  assert.equal(
-    new URL(must(res.headers.get("Location"))).searchParams.get("scope"),
-    "user:read:chat user:write:chat user:bot",
-  );
-  const allow = await worker.fetch(req("/auth/login?channel=nesszerra&connect=bot"), f.env);
-  assert.equal(new URL(must(allow.headers.get("Location"))).searchParams.get("scope"), "moderation:read channel:bot");
+  assert.equal(await f.st("/auth/login?bot=1"), 302);
+  assert.equal(await scope("/auth/login?bot=1"), "user:read:chat user:write:chat user:bot");
+  assert.equal(await scope("/auth/login?channel=nesszerra&connect=bot"), "moderation:read channel:bot");
 });
+
+/** Answers each Helix chat post with the next queued reply; `sent` records the lines posted. */
+function chatPosts(t: TestContext, next: () => Response) {
+  const sent: string[] = [];
+  twitchApi(t, (_, init) => {
+    sent.push(JSON.parse(String(init.body)).message); // chat posts always carry a body
+    return next();
+  });
+  return sent;
+}
+const delivered = (id = "r1") => Response.json({ data: [{ message_id: id, is_sent: true }] });
 
 test("chat bot: a rate-limited reply (429) is retried after a short wait, then gives up", async (t) => {
   const f = environment(),
     waits: number[] = [];
   let statuses = [429, 200];
-  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL) => {
-    if (String(url).startsWith("https://id.twitch.tv"))
-      return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    const status = statuses.shift() as number; // the test queues one status per call
-    return status === 200
-      ? Response.json({ data: [{ message_id: "r1", is_sent: true }] })
-      : new Response("{}", { status });
+  chatPosts(t, () => {
+    const code = must(statuses.shift()); // the test queues one status per call
+    return code === 200 ? delivered() : new Response("{}", { status: code });
   });
   const send = () =>
     sendChatMessage(f.env, {
@@ -1367,21 +877,13 @@ test("chat bot: a rate-limited reply (429) is retried after a short wait, then g
 });
 
 test("chat bot: a line Twitch drops as a duplicate is resent with an invisible tag character, at most twice", async (t) => {
-  const f = environment(),
-    sent: string[] = [];
+  const f = environment();
   let dupes = 1;
-  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: { body: string }) => {
-    if (String(url).startsWith("https://id.twitch.tv"))
-      return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    sent.push(JSON.parse(init.body).message);
-    return Response.json({
-      data: [
-        dupes-- > 0
-          ? { message_id: "", is_sent: false, drop_reason: { code: "msg_duplicate" } }
-          : { message_id: "r1", is_sent: true },
-      ],
-    });
-  });
+  const sent = chatPosts(t, () =>
+    dupes-- > 0
+      ? Response.json({ data: [{ message_id: "", is_sent: false, drop_reason: { code: "msg_duplicate" } }] })
+      : delivered(),
+  );
   const send = () =>
     sendChatMessage(f.env, { broadcasterId: "1", senderId: "99", message: "PixFray help", replyTo: "m1" });
   assert.deepEqual(await send(), { sent: true, reason: "" });
@@ -1394,19 +896,9 @@ test("chat bot: a line Twitch drops as a duplicate is resent with an invisible t
 
 test("chat bot: several reply lines go out in order, about a second apart, and one failure does not stop the rest", async (t) => {
   const f = environment(),
-    waits: number[] = [],
-    sent: string[] = [];
+    waits: number[] = [];
   let first = true;
-  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init: FetchInit = {}) => {
-    if (String(url).startsWith("https://id.twitch.tv"))
-      return Response.json({ access_token: "app-token-1", expires_in: 5000 });
-    sent.push(JSON.parse(init.body as string).message); // chat posts always carry a body
-    if (first) {
-      first = false;
-      return new Response("{}", { status: 500 });
-    }
-    return Response.json({ data: [{ message_id: "r", is_sent: true }] });
-  });
+  const sent = chatPosts(t, () => (first ? ((first = false), new Response("{}", { status: 500 })) : delivered("r")));
   const out = await sendChatMessages(f.env, {
     broadcasterId: "1",
     senderId: "99",
@@ -1416,150 +908,86 @@ test("chat bot: several reply lines go out in order, about a second apart, and o
   });
   assert.deepEqual(sent, ["one", "two", "three"]);
   assert.deepEqual(waits, [1100, 1100]);
-  assert.deepEqual(
-    out.map((r) => r.sent),
-    [false, true, true],
-  );
+  const flags = out.map((r) => r.sent);
+  assert.deepEqual(flags, [false, true, true]);
 });
 
-test("check-in test mode: a mod or the owner turns it on through /api/admin; viewers cannot", async () => {
-  const f = environment();
-  assert.equal(
-    (
-      await worker.fetch(
-        req("/api/admin/nesszerra", "POST", { action: "checkinTest", value: true }, await signedIn(f)),
-        f.env,
-      )
-    ).status,
-    403,
-  );
-  assert.equal(
-    f.forwarded.some((x) => x.path === "/checkin-test"),
-    false,
-  );
-  const res = await worker.fetch(
-    req("/api/admin/nesszerra", "POST", { action: "checkinTest", value: true }, await signedIn(f, true)),
-    f.env,
-  );
-  assert.equal(res.status, 200);
-  assert.deepEqual(f.forwarded.find((x) => x.path === "/checkin-test").body, { on: true, by: "V" });
-});
-
-test("check-in test mode: only on the site channel", async () => {
-  const f = environment();
-  const res = await worker.fetch(
-    req("/api/admin/miolafff", "POST", { action: "checkinTest", value: true }, await signedIn(f, true)),
-    f.env,
-  );
-  assert.equal(res.status, 403);
-  assert.match((await res.json<Loose>()).error, /only for nesszerra's channel/); // Loose: the JSON reply, read by property
-  assert.equal(
-    f.forwarded.some((x) => x.path === "/checkin-test"),
-    false,
-  );
+test("check-in test mode: a mod or the owner turns it on, only on the site channel; viewers cannot", async () => {
+  const f = environment(),
+    on = { action: "checkinTest", value: true };
+  assert.equal(await f.st("/api/admin/nesszerra", "POST", on, await signedIn(f)), 403);
+  const other = await call(f.env, "/api/admin/miolafff", "POST", on, await signedIn(f, true));
+  assert.equal(other.status, 403);
+  assert.match(other.body.error, /only for nesszerra's channel/);
+  const told = f.forwarded.some((x) => x.path === "/checkin-test");
+  assert.equal(told, false);
+  assert.equal(await f.st("/api/admin/nesszerra", "POST", on, await signedIn(f, true)), 200);
+  assert.deepEqual(f.forwarded.find((x) => x.path === "/checkin-test").body, { on: true, by: "nesszerra" });
 });
 
 test("viewer sprites: only the owner may wear one; sends need sign-in, reviews need a mod, AI redraw refunds on failure", async () => {
   const f = environment(),
     cookie = await signedIn(f);
-  const rooms = f.env.ROOMS.get;
-  f.env.ROOMS = {
-    idFromName: (x) => x,
-    get: (channel) => ({
-      async fetch(url, options = {}) {
-        const path = new URL(url).pathname;
-        if (path === "/catalog")
-          return Response.json([
-            { id: "v-mine-aaaaaa", owner: "2" },
-            { id: "v-theirs-bbbbbb", owner: "9" },
-          ]);
-        if (path === "/sprites/ai") {
-          f.forwarded.push({ path, body: JSON.parse(options.body as string) }); // redraw calls always carry a body
-          return Response.json({ ok: true, left: 2 });
-        }
-        return rooms(channel).fetch(url, options);
-      },
-    }),
-  } satisfies FakeNamespace as TestEnv["ROOMS"]; // a fake namespace in place of the binding
-  const save = (avatar: string) =>
-    worker.fetch(
-      req("/api/profile/nesszerra", "POST", { avatar, color: "#aabbcc", defaultAbility: "heal" }, cookie),
-      f.env,
-    );
+  f.rooms(async (channel, url, options, next) => {
+    const path = new URL(url).pathname;
+    if (path === "/catalog")
+      return Response.json([
+        { id: "v-mine-aaaaaa", owner: "2" },
+        { id: "v-theirs-bbbbbb", owner: "9" },
+      ]);
+    if (path !== "/sprites/ai") return next(channel, url, options);
+    f.forwarded.push({ path, body: JSON.parse(String(options.body)) }); // redraw calls always carry a body
+    return Response.json({ ok: true, left: 2 });
+  });
+  const save = (avatar: string) => call(f.env, "/api/profile/nesszerra", "POST", { ...look, avatar }, cookie);
   assert.equal((await save("v-mine-aaaaaa")).status, 200);
   const theirs = await save("v-theirs-bbbbbb");
-  assert.deepEqual([theirs.status, (await theirs.json<Loose>()).error], [403, "That sprite belongs to another viewer"]); // Loose: the JSON reply, read by property
+  assert.deepEqual([theirs.status, theirs.body.error], [403, "That sprite belongs to another viewer"]);
   assert.deepEqual(f.forwarded.filter((x) => x.path === "/dev/log").at(-1)?.body, {
     source: "warn",
     message: "viewer profile not saved: sprite_not_owned",
     context: { channel: "nesszerra", action: "save", userId: "2", user: "viewer", reason: "sprite_not_owned" },
   });
 
-  assert.equal((await worker.fetch(req("/api/sprite/nesszerra"), f.env)).status, 401);
-  const status = await (
-    await worker.fetch(req("/api/sprite/nesszerra", "GET", undefined, cookie), f.env)
-  ).json<Loose>(); // Loose: the JSON reply, read by property
-  assert.deepEqual(status.ai, { available: false, left: 0 });
+  assert.equal(await f.st("/api/sprite/nesszerra"), 401);
+  assert.deepEqual((await f.json("/api/sprite/nesszerra", "GET", undefined, cookie)).ai, { available: false, left: 0 });
   // The room gets the session's identity, never one from the body.
-  const png = "data:image/png;base64," + Buffer.from(makePng(32, 48)).toString("base64");
-  const sent = await worker.fetch(
-    req("/api/sprite/nesszerra", "POST", { label: "Cat", image: png, userId: "1" }, cookie),
-    f.env,
-  );
-  assert.equal(sent.status, 200);
-  assert.deepEqual((({ userId, username, label }) => ({ userId, username, label }))(f.forwarded.at(-1).body), {
-    userId: "2",
-    username: "viewer",
-    label: "Cat",
-  });
-  assert.equal(
-    (await worker.fetch(req("/api/sprite/nesszerra", "POST", { label: "Cat", image: b64png(200, 20) }, cookie), f.env))
-      .status,
-    400,
-  );
+  const png = "data:image/png;base64," + b64png(32, 48);
+  assert.equal(await f.st("/api/sprite/nesszerra", "POST", { label: "Cat", image: png, userId: "1" }, cookie), 200);
+  const { userId, username, label } = f.forwarded.at(-1).body;
+  assert.deepEqual({ userId, username, label }, { userId: "2", username: "viewer", label: "Cat" });
+  assert.equal(await f.st("/api/sprite/nesszerra", "POST", { label: "Cat", image: b64png(200, 20) }, cookie), 400);
   // Mods only: the review list and actions.
-  assert.equal((await worker.fetch(req("/api/sprites/nesszerra", "GET", undefined, cookie), f.env)).status, 403);
-  assert.equal(
-    (await worker.fetch(req("/api/sprites/nesszerra/v-mine-aaaaaa", "POST", { action: "approve" }, cookie), f.env))
-      .status,
-    403,
-  );
+  assert.equal(await f.st("/api/sprites/nesszerra", "GET", undefined, cookie), 403);
+  assert.equal(await f.st("/api/sprites/nesszerra/v-mine-aaaaaa", "POST", { action: "approve" }, cookie), 403);
 
   // AI redraw: off without the binding; with it, a failed model call gives the redraw back.
-  assert.equal(
-    (await worker.fetch(req("/api/sprite/nesszerra/redraw", "POST", { image: b64png(64, 64) }, cookie), f.env)).status,
-    503,
-  );
+  const redraw = (w: number) => call(f.env, "/api/sprite/nesszerra/redraw", "POST", { image: b64png(w, 64) }, cookie);
+  assert.equal((await redraw(64)).status, 503);
   let input: Loose = null; // Loose: set by the fake model below, read after the call
-  f.env.AI = {
-    async run(model: string, { multipart }: { multipart: { contentType: string } }) {
+  const ai = (
+    run: (model: string, options: { multipart: { contentType: string } }) => Promise<object>,
+  ): Partial<Env> => ({
+    AI: { run } as unknown as Ai, // a fake with only run, the one Ai call the redraw makes
+  });
+  Object.assign(
+    f.env,
+    ai(async (model, { multipart }) => {
       input = { model, type: multipart.contentType };
       return { image: "QUJD" };
-    },
-  } as unknown as Ai; // a fake with only run, the one Ai call the redraw makes
-  const drawn = await worker.fetch(
-    req("/api/sprite/nesszerra/redraw", "POST", { image: b64png(64, 64) }, cookie),
-    f.env,
+    }),
   );
-  assert.deepEqual(await drawn.json(), { ok: true, image: "QUJD", left: 2 });
+  assert.deepEqual((await redraw(64)).body, { ok: true, image: "QUJD", left: 2 });
   assert.equal(input.model, "@cf/black-forest-labs/flux-2-klein-4b");
   assert.match(input.type, /^multipart\/form-data/);
-  assert.equal(
-    (await worker.fetch(req("/api/sprite/nesszerra/redraw", "POST", { image: b64png(512, 64) }, cookie), f.env)).status,
-    400,
-  );
-  f.env.AI = {
-    async run() {
-      throw new Error("capacity");
-    },
-  } as unknown as Ai; // a fake with only run, the one Ai call the redraw makes
-  const failed = await worker.fetch(
-    req("/api/sprite/nesszerra/redraw", "POST", { image: b64png(64, 64) }, cookie),
+  assert.equal((await redraw(512)).status, 400);
+  Object.assign(
     f.env,
+    ai(async () => {
+      throw new Error("capacity");
+    }),
   );
-  assert.equal(failed.status, 502);
-  assert.deepEqual(
-    f.forwarded.filter((x) => x.path === "/sprites/ai").map((x) => x.body.op),
-    ["take", "take", "refund"],
-  );
+  assert.equal((await redraw(64)).status, 502);
+  const ops = f.forwarded.filter((x) => x.path === "/sprites/ai").map((x) => x.body.op);
+  assert.deepEqual(ops, ["take", "take", "refund"]);
 });

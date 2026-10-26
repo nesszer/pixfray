@@ -1,14 +1,10 @@
-/**
- * Read-only Twitch IRC transport. No login secrets and no chat-send API.
- * Chat identity comes exclusively from Twitch tags, never command arguments.
- */
+// Read-only Twitch IRC transport: no login secrets and no chat-send API. Identity comes only from Twitch tags.
 import { warnOnce } from "./parse.ts";
 
 const IRC_URL = "wss://irc-ws.chat.twitch.tv:443";
 const tagEscapes: Record<string, string> = { s: " ", ":": ";", r: "\r", n: "\n", "\\": "\\" };
 
-export function parseIRCLine(line: unknown) {
-  if (typeof line !== "string" || !line.trim()) return null;
+function parseIRCLine(line: string) {
   let rest = line.replace(/[\r\n]+$/, "");
   const tags: Record<string, string> = {};
   let prefix = "";
@@ -36,19 +32,8 @@ export function parseIRCLine(line: unknown) {
   if (!command) return null;
   return { tags, prefix, command: command.toUpperCase(), params: pieces, trailing };
 }
+type IrcLine = NonNullable<ReturnType<typeof parseIRCLine>>;
 
-function commandFromText(text: string) {
-  const match = /^!(jump|avatar|color)(?:\s+([^\s]+))?\s*$/i.exec(text);
-  if (!match) return null;
-  const type = match[1]!.toLowerCase(); // group 1 is not optional
-  const value = match[2] ?? "";
-  if (type === "jump" && !value) return { type };
-  if (type === "avatar" && /^\d{1,2}$/.test(value)) return { type, value: Number(value) };
-  if (type === "color" && /^#[0-9a-f]{6}$/i.test(value)) return { type, value: value.toUpperCase() };
-  return null;
-}
-
-export type ChatCommand = ReturnType<typeof commandFromText>;
 export type ChatMessage = {
   id: string | undefined;
   userId: string;
@@ -58,7 +43,6 @@ export type ChatMessage = {
   badges: string[];
   text: string;
   timestamp: number;
-  command: ChatCommand;
 };
 export type ModerationEvent = {
   type: "clear" | "timeout" | "ban" | "delete";
@@ -74,10 +58,6 @@ type ChatHandlers = {
   onStatus?: (status: ChatStatus) => void;
 };
 
-/**
- * @param {string} channel
- * @param {{ onMessage?: (message: any) => void, onModeration?: (event: any) => void, onStatus?: (status: any) => void }} [handlers]
- */
 export function connectChat(
   channel: string,
   { onMessage = () => {}, onModeration = () => {}, onStatus = () => {} }: ChatHandlers = {},
@@ -86,6 +66,7 @@ export function connectChat(
     .replace(/^#/, "")
     .toLowerCase();
   if (!/^[a-z0-9_]{1,25}$/.test(channel)) throw new Error("Invalid Twitch channel name");
+  const room = "#" + channel;
   let socket: WebSocket | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let watchdogTimer: ReturnType<typeof setInterval> | undefined;
@@ -107,70 +88,62 @@ export function connectChat(
       open();
     }, retryInMs);
   }
-  function handle(line: string, activeSocket: WebSocket) {
-    const item = parseIRCLine(line);
-    if (!item) {
-      // a line that isn't IRC at all; an IRC command this file doesn't handle is no reason to warn
-      if (line.trim()) warnOnce("a Twitch chat line", "not an IRC message");
-      return;
+  function markJoined(here: boolean) {
+    if (!here || joined) return;
+    joined = true;
+    attempts = 0;
+    status("connected", "Listening to " + room);
+  }
+  function message({ tags, prefix, trailing }: IrcLine) {
+    const username = prefix.split("!")[0];
+    if (!username || trailing === null) return;
+    if (tags.id && seen.has(tags.id)) return;
+    if (tags.id) {
+      seen.add(tags.id);
+      if (seen.size > 1000) seen.delete(seen.values().next().value!); // over 1000 entries, so a first one exists
     }
-    if (item.command === "PING") {
-      activeSocket.send("PONG :" + (item.trailing ?? item.params.join(" ")) + "\r\n");
-      return;
-    }
-    if (item.command === "RECONNECT") {
-      activeSocket.close();
-      return;
-    }
-    if (item.command === "001") {
-      activeSocket.send("JOIN #" + channel + "\r\n");
-    }
-    if (
-      (item.command === "JOIN" && item.params[0] === "#" + channel) ||
-      (item.command === "ROOMSTATE" && item.params[0] === "#" + channel) ||
-      (item.command === "366" && item.params.includes("#" + channel))
-    ) {
-      if (!joined) {
-        joined = true;
-        attempts = 0;
-        status("connected", "Listening to #" + channel);
-      }
-    }
-    if (item.command === "NOTICE") {
-      status("error", item.trailing ?? "Twitch sent a notice");
-    }
-    if (item.params[0] !== "#" + channel) return;
-    const { tags } = item;
-    if (item.command === "PRIVMSG") {
-      const username = item.prefix.split("!")[0];
-      if (!username || item.trailing === null) return;
-      if (tags.id && seen.has(tags.id)) return;
-      if (tags.id) {
-        seen.add(tags.id);
-        if (seen.size > 1000) seen.delete(seen.values().next().value!); // over 1000 entries, so a first one exists
-      }
-      onMessage({
-        id: tags.id || undefined,
-        userId: tags["user-id"] || username,
-        username,
-        displayName: tags["display-name"] || username,
-        color: /^#[0-9a-f]{6}$/i.test(tags.color ?? "") ? tags.color : null,
-        badges: (tags.badges || "").split(",").filter(Boolean),
-        text: item.trailing.slice(0, 1000),
-        timestamp: Number(tags["tmi-sent-ts"]) || Date.now(),
-        command: commandFromText(item.trailing),
-      });
-    } else if (item.command === "CLEARCHAT") {
+    onMessage({
+      id: tags.id || undefined,
+      userId: tags["user-id"] || username,
+      username,
+      displayName: tags["display-name"] || username,
+      color: /^#[0-9a-f]{6}$/i.test(tags.color ?? "") ? tags.color : null,
+      badges: (tags.badges || "").split(",").filter(Boolean),
+      text: trailing.slice(0, 1000),
+      timestamp: Number(tags["tmi-sent-ts"]) || Date.now(),
+    });
+  }
+  // the IRC commands this transport acts on; any other command is ignored
+  const ON: Record<string, (item: IrcLine, active: WebSocket) => void> = {
+    PING: (item, active) => active.send("PONG :" + (item.trailing ?? item.params.join(" ")) + "\r\n"),
+    RECONNECT: (_, active) => active.close(),
+    "001": (_, active) => active.send("JOIN " + room + "\r\n"),
+    JOIN: (item) => markJoined(item.params[0] === room),
+    ROOMSTATE: (item) => markJoined(item.params[0] === room),
+    "366": (item) => markJoined(item.params.includes(room)),
+    NOTICE: (item) => status("error", item.trailing ?? "Twitch sent a notice"),
+    PRIVMSG: (item) => {
+      if (item.params[0] === room) message(item);
+    },
+    CLEARCHAT: ({ params, tags, trailing }) => {
+      if (params[0] !== room) return;
       const duration = Number(tags["ban-duration"]);
       onModeration({
-        type: !item.trailing ? "clear" : tags["ban-duration"] ? "timeout" : "ban",
+        type: !trailing ? "clear" : tags["ban-duration"] ? "timeout" : "ban",
         userId: tags["target-user-id"] || undefined,
-        username: item.trailing || undefined,
+        username: trailing || undefined,
         duration: Number.isFinite(duration) ? duration : undefined,
       });
-    } else if (item.command === "CLEARMSG") {
-      onModeration({ type: "delete", username: tags.login, messageId: tags["target-msg-id"] });
-    }
+    },
+    CLEARMSG: ({ params, tags }) => {
+      if (params[0] === room) onModeration({ type: "delete", username: tags.login, messageId: tags["target-msg-id"] });
+    },
+  };
+  function handle(line: string, active: WebSocket) {
+    const item = parseIRCLine(line);
+    if (item) ON[item.command]?.(item, active);
+    // a line that isn't IRC at all; an IRC command this file doesn't handle is no reason to warn
+    else if (line.trim()) warnOnce("a Twitch chat line", "not an IRC message");
   }
   function open() {
     if (stopped) return;

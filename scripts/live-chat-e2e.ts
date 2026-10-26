@@ -141,15 +141,11 @@ async function openChat(cdp: string): Promise<Chat> {
   if (!login) throw new Error("not signed in to Twitch in the Chrome at " + cdp);
   const url = `https://www.twitch.tv/popout/${CHANNEL}/chat`;
   let page = ctx.pages().find((p) => p.url().startsWith(url)) || (await ctx.newPage());
-  if (
-    !(await page.goto(url).then(
-      () => true,
-      () => false,
-    ))
-  ) {
-    page = await ctx.newPage();
-    await page.goto(url);
-  } // Twitch sometimes refuses to reload an old tab
+  const reloaded = await page.goto(url).then(
+    () => true,
+    () => false,
+  );
+  if (!reloaded) await (page = await ctx.newPage()).goto(url); // Twitch sometimes refuses to reload an old tab
   await page.bringToFront();
   await page.locator('[data-a-target="chat-input"]').waitFor({ timeout: 30_000 });
   for (let n = -1, i = 0; i < 10; i++) {
@@ -265,9 +261,24 @@ async function openChallenge(from: Chat, to: Chat, texts: string[]) {
   throw new Error(`could not open a challenge from ${from.login} to ${to.login}`);
 }
 
+// Three spellings of a challenge to `to`, so a retry never repeats the text Twitch just saw.
+const spellings = (to: Chat) => [
+  `!challenge @${to.login}`,
+  `!challenge ${to.login}`,
+  `!challenge @${to.login.toUpperCase()}`,
+];
+// The reply to !fight or !decline with nothing pending.
+const nobodyChallenged = (who: Chat) => new RegExp(`^${esc(who.login)}, nobody has challenged you yet`, "i");
+
 const board = async (): Promise<Row[]> => await (await fetch(`${ORIGIN}/api/leaderboard/${CHANNEL}`)).json();
 const row = (rows: Row[], name: string) =>
   rows.find((r) => r.username === name.toLowerCase() || r.displayName === name);
+// Both test accounts have a row on every board: the setup checked their saved fighters.
+function must(rows: Row[], name: string): Row {
+  const r = row(rows, name);
+  check(r, `${name} has no row on the leaderboard`);
+  return r;
+}
 
 // The duel reply names both fighters, challenger first, and never the winner: the stream shows that first.
 const FIGHT_ON = /^Fight on: (\S+) vs (\S+)! Watch the stream for the winner\.$/;
@@ -276,7 +287,7 @@ const nums = (rows: Row[], name: string) => {
   return r ? [r.elo, r.wins, r.losses].join("/") : "missing";
 };
 
-function checkFightOn(result: string, pre: Row[], challenger: Chat, accepter: Chat) {
+function checkFightOn(result: string, challenger: Chat, accepter: Chat) {
   const m = FIGHT_ON.exec(result);
   check(m, "not a no-spoiler duel reply: " + result);
   check(
@@ -310,12 +321,8 @@ async function checkReveal(pre: Row[], a: Chat, b: Chat, results: () => Promise<
     if (nums(post, a.login) !== nums(pre, a.login)) shownAt = Date.now();
   }
   check(shownAt, "the leaderboard did not change within 60 s");
-  // !: both accounts have a row on every board (the setup checked their saved fighters); the same for the next four
-  const [w, l] = row(post, a.login)!.wins > row(pre, a.login)!.wins ? [a, b] : [b, a];
-  const w0 = row(pre, w.login)!, // !: both accounts have a row on every board
-    l0 = row(pre, l.login)!, // !: as above
-    w1 = row(post, w.login)!, // !: as above
-    l1 = row(post, l.login)!; // !: as above
+  const [w, l] = must(post, a.login).wins > must(pre, a.login).wins ? [a, b] : [b, a];
+  const [w0, l0, w1, l1] = [must(pre, w.login), must(pre, l.login), must(post, w.login), must(post, l.login)];
   check(w1.elo > w0.elo && l1.elo < l0.elo, `Elo did not move: winner ${w0.elo}→${w1.elo}, loser ${l0.elo}→${l1.elo}`);
   check(
     w1.wins === w0.wins + 1 && w1.losses === w0.losses && l1.losses === l0.losses + 1 && l1.wins === l0.wins,
@@ -340,6 +347,19 @@ async function checkReveal(pre: Row[], a: Chat, b: Chat, results: () => Promise<
   check(line, `no bot result line matching ${want} within 20 s of the board`);
   check(line.t >= shown.at, `the bot posted the result ${shown.at - line.t} ms before the overlay showed it`);
   return `${detail}; chat "${line.text}" ${((line.t - shown.at) / 1000).toFixed(1)} s after the overlay`;
+}
+
+// One duel: `from` opens the challenge, `to` answers with `answer`, and the reply must be the no-spoiler line while
+// the board still shows the numbers from before.
+let duels = 0;
+async function fight(from: Chat, to: Chat, texts: string[], answer: string) {
+  const pre = await board(),
+    since = Date.now();
+  await openChallenge(from, to, texts);
+  const result = await say(to, answer, FIGHT_ON);
+  duels++;
+  checkFightOn(result, from, to);
+  return { pre, since, detail: `${result} — ${await checkHidden(pre, A, B)}` };
 }
 
 let local: Browser | undefined;
@@ -400,7 +420,7 @@ try {
     for (let i = 0; i < 40 && !irc.joined; i++) await sleep(500);
     check(irc.joined, "the overlay did not join Twitch chat within 20 s");
     await post(B, `e2e check ${stamp.slice(11, 19)}`);
-    const saved = row(start, B.login)!; // !: the setup checked that B has a saved fighter on this board
+    const saved = must(start, B.login);
     let p: ArenaPlayer | undefined;
     for (let i = 0; i < 30 && !p; i++) {
       await sleep(500);
@@ -462,54 +482,29 @@ try {
   await step(`${A.login}: !challenge a viewer with no fighter`, () =>
     say(A, `!challenge @${NOBODY}`, new RegExp(`^@${NOBODY} has no fighter in the arena yet!`)),
   );
-  await step(`${A.login}: !fight with nothing pending`, () =>
-    say(A, "!fight", new RegExp(`^${esc(A.login)}, nobody has challenged you yet`, "i")),
-  );
-  await step(`${B.login}: !decline with nothing pending`, () =>
-    say(B, "!decline", new RegExp(`^${esc(B.login)}, nobody has challenged you yet`, "i")),
-  );
+  await step(`${A.login}: !fight with nothing pending`, () => say(A, "!fight", nobodyChallenged(A)));
+  await step(`${B.login}: !decline with nothing pending`, () => say(B, "!decline", nobodyChallenged(B)));
 
   // A challenge that is refused every wrong way, then declined.
   await step(`${A.login} challenges twice (busy), ${B.login} names the wrong challenger, then declines`, async () => {
-    await openChallenge(A, B, [
-      `!challenge @${B.login}`,
-      `!challenge ${B.login}`,
-      `!challenge @${B.login.toUpperCase()}`,
-    ]);
+    await openChallenge(A, B, spellings(B));
     await say(A, `!challenge ${B.login.toUpperCase()}`, /^One of you is already fighting!/);
-    await say(B, `!fight @${NOBODY}`, new RegExp(`^${esc(B.login)}, nobody has challenged you yet`, "i"));
+    await say(B, `!fight @${NOBODY}`, nobodyChallenged(B));
     return say(B, `!decline @${A.login}`, new RegExp(`^${esc(B.login)} backs out of the duel\\.$`, "i"));
   });
 
   // Duel 1: B challenges, A accepts by naming the challenger. Chat gets no result until the stream has shown it.
-  // !: the duel 1 step sets both; if it fails first, the steps that read them throw and step() records it
-  let duels = 0,
-    pre1!: Row[], // !: set by the duel 1 step
-    since1!: number; // !: set by the duel 1 step
+  // !: the duel 1 step sets it; if it fails first, the steps that read it throw and step() records it
+  let first!: { pre: Row[]; since: number; detail: string };
   await step(`${B.login} challenges, ${A.login} answers !fight @${B.login}, and chat gets no result`, async () => {
-    pre1 = await board();
-    since1 = Date.now();
-    await openChallenge(B, A, [
-      `!challenge @${A.login}`,
-      `!challenge ${A.login}`,
-      `!challenge @${A.login.toUpperCase()}`,
-    ]);
-    const result = await say(A, `!fight @${B.login}`, FIGHT_ON);
-    duels++;
-    checkFightOn(result, pre1, B, A);
-    return `${result} — ${await checkHidden(pre1, A, B)}`;
+    first = await fight(B, A, spellings(A), `!fight @${B.login}`);
+    return first.detail;
   });
-  await step(`${B.login}: !elo before the stream shows the fight gives the old Elo`, () =>
-    say(
-      B,
-      "!elo",
-      new RegExp(
-        // !: B had a saved fighter on the board before duel 1 (three times on the next line)
-        `^${esc(B.login)}: ${row(pre1, B.login)!.elo} Elo, rank \\d+ of \\d+, ${row(pre1, B.login)!.wins} wins? and ${row(pre1, B.login)!.losses} loss(es)?\\.$`,
-        "i",
-      ),
-    ),
-  );
+  await step(`${B.login}: !elo before the stream shows the fight gives the old Elo`, () => {
+    const r = must(first.pre, B.login);
+    const want = `^${esc(B.login)}: ${r.elo} Elo, rank \\d+ of \\d+, ${r.wins} wins? and ${r.losses} loss(es)?\\.$`;
+    return say(B, "!elo", new RegExp(want, "i"));
+  });
   // Right after the duel the loser may still be knocked out (respawnMs); naming them would give the result away.
   await step("an instant re-challenge names nobody as knocked out", () =>
     say(
@@ -523,35 +518,24 @@ try {
     return say(A, `!challenge @${B.login}`, /^Rematch in \d+ s! Catch your breath first\.$/);
   });
   await step("duel 1: the board shows the result only after the overlay announced it", () =>
-    checkReveal(pre1, A, B, results, since1),
+    checkReveal(first.pre, A, B, results, first.since),
   );
 
   // Duel 2: both name each other, which starts the duel without !fight.
   await step(`${A.login} and ${B.login} challenge each other, and chat gets no result`, async () => {
-    const pre = await board(),
-      since = Date.now();
-    await openChallenge(A, B, [
+    const texts = [
       `!challenge @${B.login.toUpperCase()}`,
       `!challenge ${B.login.toUpperCase()}`,
       `!challenge @${B.login}`,
-    ]);
-    const result = await say(B, `!challenge @${A.login}`, FIGHT_ON);
-    duels++;
-    checkFightOn(result, pre, A, B);
-    const hidden = await checkHidden(pre, A, B);
-    return `${result} — ${hidden}; ${await checkReveal(pre, A, B, results, since)}`;
+    ];
+    const { pre, since, detail } = await fight(A, B, texts, `!challenge @${A.login}`);
+    return `${detail}; ${await checkReveal(pre, A, B, results, since)}`;
   });
 
   // Duel 3: !rematch names nobody; it finds the last opponent, and a !rematch back starts the duel.
   await step(`${B.login} and ${A.login} both type !rematch, and chat gets no result`, async () => {
-    const pre = await board(),
-      since = Date.now();
-    await openChallenge(B, A, ["!rematch", "!rematch now", `!rematch @${A.login}`]);
-    const result = await say(A, "!rematch", FIGHT_ON);
-    duels++;
-    checkFightOn(result, pre, B, A);
-    const hidden = await checkHidden(pre, A, B);
-    return `${result} — ${hidden}; ${await checkReveal(pre, A, B, results, since)}`;
+    const { pre, since, detail } = await fight(B, A, ["!rematch", "!rematch now", `!rematch @${A.login}`], "!rematch");
+    return `${detail}; ${await checkReveal(pre, A, B, results, since)}`;
   });
 
   await step("the overlay played every duel without page errors", async () => {
@@ -565,11 +549,7 @@ try {
   // A challenge left unanswered expires after the timeout.
   await step("an unanswered challenge expires", async () => {
     const since = Date.now();
-    await openChallenge(A, B, [
-      `!challenge @${B.login}`,
-      `!challenge ${B.login}`,
-      `!challenge @${B.login.toUpperCase()}`,
-    ]);
+    await openChallenge(A, B, spellings(B));
     note(`  waiting ${config.challengeTimeoutMs / 1000 + 3} s for the challenge to expire`);
     await sleep(config.challengeTimeoutMs + 3000);
     let expired = "";
@@ -585,7 +565,7 @@ try {
       }
       check(expired, "the bot never said the challenge expired");
     }
-    const reply = await say(B, "!fight", new RegExp(`^${esc(B.login)}, nobody has challenged you yet`, "i"));
+    const reply = await say(B, "!fight", nobodyChallenged(B));
     return expired ? `chat "${expired}"; ${reply}` : reply;
   });
 

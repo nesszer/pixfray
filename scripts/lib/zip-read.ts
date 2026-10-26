@@ -1,45 +1,31 @@
 // Minimal in-memory ZIP reader (stored + deflate entries) so the character build needs no unzip tool or npm package.
 import zlib from "node:zlib";
 
-type Entry = { name: string; method: number; csize: number; offset: number };
-// The archive as readZip returns it: entry names, a membership test and a reader that inflates one entry.
-export type Zip = { names: () => string[]; has: (name: string) => boolean; read(name: string): Buffer };
+export type Zip = { read(name: string): Buffer };
 
 export function readZip(buffer: Buffer): Zip {
-  let eocd = -1;
-  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65558); i--) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) {
-      eocd = i;
-      break;
-    }
-  }
-  if (eocd < 0) throw new Error("not a ZIP file (no end-of-central-directory record)");
-  const count = buffer.readUInt16LE(eocd + 10);
-  let p = buffer.readUInt32LE(eocd + 16);
-  const entries = new Map<string, Entry>();
-  for (let n = 0; n < count; n++) {
+  // The end-of-central-directory record sits in the last 22 bytes plus up to 64 KB of comment.
+  let eocd = buffer.length - 22;
+  while (eocd >= Math.max(0, buffer.length - 65558) && buffer.readUInt32LE(eocd) !== 0x06054b50) eocd--;
+  if (eocd < Math.max(0, buffer.length - 65558)) throw new Error("not a ZIP file (no end-of-central-directory record)");
+  const entries = new Map<string, { method: number; csize: number; offset: number }>();
+  for (let n = buffer.readUInt16LE(eocd + 10), p = buffer.readUInt32LE(eocd + 16); n > 0; n--) {
     if (buffer.readUInt32LE(p) !== 0x02014b50) throw new Error("bad central directory");
-    const flags = buffer.readUInt16LE(p + 8);
-    const method = buffer.readUInt16LE(p + 10);
-    const csize = buffer.readUInt32LE(p + 20);
-    const nameLen = buffer.readUInt16LE(p + 28),
-      extraLen = buffer.readUInt16LE(p + 30),
-      commentLen = buffer.readUInt16LE(p + 32);
-    const offset = buffer.readUInt32LE(p + 42);
-    const name = buffer.toString(flags & 0x800 ? "utf8" : "latin1", p + 46, p + 46 + nameLen);
-    p += 46 + nameLen + extraLen + commentLen;
-    if (name.endsWith("/")) continue;
-    entries.set(name, { name, method, csize, offset });
+    const nameLen = buffer.readUInt16LE(p + 28);
+    const name = buffer.toString(buffer.readUInt16LE(p + 8) & 0x800 ? "utf8" : "latin1", p + 46, p + 46 + nameLen);
+    const entry = {
+      method: buffer.readUInt16LE(p + 10),
+      csize: buffer.readUInt32LE(p + 20),
+      offset: buffer.readUInt32LE(p + 42),
+    };
+    if (!name.endsWith("/")) entries.set(name, entry);
+    p += 46 + nameLen + buffer.readUInt16LE(p + 30) + buffer.readUInt16LE(p + 32);
   }
   return {
-    names: () => [...entries.keys()],
-    has: (name: string) => entries.has(name),
     read(name: string): Buffer {
       const e = entries.get(name);
       if (!e) throw new Error("not in archive: " + name);
-      const nl = buffer.readUInt16LE(e.offset + 26),
-        el = buffer.readUInt16LE(e.offset + 28);
-      const start = e.offset + 30 + nl + el;
+      const start = e.offset + 30 + buffer.readUInt16LE(e.offset + 26) + buffer.readUInt16LE(e.offset + 28);
       const raw = buffer.subarray(start, start + e.csize);
       if (e.method === 0) return Buffer.from(raw);
       if (e.method === 8) return zlib.inflateRawSync(raw);

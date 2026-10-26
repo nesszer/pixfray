@@ -1,5 +1,5 @@
 // Minimal PNG decoder/encoder and image helpers on top of node:zlib, so the character build adds no dependency.
-// Decodes non-interlaced PNGs (8/16-bit gray, gray+alpha, RGB, RGBA, 1-8-bit palette) to RGBA8.
+// Decodes what the pinned source archives hold: non-interlaced 8-bit RGB and RGBA, and 1-8-bit palette images.
 import zlib from "node:zlib";
 
 // An RGBA8 image: 4 bytes per pixel, rows top to bottom.
@@ -8,135 +8,94 @@ export type Image = { width: number; height: number; data: Buffer };
 export type Rect = { x: number; y: number; w: number; h: number };
 
 const SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const CHANNELS: Record<number, number> = { 2: 3, 3: 1, 6: 4 };
 
-const CRC = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c >>> 0;
-  }
-  return t;
-})();
+const CRC = Array.from({ length: 256 }, (_, n) => {
+  for (let k = 0; k < 8; k++) n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1;
+  return n >>> 0;
+});
 function crc32(buf: Uint8Array): number {
   let c = 0xffffffff;
-  // !: i < buf.length, and a value masked to 0..255 indexes the 256-entry table
-  for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]!) & 0xff]! ^ (c >>> 8);
+  for (const byte of buf) c = (CRC[(c ^ byte) & 0xff] ?? 0) ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
+// The PNG row filters: each predicts a byte from its left (a), up (b) and up-left (c) neighbours.
+const FILTERS = [
+  () => 0,
+  (a: number) => a,
+  (_: number, b: number) => b,
+  (a: number, b: number) => (a + b) >> 1,
+  (a: number, b: number, c: number) => {
+    const p = a + b - c;
+    const [pa, pb, pc] = [Math.abs(p - a), Math.abs(p - b), Math.abs(p - c)];
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+  },
+];
+
 export function decodePng(buf: Buffer): Image {
   if (!buf.subarray(0, 8).equals(SIG)) throw new Error("not a PNG");
-  let p = 8,
-    width = 0,
-    height = 0,
-    depth = 0,
-    ctype = 0,
-    interlace = 0,
-    palette: Buffer | null = null,
-    trns: Buffer | null = null;
+  let ihdr: Buffer = Buffer.alloc(13),
+    palette: Buffer = Buffer.alloc(0),
+    trns: Buffer = Buffer.alloc(0);
   const idat: Buffer[] = [];
-  while (p < buf.length) {
+  for (let p = 8; p < buf.length;) {
     const len = buf.readUInt32BE(p),
       type = buf.toString("latin1", p + 4, p + 8),
       data = buf.subarray(p + 8, p + 8 + len);
     p += 12 + len;
-    if (type === "IHDR") {
-      width = data.readUInt32BE(0);
-      height = data.readUInt32BE(4);
-      // !: IHDR's body is 13 bytes (size, depth, colour type, compression, filter, interlace); same 2 lines below
-      depth = data[8]!;
-      ctype = data[9]!; // !: IHDR's body is 13 bytes
-      interlace = data[12]!; // !: IHDR's body is 13 bytes
-    } else if (type === "PLTE") palette = data;
+    if (type === "IHDR") ihdr = data;
+    else if (type === "PLTE") palette = data;
     else if (type === "tRNS") trns = data;
     else if (type === "IDAT") idat.push(data);
     else if (type === "IEND") break;
   }
-  if (interlace) throw new Error("interlaced PNG is not supported");
-  // as: the colour type comes from the file, so any number may look up the table and miss
-  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number | undefined>)[ctype];
-  if (!channels) throw new Error("unsupported PNG colour type " + ctype);
+  const [width, height] = [ihdr.readUInt32BE(0), ihdr.readUInt32BE(4)];
+  const [depth, ctype, interlace] = [ihdr[8] ?? 0, ihdr[9] ?? 0, ihdr[12] ?? 0];
+  const channels = CHANNELS[ctype];
+  if (!channels || interlace || depth > 8 || (ctype !== 3 && depth !== 8))
+    throw new Error(`unsupported PNG: colour type ${ctype}, depth ${depth}, interlace ${interlace}`);
   const bpp = Math.max(1, (channels * depth) >> 3); // bytes per pixel for filtering
   const stride = Math.ceil((width * channels * depth) / 8);
   const raw = zlib.inflateSync(Buffer.concat(idat));
   const px = Buffer.alloc(stride * height);
   for (let y = 0; y < height; y++) {
-    // !: each of the height rows is a filter byte plus stride bytes, and the guards keep the left/up reads inside px
-    // (this holds for the reads of raw and px in the next eight lines)
-    const f = raw[y * (stride + 1)]!,
-      src = y * (stride + 1) + 1,
-      dst = y * stride;
+    const src = y * (stride + 1) + 1,
+      dst = y * stride,
+      filter = FILTERS[raw[src - 1] ?? 0];
+    if (!filter) throw new Error("bad PNG filter " + raw[src - 1]);
     for (let i = 0; i < stride; i++) {
-      const x = raw[src + i]!; // !: src + i stays inside this row of raw
-      const a = i >= bpp ? px[dst + i - bpp]! : 0, // !: the index is inside the rows decoded so far
-        b = y ? px[dst - stride + i]! : 0, // !: the index is inside the rows decoded so far
-        c = i >= bpp && y ? px[dst - stride + i - bpp]! : 0; // !: the index is inside the rows decoded so far
-      let v: number;
-      if (f === 0) v = x;
-      else if (f === 1) v = x + a;
-      else if (f === 2) v = x + b;
-      else if (f === 3) v = x + ((a + b) >> 1);
-      else if (f === 4) {
-        const pp = a + b - c,
-          pa = Math.abs(pp - a),
-          pb = Math.abs(pp - b),
-          pc = Math.abs(pp - c);
-        v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
-      } else throw new Error("bad PNG filter " + f);
-      px[dst + i] = v & 255;
+      const a = i >= bpp ? (px[dst + i - bpp] ?? 0) : 0,
+        b = y ? (px[dst - stride + i] ?? 0) : 0,
+        c = i >= bpp && y ? (px[dst - stride + i - bpp] ?? 0) : 0;
+      px[dst + i] = ((raw[src + i] ?? 0) + filter(a, b, c)) & 255;
     }
   }
-  const out = Buffer.alloc(width * height * 4);
+  // The idx-th sample of a row: the byte itself at depth 8, the packed bits below it.
   const sample = (row: number, idx: number): number => {
-    // idx-th sample of a row (high byte for 16-bit, raw value below 8-bit)
-    // !: callers pass a sample index inside the row of stride bytes, so these reads stay inside px (three lines)
-    if (depth === 8) return px[row + idx]!;
-    if (depth === 16) return px[row + idx * 2]!; // !: idx is a sample inside the row
-    const per = 8 / depth,
-      byte = px[row + Math.floor(idx / per)]!, // !: idx is a sample inside the row
-      shift = 8 - depth * ((idx % per) + 1);
-    return (byte >> shift) & ((1 << depth) - 1);
+    if (depth === 8) return px[row + idx] ?? 0;
+    const per = 8 / depth;
+    return ((px[row + Math.floor(idx / per)] ?? 0) >> (8 - depth * ((idx % per) + 1))) & ((1 << depth) - 1);
   };
-  for (let y = 0; y < height; y++) {
-    const row = y * stride;
+  const out = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y++)
     for (let x = 0; x < width; x++) {
       const o = (y * width + x) * 4;
-      if (ctype === 6) {
-        for (let k = 0; k < 4; k++) out[o + k] = sample(row, x * 4 + k);
-      } else if (ctype === 2) {
-        for (let k = 0; k < 3; k++) out[o + k] = sample(row, x * 3 + k);
-        out[o + 3] = 255;
-        if (trns && depth === 8 && out[o] === trns[1] && out[o + 1] === trns[3] && out[o + 2] === trns[5])
-          out[o + 3] = 0;
-      } else if (ctype === 3) {
-        const i = sample(row, x);
-        // !: colour type 3 requires a PLTE chunk and its indexes point inside it (the PNG spec); next two lines too
-        out[o] = palette![i * 3]!;
-        out[o + 1] = palette![i * 3 + 1]!; // !: type 3 has a PLTE holding index i
-        out[o + 2] = palette![i * 3 + 2]!; // !: type 3 has a PLTE holding index i
-        out[o + 3] = trns && i < trns.length ? trns[i]! : 255; // !: i < trns.length
-      } else if (ctype === 4) {
-        const g = sample(row, x * 2);
-        out[o] = out[o + 1] = out[o + 2] = g;
-        out[o + 3] = sample(row, x * 2 + 1);
+      if (ctype === 3) {
+        const i = sample(y * stride, x);
+        palette.copy(out, o, i * 3, i * 3 + 3);
+        out[o + 3] = trns[i] ?? 255;
       } else {
-        let g = sample(row, x);
-        if (depth < 8) g = Math.round((g * 255) / ((1 << depth) - 1));
-        out[o] = out[o + 1] = out[o + 2] = g;
-        out[o + 3] = 255;
+        for (let k = 0; k < channels; k++) out[o + k] = sample(y * stride, x * channels + k);
+        if (channels === 3) out[o + 3] = 255;
       }
     }
-  }
   return { width, height, data: out };
 }
 
 export function encodePng({ width, height, data }: Image): Buffer {
   const raw = Buffer.alloc((width * 4 + 1) * height);
-  for (let y = 0; y < height; y++) {
-    raw[y * (width * 4 + 1)] = 0;
-    data.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
-  }
+  for (let y = 0; y < height; y++) data.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
   const chunk = (type: string, body: Uint8Array): Buffer => {
     const head = Buffer.alloc(8);
     head.writeUInt32BE(body.length, 0);
@@ -145,11 +104,9 @@ export function encodePng({ width, height, data }: Image): Buffer {
     tail.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), body])), 0);
     return Buffer.concat([head, body, tail]);
   };
-  const ihdr = Buffer.alloc(13);
+  const ihdr = Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 8, 6, 0, 0, 0]); // 8-bit RGBA
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
   return Buffer.concat([
     SIG,
     chunk("IHDR", ihdr),
@@ -164,20 +121,14 @@ export const blank = (width: number, height: number): Image => ({
   data: Buffer.alloc(width * height * 4),
 });
 
-// Bounding box of pixels with alpha > threshold, or null when the image is empty.
-export function alphaBounds({ width, height, data }: Image, threshold = 0): Rect | null {
-  let x0 = width,
-    y0 = height,
-    x1 = -1,
-    y1 = -1;
+// Bounding box of the pixels that aren't fully transparent, or null when the image is empty.
+export function alphaBounds({ width, height, data }: Image): Rect | null {
+  let [x0, y0, x1, y1] = [width, height, -1, -1];
   for (let y = 0; y < height; y++)
     for (let x = 0; x < width; x++)
-      // !: x < width and y < height, so the alpha byte is inside data
-      if (data[(y * width + x) * 4 + 3]! > threshold) {
-        if (x < x0) x0 = x;
-        if (x > x1) x1 = x;
-        if (y < y0) y0 = y;
-        if (y > y1) y1 = y;
+      if (data[(y * width + x) * 4 + 3]) {
+        [x0, x1] = [Math.min(x0, x), Math.max(x1, x)];
+        [y0, y1] = [Math.min(y0, y), Math.max(y1, y)];
       }
   return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
@@ -189,89 +140,57 @@ export function crop(img: Image, r: Rect): Image {
   return out;
 }
 
-// Area-average resample (premultiplied alpha), used for downscaling; exact box filter, so no ringing and no halos.
+// Writes pixel o of out as the premultiplied-alpha average of the source taps [x, y, weight]; the weights sum to wsum.
+function mix(img: Image, out: Image, o: number, taps: [number, number, number][], wsum: number): void {
+  let [r, g, b, a] = [0, 0, 0, 0];
+  for (const [x, y, wt] of taps) {
+    const i = (y * img.width + x) * 4,
+      al = (img.data[i + 3] ?? 0) / 255;
+    r += (img.data[i] ?? 0) * al * wt;
+    g += (img.data[i + 1] ?? 0) * al * wt;
+    b += (img.data[i + 2] ?? 0) * al * wt;
+    a += al * wt;
+  }
+  if (a > 0) out.data.set([r / a, g / a, b / a, (a / wsum) * 255].map(Math.round), o);
+}
+
+// Area-average resample, used for downscaling; exact box filter, so no ringing and no halos.
 export function resizeArea(img: Image, w: number, h: number): Image {
   const out = blank(w, h),
     sx = img.width / w,
     sy = img.height / h;
-  for (let y = 0; y < h; y++) {
-    const y0 = y * sy,
-      y1 = (y + 1) * sy;
+  for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
-      const x0 = x * sx,
-        x1 = (x + 1) * sx;
-      let r = 0,
-        g = 0,
-        b = 0,
-        a = 0,
-        wsum = 0;
-      for (let yy = Math.floor(y0); yy < Math.min(img.height, Math.ceil(y1)); yy++) {
-        const wy = Math.min(yy + 1, y1) - Math.max(yy, y0);
-        for (let xx = Math.floor(x0); xx < Math.min(img.width, Math.ceil(x1)); xx++) {
-          const wt = wy * (Math.min(xx + 1, x1) - Math.max(xx, x0)),
-            i = (yy * img.width + xx) * 4,
-            // !: the loops clamp xx and yy to the source size, so pixel i is inside img.data (four lines)
-            al = img.data[i + 3]! / 255;
-          r += img.data[i]! * al * wt; // !: pixel i is inside img.data
-          g += img.data[i + 1]! * al * wt; // !: pixel i is inside img.data
-          b += img.data[i + 2]! * al * wt; // !: pixel i is inside img.data
-          a += al * wt;
-          wsum += wt;
-        }
-      }
-      const o = (y * w + x) * 4;
-      if (a > 0) {
-        out.data[o] = Math.round(r / a);
-        out.data[o + 1] = Math.round(g / a);
-        out.data[o + 2] = Math.round(b / a);
-        out.data[o + 3] = Math.round((a / wsum) * 255);
-      }
+      const [x0, x1, y0, y1] = [x * sx, (x + 1) * sx, y * sy, (y + 1) * sy];
+      const taps: [number, number, number][] = [];
+      for (let yy = Math.floor(y0); yy < Math.min(img.height, Math.ceil(y1)); yy++)
+        for (let xx = Math.floor(x0); xx < Math.min(img.width, Math.ceil(x1)); xx++)
+          taps.push([xx, yy, (Math.min(yy + 1, y1) - Math.max(yy, y0)) * (Math.min(xx + 1, x1) - Math.max(xx, x0))]);
+      const wsum = taps.reduce((sum, [, , wt]) => sum + wt, 0);
+      mix(img, out, (y * w + x) * 4, taps, wsum);
     }
-  }
   return out;
 }
 
-// Integer bilinear upscale (premultiplied alpha) for smooth vector-style art; edges stay soft instead of blocky.
+// Integer bilinear upscale for smooth vector-style art; edges stay soft instead of blocky.
 export function resizeBilinear(img: Image, factor: number): Image {
-  const w = img.width * factor,
-    h = img.height * factor,
-    out = blank(w, h);
-  for (let y = 0; y < h; y++) {
-    const fy = Math.max(0, Math.min(img.height - 1, (y + 0.5) / factor - 0.5)),
-      y0 = Math.floor(fy),
-      y1 = Math.min(img.height - 1, y0 + 1),
-      ty = fy - y0;
-    for (let x = 0; x < w; x++) {
-      const fx = Math.max(0, Math.min(img.width - 1, (x + 0.5) / factor - 0.5)),
-        x0 = Math.floor(fx),
-        x1 = Math.min(img.width - 1, x0 + 1),
-        tx = fx - x0;
+  const out = blank(img.width * factor, img.height * factor);
+  // The two source pixels around output pixel v along one axis, and how far v sits towards the second.
+  const axis = (v: number, size: number): [number, number, number] => {
+    const f = Math.max(0, Math.min(size - 1, (v + 0.5) / factor - 0.5));
+    return [Math.floor(f), Math.min(size - 1, Math.floor(f) + 1), f - Math.floor(f)];
+  };
+  for (let y = 0; y < out.height; y++) {
+    const [y0, y1, ty] = axis(y, img.height);
+    for (let x = 0; x < out.width; x++) {
+      const [x0, x1, tx] = axis(x, img.width);
       const taps: [number, number, number][] = [
         [x0, y0, (1 - tx) * (1 - ty)],
         [x1, y0, tx * (1 - ty)],
         [x0, y1, (1 - tx) * ty],
         [x1, y1, tx * ty],
       ];
-      let r = 0,
-        g = 0,
-        b = 0,
-        a = 0;
-      for (const [sx, sy, wt] of taps) {
-        const i = (sy * img.width + sx) * 4,
-          // !: the taps are clamped to the source size, so pixel i is inside img.data (four lines)
-          al = (img.data[i + 3]! / 255) * wt;
-        r += img.data[i]! * al; // !: pixel i is inside img.data
-        g += img.data[i + 1]! * al; // !: pixel i is inside img.data
-        b += img.data[i + 2]! * al; // !: pixel i is inside img.data
-        a += al;
-      }
-      const o = (y * w + x) * 4;
-      if (a > 0) {
-        out.data[o] = Math.round(r / a);
-        out.data[o + 1] = Math.round(g / a);
-        out.data[o + 2] = Math.round(b / a);
-        out.data[o + 3] = Math.round(a * 255);
-      }
+      mix(img, out, (y * out.width + x) * 4, taps, 1);
     }
   }
   return out;
@@ -279,26 +198,21 @@ export function resizeBilinear(img: Image, factor: number): Image {
 
 // Integer nearest-neighbour upscale for pixel art.
 export function resizeNearest(img: Image, factor: number): Image {
-  const w = img.width * factor,
-    h = img.height * factor,
-    out = blank(w, h);
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
+  const out = blank(img.width * factor, img.height * factor);
+  for (let y = 0; y < out.height; y++)
+    for (let x = 0; x < out.width; x++) {
       const s = (Math.floor(y / factor) * img.width + Math.floor(x / factor)) * 4;
-      img.data.copy(out.data, (y * w + x) * 4, s, s + 4);
+      img.data.copy(out.data, (y * out.width + x) * 4, s, s + 4);
     }
   return out;
 }
 
 // Copies src into dst at (dx, dy), clipped. Cells start transparent and never overlap, so a plain copy is enough.
 export function blit(dst: Image, src: Image, dx: number, dy: number): void {
-  for (let y = 0; y < src.height; y++) {
-    const ty = dy + y;
-    if (ty < 0 || ty >= dst.height) continue;
-    for (let x = 0; x < src.width; x++) {
-      const tx = dx + x;
-      if (tx < 0 || tx >= dst.width) continue;
-      src.data.copy(dst.data, (ty * dst.width + tx) * 4, (y * src.width + x) * 4, (y * src.width + x) * 4 + 4);
-    }
+  for (let y = Math.max(0, -dy); y < Math.min(src.height, dst.height - dy); y++) {
+    const x0 = Math.max(0, -dx),
+      x1 = Math.min(src.width, dst.width - dx);
+    if (x1 > x0)
+      src.data.copy(dst.data, ((dy + y) * dst.width + dx + x0) * 4, (y * src.width + x0) * 4, (y * src.width + x1) * 4);
   }
 }

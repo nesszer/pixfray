@@ -22,17 +22,6 @@ export type ReleaseOpts = {
   version?: string;
   dryRun?: boolean;
 };
-// parseArgs's draft: flags arrive by name as raw strings and are checked and converted before it returns.
-type DraftOpts = {
-  command: string | undefined;
-  target?: string;
-  percentage?: string | number;
-  tag?: string;
-  message?: string;
-  version?: string;
-  dryRun?: boolean;
-  [flag: string]: unknown;
-};
 /** One traffic split of a deployment. */
 export type Split = { version_id: string; percentage: number };
 /** A Worker deployment, as the Cloudflare API lists it (only the fields read here). */
@@ -61,27 +50,32 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseArgs(argv: string[]): ReleaseOpts {
   const [command, ...rest] = argv,
-    opts: DraftOpts = { command };
+    raw: Record<string, string> = {};
+  let dryRun = false;
   for (let i = 0; i < rest.length; i++) {
-    const k = rest[i]!; // i < rest.length
-    if (k === "--dry-run") opts.dryRun = true;
-    else if (/^--(target|percentage|tag|message|version)$/.test(k) && i + 1 < rest.length) opts[k.slice(2)] = rest[++i];
+    const k = rest[i] ?? "";
+    if (k === "--dry-run") dryRun = true;
+    else if (/^--(target|percentage|tag|message|version)$/.test(k) && i + 1 < rest.length)
+      raw[k.slice(2)] = rest[++i] ?? "";
     else throw new Error("Unknown argument: " + k);
   }
-  // a missing command (undefined) is not in the list either, so it throws
-  if (!["deploy", "rollback"].includes(command!)) throw new Error("Command must be deploy or rollback");
-  // a missing --target (undefined) is read as the key "undefined", which SCRIPTS lacks, so it throws
-  if (!Object.hasOwn(SCRIPTS, opts.target!)) throw new Error("--target must be test or production");
-  opts.percentage = opts.percentage === undefined || opts.percentage === "" ? 100 : Number(opts.percentage);
-  if (!Number.isInteger(opts.percentage) || opts.percentage < 1 || opts.percentage > 100)
+  const { target, version } = raw;
+  if (command !== "deploy" && command !== "rollback") throw new Error("Command must be deploy or rollback");
+  if (target !== "test" && target !== "production") throw new Error("--target must be test or production");
+  const percentage = raw.percentage ? Number(raw.percentage) : 100;
+  if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100)
     throw new Error("--percentage must be an integer from 1 to 100");
-  if (opts.target === "test" && opts.percentage !== 100) throw new Error("Gradual deployments are for production only");
-  if (opts.version && !UUID.test(opts.version)) throw new Error("--version must be a Worker version UUID");
-  opts.tag = String(opts.tag || "").slice(0, 25);
-  opts.message = String(opts.message || "")
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .slice(0, 100);
-  return opts as ReleaseOpts; // command, target and percentage are validated above; tag and message are strings
+  if (target === "test" && percentage !== 100) throw new Error("Gradual deployments are for production only");
+  if (version && !UUID.test(version)) throw new Error("--version must be a Worker version UUID");
+  return {
+    command,
+    target,
+    percentage,
+    tag: (raw.tag ?? "").slice(0, 25),
+    message: (raw.message ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 100),
+    ...(version !== undefined ? { version } : {}),
+    ...(dryRun ? { dryRun } : {}),
+  };
 }
 
 // The main version of a deployment is the one carrying the most traffic.
@@ -104,15 +98,10 @@ export function planDeploy(
   percentage: number,
 ): { previous: string | null; versions: Split[] } {
   const current = mainVersion(newestFirst(deployments || [])[0]);
-  if (percentage === 100 || !current || current === newVersion)
-    return { previous: current, versions: [{ version_id: newVersion, percentage: 100 }] };
-  return {
-    previous: current,
-    versions: [
-      { version_id: newVersion, percentage },
-      { version_id: current, percentage: 100 - percentage },
-    ],
-  };
+  const whole = percentage === 100 || !current || current === newVersion;
+  const versions = [{ version_id: newVersion, percentage: whole ? 100 : percentage }];
+  if (!whole) versions.push({ version_id: current, percentage: 100 - percentage });
+  return { previous: current, versions };
 }
 
 export function planRollback(
@@ -121,13 +110,8 @@ export function planRollback(
 ): { previous: string | null; target: string | null } {
   const list = newestFirst(deployments || []),
     current = mainVersion(list[0]);
-  if (requested) return { previous: current, target: requested };
-  const target =
-    list
-      .slice(1)
-      .map(mainVersion)
-      .find((id) => id && id !== current) || null;
-  return { previous: current, target };
+  const earlier = list.slice(1).map(mainVersion);
+  return { previous: current, target: requested || earlier.find((id) => id && id !== current) || null };
 }
 
 export function missingSecrets(versionDetail: VersionDetail | null | undefined): string[] {
@@ -156,17 +140,8 @@ export function api(env: ApiEnv, fetchImpl: FetchLike = fetch) {
 }
 
 function uploadVersion(opts: ReleaseOpts) {
-  const args = [
-    "cf",
-    "workers",
-    "versions",
-    "create",
-    ...(opts.target === "test" ? ["--mode", "test"] : []),
-    "--tag",
-    opts.tag,
-    "--message",
-    opts.message || "deploy " + opts.tag,
-  ];
+  const args = ["cf", "workers", "versions", "create", ...(opts.target === "test" ? ["--mode", "test"] : [])];
+  args.push("--tag", opts.tag, "--message", opts.message || "deploy " + opts.tag);
   const r = spawnSync("bunx", args, { stdio: "inherit", shell: process.platform === "win32" });
   if (r.status !== 0) throw new Error("cf workers versions create failed (exit " + r.status + ")");
 }
@@ -177,12 +152,7 @@ function summary(lines: string[]) {
 }
 
 /** What run() resolves to: the deploy or rollback plan it carried out. */
-export type RunResult = {
-  previous: string | null;
-  target?: string | null;
-  versionId?: string;
-  versions?: Split[];
-};
+export type RunResult = { previous: string | null; target?: string | null; versionId?: string; versions?: Split[] };
 
 export async function run(opts: ReleaseOpts, env: ApiEnv = process.env, deps: ReleaseDeps = {}): Promise<RunResult> {
   const call = api(env, deps.fetch),
@@ -215,18 +185,12 @@ export async function run(opts: ReleaseOpts, env: ApiEnv = process.env, deps: Re
   if (!opts.dryRun) (deps.upload || uploadVersion)(opts);
   const versions = (await call<{ items?: Version[] }>(script + "/versions")).items || [];
   const versionId = findVersionByTag(versions, opts.tag);
-  if (!versionId)
+  if (!versionId && opts.dryRun) throw new Error("Dry run: no uploaded version is tagged " + opts.tag);
+  if (!versionId) throw new Error("Uploaded version with tag " + opts.tag + " not found");
+  const missing = missingSecrets(await call<VersionDetail>(script + "/versions/" + versionId)).join(", ");
+  if (missing)
     throw new Error(
-      opts.dryRun
-        ? "Dry run: no uploaded version is tagged " + opts.tag
-        : "Uploaded version with tag " + opts.tag + " not found",
-    );
-  const missing = missingSecrets(await call<VersionDetail>(script + "/versions/" + versionId));
-  if (missing.length)
-    throw new Error(
-      "New version is missing secrets " +
-        missing.join(", ") +
-        "; set them with cf deploy --secrets-file first. Traffic was not moved.",
+      `New version is missing secrets ${missing}; set them with cf deploy --secrets-file first. Traffic was not moved.`,
     );
   const plan = planDeploy(await deployments(), versionId, opts.percentage);
   if (!opts.dryRun) await deployTo(plan.versions);

@@ -5,11 +5,7 @@ import * as THREE from "three";
 import { sampleSprite, VoxelFighter } from "./intro/voxels.ts";
 import type { Look } from "./fighter3d.ts";
 
-interface Job {
-  target: HTMLCanvasElement;
-  make: () => Look | null;
-  tries: number;
-}
+type Job = { target: HTMLCanvasElement; make: () => Look | null; tries: number };
 
 const SIZE = 160,
   GRID = 4; // tiles are drawn GRID x GRID to an atlas, so reading them back costs one GPU sync per batch, not per tile
@@ -72,7 +68,7 @@ function render(look: Look, i: number) {
   for (let i = 0; i < f.count; i++) {
     // in range: i < count, and home holds 3 numbers per cube
     const x = f.home[i * 3]!,
-      y = f.home[i * 3 + 1]!; // in range
+      y = f.home[i * 3 + 1]!;
     x0 = Math.min(x0, x);
     x1 = Math.max(x1, x);
     y0 = Math.min(y0, y);
@@ -94,18 +90,8 @@ function render(look: Look, i: number) {
   renderer!.setScissor(x, y, SIZE, SIZE); // setup() made it before any job ran
   renderer!.render(scene, camera); // setup() made it before any job ran
   scene.remove(turn);
-  f.mesh.geometry.dispose();
-  f.mesh.material.dispose();
-  f.mesh.dispose();
+  f.dispose();
   return true;
-}
-function copyCell(i: number) {
-  const out = document.createElement("canvas");
-  out.width = out.height = SIZE;
-  out
-    .getContext("2d")! // a fresh canvas always has a 2d context
-    .drawImage(renderer!.domElement, (i % GRID) * SIZE, Math.floor(i / GRID) * SIZE, SIZE, SIZE, 0, 0, SIZE, SIZE); // renderer: setup() made it
-  return out;
 }
 
 function paint(target: HTMLCanvasElement, img: HTMLCanvasElement) {
@@ -158,7 +144,12 @@ function pump() {
   }
   renderer!.setScissorTest(false); // setup() made it before any job ran
   for (const d of drawn) {
-    const img = copyCell(d.cell);
+    const img = document.createElement("canvas"),
+      x = (d.cell % GRID) * SIZE,
+      y = Math.floor(d.cell / GRID) * SIZE;
+    img.width = img.height = SIZE;
+    // a fresh canvas always has a 2d context; setup() made renderer
+    img.getContext("2d")!.drawImage(renderer!.domElement, x, y, SIZE, SIZE, 0, 0, SIZE, SIZE);
     if (cache.size > 300) cache.delete(cache.keys().next().value!); // size > 300, so there is a first key
     cache.set(d.key, img);
     for (const t of d.targets) paints.push([t, img]);

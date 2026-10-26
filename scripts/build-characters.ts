@@ -13,20 +13,8 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { readZip } from "./lib/zip-read.ts";
-import {
-  decodePng,
-  encodePng,
-  alphaBounds,
-  crop,
-  resizeArea,
-  resizeBilinear,
-  resizeNearest,
-  blank,
-  blit,
-} from "./lib/png-io.ts";
-import type { Image, Rect } from "./lib/png-io.ts";
-import type { Zip } from "./lib/zip-read.ts";
+import * as png from "./lib/png-io.ts";
+import { readZip, type Zip } from "./lib/zip-read.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const srcDir = path.resolve(process.env.ASSET_SRC || path.join(root, ".asset-src"));
@@ -36,163 +24,94 @@ const args = new Set(process.argv.slice(2));
 const MAX_FRAME = 128;
 
 // ---------------------------------------------------------------- packs
-const OGA = "https://opengameart.org/sites/default/files/";
-type PackId =
-  | "kenney-new-platformer"
-  | "kenney-pixel-platformer"
-  | "kenney-abstract-platformer"
-  | "kenney-jumper"
-  | "oga-knight"
-  | "oga-santa"
-  | "oga-ninja"
-  | "oga-adventure-girl"
-  | "oga-cat-dog"
-  | "oga-temple-run"
-  | "oga-cute-girl"
-  | "oga-jack"
-  | "oga-ninja-girl"
-  | "oga-red-hat-boy"
-  | "oga-flat-boy"
-  | "oga-robot"
-  | "oga-turtle"
-  | "oga-dino";
+// The pinned archives, in sha256sum format.
+const SHA256 = new Map(
+  `
+553b907f3f0e505ab65f56f245ccaff3123c8fe3f3a0dfce9373b996bfc18cc2  kenney_new-platformer-pack-1.1.zip
+d01a196dbe3cc964e00d83ba3b987df62f332dc9260c9f941b4fbcc9047130f4  kenney_pixel-platformer.zip
+e435582cf1dc5b320e109f785397ca740c7039e1124d7849dff2e5171e6832df  kenney_abstract-platformer.zip
+eca9d66cd3f31eb186e2e73fb531c0d9ff1283376ca5a5195680d4995ac35bf9  kenney_jumper-pack.zip
+84a1355be8af79d9077c84ce90f536af8d5be9ab8e449d383122053c9cb089b7  oga_FreeKnight.zip
+5c2370c9a107b4e86b290159a23ea16154fe5179d072fe8adf65a1ed08d07265  oga_SantaSprites.zip
+2a58cb74be07b3cb677a9ed4a9f372bb01cbfc6abcfeb3ffdc8d3eb54ae98b89  oga_NinjaAdventure.zip
+dee3c944f21cac7475d9f107d7055c07a7acdc4f2eb7612be48c2842417749d5  oga_AdventureGirl.zip
+e60f863e5abdce6fcded54f6b82bbda752ba0b555bc69c76c7da42d692e7b47c  oga_CatnDog.zip
+d6d005f32e6d64c4187c911be2e3f19ceab7ef915d70be432ce9cd8ef52abb33  oga_TempleRun.zip
+facd021364fba2cfb25c21172ce890aea1bedbebab437be51c4426ee0dc9257d  oga_CuteGirlFiles.zip
+386a223a9540f24654bc5d305369e5e390c80fd25d78f0b1c296f063375f39de  oga_JackFree.zip
+6fa7c8de581b6f35029261f7f2dfe5dbe0a79c493ba960f7c932a741188d85c6  oga_NinjaGirl.zip
+8ce021bdda109c2d0b32458d0c25511b4b02888cd41bcfb8d917676e54a3dcfb  oga_redhatfiles.zip
+d105576e4fa1cba4ac54752176b9d5aa20fdc0be1cb41c30635e8845e28f99b1  oga_FlatBoy.zip
+f9ae663c870a63c11fc3c4a825d420256503e98ad3351561e79af272aa7396e0  oga_RobotFree.zip
+acc903a48fbfc3277ee5ffbea8a85682965c8ba728f21f799e17798aca4126d8  oga_turtle_4.png
+a0b84c84bb0ab08d2f8d6eab7e998efa10a54c5866fc782865c442bb46073173  oga_FreeDinoSprite.zip
+`
+    .trim()
+    .split("\n")
+    .map((line) => line.split("  ").reverse() as [string, string]), // as: every line is "<sha256>  <file>"
+);
 // One source archive (or a single sprite sheet when `sheet` is set) and the license file copied out of it.
 type Pack = {
   source: string;
   file: string;
-  sha256: string;
   url: string;
   license?: { entry: string; out: string };
   sheet?: { w: number; h: number };
 };
-const PACKS: Record<PackId, Pack> = {
-  "kenney-new-platformer": {
-    source: "https://kenney.nl/assets/new-platformer-pack",
-    file: "kenney_new-platformer-pack-1.1.zip",
-    sha256: "553b907f3f0e505ab65f56f245ccaff3123c8fe3f3a0dfce9373b996bfc18cc2",
-    url: "https://kenney.nl/media/pages/assets/new-platformer-pack/1896103897-1764756702/kenney_new-platformer-pack-1.1.zip",
-    license: { entry: "License.txt", out: "KENNEY_NEW_PLATFORMER_LICENSE.txt" },
-  },
-  "kenney-pixel-platformer": {
-    source: "https://kenney.nl/assets/pixel-platformer",
-    file: "kenney_pixel-platformer.zip",
-    sha256: "d01a196dbe3cc964e00d83ba3b987df62f332dc9260c9f941b4fbcc9047130f4",
-    url: "https://kenney.nl/media/pages/assets/pixel-platformer/33bb4921eb-1696667883/kenney_pixel-platformer.zip",
-    license: { entry: "License.txt", out: "KENNEY_PIXEL_PLATFORMER_LICENSE.txt" },
-  },
-  "kenney-abstract-platformer": {
-    source: "https://kenney.nl/assets/abstract-platformer",
-    file: "kenney_abstract-platformer.zip",
-    sha256: "e435582cf1dc5b320e109f785397ca740c7039e1124d7849dff2e5171e6832df",
-    url: "https://kenney.nl/media/pages/assets/abstract-platformer/a8f4badcb5-1677579172/kenney_abstract-platformer.zip",
-    license: { entry: "License.txt", out: "KENNEY_ABSTRACT_PLATFORMER_LICENSE.txt" },
-  },
-  "kenney-jumper": {
-    source: "https://kenney.nl/assets/jumper-pack",
-    file: "kenney_jumper-pack.zip",
-    sha256: "eca9d66cd3f31eb186e2e73fb531c0d9ff1283376ca5a5195680d4995ac35bf9",
-    url: "https://kenney.nl/media/pages/assets/jumper-pack/4654b2d2e5-1677666699/kenney_jumper-pack.zip",
-    license: { entry: "License.txt", out: "KENNEY_JUMPER_LICENSE.txt" },
-  },
+const OGA = "https://opengameart.org/sites/default/files/";
+// An OpenGameArt pack: its page under /content/ and the file name it is downloaded under.
+const oga = (page: string, name: string, extra: Partial<Pack> = {}): Pack => ({
+  source: "https://opengameart.org/content/" + page,
+  file: "oga_" + name,
+  url: OGA + name,
+  ...extra,
+});
+// A Kenney pack: its page under /assets/<slug>, the archive under that page's media folder `dir` (file name
+// kenney_<slug><version>.zip), and its License.txt copied to KENNEY_<name>_LICENSE.txt.
+const kenney = (slug: string, dir: string, name: string, version = ""): Pack => ({
+  source: "https://kenney.nl/assets/" + slug,
+  file: `kenney_${slug}${version}.zip`,
+  url: `https://kenney.nl/media/pages/assets/${slug}/${dir}/kenney_${slug}${version}.zip`,
+  license: { entry: "License.txt", out: `KENNEY_${name}_LICENSE.txt` },
+});
+const PACK_TABLE = {
+  "kenney-new-platformer": kenney("new-platformer-pack", "1896103897-1764756702", "NEW_PLATFORMER", "-1.1"),
+  "kenney-pixel-platformer": kenney("pixel-platformer", "33bb4921eb-1696667883", "PIXEL_PLATFORMER"),
+  "kenney-abstract-platformer": kenney("abstract-platformer", "a8f4badcb5-1677579172", "ABSTRACT_PLATFORMER"),
+  "kenney-jumper": kenney("jumper-pack", "4654b2d2e5-1677666699", "JUMPER"),
   // OpenGameArt packs by pzUH. The archives carry no license file; the CC0 statement is on each OpenGameArt page and is
   // recorded in public/assets/OGA_PZUH_LICENSE.txt (written by hand, not generated here).
-  "oga-knight": {
-    source: "https://opengameart.org/content/the-knight-free-sprite",
-    file: "oga_FreeKnight.zip",
-    sha256: "84a1355be8af79d9077c84ce90f536af8d5be9ab8e449d383122053c9cb089b7",
-    url: OGA + "FreeKnight.zip",
-  },
-  "oga-santa": {
-    source: "https://opengameart.org/content/santa-claus-free-sprites",
-    file: "oga_SantaSprites.zip",
-    sha256: "5c2370c9a107b4e86b290159a23ea16154fe5179d072fe8adf65a1ed08d07265",
-    url: OGA + "SantaSprites.zip",
-  },
-  "oga-ninja": {
-    source: "https://opengameart.org/content/ninja-adventure-free-sprite",
-    file: "oga_NinjaAdventure.zip",
-    sha256: "2a58cb74be07b3cb677a9ed4a9f372bb01cbfc6abcfeb3ffdc8d3eb54ae98b89",
-    url: OGA + "NinjaAdventure.zip",
-  },
-  "oga-adventure-girl": {
-    source: "https://opengameart.org/content/adventurer-girl-free-sprite",
-    file: "oga_AdventureGirl.zip",
-    sha256: "dee3c944f21cac7475d9f107d7055c07a7acdc4f2eb7612be48c2842417749d5",
-    url: OGA + "Adventure%20Girl.zip",
-  },
-  "oga-cat-dog": {
-    source: "https://opengameart.org/content/cat-dog-free-sprites",
-    file: "oga_CatnDog.zip",
-    sha256: "e60f863e5abdce6fcded54f6b82bbda752ba0b555bc69c76c7da42d692e7b47c",
-    url: OGA + "CatnDog.zip",
-  },
-  "oga-temple-run": {
-    source: "https://opengameart.org/content/temple-run-free-sprite",
-    file: "oga_TempleRun.zip",
-    sha256: "d6d005f32e6d64c4187c911be2e3f19ceab7ef915d70be432ce9cd8ef52abb33",
-    url: OGA + "TempleRun.zip",
-  },
-  "oga-cute-girl": {
-    source: "https://opengameart.org/content/cute-girl-free-sprites",
-    file: "oga_CuteGirlFiles.zip",
-    sha256: "facd021364fba2cfb25c21172ce890aea1bedbebab437be51c4426ee0dc9257d",
-    url: OGA + "CuteGirlFiles.zip",
-  },
-  "oga-jack": {
-    source: "https://opengameart.org/content/jack-o-lantern-free-sprite",
-    file: "oga_JackFree.zip",
-    sha256: "386a223a9540f24654bc5d305369e5e390c80fd25d78f0b1c296f063375f39de",
-    url: OGA + "JackFree.zip",
-  },
-  "oga-ninja-girl": {
-    source: "https://opengameart.org/content/ninja-girl-free-sprite",
-    file: "oga_NinjaGirl.zip",
-    sha256: "6fa7c8de581b6f35029261f7f2dfe5dbe0a79c493ba960f7c932a741188d85c6",
-    url: OGA + "NinjaGirl.zip",
-  },
-  "oga-red-hat-boy": {
-    source: "https://opengameart.org/content/red-hat-boy-free-sprites",
-    file: "oga_redhatfiles.zip",
-    sha256: "8ce021bdda109c2d0b32458d0c25511b4b02888cd41bcfb8d917676e54a3dcfb",
-    url: OGA + "redhatfiles.zip",
-  },
-  "oga-flat-boy": {
-    source: "https://opengameart.org/content/the-boy-free-sprites",
-    file: "oga_FlatBoy.zip",
-    sha256: "d105576e4fa1cba4ac54752176b9d5aa20fdc0be1cb41c30635e8845e28f99b1",
-    url: OGA + "FlatBoy.zip",
-  },
-  "oga-robot": {
-    source: "https://opengameart.org/content/the-robot-free-sprite",
-    file: "oga_RobotFree.zip",
-    sha256: "f9ae663c870a63c11fc3c4a825d420256503e98ad3351561e79af272aa7396e0",
-    url: OGA + "RobotFree.zip",
-  },
+  "oga-knight": oga("the-knight-free-sprite", "FreeKnight.zip"),
+  "oga-santa": oga("santa-claus-free-sprites", "SantaSprites.zip"),
+  "oga-ninja": oga("ninja-adventure-free-sprite", "NinjaAdventure.zip"),
+  "oga-adventure-girl": oga("adventurer-girl-free-sprite", "AdventureGirl.zip", { url: OGA + "Adventure%20Girl.zip" }),
+  "oga-cat-dog": oga("cat-dog-free-sprites", "CatnDog.zip"),
+  "oga-temple-run": oga("temple-run-free-sprite", "TempleRun.zip"),
+  "oga-cute-girl": oga("cute-girl-free-sprites", "CuteGirlFiles.zip"),
+  "oga-jack": oga("jack-o-lantern-free-sprite", "JackFree.zip"),
+  "oga-ninja-girl": oga("ninja-girl-free-sprite", "NinjaGirl.zip"),
+  "oga-red-hat-boy": oga("red-hat-boy-free-sprites", "redhatfiles.zip"),
+  "oga-flat-boy": oga("the-boy-free-sprites", "FlatBoy.zip"),
+  "oga-robot": oga("the-robot-free-sprite", "RobotFree.zip"),
   // A single sprite sheet rather than an archive: `sheet` gives the tile size, and frames are named "tile <n>" (left to right).
   // The CC0 statement is on the OpenGameArt page, recorded in public/assets/OGA_SOGOMN_LICENSE.txt (written by hand).
-  "oga-turtle": {
-    source: "https://opengameart.org/content/animated-turtle",
-    file: "oga_turtle_4.png",
-    sha256: "acc903a48fbfc3277ee5ffbea8a85682965c8ba728f21f799e17798aca4126d8",
-    url: OGA + "turtle_4.png",
-    sheet: { w: 32, h: 32 },
-  },
-  "oga-dino": {
-    source: "https://opengameart.org/content/free-dino-sprites",
-    file: "oga_FreeDinoSprite.zip",
-    sha256: "a0b84c84bb0ab08d2f8d6eab7e998efa10a54c5866fc782865c442bb46073173",
-    url: OGA + "FreeDinoSprite.zip",
-  },
-};
+  "oga-turtle": oga("animated-turtle", "turtle_4.png", { sheet: { w: 32, h: 32 } }),
+  "oga-dino": oga("free-dino-sprites", "FreeDinoSprite.zip"),
+} satisfies Record<string, Pack>;
+type PackId = keyof typeof PACK_TABLE;
+const PACKS: Record<PackId, Pack> = PACK_TABLE;
 
 // ---------------------------------------------------------------- characters
-// Frame names. `p(dir, name, list)` -> "dir/name (3).png"; `u(dir, name, list)` -> "dir/name__003.png".
-const p = (dir: string, name: string, list: number[]): string[] => list.map((i) => `${dir}${name} (${i}).png`);
-const u = (dir: string, name: string, list: number[]): string[] =>
-  list.map((i) => `${dir}${name}__${String(i).padStart(3, "0")}.png`);
+// Frame names in a folder. `p(dir)(name, list)` -> "dir/name (3).png"; `u(dir)(name, list)` -> "dir/name__003.png".
+type Names = (name: string, list: number[]) => string[];
+function p(dir: string): Names {
+  return (name, list) => list.map((i) => `${dir}${name} (${i}).png`);
+}
+function u(dir: string): Names {
+  return (name, list) => list.map((i) => `${dir}${name}__${String(i).padStart(3, "0")}.png`);
+}
 const range = (a: number, b: number): number[] => Array.from({ length: b - a + 1 }, (_, i) => a + i);
-const every = (list: number[], step: number, from = 0): number[] =>
-  list.filter((_, i) => i >= from && (i - from) % step === 0);
+const odds = (to: number): number[] => range(1, to).filter((i) => i % 2 === 1); // 1, 3, 5 ... up to `to`
 
 // Source file names per animation (zip entries, or "tile <n>" for a sheet).
 type Frames = { walk: string[]; idle: string[]; jump: string[]; cheer: string[]; attack?: string[]; ko?: string[] };
@@ -209,203 +128,124 @@ type Character = Frames & {
 
 // scale: {height: px} fits the walk/idle height to px (area-average downscale), {smooth: n} integer bilinear upscale,
 // {pixel: n} integer nearest-neighbour upscale (pixel art), {} native size. Nothing may end up above 128 x 128.
-const npp = (colour: string, id: string, label: string): Character => ({
-  id,
-  label,
-  pack: "kenney-new-platformer",
-  fps: 6,
-  scale: {},
-  walk: [
-    `Sprites/Characters/Default/character_${colour}_walk_a.png`,
-    `Sprites/Characters/Default/character_${colour}_walk_b.png`,
-  ],
-  idle: [`Sprites/Characters/Default/character_${colour}_idle.png`],
-  jump: [`Sprites/Characters/Default/character_${colour}_jump.png`],
-  cheer: [
-    `Sprites/Characters/Default/character_${colour}_front.png`,
-    `Sprites/Characters/Default/character_${colour}_jump.png`,
-  ],
-  ko: [`Sprites/Characters/Default/character_${colour}_hit.png`],
-});
+function char(pack: PackId, fps: number, scale: Character["scale"], id: string, label: string, o: Frames): Character {
+  return { id, label, pack, fps, scale, ...o };
+}
+const npp = (colour: string, id: string, label: string): Character => {
+  const d = `Sprites/Characters/Default/character_${colour}_`;
+  return char("kenney-new-platformer", 6, {}, id, label, {
+    walk: [`${d}walk_a.png`, `${d}walk_b.png`],
+    idle: [`${d}idle.png`],
+    jump: [`${d}jump.png`],
+    cheer: [`${d}front.png`, `${d}jump.png`],
+    ko: [`${d}hit.png`],
+  });
+};
+const ENEMIES = "Sprites/Enemies/Default/";
 const nppBug = (name: string, id: string, label: string, jump: string, extra: Partial<Character> = {}): Character => ({
-  id,
-  label,
-  pack: "kenney-new-platformer",
-  fps: 6,
-  scale: { smooth: 2 },
-  walk: [`Sprites/Enemies/Default/${name}_walk_a.png`, `Sprites/Enemies/Default/${name}_walk_b.png`],
-  idle: [`Sprites/Enemies/Default/${name}_rest.png`],
-  jump: [`Sprites/Enemies/Default/${jump}.png`],
-  cheer: [`Sprites/Enemies/Default/${name}_rest.png`, `Sprites/Enemies/Default/${jump}.png`],
+  ...char("kenney-new-platformer", 6, { smooth: 2 }, id, label, {
+    walk: [`${ENEMIES}${name}_walk_a.png`, `${ENEMIES}${name}_walk_b.png`],
+    idle: [`${ENEMIES}${name}_rest.png`],
+    jump: [`${ENEMIES}${jump}.png`],
+    cheer: [`${ENEMIES}${name}_rest.png`, `${ENEMIES}${jump}.png`],
+  }),
   ...extra,
 });
-const pixel = (a: string, b: string, id: string, label: string): Character => ({
-  id,
-  label,
-  pack: "kenney-pixel-platformer",
-  fps: 6,
-  scale: { pixel: 4 },
-  walk: [`Tiles/Characters/tile_${a}.png`, `Tiles/Characters/tile_${b}.png`],
-  idle: [`Tiles/Characters/tile_${a}.png`],
-  jump: [`Tiles/Characters/tile_${b}.png`],
-  cheer: [`Tiles/Characters/tile_${a}.png`, `Tiles/Characters/tile_${b}.png`],
-});
+const tiles = (list: string[]): string[] => list.map((t) => `Tiles/Characters/tile_${t}.png`);
+const pixel = (a: string, b: string, id: string, label: string): Character =>
+  char("kenney-pixel-platformer", 6, { pixel: 4 }, id, label, {
+    walk: tiles([a, b]),
+    idle: tiles([a]),
+    jump: tiles([b]),
+    cheer: tiles([a, b]),
+  });
 const blob = (colour: string, id: string, label: string): Character => {
   const d = `PNG/Players/Player ${colour}/player${colour}_`;
-  return {
-    id,
-    label,
-    pack: "kenney-abstract-platformer",
-    fps: 10,
-    scale: { smooth: 2 },
+  return char("kenney-abstract-platformer", 10, { smooth: 2 }, id, label, {
     walk: range(1, 5).map((i) => `${d}walk${i}.png`),
     idle: [`${d}stand.png`],
     jump: [`${d}up2.png`],
     cheer: [`${d}up1.png`, `${d}up2.png`],
     ko: [`${d}hit.png`, `${d}dead.png`],
-  };
+  });
 };
 // pzUH characters are big (400-900 px) side views: scaled down to ~104 px tall. 10 fps over 10 frames = one stride per second.
-const pz = (pack: PackId, id: string, label: string, o: Frames): Character => ({
-  id,
-  label,
-  pack,
-  fps: 10,
-  scale: { height: 104 },
-  ...o,
-});
+// Columns after the label: the frame names, walk [name, frames], Idle frames, the Jump frame, then cheer's distance either
+// side of the jump frame (`spread`, default 2) and the optional attack and ko [name, frames].
+type PzMore = { spread?: number; attack?: [string, number[]]; ko?: [string, number[]] };
+function pz(
+  pack: PackId,
+  id: string,
+  label: string,
+  f: Names,
+  walk: [string, number[]],
+  idle: number[],
+  jump: number,
+  { spread = 2, attack, ko }: PzMore = {},
+): Character {
+  return char(pack, 10, { height: 104 }, id, label, {
+    walk: f(...walk),
+    idle: f("Idle", idle),
+    jump: f("Jump", [jump]),
+    cheer: f("Jump", [jump - spread, jump + spread]),
+    ...(attack ? { attack: f(...attack) } : {}),
+    ...(ko ? { ko: f(...ko) } : {}),
+  });
+}
 
 // Kenney Jumper Pack: big flat-colour sprites, scaled down like the pzUH ones. Frame lists are file names without ".png".
-const jumper = (dir: string, id: string, label: string, o: Frames): Character => ({
-  id,
-  label,
-  pack: "kenney-jumper",
-  fps: 6,
-  scale: { height: 104 },
+const jumper = (dir: string, id: string, label: string, o: Frames): Character => {
   // as: fromEntries returns a string-keyed record; it maps each frame list of o to the same key, so it is Frames again
-  ...(Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.map((n) => `PNG/${dir}/${n}.png`)])) as Frames),
+  const files = Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.map((n) => `PNG/${dir}/${n}.png`)]));
+  return char("kenney-jumper", 6, { height: 104 }, id, label, files as Frames);
+};
+// A Jumper Pack figure with name_walk1/2, name_stand and name_jump frames.
+const walker = (name: string, cheer: string, ko?: string): Frames => ({
+  walk: [`${name}_walk1`, `${name}_walk2`],
+  idle: [`${name}_stand`],
+  jump: [`${name}_jump`],
+  cheer: [`${name}_${cheer}`, `${name}_jump`],
+  ...(ko ? { ko: [`${name}_${ko}`] } : {}),
 });
 
 const CHARACTERS: Character[] = [
-  pz("oga-knight", "knight", "Knight", {
-    walk: p("png/", "Walk", range(1, 10)),
-    idle: p("png/", "Idle", every(range(1, 10), 1)),
-    jump: p("png/", "Jump", [5]),
-    cheer: p("png/", "Jump", [3, 7]),
-    attack: p("png/", "Attack", [1, 3, 5, 7, 9]),
-    ko: p("png/", "Dead", [1, 4, 7, 10]),
+  pz("oga-knight", "knight", "Knight", p("png/"), ["Walk", range(1, 10)], range(1, 10), 5, {
+    attack: ["Attack", [1, 3, 5, 7, 9]],
+    ko: ["Dead", [1, 4, 7, 10]],
   }),
-  pz("oga-santa", "santa", "Santa", {
-    walk: p("png/", "Walk", range(1, 13)),
-    idle: p("png/", "Idle", every(range(1, 16), 2)),
-    jump: p("png/", "Jump", [8]),
-    cheer: p("png/", "Jump", [5, 11]),
+  pz("oga-santa", "santa", "Santa", p("png/"), ["Walk", range(1, 13)], odds(15), 8, { spread: 3 }),
+  pz("oga-ninja", "ninja", "Ninja", u("png/"), ["Run", range(0, 9)], range(0, 9), 5, {
+    attack: ["Attack", [0, 2, 4, 6, 8]],
+    ko: ["Dead", [0, 3, 6, 9]],
   }),
-  pz("oga-ninja", "ninja", "Ninja", {
-    walk: u("png/", "Run", range(0, 9)),
-    idle: u("png/", "Idle", range(0, 9)),
-    jump: u("png/", "Jump", [5]),
-    cheer: u("png/", "Jump", [3, 7]),
-    attack: u("png/", "Attack", [0, 2, 4, 6, 8]),
-    ko: u("png/", "Dead", [0, 3, 6, 9]),
+  pz("oga-adventure-girl", "cowgirl", "Cowgirl", p("png/"), ["Run", range(1, 8)], range(1, 10), 5, {
+    attack: ["Melee", range(1, 7)],
+    ko: ["Dead", [1, 4, 7, 10]],
   }),
-  pz("oga-adventure-girl", "cowgirl", "Cowgirl", {
-    walk: p("png/", "Run", range(1, 8)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [5]),
-    cheer: p("png/", "Jump", [3, 7]),
-    attack: p("png/", "Melee", range(1, 7)),
-    ko: p("png/", "Dead", [1, 4, 7, 10]),
+  pz("oga-temple-run", "cowboy", "Cowboy", u(""), ["Run", range(0, 9)], range(0, 9), 5),
+  pz("oga-cat-dog", "cat", "Cat", p("png/cat/"), ["Walk", range(1, 10)], range(1, 10), 4, { ko: ["Hurt", [4]] }),
+  pz("oga-cat-dog", "dog", "Dog", p("png/dog/"), ["Walk", range(1, 10)], range(1, 10), 4, { ko: ["Hurt", [4]] }),
+  pz("oga-dino", "dino", "Dino", p("png/"), ["Walk", range(1, 10)], range(1, 10), 6, { ko: ["Dead", [1, 3, 5, 8]] }),
+  pz("oga-cute-girl", "cute-girl", "Cute Girl", p("png/"), ["Walk", odds(19)], odds(15), 15, {
+    spread: 7,
+    ko: ["Dead", [1, 10, 20, 30]],
   }),
-  pz("oga-temple-run", "cowboy", "Cowboy", {
-    walk: u("", "Run", range(0, 9)),
-    idle: u("", "Idle", range(0, 9)),
-    jump: u("", "Jump", [5]),
-    cheer: u("", "Jump", [3, 7]),
+  pz("oga-jack", "pumpkin", "Pumpkin", p("png/"), ["Walk", range(1, 10)], range(1, 10), 5, {
+    ko: ["Dead", [1, 4, 7, 10]],
   }),
-  pz("oga-cat-dog", "cat", "Cat", {
-    walk: p("png/cat/", "Walk", range(1, 10)),
-    idle: p("png/cat/", "Idle", range(1, 10)),
-    jump: p("png/cat/", "Jump", [4]),
-    cheer: p("png/cat/", "Jump", [2, 6]),
-    ko: p("png/cat/", "Hurt", [4]),
+  pz("oga-ninja-girl", "ninja-girl", "Ninja Girl", u("png/"), ["Run", range(0, 9)], range(0, 9), 5, {
+    attack: ["Attack", [0, 2, 4, 6, 8]],
+    ko: ["Dead", [0, 3, 6, 9]],
   }),
-  pz("oga-cat-dog", "dog", "Dog", {
-    walk: p("png/dog/", "Walk", range(1, 10)),
-    idle: p("png/dog/", "Idle", range(1, 10)),
-    jump: p("png/dog/", "Jump", [4]),
-    cheer: p("png/dog/", "Jump", [2, 6]),
-    ko: p("png/dog/", "Hurt", [4]),
+  pz("oga-red-hat-boy", "red-hat-boy", "Red Hat Boy", p("png/"), ["Run", range(1, 8)], range(1, 10), 6),
+  pz("oga-flat-boy", "flat-boy", "Kid", p("png/"), ["Walk", odds(15)], odds(15), 8, { spread: 3 }),
+  pz("oga-robot", "robot", "Gold Robot", p("png/"), ["Run", range(1, 8)], range(1, 10), 5, {
+    attack: ["Melee", range(1, 8)],
+    ko: ["Dead", [1, 4, 7, 10]],
   }),
-  pz("oga-dino", "dino", "Dino", {
-    walk: p("png/", "Walk", range(1, 10)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [6]),
-    cheer: p("png/", "Jump", [4, 8]),
-    ko: p("png/", "Dead", [1, 3, 5, 8]),
-  }),
-  pz("oga-cute-girl", "cute-girl", "Cute Girl", {
-    walk: p("png/", "Walk", every(range(1, 20), 2)),
-    idle: p("png/", "Idle", every(range(1, 16), 2)),
-    jump: p("png/", "Jump", [15]),
-    cheer: p("png/", "Jump", [8, 22]),
-    ko: p("png/", "Dead", [1, 10, 20, 30]),
-  }),
-  pz("oga-jack", "pumpkin", "Pumpkin", {
-    walk: p("png/", "Walk", range(1, 10)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [5]),
-    cheer: p("png/", "Jump", [3, 7]),
-    ko: p("png/", "Dead", [1, 4, 7, 10]),
-  }),
-  pz("oga-ninja-girl", "ninja-girl", "Ninja Girl", {
-    walk: u("png/", "Run", range(0, 9)),
-    idle: u("png/", "Idle", range(0, 9)),
-    jump: u("png/", "Jump", [5]),
-    cheer: u("png/", "Jump", [3, 7]),
-    attack: u("png/", "Attack", [0, 2, 4, 6, 8]),
-    ko: u("png/", "Dead", [0, 3, 6, 9]),
-  }),
-  pz("oga-red-hat-boy", "red-hat-boy", "Red Hat Boy", {
-    walk: p("png/", "Run", range(1, 8)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [6]),
-    cheer: p("png/", "Jump", [4, 8]),
-  }),
-  pz("oga-flat-boy", "flat-boy", "Kid", {
-    walk: p("png/", "Walk", every(range(1, 15), 2)),
-    idle: p("png/", "Idle", every(range(1, 15), 2)),
-    jump: p("png/", "Jump", [8]),
-    cheer: p("png/", "Jump", [5, 11]),
-  }),
-  pz("oga-robot", "robot", "Gold Robot", {
-    walk: p("png/", "Run", range(1, 8)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [5]),
-    cheer: p("png/", "Jump", [3, 7]),
-    attack: p("png/", "Melee", range(1, 8)),
-    ko: p("png/", "Dead", [1, 4, 7, 10]),
-  }),
-  jumper("Players", "bunny-brown", "Brown Bunny", {
-    walk: ["bunny1_walk1", "bunny1_walk2"],
-    idle: ["bunny1_stand"],
-    jump: ["bunny1_jump"],
-    cheer: ["bunny1_ready", "bunny1_jump"],
-    ko: ["bunny1_hurt"],
-  }),
-  jumper("Players", "bunny-purple", "Purple Bunny", {
-    walk: ["bunny2_walk1", "bunny2_walk2"],
-    idle: ["bunny2_stand"],
-    jump: ["bunny2_jump"],
-    cheer: ["bunny2_ready", "bunny2_jump"],
-    ko: ["bunny2_hurt"],
-  }),
-  jumper("Enemies", "spike-man", "Spike Man", {
-    walk: ["spikeMan_walk1", "spikeMan_walk2"],
-    idle: ["spikeMan_stand"],
-    jump: ["spikeMan_jump"],
-    cheer: ["spikeMan_stand", "spikeMan_jump"],
-  }),
+  jumper("Players", "bunny-brown", "Brown Bunny", walker("bunny1", "ready", "hurt")),
+  jumper("Players", "bunny-purple", "Purple Bunny", walker("bunny2", "ready", "hurt")),
+  jumper("Enemies", "spike-man", "Spike Man", walker("spikeMan", "stand")),
   jumper("Enemies", "fly-man", "Propeller", {
     walk: ["flyMan_fly", "flyMan_still_fly"],
     idle: ["flyMan_stand"],
@@ -414,7 +254,7 @@ const CHARACTERS: Character[] = [
   }),
   {
     ...jumper("Enemies", "wing-man", "Wing Bird", {
-      walk: ["wingMan1", "wingMan2", "wingMan3", "wingMan4", "wingMan5", "wingMan4", "wingMan3", "wingMan2"],
+      walk: [1, 2, 3, 4, 5, 4, 3, 2].map((i) => `wingMan${i}`),
       idle: ["wingMan1"],
       jump: ["wingMan3"],
       cheer: ["wingMan1", "wingMan5"],
@@ -429,17 +269,10 @@ const CHARACTERS: Character[] = [
   nppBug("ladybug", "npp-ladybug", "Ladybug", "ladybug_fly"),
   nppBug("snail", "npp-snail", "Snail", "snail_walk_b"),
   nppBug("mouse", "npp-mouse", "Mouse", "mouse_walk_b"),
-  {
-    id: "npp-frog",
-    label: "Frog",
-    pack: "kenney-new-platformer",
+  nppBug("frog", "npp-frog", "Frog", "frog_jump", {
     fps: 4,
-    scale: { smooth: 2 },
-    walk: ["Sprites/Enemies/Default/frog_idle.png", "Sprites/Enemies/Default/frog_jump.png"],
-    idle: ["Sprites/Enemies/Default/frog_rest.png"],
-    jump: ["Sprites/Enemies/Default/frog_jump.png"],
-    cheer: ["Sprites/Enemies/Default/frog_rest.png", "Sprites/Enemies/Default/frog_jump.png"],
-  },
+    walk: [`${ENEMIES}frog_idle.png`, `${ENEMIES}frog_jump.png`],
+  }),
   pixel("0000", "0001", "pixel-green", "Pixel Green"),
   pixel("0002", "0003", "pixel-blue", "Pixel Blue"),
   pixel("0004", "0005", "pixel-pink", "Pixel Pink"),
@@ -448,30 +281,23 @@ const CHARACTERS: Character[] = [
   pixel("0011", "0012", "pixel-block", "Angry Block"),
   pixel("0015", "0016", "pixel-spike", "Spike Helmet"),
   pixel("0021", "0022", "pixel-bot", "Pixel Robot"),
-  {
-    ...pixel("0024", "0025", "pixel-bat", "Pixel Bat"),
-    walk: ["0024", "0025", "0026", "0025"].map((t) => `Tiles/Characters/tile_${t}.png`),
-  },
+  { ...pixel("0024", "0025", "pixel-bat", "Pixel Bat"), walk: tiles(["0024", "0025", "0026", "0025"]) },
   blob("Blue", "blob-blue", "Blue Blob"),
   blob("Green", "blob-green", "Green Blob"),
   blob("Red", "blob-red", "Red Blob"),
   {
-    id: "turtle",
-    label: "Turtle",
-    pack: "oga-turtle",
-    fps: 6,
-    scale: { pixel: 4 },
-    walk: ["tile 0", "tile 1", "tile 2", "tile 3"],
-    idle: ["tile 0"],
-    jump: ["tile 1"],
-    cheer: ["tile 0", "tile 2"],
+    ...char("oga-turtle", 6, { pixel: 4 }, "turtle", "Turtle", {
+      walk: ["tile 0", "tile 1", "tile 2", "tile 3"],
+      idle: ["tile 0"],
+      jump: ["tile 1"],
+      cheer: ["tile 0", "tile 2"],
+    }),
     head: { top: 0, left: 0.73, right: 0.98 }, // the head pokes out on the right; the top of the figure is shell
   },
 ];
 
-// ---------------------------------------------------------------- helpers
+// ---------------------------------------------------------------- sources
 const sha256 = (buf: Buffer): string => crypto.createHash("sha256").update(buf).digest("hex");
-const archivePath = (pack: PackId): string => path.join(srcDir, PACKS[pack].file);
 
 async function download() {
   fs.mkdirSync(srcDir, { recursive: true });
@@ -485,197 +311,140 @@ async function download() {
   }
 }
 
-// A pack's opened source: a ZIP archive, or a sprite sheet cut into tiles.
-type Sheet = { tile: (n: number) => Image };
-type Archive = Zip | Sheet;
-const archives = new Map<PackId, Archive>();
-function archive(pack: PackId): Archive {
-  if (!archives.has(pack)) {
-    const file = archivePath(pack);
-    if (!fs.existsSync(file)) throw new Error("missing " + file + " (run with --download)");
-    const buf = fs.readFileSync(file);
-    const want = PACKS[pack].sha256;
-    if (want && sha256(buf) !== want)
-      throw new Error(PACKS[pack].file + " sha256 " + sha256(buf) + " does not match the pinned " + want);
-    if (PACKS[pack].sheet) {
-      const { w, h } = PACKS[pack].sheet,
-        img = decodePng(buf);
-      archives.set(pack, {
-        tile: (n: number) => crop(img, { x: (n % (img.width / w)) * w, y: Math.floor(n / (img.width / w)) * h, w, h }),
-      });
-    } else archives.set(pack, readZip(buf));
+// A pack's opened source: frame images by name, and the archive itself when it is a ZIP (for the license file).
+type Source = { image: (name: string) => png.Image; zip?: Zip };
+const sources = new Map<PackId, Source>();
+function open(pack: PackId): Source {
+  const { file, sheet } = PACKS[pack];
+  const known = sources.get(pack);
+  if (known) return known;
+  const full = path.join(srcDir, file);
+  if (!fs.existsSync(full)) throw new Error("missing " + full + " (run with --download)");
+  const buf = fs.readFileSync(full);
+  if (sha256(buf) !== SHA256.get(file))
+    throw new Error(file + " sha256 " + sha256(buf) + " does not match the pinned " + SHA256.get(file));
+  let source: Source;
+  if (sheet) {
+    const img = png.decodePng(buf),
+      cols = img.width / sheet.w;
+    const tile = (n: number) => png.crop(img, { x: (n % cols) * sheet.w, y: Math.floor(n / cols) * sheet.h, ...sheet });
+    source = { image: (name) => tile(Number(/^tile (\d+)$/.exec(name)?.[1])) };
+  } else {
+    const zip = readZip(buf);
+    source = { image: (name) => png.decodePng(zip.read(name)), zip };
   }
-  return archives.get(pack)!; // !: set just above when it was missing
+  sources.set(pack, source);
+  return source;
 }
 
 // One source frame: its canvas size, the bounds of its opaque pixels and the decoded image.
-type Frame = { name: string; canvas: { w: number; h: number }; box: Rect; img: Image };
+type Frame = { canvas: { w: number; h: number }; box: png.Rect; img: png.Image };
 function loadFrame(pack: PackId, name: string): Frame {
-  const tile = /^tile (\d+)$/.exec(name);
-  // as: archive() opens a pack with a sheet as a Sheet and every other pack as a Zip (next line too)
-  const img =
-    tile && PACKS[pack].sheet
-      ? (archive(pack) as Sheet).tile(Number(tile[1])) // as Sheet: a pack with a sheet opens as a Sheet
-      : decodePng((archive(pack) as Zip).read(name)); // as Zip: every other pack opens as a Zip
-  const box = alphaBounds(img);
+  const img = open(pack).image(name);
+  const box = png.alphaBounds(img);
   if (!box) throw new Error(pack + ": " + name + " is empty");
-  return { name, canvas: { w: img.width, h: img.height }, box, img };
+  return { canvas: { w: img.width, h: img.height }, box, img };
 }
 
 // ---------------------------------------------------------------- atlas
-type Animations = {
-  idle: Rect[];
-  walk?: Rect[];
-  jump?: Rect[];
-  cheer?: Rect[];
-  attack?: Rect[];
-  ko?: Rect[];
-};
-// One entry of public/assets/characters.json.
-type CatalogEntry = {
-  id: string;
-  label: string;
-  url: string;
-  frames: Rect[];
-  fps: number;
-  animations: Animations;
-  anchor: { x: number; y: number };
-  license: string;
-  source: string;
-  head?: Head;
-  combatFallback?: string;
-};
+const ATLAS_ORDER = ["walk", "idle", "jump", "attack", "ko", "cheer"] as const; // as const: the frame list keys
+const JSON_ORDER = ["idle", "walk", "jump", "cheer", "attack", "ko"] as const; // as const: the frame list keys
 
-function buildCharacter(c: Character): { entry: CatalogEntry; png: Buffer; cell: string; frames: number } {
-  const order: string[] = []; // unique source files, in atlas order
-  // as const: the animation keys of Character, so c[r] is a frame list
-  for (const r of ["walk", "idle", "jump", "attack", "ko", "cheer"] as const)
-    for (const f of c[r] || []) if (!order.includes(f)) order.push(f);
+function buildCharacter(c: Character) {
+  const order = [...new Set(ATLAS_ORDER.flatMap((r) => c[r] ?? []))]; // unique source files, in atlas order
   const frames = new Map<string, Frame>(order.map((f) => [f, loadFrame(c.pack, f)]));
   // !: order holds every walk and idle file and frames has an entry for each; walk is never empty, so base[0] exists
-  // (the base[0]! reads in the next lines rely on that too)
   const base = [...c.walk, ...c.idle].map((f) => frames.get(f)!);
+  const first = base[0]!; // !: walk is never empty
   // Walk and idle frames that share a canvas keep the body on one column (no sway); other frames centre on their own bounds.
-  const sameCanvas = base.every((f) => f.canvas.w === base[0]!.canvas.w && f.canvas.h === base[0]!.canvas.h);
+  const onFirstCanvas = (f: Frame) => f.canvas.w === first.canvas.w && f.canvas.h === first.canvas.h;
+  const sameCanvas = base.every(onFirstCanvas);
   const cx = sameCanvas
     ? (Math.min(...base.map((f) => f.box.x)) + Math.max(...base.map((f) => f.box.x + f.box.w))) / 2
     : 0;
-  // !: base[0] exists, as above
-  const anchored = (f: Frame) => sameCanvas && f.canvas.w === base[0]!.canvas.w && f.canvas.h === base[0]!.canvas.h;
+  const anchored = (f: Frame) => sameCanvas && onFirstCanvas(f);
   const left = (f: Frame) => (anchored(f) ? cx - f.box.x : f.box.w / 2),
     right = (f: Frame) => (anchored(f) ? f.box.x + f.box.w - cx : f.box.w / 2);
 
-  let scale = 1,
-    mode = "area";
-  if (c.scale.pixel) {
-    scale = c.scale.pixel;
-    mode = "pixel";
-  } else if (c.scale.smooth) {
-    scale = c.scale.smooth;
-    mode = "smooth";
-  } else if (c.scale.height) scale = c.scale.height / Math.max(...base.map((f) => f.box.h));
+  const { pixel, smooth, height } = c.scale;
+  const mode = pixel ? "pixel" : smooth ? "smooth" : "area";
+  let scale = pixel ?? smooth ?? (height ? height / Math.max(...base.map((f) => f.box.h)) : 1);
   const all = [...frames.values()];
   const dims = () => ({
     halfW: Math.ceil(Math.max(...all.map((f) => Math.max(left(f), right(f)))) * scale),
     h: Math.ceil(Math.max(...all.map((f) => f.box.h)) * scale),
   });
   let d = dims();
-  if (mode === "area")
-    while (d.halfW * 2 > MAX_FRAME || d.h > MAX_FRAME) {
-      scale *= 0.98;
-      d = dims();
-    }
+  while (mode === "area" && (d.halfW * 2 > MAX_FRAME || d.h > MAX_FRAME)) {
+    scale *= 0.98;
+    d = dims();
+  }
   const cw = d.halfW * 2,
     ch = d.h;
   if (cw > MAX_FRAME || ch > MAX_FRAME) throw new Error(c.id + ": cell " + cw + "x" + ch + " exceeds " + MAX_FRAME);
 
-  const cells = new Map<string, Rect>();
-  const atlas = blank(cw * order.length, ch);
+  const atlas = png.blank(cw * order.length, ch);
   order.forEach((name, i) => {
     const f = frames.get(name)!; // !: frames has an entry for every name in order
-    let img = crop(f.img, f.box);
-    if (mode === "pixel") img = resizeNearest(img, scale);
-    else if (mode === "smooth") img = resizeBilinear(img, scale);
+    let img = png.crop(f.img, f.box);
+    if (mode === "pixel") img = png.resizeNearest(img, scale);
+    else if (mode === "smooth") img = png.resizeBilinear(img, scale);
     else if (scale !== 1)
-      img = resizeArea(img, Math.max(1, Math.round(f.box.w * scale)), Math.max(1, Math.round(f.box.h * scale)));
+      img = png.resizeArea(img, Math.max(1, Math.round(f.box.w * scale)), Math.max(1, Math.round(f.box.h * scale)));
     const dx = anchored(f) ? d.halfW - Math.round(left(f) * scale) : Math.floor((cw - img.width) / 2);
-    blit(atlas, img, i * cw + Math.max(0, Math.min(cw - img.width, dx)), ch - img.height);
-    cells.set(name, { x: i * cw, y: 0, w: cw, h: ch });
+    png.blit(atlas, img, i * cw + Math.max(0, Math.min(cw - img.width, dx)), ch - img.height);
   });
-  // !: every file in order has a cell
-  const rects = (list: string[]): Rect[] => list.map((f) => ({ ...cells.get(f)! }));
-  const animations: Animations = { idle: rects(c.idle) };
-  animations.walk = rects(c.walk);
-  animations.jump = rects(c.jump);
-  animations.cheer = rects(c.cheer);
-  if (c.attack) animations.attack = rects(c.attack);
-  if (c.ko) animations.ko = rects(c.ko);
-  const entry: CatalogEntry = {
+  const rects = (list: string[]): png.Rect[] => list.map((f) => ({ x: order.indexOf(f) * cw, y: 0, w: cw, h: ch }));
+  const entry = {
     id: c.id,
     label: c.label,
     url: "/assets/" + c.id + ".png",
     frames: rects(c.walk),
     fps: c.fps,
-    animations,
+    animations: Object.fromEntries(JSON_ORDER.flatMap((k) => (c[k] ? [[k, rects(c[k])]] : []))),
     anchor: { x: 0.5, y: 1 },
     license: "CC0-1.0",
     source: PACKS[c.pack].source,
+    ...(c.head ? { head: c.head } : {}), // where hats go (src/served/hats.ts), when it isn't the top of the figure
+    ...(c.attack ? {} : { combatFallback: "effects" }),
   };
-  if (c.head) entry.head = c.head; // where hats go (src/served/hats.ts), when it isn't the top of the figure
-  if (!c.attack) entry.combatFallback = "effects";
-  return { entry, png: encodePng(atlas), cell: cw + " x " + ch, frames: order.length };
+  return { entry, png: png.encodePng(atlas), cell: cw + " x " + ch, frames: order.length };
 }
 
 // ---------------------------------------------------------------- main
 if (args.has("--download")) await download();
 if (args.has("--check")) {
-  for (const [name, pack] of Object.entries(PACKS)) {
-    const file = archivePath(name as PackId); // as: Object.entries types keys as string; these are PACKS' own keys
-    console.log(
-      (fs.existsSync(file) ? sha256(fs.readFileSync(file)) : "missing".padEnd(64)) +
-        "  " +
-        pack.file +
-        (pack.sha256
-          ? fs.existsSync(file) && sha256(fs.readFileSync(file)) === pack.sha256
-            ? "  ok"
-            : "  MISMATCH"
-          : "  (not pinned)"),
-    );
+  for (const { file } of Object.values(PACKS)) {
+    const full = path.join(srcDir, file);
+    const hash = fs.existsSync(full) ? sha256(fs.readFileSync(full)) : "missing".padEnd(64);
+    console.log(`${hash}  ${file}  ${hash === SHA256.get(file) ? "ok" : "MISMATCH"}`);
   }
   process.exit(0);
 }
 
-const seen = new Set<string>();
-for (const c of CHARACTERS) {
-  if (seen.has(c.id)) throw new Error("duplicate id " + c.id);
-  seen.add(c.id);
-}
-const existing = JSON.parse(fs.readFileSync(catalogFile, "utf8")).filter((e: { id: string }) => !seen.has(e.id));
-const built: CatalogEntry[] = [];
-for (const c of CHARACTERS) {
+const ids = new Set(CHARACTERS.map((c) => c.id));
+const duplicate = CHARACTERS.find((c, i) => CHARACTERS.findIndex((o) => o.id === c.id) !== i);
+if (duplicate) throw new Error("duplicate id " + duplicate.id);
+const existing = JSON.parse(fs.readFileSync(catalogFile, "utf8")).filter((e: { id: string }) => !ids.has(e.id));
+const built = CHARACTERS.map((c) => {
   const r = buildCharacter(c);
   fs.writeFileSync(path.join(outDir, c.id + ".png"), r.png);
-  built.push(r.entry);
+  const size = Math.round(r.png.length / 1024);
   console.log(
-    c.id.padEnd(16) +
-      c.label.padEnd(18) +
-      ("cell " + r.cell).padEnd(14) +
-      (r.frames + " frames").padEnd(11) +
-      Math.round(r.png.length / 1024) +
-      " KB",
+    `${c.id.padEnd(16)}${c.label.padEnd(18)}${`cell ${r.cell}`.padEnd(14)}${`${r.frames} frames`.padEnd(11)}${size} KB`,
   );
-}
+  return r.entry;
+});
 fs.writeFileSync(catalogFile, JSON.stringify([...existing, ...built], null, 2) + "\n");
 
-for (const name of new Set(CHARACTERS.map((c) => c.pack))) {
-  const lic = PACKS[name].license;
-  if (!lic) continue;
-  const text = (archive(name) as Zip).read(lic.entry); // as: a pack with a license file is a ZIP archive, not a sheet
-  const target = path.join(outDir, lic.out);
+for (const pack of new Set(CHARACTERS.map((c) => c.pack))) {
+  const { license } = PACKS[pack],
+    zip = open(pack).zip;
+  if (!license || !zip) continue;
+  const text = zip.read(license.entry);
+  const target = path.join(outDir, license.out);
   if (!fs.existsSync(target) || !fs.readFileSync(target).equals(text)) fs.writeFileSync(target, text);
 }
 if (!fs.existsSync(path.join(outDir, "OGA_PZUH_LICENSE.txt")))
   console.warn("warning: public/assets/OGA_PZUH_LICENSE.txt is missing");
-console.log(
-  "\n" + built.length + " characters written; catalog now has " + (existing.length + built.length) + " entries.",
-);
+console.log(`\n${built.length} characters written; catalog now has ${existing.length + built.length} entries.`);

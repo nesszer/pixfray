@@ -3,21 +3,18 @@
 import test from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
-import worker from "../server/worker.ts";
-import { AuthStore, digest, record, seal, handleAuth, POINTS_SCOPE } from "../server/auth.ts";
+import { record, seal, handleAuth, POINTS_SCOPE } from "../server/auth.ts";
 import { forgetChannel } from "../server/channels.ts";
 import { eventsubSecret, handleEventsub, signEventsub } from "../server/eventsub.ts";
 import { ensurePointsSchema, handleRoomPoints, REDEMPTION_TYPE } from "../server/points.ts";
-import type { Redemption } from "../server/points.ts";
+import type { PointReward, Redemption } from "../server/points.ts";
 import { ensureDeveloperSchema } from "../server/developer.ts";
 import { ensureTrackerSchema, readCounts } from "../server/tracker.ts";
-import type { Env } from "../server/env.ts";
-import { asEnv, fakeCtx, type FakeSql } from "./fakes.ts";
+import { postJson } from "../server/http.ts";
+import { asEnv, fakeCtx } from "./fakes.ts";
+import { call, namespace, ORIGIN, SECRETS, signIn, sqliteAuth, twitchApi } from "./worker-fakes.ts";
 
-const ORIGIN = "https://staging.pixfray.xyz",
-  NOW = 1_800_000_000_000;
+const NOW = 1_800_000_000_000;
 
 function pointsRoom() {
   const ctx = fakeCtx(),
@@ -40,11 +37,6 @@ function pointsRoom() {
       .toArray()[0];
   return { room, sql, call, wallet };
 }
-const post = (body: object): RequestInit => ({
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(body),
-});
 const REWARD = {
   rewardId: "rw1",
   title: "PixFray $50",
@@ -54,7 +46,7 @@ const REWARD = {
   status: "enabled",
   createdAt: 1,
 };
-const env = asEnv({ AUTH_SECRET: "test-only-auth-key", INTERNAL_SECRET: "test-only-internal-key" });
+const env = asEnv(SECRETS);
 
 function redemption(id: string, over: Record<string, unknown> = {}) {
   return {
@@ -90,7 +82,9 @@ async function signed(type: string, body: object) {
 }
 const subscription = { id: "sub1", status: "enabled", condition: { broadcaster_user_id: "55", reward_id: "rw1" } };
 
-function eventsub(r: ReturnType<typeof pointsRoom>) {
+/** A room hooked to eventsub, with the reward added unless `reward` is false and a profile row when `wallet` is given. */
+async function redeemRoom(wallet = "", reward = true) {
+  const r = pointsRoom();
   const done: { redemption: Redemption; mark: string | null; reply: string }[] = [],
     paths: string[] = [];
   const deliver = async (type: string, body: object) =>
@@ -105,81 +99,63 @@ function eventsub(r: ReturnType<typeof pointsRoom>) {
       onRedeemed: (d) => done.push(d),
       now: NOW,
     });
-  return { done, paths, deliver };
+  if (wallet)
+    r.sql.exec(`INSERT INTO profiles (user_id, username, dollars, style_dollars) VALUES ('7', 'viewer', ${wallet})`);
+  if (reward)
+    assert.equal((await r.call("newstreamer", "/points/rewards", postJson({ op: "add", reward: REWARD }))).status, 200);
+  const redeem = (id: string, over?: Record<string, unknown>) =>
+    deliver("notification", { subscription, event: redemption(id, over) });
+  return { r, done, paths, deliver, redeem };
 }
 
 test("a redemption adds the reward's dollars to style dollars once, even when Twitch retries it; duel dollars stay", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles (user_id, username, dollars) VALUES ('7', 'viewer', 100)");
-  assert.equal((await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }))).status, 200);
-  const first = await e.deliver("notification", { subscription, event: redemption("red-1") });
-  const retry = await e.deliver("notification", { subscription, event: redemption("red-1") });
+  const { r, done, redeem } = await redeemRoom("100, 0");
+  const first = await redeem("red-1");
+  const retry = await redeem("red-1");
   assert.deepEqual([first.status, retry.status], [204, 204]);
   assert.deepEqual({ ...r.wallet("7") }, { dollars: 100, style: 50 });
-  assert.equal(e.done.length, 1, "the retry marks nothing and posts nothing");
-  assert.equal(e.done[0]?.mark, "FULFILLED");
+  assert.equal(done.length, 1, "the retry marks nothing and posts nothing");
+  assert.equal(done[0]?.mark, "FULFILLED");
   assert.equal(
-    e.done[0]?.reply,
+    done[0]?.reply,
     "@Viewer got $50 style dollars from PixFray $50 for looks, hats and build slots. Style: $50.",
   );
   assert.equal(readCounts(r.room)[0]?.counts.points_granted, 1);
 });
 
 test("a reward PixFray doesn't hold is ignored: no dollars, no mark", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles (user_id, username, dollars) VALUES ('7', 'viewer', 100)");
-  const res = await e.deliver("notification", {
-    subscription,
-    event: redemption("red-2", { reward: { id: "other", title: "Hydrate", cost: 100 } }),
-  });
+  const { r, done, redeem } = await redeemRoom("100, 0", false);
+  const res = await redeem("red-2", { reward: { id: "other", title: "Hydrate", cost: 100 } });
   assert.equal(res.status, 204);
   assert.deepEqual({ ...r.wallet("7") }, { dollars: 100, style: 0 });
-  assert.deepEqual(e.done, []);
+  assert.deepEqual(done, []);
 });
 
 test("a viewer with no fighter gets their points back and a line that differs per redemption", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }));
-  await e.deliver("notification", { subscription, event: redemption("red-aaaa") });
-  await e.deliver("notification", { subscription, event: redemption("red-bbbb") });
-  assert.deepEqual(
-    e.done.map((d) => [d.mark, d.reply]),
-    [
-      [
-        "CANCELED",
-        `@Viewer needs a saved fighter first: make one at ${ORIGIN}/?channel=newstreamer. Your channel points were refunded (redemption aaaa).`,
-      ],
-      [
-        "CANCELED",
-        `@Viewer needs a saved fighter first: make one at ${ORIGIN}/?channel=newstreamer. Your channel points were refunded (redemption bbbb).`,
-      ],
-    ],
-  );
+  const { done, redeem } = await redeemRoom();
+  await redeem("red-aaaa");
+  await redeem("red-bbbb");
+  const refunded = (id: string) => [
+    "CANCELED",
+    `@Viewer needs a saved fighter first: make one at ${ORIGIN}/?channel=newstreamer. Your channel points were refunded (redemption ${id}).`,
+  ];
+  const marks = done.map((d) => [d.mark, d.reply]);
+  assert.deepEqual(marks, [refunded("aaaa"), refunded("bbbb")]);
 });
 
 test("style dollars never pass the dollar cap", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  r.sql.exec("INSERT INTO profiles (user_id, username, dollars, style_dollars) VALUES ('7', 'viewer', 5, 999990)");
-  await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }));
-  await e.deliver("notification", { subscription, event: redemption("red-3") });
+  const { r, redeem } = await redeemRoom("5, 999990");
+  await redeem("red-3");
   assert.deepEqual({ ...r.wallet("7") }, { dollars: 5, style: 1_000_000 });
 });
 
 test("the redemption subscription's challenge is answered, and a revocation marks the reward", async () => {
-  const r = pointsRoom(),
-    e = eventsub(r);
-  await r.call("newstreamer", "/points/rewards", post({ op: "add", reward: REWARD }));
-  const verify = await e.deliver("webhook_callback_verification", { subscription, challenge: "abc123" });
+  const { r, paths, deliver } = await redeemRoom();
+  const verify = await deliver("webhook_callback_verification", { subscription, challenge: "abc123" });
   assert.equal(await verify.text(), "abc123");
-  const revoked = await e.deliver("revocation", {
-    subscription: { ...subscription, status: "authorization_revoked" },
-  });
+  const revoked = await deliver("revocation", { subscription: { ...subscription, status: "authorization_revoked" } });
   assert.equal(revoked.status, 204);
-  assert.ok(e.paths.includes("newstreamer /points/rewards"), "the broadcaster's own room hears the revocation");
+  assert.ok(paths.includes("newstreamer /points/rewards"), "the broadcaster's own room hears the revocation");
   const view = await (await r.call("newstreamer", "/points")).json<{ rewards: { status: string }[] }>();
   assert.equal(view.rewards[0]?.status, "authorization_revoked");
 });
@@ -197,78 +173,30 @@ test("a room failure fails the delivery, so Twitch retries it", async () => {
 
 // ---------- Admin actions through the Worker ----------
 
-function store(): AuthStore {
-  const db = new DatabaseSync(":memory:");
-  const sql: FakeSql = {
-    exec(q: string, ...p: SQLInputValue[]) {
-      const rows = db
-        .prepare(q)
-        .all(...p)
-        .map((x) => ({ ...x }));
-      return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() };
-    },
-  };
-  let alarm: number | null = null;
-  const ctx = {
-    storage: {
-      sql,
-      getAlarm: async () => alarm,
-      setAlarm: async (t: number) => void (alarm = t),
-    },
-  };
-  // the fake context has only the sql and alarm calls AuthStore makes
-  return new AuthStore(ctx as unknown as DurableObjectState, asEnv({ INTERNAL_SECRET: "test-only-internal-key" }));
-}
 async function site(t: TestContext, { scopes = ["moderation:read", POINTS_SCOPE] } = {}) {
   forgetChannel();
   t.mock.method(Date, "now", () => NOW);
-  const auth = store(),
-    r = pointsRoom();
-  const e = {
-    AUTH_SECRET: "test-only-auth-key",
-    INTERNAL_SECRET: "test-only-internal-key",
+  const r = pointsRoom();
+  const ROOMS = namespace(async (channel, url, init) => {
+    const path = new URL(url).pathname;
+    return path.startsWith("/points") ? r.call(channel, path, init) : Response.json({});
+  });
+  const ASSETS = { fetch: async () => new Response("page") };
+  const env = asEnv({
+    ...SECRETS,
     OWNER_TWITCH_ID: "1",
-    TWITCH_CLIENT_ID: "test-app",
-    TWITCH_CLIENT_SECRET: "test-secret",
     PUBLIC_ORIGIN: ORIGIN,
-    AUTH: {
-      idFromName: (x: string) => x,
-      get: () => ({ fetch: (u: string, i?: RequestInit) => auth.fetch(new Request(u, i)) }),
-    },
-    ROOMS: {
-      idFromName: (x: string) => x,
-      get: (channel: string) => ({
-        async fetch(url: string, init?: RequestInit) {
-          const path = new URL(url).pathname;
-          return path.startsWith("/points") ? r.call(channel, path, init) : Response.json({});
-        },
-      }),
-    },
-    ASSETS: { fetch: async () => new Response("page") },
-  };
-  const env = e as typeof e & Env; // a partial Env: the bindings worker.fetch reads
+    AUTH: sqliteAuth().AUTH,
+    ROOMS,
+    ASSETS,
+  });
   await record(env, "channel:newstreamer", { id: "55", login: "newstreamer", enabledAt: 1 }, NOW + 86400000);
-  await record(
-    env,
-    "broadcaster:newstreamer",
-    await seal(env, { access_token: "a1", refresh_token: "r1", userId: "55", scopes, validatedAt: NOW }),
-    NOW + 86400000,
-  );
-  const cookie = async (id: string, login: string) => {
-    const key = id.padStart(64, "c");
-    await record(env, "session:" + (await digest(key)), { user: { id, login, displayName: login } }, NOW + 3600000);
-    return "mini_session=" + key;
+  const token = { access_token: "a1", refresh_token: "r1", userId: "55", scopes, validatedAt: NOW };
+  await record(env, "broadcaster:newstreamer", await seal(env, token), NOW + 86400000);
+  return {
+    cookie: (id: string, login: string) => signIn(env, { id, login, displayName: login }),
+    admin: (data: object, cookie: string) => call(env, "/api/admin/newstreamer", "POST", data, cookie),
   };
-  const admin = (data: object, c: string) =>
-    worker.fetch(
-      new Request(ORIGIN + "/api/admin/newstreamer", {
-        method: "POST",
-        headers: { Cookie: c, Origin: ORIGIN, "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      }),
-      env,
-    );
-  return { env, r, cookie, admin };
 }
 const CREATE = { action: "createPointReward", payload: { title: "PixFray $50", cost: 500, dollars: 50 } };
 
@@ -280,7 +208,7 @@ test("a channel that isn't an Affiliate hears so in plain words when it makes a 
   });
   const res = await s.admin(CREATE, await s.cookie("55", "newstreamer"));
   assert.equal(res.status, 403);
-  assert.deepEqual(await res.json(), {
+  assert.deepEqual(res.body, {
     error: "Twitch only gives channel points to Affiliates and Partners, and newstreamer is neither yet.",
     reason: "points_not_affiliate",
   });
@@ -294,10 +222,10 @@ test("rewards need the broadcaster's points sign-in, and only the broadcaster or
   });
   const mod = await s.admin(CREATE, await s.cookie("9", "amod"));
   assert.equal(mod.status, 403);
-  assert.equal((await mod.json<{ reason: string }>()).reason, "broadcaster_only");
+  assert.equal(mod.body.reason, "broadcaster_only");
   const res = await s.admin(CREATE, await s.cookie("55", "newstreamer"));
   assert.equal(res.status, 409);
-  assert.deepEqual(await res.json(), {
+  assert.deepEqual(res.body, {
     error: "newstreamer must allow channel point rewards at /auth/login?channel=newstreamer&connect=points",
     reason: "points_not_connected",
     reconnect: "/auth/login?channel=newstreamer&connect=points",
@@ -308,51 +236,37 @@ test("a new reward is subscribed to, and removed again when Twitch refuses the s
   const s = await site(t),
     calls: string[] = [];
   let subscribe = 202;
-  t.mock.method(
-    globalThis,
-    "fetch",
-    async (url: string | URL | Request, init: { method?: string; body?: string } = {}) => {
-      const u = String(url).replace("https://api.twitch.tv/helix", "");
-      calls.push((init.method || "GET") + " " + u.split("?")[0]);
-      if (u.startsWith("/channel_points/custom_rewards") && init.method === "POST") {
-        assert.deepEqual(JSON.parse(String(init.body)), {
-          title: "PixFray $50",
-          cost: 500,
-          prompt:
-            "Adds $50 style dollars for looks, hats and build slots (not pets). Save a fighter first, or your points come back.",
-          should_redemptions_skip_request_queue: false,
-        });
-        return Response.json({ data: [{ id: "rw-new" }] });
-      }
-      if (u.startsWith("/channel_points/custom_rewards") && init.method === "DELETE")
-        return new Response(null, { status: 204 });
-      if (u.endsWith("/oauth2/token")) return Response.json({ access_token: "app", expires_in: 3600 });
-      if (u.startsWith("/eventsub/subscriptions")) {
-        const body = JSON.parse(String(init.body));
-        assert.deepEqual(
-          [body.type, body.condition, body.transport.callback],
-          [REDEMPTION_TYPE, { broadcaster_user_id: "55", reward_id: "rw-new" }, ORIGIN + "/api/eventsub"],
-        );
-        return subscribe === 202
-          ? Response.json(
-              { data: [{ id: "sub-new", status: "webhook_callback_verification_pending" }] },
-              { status: 202 },
-            )
-          : new Response("no", { status: subscribe });
-      }
-      throw new Error("unexpected fetch " + u);
-    },
-  );
+  twitchApi(t, async (url, init) => {
+    const u = url.pathname.replace("/helix", "");
+    calls.push((init.method || "GET") + " " + u);
+    if (u === "/channel_points/custom_rewards" && init.method === "POST") {
+      assert.deepEqual(JSON.parse(String(init.body)), {
+        title: "PixFray $50",
+        cost: 500,
+        prompt:
+          "Adds $50 style dollars for looks, hats and build slots (not pets). Save a fighter first, or your points come back.",
+        should_redemptions_skip_request_queue: false,
+      });
+      return Response.json({ data: [{ id: "rw-new" }] });
+    }
+    if (u === "/channel_points/custom_rewards" && init.method === "DELETE") return new Response(null, { status: 204 });
+    if (u === "/eventsub/subscriptions") {
+      const body = JSON.parse(String(init.body));
+      assert.deepEqual(
+        [body.type, body.condition, body.transport.callback],
+        [REDEMPTION_TYPE, { broadcaster_user_id: "55", reward_id: "rw-new" }, ORIGIN + "/api/eventsub"],
+      );
+      return subscribe === 202
+        ? Response.json({ data: [{ id: "sub-new", status: "webhook_callback_verification_pending" }] }, { status: 202 })
+        : new Response("no", { status: subscribe });
+    }
+    throw new Error("unexpected fetch " + url);
+  });
   const streamer = await s.cookie("55", "newstreamer");
   const made = await s.admin(CREATE, streamer);
   assert.equal(made.status, 200);
-  assert.deepEqual(
-    (await made.json<{ rewards: { rewardId: string; subscriptionId: string }[] }>()).rewards.map((x) => [
-      x.rewardId,
-      x.subscriptionId,
-    ]),
-    [["rw-new", "sub-new"]],
-  );
+  const ids = made.body.rewards.map((x: PointReward) => [x.rewardId, x.subscriptionId]);
+  assert.deepEqual(ids, [["rw-new", "sub-new"]]);
   subscribe = 409;
   calls.length = 0;
   const refused = await s.admin(CREATE, streamer);
@@ -362,19 +276,7 @@ test("a new reward is subscribed to, and removed again when Twitch refuses the s
 
 test("the points sign-in asks for the earlier scopes plus channel:manage:redemptions", async () => {
   forgetChannel();
-  const auth = store();
-  const e = {
-    AUTH_SECRET: "test-only-auth-key",
-    INTERNAL_SECRET: "test-only-internal-key",
-    TWITCH_CLIENT_ID: "test-app",
-    TWITCH_CLIENT_SECRET: "test-secret",
-    CHAT_BOT: "1",
-    AUTH: {
-      idFromName: (x: string) => x,
-      get: () => ({ fetch: (u: string, i?: RequestInit) => auth.fetch(new Request(u, i)) }),
-    },
-  };
-  const env = e as typeof e & Env; // the bindings handleAuth reads
+  const env = asEnv({ ...SECRETS, CHAT_BOT: "1", AUTH: sqliteAuth().AUTH });
   await record(env, "channel:newstreamer", { id: "55", login: "newstreamer", enabledAt: 1 }, Date.now() + 86400000);
   const res = await handleAuth(new Request(ORIGIN + "/auth/login?channel=newstreamer&connect=points"), env);
   const to = new URL(String(res.headers.get("Location")));

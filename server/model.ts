@@ -1,4 +1,4 @@
-// The game's data shapes (types only): the channel config, the state ChannelRoom keeps, the events reduceGame
+// The game's data shapes: the channel config (with its defaults), the state ChannelRoom keeps, the events reduceGame
 // takes, and what the overlay socket sends (docs/CONTRACTS.md §3 and §6).
 import type { Stats } from "./upgrades.ts";
 
@@ -20,57 +20,63 @@ export type ChatEvent = {
 export type Untrusted = { [key: string]: unknown } | unknown[] | string | number | boolean | null | undefined;
 
 export type AbilityName = "strike" | "heavy" | "heal";
-export type Abilities = {
-  strike: { damage: number; cooldownMs: number };
-  heavy: { damage: number; cooldownMs: number };
-  heal: { amount: number; cooldownMs: number };
+/** A channel's settings and their defaults (ranges in CONFIG_CHECKS in server/game.ts, docs/CONTRACTS.md §7). */
+export const DEFAULT_CONFIG = {
+  enabled: true,
+  // Off = the HP fight (!attack/!strike/!heavy/!heal). StreamElements has no attack commands, so its duels always
+  // settle quickly.
+  quickDuel: true,
+  // "off", "top" or "bottom"
+  announce: "off",
+  maxOnStream: 50,
+  maxHp: 100,
+  maxDuels: 5,
+  challengeTimeoutMs: 30_000,
+  inactivityMs: 45_000,
+  respawnMs: 3_000,
+  rematchDelayMs: 30_000,
+  // How far the stream runs behind chat. Chat keeps a quick duel's result hidden this long after the overlay shows it.
+  streamDelayMs: 6_000,
+  sharedCooldownMs: 1_000,
+  initialElo: 1_000,
+  eloK: 24,
+  checkinPoints: 1,
+  streakBonus: true,
+  // Levels above it stay saved but don't count on this channel.
+  maxStatLevel: 16,
+  winDollars: 5,
+  lossDollars: 3,
+  // 0 = no limit. Past it a pair duels unrated for half the dollars.
+  pairRankedPerStream: 0,
+  giveEnabled: true,
+  giveMaxPerStream: 100,
+  giveMinDuels: 5,
+  // Minutes between the bot's !fray lines while live (0 = off, else 10 to 240).
+  reminderMin: 0,
+  botEnabled: true,
+  // A duel pays about $4, so a common pet is ~3 duels, a recolor ~5 and a legendary pet ~75.
+  petPriceCommon: 10,
+  petPriceUncommon: 25,
+  petPriceRare: 60,
+  petPriceEpic: 140,
+  petPriceLegendary: 300,
+  hatPricePerWin: 3,
+  recolorPrice: 20,
+  petColorPrice: 15,
+  accessoryPrice: 25,
+  trailPrice: 40,
+  effectPrice: 50,
+  tauntPrice: 10,
+  titlePrice: 15,
+  buildSlotPrice: 60,
+  buildSlotPriceMore: 120,
+  abilities: {
+    strike: { damage: 20, cooldownMs: 2_000 },
+    heavy: { damage: 35, cooldownMs: 5_000 },
+    heal: { amount: 15, cooldownMs: 12_000 },
+  },
 };
-
-/** A channel's settings (DEFAULT_CONFIG in server/game.ts; ranges in validateConfigPatch, docs/CONTRACTS.md §7). */
-export type Config = {
-  enabled: boolean;
-  quickDuel: boolean;
-  /** Overlay duel banner: "off", "top" or "bottom". */
-  announce: string;
-  maxOnStream: number;
-  maxHp: number;
-  maxDuels: number;
-  challengeTimeoutMs: number;
-  inactivityMs: number;
-  respawnMs: number;
-  rematchDelayMs: number;
-  streamDelayMs: number;
-  sharedCooldownMs: number;
-  initialElo: number;
-  eloK: number;
-  checkinPoints: number;
-  streakBonus: boolean;
-  maxStatLevel: number;
-  winDollars: number;
-  lossDollars: number;
-  pairRankedPerStream: number;
-  giveEnabled: boolean;
-  giveMaxPerStream: number;
-  giveMinDuels: number;
-  reminderMin: number;
-  botEnabled: boolean;
-  petPriceCommon: number;
-  petPriceUncommon: number;
-  petPriceRare: number;
-  petPriceEpic: number;
-  petPriceLegendary: number;
-  hatPricePerWin: number;
-  recolorPrice: number;
-  petColorPrice: number;
-  accessoryPrice: number;
-  trailPrice: number;
-  effectPrice: number;
-  tauntPrice: number;
-  titlePrice: number;
-  buildSlotPrice: number;
-  buildSlotPriceMore: number;
-  abilities: Abilities;
-};
+export type Config = typeof DEFAULT_CONFIG;
 
 /** The cosmetics a fighter wears (server/cosmetics.ts cleanCosmetics); "" = none. */
 export type Cosmetics = {
@@ -110,34 +116,21 @@ export type Player = Cosmetics & {
   lastOpponentId?: string;
 };
 
-/**
- * A fighter as a caller hands it to the reducer: a saved profile row, a dashboard save or a stub built from a chat
- * message. Any field may be missing; rows carry extra columns (dollars, build, streak...).
- */
+// A fighter as a caller hands it to the reducer (a profile row, a dashboard save or a chat stub). Any field may be
+// missing; rows carry extra columns.
 export type ProfileInput = { [K in keyof Player]?: Player[K] | undefined } & {
   dollars?: number | undefined;
   [key: string]: unknown;
 };
 
-export type DuelStatus = "pending" | "active" | "completed" | "cancelled" | "expired" | "declined";
 export type Cooldowns = { sharedUntil: number; strikeUntil: number; heavyUntil: number; healUntil: number };
-/** The config a duel was started with, so a mid-duel config change doesn't touch it. */
-export type DuelRules = {
-  maxHp: number;
-  inactivityMs: number;
-  respawnMs: number;
-  rematchDelayMs: number;
-  sharedCooldownMs: number;
-  abilities: Abilities;
-};
-export type Rating = { before: number; after: number; delta: number; bonus?: number };
 
 /** A challenge or duel (docs/CONTRACTS.md §3 Duel). The fields below `winnerId` are set once it starts or ends. */
 export type Duel = {
   id: string;
   a: string;
   b: string;
-  status: DuelStatus;
+  status: "pending" | "active" | "completed" | "cancelled" | "expired" | "declined";
   createdAt: number;
   expiresAt: number;
   /** userId -> hp; both fighters have an entry once the duel starts. */
@@ -146,7 +139,8 @@ export type Duel = {
   startedAt?: number;
   lastActionAt?: number;
   round?: number;
-  rules?: DuelRules;
+  /** The config the duel started with, so a mid-duel config change doesn't touch it. */
+  rules?: Pick<Config, "maxHp" | "inactivityMs" | "respawnMs" | "rematchDelayMs" | "sharedCooldownMs" | "abilities">;
   /** userId -> full health in this duel: rules.maxHp plus vitality (server/upgrades.ts bonusHp). */
   maxHp?: Record<string, number>;
   cooldowns?: Record<string, Cooldowns>;
@@ -156,9 +150,9 @@ export type Duel = {
   lastRanked?: boolean;
   endedAt?: number;
   cancelReason?: string;
-  ratings?: Record<string, Rating>;
+  ratings?: Record<string, { before: number; after: number; delta: number; bonus?: number }>;
   flawless?: boolean;
-  /** userId -> dollars the room pays out once (server/channel.ts payDuels). */
+  /** userId -> dollars the room pays out once (server/room-economy.ts payDuels). */
   payout?: Record<string, number>;
   /** How a quick duel ended when not by knockout: "hp" or "sudden_death". */
   decision?: string;
@@ -169,24 +163,22 @@ export type Duel = {
 /** One entry of the event log the overlay plays (docs/CONTRACTS.md §3, event types table). */
 export type GameLogEvent = { id: string; type: string; at: number; [field: string]: unknown };
 
-/** The chat source (one Twitch EventSub subscription, or StreamElements). */
-export type ChatState = {
-  connected: boolean;
-  /** Last notification. */
-  lastSeen: number;
-  subscriptionId: string;
-  status: string;
-  createdAt: number;
-  revokedReason: string;
-  checkedAt: number;
-  verifiedId: string;
-};
-
-/** What ChannelRoom stores for a channel (createInitialState, normalizeState in server/game.ts). */
+/** What ChannelRoom stores for a channel (createInitialState, normalizeGameState in server/game.ts). */
 export type GameState = {
   channel: string;
   revision: number;
-  chat: ChatState;
+  /** The chat source (one Twitch EventSub subscription, or StreamElements). */
+  chat: {
+    connected: boolean;
+    /** Last notification. */
+    lastSeen: number;
+    subscriptionId: string;
+    status: string;
+    createdAt: number;
+    revokedReason: string;
+    checkedAt: number;
+    verifiedId: string;
+  };
   config: Config;
   configVersion: number;
   round: number;
@@ -202,7 +194,7 @@ export type GameState = {
   nextDuelId: number;
   /** 2 once the 2026-10-06 price cut has been applied. */
   priceSchema?: number;
-  /** Removed with the relay; normalizeState deletes it from old stored states. */
+  /** Removed with the relay; normalizeGameState deletes it from old stored states. */
   relay?: unknown;
 };
 
@@ -221,7 +213,7 @@ export type AdminPayload = {
   b?: unknown;
 };
 
-/** A chat command as the room hands it to the reducer (server/channel.ts processChatMessage). */
+/** A chat command as the room hands it to the reducer (server/room-bot.ts processChatMessage). */
 export type CommandEvent = {
   type: "command";
   messageId?: unknown;
@@ -352,10 +344,7 @@ export type Snapshot = {
 /** Whether Twitch posted a line, and its drop_reason code (or the error) when it didn't. */
 export type SendResult = { sent: boolean; reason: string };
 
-/**
- * A channel room's export as backups.ts stores it (the owner page's download). Only the fields developer.ts reads
- * are named; the room's export code is the full shape. exportedAt is the ISO time of exportHead in developer.ts.
- */
+// A room's export as backups.ts stores it. Only the fields developer.ts reads are named; exportedAt is an ISO time.
 export type BackupExport = {
   exportedAt: string;
   profiles: { userId: string; username: string }[];

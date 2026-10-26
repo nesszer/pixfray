@@ -14,9 +14,7 @@ function picture(w: number, h: number, pixel: (x: number, y: number) => readonly
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) data.set(pixel(x, y), (y * w + x) * 4);
   return { width: w, height: h, data };
 }
-const at = (img: Img, x: number, y: number) => [
-  ...img.data.subarray((y * img.width + x) * 4, (y * img.width + x) * 4 + 4),
-];
+const at = (img: Img, x: number, y: number) => [...img.data.subarray((y * img.width + x) * 4).subarray(0, 4)];
 // A red ball with a blue stripe on a white photo background, touching nothing.
 const ball = (w = 300, h = 200) =>
   picture(w, h, (x, y) =>
@@ -101,28 +99,19 @@ test("autosprite: background the cut kept stuck to the subject goes, the subject
   );
   const all = new Uint8Array(60 * 60).fill(1);
   dropEdgeLeak(all, labOf(ice), 60, 60);
-  assert.equal(
-    all.reduce((s, v) => s + v, 0),
-    3600,
-  );
+  assert.ok(all.every((v) => v === 1));
 });
 
 test("spritify: shaded outline and pixel doubling", () => {
   // One red pixel: a dark red outline around it, corners clear (a rounder outline), then every pixel doubled.
-  const dot = must(
-    spritify(
-      picture(1, 1, () => [200, 0, 0, 255]),
-      { removeBg: false },
-    ),
-  );
+  const red = picture(1, 1, () => [200, 0, 0, 255]);
+  const dot = must(spritify(red, { removeBg: false }));
   assert.deepEqual([dot.width, dot.height], [6, 6]);
   assert.deepEqual(at(dot, 2, 2), [209, 0, 0, 255]);
   assert.deepEqual(at(dot, 2, 0), [47, 0, 0, 255]);
   assert.equal(at(dot, 0, 0)[3], 0);
-  const big = enlarge(
-    picture(1, 1, () => [1, 2, 3, 255]),
-    2,
-  );
+  const px = picture(1, 1, () => [1, 2, 3, 255]);
+  const big = enlarge(px, 2);
   assert.deepEqual([big.width, big.height], [2, 2]);
   assert.deepEqual(at(big, 1, 1), [1, 2, 3, 255]);
 });

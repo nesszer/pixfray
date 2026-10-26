@@ -1,24 +1,7 @@
-// Custom character uploader (Lane D). Browser only; vite.config.ts (servedBuild) serves it as /upload.js.
-//
-// Mount API, used by the /admin page (src/admin.ts):
-//   const { mountUpload } = await import('/upload.js');
-//   const handle = await mountUpload(root, { channel, usage, limits, items, refresh });
-//     root     Element to render into (its children are replaced).
-//     channel  Channel login (required).
-//     usage    Optional {count, limit, bytes} from GET /api/admin/:channel (customUsage).
-//     limits   Optional limits object; the stricter of these and the built-in LIMITS is enforced.
-//     items    Optional custom catalog entries (GET /api/assets/:channel items) for the delete list.
-//     refresh  Optional async () => void, called after a save or delete so the page can reload its data.
-//   handle = { destroy() }  stops the preview loop and empties root.
-// Without `items`/`usage` the module loads them itself from GET /api/assets/:channel (moderator session needed).
-//
-// Two ways to add a character:
-//   One PNG       one image; scaled down to fit 128 x 128 if needed. The overlay animates it with movement and
-//                 effects (flash, shake, fade) for attacks and knockouts.
-//   PNG frames    PNG files per animation (idle, walk, attack, knockout). Files in a slot play in name order.
-// Frames are aligned (bottom-centre) and packed into one atlas in the browser, previewed, then posted as
-// POST /api/assets/:channel {label, mode, fps, atlas:<base64 PNG>, frames, animations}. The server checks every
-// limit again: PNG only, 24 frames, 128 x 128 per frame, 1.5 MB per atlas, 24 characters per channel.
+// Custom character uploader, served as /upload.js and mounted by the mod page (docs/CONTRACTS.md section 8). The
+// stricter of the given limits and LIMITS applies; missing items or usage load from GET /api/assets/:channel.
+// Frames (or one PNG, scaled to fit) are packed into one atlas in the browser, previewed, then posted to
+// POST /api/assets/:channel, where the server checks every limit again.
 import {
   LIMITS,
   ANIMATION_SLOTS,
@@ -98,10 +81,6 @@ const toBase64 = (blob: Blob) =>
     r.readAsDataURL(blob);
   });
 
-/**
- * @param {string} path
- * @param {{ method?: string, body?: unknown }} [opts]
- */
 async function api(path: string, { method = "GET", body }: { method?: string; body?: unknown } = {}) {
   try {
     // as: an undefined body sends none; RequestInit under exactOptionalPropertyTypes only allows leaving it out
@@ -111,25 +90,15 @@ async function api(path: string, { method = "GET", body }: { method?: string; bo
       headers: body ? { "Content-Type": "application/json" } : {},
       body: body ? JSON.stringify(body) : undefined,
     } as RequestInit);
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {}
+    const data = await res.json().catch(() => null);
     return { ok: res.ok, status: res.status, data };
   } catch (error: any) {
     // any: whatever fetch threw; ?. reads its message when it has one
-    return { ok: false, status: 0, data: { error: "Network error: " + (error?.message || error) } };
+    return { ok: false, status: 0, data: { error: `Network error: ${error?.message || error}` } };
   }
 }
 const errorText = (r: Awaited<ReturnType<typeof api>>) =>
-  (r.data && (r.data.error || r.data.reason)) || "HTTP " + r.status;
-
-function ensureStyles() {
-  if (document.querySelector("link[data-upload-css]")) return;
-  document.head.append(
-    h("link", { rel: "stylesheet", href: new URL("./upload.css", import.meta.url).href, "data-upload-css": true }),
-  );
-}
+  (r.data && (r.data.error || r.data.reason)) || `HTTP ${r.status}`;
 
 // Reads PNG files into {name, w, h, image}. Rejects anything whose bytes are not a PNG, whatever its extension.
 async function readPngFiles(files: FileList | File[]) {
@@ -139,20 +108,23 @@ async function readPngFiles(files: FileList | File[]) {
     const head = new Uint8Array(await file.slice(0, 32).arrayBuffer());
     const info = pngInfo(head);
     if (!info || (file.type && file.type !== "image/png")) {
-      problems.push(file.name + " is not a PNG file.");
+      problems.push(`${file.name} is not a PNG file.`);
       continue;
     }
     try {
       out.push({ name: file.name, w: info.width, h: info.height, image: await createImageBitmap(file) });
     } catch {
-      problems.push(file.name + " couldn't be decoded as an image.");
+      problems.push(`${file.name} couldn't be decoded as an image.`);
     }
   }
   return { frames: out, problems };
 }
 
 export async function mountUpload(root: Element, ctx: UploadContext = {}) {
-  ensureStyles();
+  if (!document.querySelector("link[data-upload-css]")) {
+    const href = new URL("./upload.css", import.meta.url).href;
+    document.head.append(h("link", { rel: "stylesheet", href, "data-upload-css": true }));
+  }
   const channel = ctx.channel;
   if (!channel) return null;
   const limits: Record<LimitKey, number> & Omit<typeof LIMITS, LimitKey> = { ...LIMITS };
@@ -204,7 +176,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
   const slotInputs = Object.fromEntries(
     ANIMATION_SLOTS.map((s) => [
       s,
-      h("input", { id: "up-slot-" + s, type: "file", accept: "image/png", multiple: true }),
+      h("input", { id: `up-slot-${s}`, type: "file", accept: "image/png", multiple: true }),
     ]),
   );
   const slotCounts = Object.fromEntries(
@@ -218,11 +190,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     h(
       "p",
       { class: "hint small muted" },
-      "Larger images are scaled down to fit " +
-        limits.frameSize +
-        " x " +
-        limits.frameSize +
-        " px. The overlay moves the character and uses effects for attacks and knockouts.",
+      `Larger images are scaled down to fit ${limits.frameSize} x ${limits.frameSize} px. The overlay moves the character and uses effects for attacks and knockouts.`,
     ),
   );
   const framesBox = h(
@@ -232,7 +200,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
       h(
         "div",
         { class: "upload-field" },
-        h("label", { for: "up-slot-" + s }, SLOT_LABELS[s] + " frames"),
+        h("label", { for: `up-slot-${s}` }, `${SLOT_LABELS[s]} frames`),
         slotInputs[s],
         slotCounts[s],
         h("p", { class: "hint small muted" }, SLOT_HINTS[s]),
@@ -296,17 +264,8 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
           h(
             "p",
             { class: "hint small muted" },
-            "Limits: PNG only, " +
-              limits.maxFrames +
-              " frames in total, " +
-              limits.frameSize +
-              " x " +
-              limits.frameSize +
-              " px per frame, " +
-              formatBytes(limits.maxAtlasBytes) +
-              " per atlas, " +
-              limits.maxCharacters +
-              " characters per channel.",
+            `Limits: PNG only, ${limits.maxFrames} frames in total, ${limits.frameSize} x ${limits.frameSize} px per frame, ` +
+              `${formatBytes(limits.maxAtlasBytes)} per atlas, ${limits.maxCharacters} characters per channel.`,
           ),
         ),
         h(
@@ -326,32 +285,23 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
   );
 
   // ---- state -> view ----
-  function renderUsage() {
-    if (!usage) {
-      usageLine.textContent = "Checking free slots…";
-      return;
-    }
-    usageLine.textContent =
-      usage.count +
-      " of " +
-      (usage.limit || limits.maxCharacters) +
-      " custom character slots used, " +
-      formatBytes(usage.bytes || 0) +
-      " stored.";
-  }
-  function renderDelete() {
+  // The usage line, the delete list and the problems, after the stored characters changed
+  function renderItems() {
+    usageLine.textContent = usage
+      ? `${usage.count} of ${usage.limit || limits.maxCharacters} custom character slots used, ${formatBytes(usage.bytes || 0)} stored.`
+      : "Checking free slots…";
     const list = items || [];
     deleteSelect.replaceChildren(
       ...(list.length
-        ? list.map((x) => h("option", { value: x.id }, (x.label || x.id) + " (" + formatBytes(x.bytes || 0) + ")"))
+        ? list.map((x) => h("option", { value: x.id }, `${x.label || x.id} (${formatBytes(x.bytes || 0)})`))
         : [h("option", { value: "" }, "No custom characters")]),
     );
     deleteSelect.disabled = deleteButton.disabled = !list.length;
     deleteBox.hidden = !list.length; // nothing to remove yet
+    renderProblems();
   }
   function groups(): Partial<Record<Slot, Picked[]>> {
-    if (state.mode === "single") return state.single ? { idle: [state.single] } : {};
-    return state.slots;
+    return state.mode !== "single" ? state.slots : state.single ? { idle: [state.single] } : {};
   }
   function problems() {
     const out = [...state.readProblems];
@@ -360,14 +310,10 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     if (state.mode === "frames") out.push(...checkFrames(g, limits));
     if (state.blob && state.blob.size > limits.maxAtlasBytes)
       out.push(
-        "The packed atlas is " +
-          formatBytes(state.blob.size) +
-          "; the limit is " +
-          formatBytes(limits.maxAtlasBytes) +
-          ". Use fewer or smaller frames.",
+        `The packed atlas is ${formatBytes(state.blob.size)}; the limit is ${formatBytes(limits.maxAtlasBytes)}. Use fewer or smaller frames.`,
       );
     if (usage && usage.count >= (usage.limit || limits.maxCharacters))
-      out.push("All " + limits.maxCharacters + " custom character slots are used. Delete one first.");
+      out.push(`All ${limits.maxCharacters} custom character slots are used. Delete one first.`);
     const fps = Number(fpsInput.value);
     if (!Number.isInteger(fps) || fps < 1 || fps > 30)
       out.push("Frames per second must be a whole number from 1 to 30.");
@@ -381,26 +327,15 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     const shown = started
       ? list
       : list.filter((p) => p !== "Add at least one PNG frame." && p !== "Choose a PNG image.");
-    problemsBox.replaceChildren(
-      ...(shown.length
-        ? [
-            h(
-              "ul",
-              { class: "small" },
-              shown.map((p) => h("li", {}, p)),
-            ),
-          ]
-        : []),
-    );
-    problemsBox.className = "upload-problems" + (shown.length ? " callout negative" : "");
+    problemsBox.replaceChildren();
+    if (shown.length) problemsBox.append(h("ul", { class: "small" }, ...shown.map((p) => h("li", {}, p))));
+    problemsBox.className = `upload-problems${shown.length ? " callout negative" : ""}`;
     saveButton.disabled = state.busy || !!list.length || !state.blob || !nameInput.value.trim();
   }
   function renderPreviewButtons() {
     const anims = state.plan?.animations || {};
-    const slots = state.mode === "single" ? (["idle", "walk", "attack", "ko"] satisfies Slot[]) : ANIMATION_SLOTS;
-    if (!slots.includes(state.previewSlot)) state.previewSlot = "walk";
     previewButtons.replaceChildren(
-      ...slots.map((s) =>
+      ...ANIMATION_SLOTS.map((s) =>
         h(
           "button",
           {
@@ -440,25 +375,10 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     const blob = await toBlob(atlas);
     Object.assign(state, { plan, atlas, blob });
     const count = plan.placements.length;
-    atlasInfo.textContent =
-      "Atlas " +
-      plan.width +
-      " x " +
-      plan.height +
-      " px, " +
-      count +
-      " frame" +
-      (count === 1 ? "" : "s") +
-      " of " +
-      plan.cell.w +
-      " x " +
-      plan.cell.h +
-      " px, " +
-      formatBytes(blob.size) +
-      ".";
+    atlasInfo.textContent = `Atlas ${plan.width} x ${plan.height} px, ${count} frame${count === 1 ? "" : "s"} of ${plan.cell.w} x ${plan.cell.h} px, ${formatBytes(blob.size)}.`;
     atlas.className = "upload-atlas";
     atlas.setAttribute("role", "img");
-    atlas.setAttribute("aria-label", "Packed atlas, " + count + " frames");
+    atlas.setAttribute("aria-label", `Packed atlas, ${count} frames`);
     sheetBox.replaceChildren(atlas);
     renderPreviewButtons();
     renderProblems();
@@ -467,10 +387,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
   // Preview loop. Missing animations show the effect the overlay uses instead.
   function tick(now: number) {
     if (destroyed) return;
-    if (!root.isConnected) {
-      destroy();
-      return;
-    }
+    if (!root.isConnected) return destroy();
     raf = requestAnimationFrame(tick);
     // a canvas element always has a 2D context
     const c = previewCanvas.getContext("2d")!,
@@ -545,12 +462,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
         image = c;
       }
       state.single = { name: f.name, w: fit.w, h: fit.h, image };
-      if (fit.scale < 1)
-        setStatus(
-          status,
-          f.name + " was scaled from " + f.w + " x " + f.h + " to " + fit.w + " x " + fit.h + " px.",
-          "",
-        );
+      if (fit.scale < 1) setStatus(status, `${f.name} was scaled from ${f.w} x ${f.h} to ${fit.w} x ${fit.h} px.`, "");
     }
     repack();
   });
@@ -560,10 +472,10 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
       const { frames, problems: bad } = await readPngFiles(slotInputs[s]!.files || []);
       state.slots[s] = frames;
       state.readProblems = state.readProblems
-        .filter((p) => !p.startsWith("[" + s + "] "))
-        .concat(bad.map((p) => "[" + s + "] " + p));
+        .filter((p) => !p.startsWith(`[${s}] `))
+        .concat(bad.map((p) => `[${s}] ${p}`));
       slotCounts[s]!.textContent = frames.length
-        ? frames.length + " file" + (frames.length === 1 ? "" : "s") + ": " + frames.map((f) => f.name).join(", ")
+        ? `${frames.length} file${frames.length === 1 ? "" : "s"}: ${frames.map((f) => f.name).join(", ")}`
         : "";
       repack();
     });
@@ -583,20 +495,19 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
         mode: state.mode,
         atlas: await toBase64(state.blob),
       });
-      const r = await api("/api/assets/" + encodeURIComponent(channel), { method: "POST", body });
+      const r = await api(`/api/assets/${encodeURIComponent(channel)}`, { method: "POST", body });
       if (!r.ok) {
-        setStatus(status, "Not saved: " + errorText(r), "error");
+        setStatus(status, `Not saved: ${errorText(r)}`, "error");
         return;
       }
       usage = r.data.usage || usage;
       items = [...(items || []), r.data.item];
-      setStatus(status, 'Saved "' + r.data.item.label + '". Viewers can pick it on the dashboard now.', "ok");
-      renderUsage();
-      renderDelete();
+      setStatus(status, `Saved "${r.data.item.label}". Viewers can pick it on the dashboard now.`, "ok");
+      renderItems();
       await ctx.refresh?.();
     } catch (error: any) {
       // any: whatever was thrown; ?. reads its message when it has one
-      setStatus(status, "Not saved: " + (error?.message || error), "error");
+      setStatus(status, `Not saved: ${error?.message || error}`, "error");
     } finally {
       state.busy = false;
       renderProblems();
@@ -606,23 +517,18 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
   deleteButton.addEventListener("click", async () => {
     const id = deleteSelect.value,
       item = (items || []).find((x) => x.id === id);
-    if (!id || !confirm('Delete "' + (item?.label || id) + '"? Viewers using it fall back to a default character.'))
-      return;
+    if (!id || !confirm(`Delete "${item?.label || id}"? Viewers using it fall back to a default character.`)) return;
     deleteButton.disabled = true;
-    const r = await api("/api/assets/" + encodeURIComponent(channel) + "/" + encodeURIComponent(id), {
-      method: "DELETE",
-    });
+    const r = await api(`/api/assets/${encodeURIComponent(channel)}/${encodeURIComponent(id)}`, { method: "DELETE" });
     deleteButton.disabled = false;
     if (!r.ok) {
-      setStatus(deleteStatus, "Not deleted: " + errorText(r), "error");
+      setStatus(deleteStatus, `Not deleted: ${errorText(r)}`, "error");
       return;
     }
     usage = r.data.usage || usage;
     items = (items || []).filter((x) => x.id !== id);
-    setStatus(deleteStatus, 'Deleted "' + (item?.label || id) + '".', "ok");
-    renderUsage();
-    renderDelete();
-    renderProblems();
+    setStatus(deleteStatus, `Deleted "${item?.label || id}".`, "ok");
+    renderItems();
     await ctx.refresh?.();
   });
 
@@ -631,20 +537,16 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     cancelAnimationFrame(raf);
   }
 
-  renderUsage();
-  renderDelete();
+  renderItems();
   renderPreviewButtons();
-  renderProblems();
   raf = requestAnimationFrame(tick);
   if (!items || !usage) {
-    const r = await api("/api/assets/" + encodeURIComponent(channel));
+    const r = await api(`/api/assets/${encodeURIComponent(channel)}`);
     if (r.ok) {
       items = r.data.items || [];
       usage = r.data.usage || usage;
-      renderUsage();
-      renderDelete();
-      renderProblems();
-    } else usageLine.textContent = "Couldn't load custom characters: " + errorText(r);
+      renderItems();
+    } else usageLine.textContent = `Couldn't load custom characters: ${errorText(r)}`;
   }
   return {
     destroy: () => {
@@ -656,11 +558,5 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
 
 function setStatus(node: HTMLElement, message: string, kind: string) {
   node.textContent = message || "";
-  node.className = "status" + (kind ? " " + kind : "");
-}
-
-// Standalone use: <div data-upload-root data-channel="<login>"></div><script type="module" src="/upload.js"></script>
-if (typeof document !== "undefined") {
-  for (const el of document.querySelectorAll<HTMLElement>("[data-upload-root]"))
-    mountUpload(el, { channel: el.dataset.channel });
+  node.className = `status${kind ? ` ${kind}` : ""}`;
 }

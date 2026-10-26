@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createArenaClient } from "../src/served/arena-client.ts";
 import { resetWarnings } from "../src/served/parse.ts";
-import type { ArenaSnapshot, LooksMessage } from "../src/served/parse.ts";
+import type { LooksMessage } from "../src/served/parse.ts";
 import { must } from "./fakes.ts";
 import type { Loose } from "./fakes.ts";
 
@@ -12,8 +12,16 @@ type SocketConstructor = new (url: string) => WebSocket;
 /** A message as the client's onmessage reads it. */
 type FakeMessage = { data: string };
 
-/** The socket harness() hands the client: onmessage is set by the client before any message arrives. */
-type FakeSocket = { close(): void; onmessage(message: FakeMessage): void };
+/** The socket harness() hands the client: onopen and onmessage are set by the client. */
+type FakeSocket = {
+  readyState: number;
+  sent: string[];
+  closed: boolean;
+  send(message: string): void;
+  close(): void;
+  onopen(): void;
+  onmessage(message: FakeMessage): void;
+};
 function harness() {
   // a partial Location on purpose: the client reads only protocol and host
   globalThis.location = { protocol: "https:", host: "test.example" } as Location;
@@ -21,10 +29,18 @@ function harness() {
     // Loose: events and snapshots are the client's output, which the tests read by property
     events: Loose[] = [],
     snapshots: Loose[] = [], // Loose: as above
-    looks: LooksMessage[] = [];
+    looks: LooksMessage[] = [],
+    fetches: (RequestInfo | URL)[] = [];
   let drops = 0;
   function FakeSocket(this: FakeSocket) {
-    this.close = () => {};
+    this.readyState = 0;
+    this.sent = [];
+    this.closed = false;
+    this.send = (m) => this.sent.push(m);
+    this.close = () => {
+      this.closed = true;
+      this.readyState = 3;
+    };
     sockets.push(this);
   }
   const client = createArenaClient({
@@ -33,12 +49,22 @@ function harness() {
     onEvent: (e) => events.push(e),
     onLooks: (m) => looks.push(m),
     onDrop: () => drops++,
-    fetchImpl: () => new Promise<Response>(() => {}),
-    // a constructor function standing in for WebSocket: the client calls only close and sets onmessage
+    fetchImpl: (url) => {
+      fetches.push(url);
+      return new Promise<Response>(() => {});
+    },
+    // a constructor function standing in for WebSocket: the client calls send and close and reads readyState
     WebSocketImpl: FakeSocket as unknown as SocketConstructor,
   });
-  const send = (payload: unknown) => must(sockets.at(-1)).onmessage({ data: JSON.stringify(payload) });
-  return { client, events, snapshots, looks, send, drops: () => drops };
+  const open = () => {
+    const ws = must(sockets.at(-1));
+    ws.readyState = 1;
+    ws.onopen();
+  };
+  // a string goes out as it is (pong, broken JSON); anything else as JSON
+  const send = (data: unknown) =>
+    must(sockets.at(-1)).onmessage({ data: typeof data === "string" ? data : JSON.stringify(data) });
+  return { client, sockets, events, snapshots, looks, fetches, open, send, drops: () => drops };
 }
 
 test("arena client: a local clock 11 s ahead of the server still sees events as fresh", () => {
@@ -141,58 +167,9 @@ test("arena client: one bad event or player in a snapshot is dropped and the res
 
 // Ping and watchdog: the client sends "ping" every 20 s, the room's auto-response answers "pong", and a socket with no
 // message at all for 45 s is half open, so it gets replaced. No /api/state polling.
-/** The socket watchdogHarness() hands the client: onopen and onmessage are set by the client. */
-type WatchedSocket = {
-  readyState: number;
-  sent: string[];
-  closed: boolean;
-  send(message: string): void;
-  close(): void;
-  onopen(): void;
-  onmessage(message: FakeMessage): void;
-};
-function watchdogHarness() {
-  // a partial Location on purpose: the client reads only protocol and host
-  globalThis.location = { protocol: "https:", host: "test.example" } as Location;
-  const sockets: WatchedSocket[] = [],
-    snapshots: ArenaSnapshot[] = [],
-    events: unknown[] = [],
-    fetches: (RequestInfo | URL)[] = [];
-  function FakeSocket(this: WatchedSocket) {
-    this.readyState = 0;
-    this.sent = [];
-    this.closed = false;
-    this.send = (m) => this.sent.push(m);
-    this.close = () => {
-      this.closed = true;
-      this.readyState = 3;
-    };
-    sockets.push(this);
-  }
-  const client = createArenaClient({
-    channel: "nesszerra",
-    onSnapshot: (s) => snapshots.push(s),
-    onEvent: (e) => events.push(e),
-    fetchImpl: (url) => {
-      fetches.push(url);
-      return new Promise<Response>(() => {});
-    },
-    // a constructor function standing in for WebSocket: the client calls send and close and reads readyState
-    WebSocketImpl: FakeSocket as unknown as SocketConstructor,
-  });
-  const open = () => {
-    const ws = must(sockets.at(-1));
-    ws.readyState = 1;
-    ws.onopen();
-  };
-  const send = (data: unknown) =>
-    must(sockets.at(-1)).onmessage({ data: typeof data === "string" ? data : JSON.stringify(data) });
-  return { client, sockets, snapshots, events, fetches, open, send };
-}
-
 test('arena client ping: an open socket sends "ping" every 20 s, and "pong" keeps it without polling /api/state', (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-  const h = watchdogHarness();
+  const h = harness();
   h.open();
   h.send({ type: "snapshot", revision: 5, players: [], events: [] });
   const fetched = h.fetches.length;
@@ -210,7 +187,7 @@ test('arena client ping: an open socket sends "ping" every 20 s, and "pong" keep
 
 test("arena client watchdog: 45 s with no pong or message replaces the socket", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-  const h = watchdogHarness();
+  const h = harness();
   h.open();
   h.send({ type: "snapshot", revision: 5, players: [], events: [] });
   const fetched = h.fetches.length;
@@ -232,7 +209,7 @@ test("arena client watchdog: 45 s with no pong or message replaces the socket", 
 
 test("arena client watchdog: every message restarts the 45 s wait, and disconnect stops pings and the watchdog", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-  const h = watchdogHarness();
+  const h = harness();
   h.open();
   t.mock.timers.tick(40_000);
   h.send({ type: "snapshot", revision: 5, players: [], events: [] });
