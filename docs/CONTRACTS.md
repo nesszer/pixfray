@@ -580,11 +580,11 @@ The channel Durable Object is split along these seams; each room module takes th
 
 | File | Holds |
 |---|---|
-| `server/channel.ts` | `ChannelRoom`: storage and schema setup, state load and save, the live sockets and looks push, `alarm()` |
+| `server/channel.ts` | `ChannelRoom`: storage and schema setup, headers and limits, state load and save, the live sockets and looks push, `alarm()` |
 | `server/room-routes.ts` | `route(room, request)`: the DO's paths in one `ROUTES` table plus `PREFIXES`; `ADMIN_ACTIONS` and `ADMIN_PAYLOADS` tables for `POST /admin`; profile save, sprites, leaderboard |
 | `server/room-bot.ts` | `botCommand` (the one `BOT_TARGET_ACTIONS` check), `QUICK_COMMANDS` shared by the bot and dev chat, `processChatMessage`, custom commands, result and expiry lines |
 | `server/room-economy.ts` | `checkin`, wallet, `give`, shop `buy` and builds, pets, `payDuels`, the live-stream lookup |
-| `server/room-shared.ts` | Row and message types, headers and limits, profile reads and writes, `json`, `own`, `errorText` |
+| `server/room-shared.ts` | Row and message types, profile reads and writes, `json`, `own`, `errorText` |
 
 Keep these signatures; worker.ts and the room modules call them.
 
