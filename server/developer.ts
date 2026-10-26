@@ -1017,7 +1017,8 @@ export async function handleRoomDeveloper(
   { path, channel, url }: { path: string; channel: string; url?: URL | undefined },
 ): Promise<Response> {
   const sql = room.ctx.storage.sql,
-    method = request.method;
+    method = request.method,
+    q = (url || new URL(request.url)).searchParams;
   if (path === "/dev/diagnostics" && method === "GET") {
     const state = room.readState(channel);
     const counts = Object.fromEntries(
@@ -1058,9 +1059,8 @@ export async function handleRoomDeveloper(
     });
   }
   if (path === "/dev/logs" && method === "GET") {
-    const q = url || new URL(request.url),
-      source = q.searchParams.get("source"),
-      limit = Math.min(100, Math.max(1, Number(q.searchParams.get("limit")) || 100));
+    const source = q.get("source"),
+      limit = Math.min(100, Math.max(1, Number(q.get("limit")) || 100));
     // includes() is false for a missing source (null)
     const rows = LOG_SOURCES.includes(source as string)
       ? sql
@@ -1077,9 +1077,8 @@ export async function handleRoomDeveloper(
   }
   // A fighter's rank history, newest first: ?user=<login or id>&limit=1..500 (default 100).
   if (path === "/dev/ranks" && method === "GET") {
-    const q = url || new URL(request.url),
-      user = (q.searchParams.get("user") || "").replace(/^@/, "").slice(0, 64),
-      limit = Math.min(500, Math.max(1, Number(q.searchParams.get("limit")) || 100));
+    const user = (q.get("user") || "").replace(/^@/, "").slice(0, 64),
+      limit = Math.min(500, Math.max(1, Number(q.get("limit")) || 100));
     if (!user) return json({ error: "Name a fighter with ?user=", reason: "invalid_user" }, 400);
     return json(rankHistory(sql, user, limit));
   }
@@ -1107,8 +1106,7 @@ export async function handleRoomDeveloper(
   }
   // Per-day counters, newest first: ?days=1..14 (default 7). Flushes today's first, so the numbers are current.
   if (path === "/dev/stats" && method === "GET") {
-    const q = url || new URL(request.url),
-      days = Math.min(14, Math.max(1, Number(q.searchParams.get("days")) || 7));
+    const days = Math.min(14, Math.max(1, Number(q.get("days")) || 7));
     return json({ channel, days: readCounts(room, days) });
   }
   // Setup progress for the owner's Channels table: read only, so it never creates a StreamElements key.
@@ -1217,21 +1215,14 @@ export function logRoomError(room: { ctx: DurableObjectState }, error: unknown, 
 
 // One line per chat command (source 'command') or a broken invariant (source 'warn'), so a wrong reply
 // can be traced without a crash. Also printed to Workers Logs (server/tracker.ts). Must never throw.
-export function logRoomEvent(
-  room: { ctx: DurableObjectState },
-  source: string,
-  message: string,
-  context: JsonObject = {},
-): void {
-  trace(room, source, message, context);
-}
+export const logRoomEvent = trace;
 
 // Called by the Worker's top-level catch (through ctx.waitUntil). Must never throw.
 export async function logWorkerError(env: Env, error: unknown, context: JsonObject = {}): Promise<void> {
+  // anything can be thrown; an Error's message reads best
+  const thrown = (error as { message?: unknown } | null | undefined)?.message;
   try {
-    // anything can be thrown; an Error's message reads best
-    const message = String((error as { message?: unknown } | null | undefined)?.message || error);
-    console.error(JSON.stringify({ log: "worker", message, ...context }));
+    console.error(JSON.stringify({ log: "worker", message: String(thrown || error), ...context }));
   } catch {}
   try {
     if (!env.INTERNAL_SECRET || !env.ROOMS) return;
@@ -1242,11 +1233,7 @@ export async function logWorkerError(env: Env, error: unknown, context: JsonObje
         "X-Mini-Channel": site.defaultChannel,
         "Content-Type": "application/json",
       },
-      // anything can be thrown; an Error's message reads best
-      body: JSON.stringify({
-        message: (error as { message?: unknown } | null | undefined)?.message || String(error),
-        context,
-      }),
+      body: JSON.stringify({ message: thrown || String(error), context }),
     });
   } catch {}
 }
@@ -1256,96 +1243,24 @@ export async function logWorkerError(env: Env, error: unknown, context: JsonObje
 function roomExport(room: DevRoom, channel: string) {
   const sql = room.ctx.storage.sql;
   const state = room.readState(channel);
-  const profiles = sql
-    .exec("SELECT * FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC")
-    .toArray()
-    .map((p) => ({
-      userId: p.user_id,
-      username: p.username,
-      displayName: p.display_name,
-      avatar: p.avatar,
-      color: p.color,
-      defaultAbility: p.default_ability,
-      elo: p.elo,
-      wins: p.wins,
-      losses: p.losses,
-      lastSeen: p.last_seen,
-      power: p.power,
-      guard: p.guard,
-      luck: p.luck,
-      crit: p.crit,
-      dodge: p.dodge,
-      counter: p.counter,
-      vitality: p.vitality,
-      hat: p.hat,
-      lastOpponentId: p.last_opponent,
-      bonus: p.bonus_points,
-      checkins: p.checkins,
-      streak: p.streak,
-      dollars: p.dollars,
-      styleDollars: p.style_dollars,
-      pet: p.pet,
-      recolor: p.recolor,
-      petColor: p.pet_color,
-      accessory: p.accessory,
-      trail: p.trail,
-      winEffect: p.win_effect,
-      taunt: p.taunt,
-      title: p.title,
-      build: p.build,
-    }));
-  const purchases = sql
-    .exec("SELECT user_id, kind, item_id, price, bought_at FROM owned_items ORDER BY bought_at, user_id")
-    .toArray()
-    .map((x) => ({ userId: x.user_id, kind: x.kind, itemId: x.item_id, price: x.price, boughtAt: x.bought_at }));
-  const builds = sql
-    .exec<{ user_id: string; slot: number; data: string }>(
-      "SELECT user_id, slot, data FROM builds ORDER BY user_id, slot",
-    )
-    .toArray()
-    .map((x) => ({ userId: x.user_id, slot: x.slot, data: safeParse(x.data) || {} }));
-  const pets = sql
-    .exec(
-      "SELECT id, label, tier, stat, stat2, bytes, width, height, created_by, created_at FROM custom_pets ORDER BY created_at",
-    )
-    .toArray()
-    .map((x) => ({
-      id: x.id,
-      label: x.label,
-      tier: x.tier,
-      stat: x.stat,
-      stat2: x.stat2,
-      bytes: x.bytes,
-      width: x.width,
-      height: x.height,
-      createdBy: x.created_by,
-      createdAt: x.created_at,
-    }));
-  const history = sql
-    .exec<{ version: number; config: string; actor_id: string; actor_name: string; at: number; note: string }>(
-      "SELECT version, config, actor_id, actor_name, at, note FROM config_history ORDER BY version DESC",
-    )
-    .toArray()
-    .map((h) => ({
-      version: h.version,
-      config: safeParse(h.config) || {},
-      actorId: h.actor_id,
-      actorName: h.actor_name,
-      at: h.at,
-      note: h.note,
-    }));
-  const characters = sql
-    .exec<{ id: string; meta: string; bytes: number; created_by: string; created_at: number }>(
-      "SELECT id, meta, bytes, created_by, created_at FROM custom_characters ORDER BY created_at",
-    )
-    .toArray()
-    .map((x) => ({
-      id: x.id,
-      meta: safeParse(x.meta) || {},
-      bytes: x.bytes,
-      createdBy: x.created_by,
-      createdAt: x.created_at,
-    }));
+  const rows = (query: string) => sql.exec(query).toArray();
+  const profiles = rows(`SELECT user_id AS userId, username, display_name AS displayName, avatar, color,
+    default_ability AS defaultAbility, elo, wins, losses, last_seen AS lastSeen, power, guard, luck, crit, dodge,
+    counter, vitality, hat, last_opponent AS lastOpponentId, bonus_points AS bonus, checkins, streak, dollars,
+    style_dollars AS styleDollars, pet, recolor, pet_color AS petColor, accessory, trail, win_effect AS winEffect,
+    taunt, title, build FROM profiles ORDER BY elo DESC, wins DESC, username COLLATE NOCASE ASC`);
+  const purchases = rows(`SELECT user_id AS userId, kind, item_id AS itemId, price, bought_at AS boughtAt
+    FROM owned_items ORDER BY bought_at, user_id`);
+  const builds = rows("SELECT user_id AS userId, slot, data FROM builds ORDER BY user_id, slot").map((x) => ({
+    ...x,
+    data: safeParse(String(x.data)) || {},
+  }));
+  const pets = rows(`SELECT id, label, tier, stat, stat2, bytes, width, height, created_by AS createdBy,
+    created_at AS createdAt FROM custom_pets ORDER BY created_at`);
+  const history = rows(`SELECT version, config, actor_id AS actorId, actor_name AS actorName, at, note
+    FROM config_history ORDER BY version DESC`).map((h) => ({ ...h, config: safeParse(String(h.config)) || {} }));
+  const characters = rows(`SELECT id, meta, bytes, created_by AS createdBy, created_at AS createdAt
+    FROM custom_characters ORDER BY created_at`).map((x) => ({ ...x, meta: safeParse(String(x.meta)) || {} }));
   const stored =
       safeParse<{ [action: string]: string }>(
         sql.exec<{ names: string }>("SELECT names FROM se_settings WHERE id = 1").toArray()[0]?.names,

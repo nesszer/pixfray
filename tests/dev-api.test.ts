@@ -396,6 +396,13 @@ test("export downloads one room as JSON: fighters, ranks, config, history, chara
   );
   assert.deepEqual([first.power, first.hat, first.defaultAbility, first.userId], [1, "crown", "strike", "11"]);
   assert.deepEqual([first.dollars, first.title, first.build, first.bonus], [70, "legend", 1, 0]);
+  // the export's field names and order, as the SQL aliases give them
+  assert.equal(
+    Object.keys(first).join(" "),
+    "userId username displayName avatar color defaultAbility elo wins losses lastSeen power guard luck crit dodge " +
+      "counter vitality hat lastOpponentId bonus checkins streak dollars styleDollars pet recolor petColor accessory " +
+      "trail winEffect taunt title build",
+  );
   assert.deepEqual([data.config.maxHp, data.configVersion], [120, 2]);
   assert.deepEqual(
     data.configHistory.map((h: { version: number; note: string }) => [h.version, h.note]),
