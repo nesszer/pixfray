@@ -4,7 +4,7 @@ import worker from "../server/worker.ts";
 import { AuthStore, digest, record } from "../server/auth.ts";
 import type { TestContext } from "node:test";
 import type { Env } from "../server/env.ts";
-import { asEnv, fakeCtx, type Loose } from "./fakes.ts";
+import { asEnv, fakeCtx, must, type Loose } from "./fakes.ts";
 
 export const ORIGIN = "https://chat.miolaf.xyz",
   INTERNAL = "test-only-internal-key";
@@ -122,4 +122,33 @@ export function twitchApi(
     const u = new URL(String(url));
     return u.host === "id.twitch.tv" ? Response.json({ access_token: "app-token-1", expires_in: 5000 }) : api(u, init);
   });
+}
+
+/**
+ * A Twitch sign-in from /auth/login?<query> through the callback, as `as` with the granted `scopes`. The channel
+ * owner's lookup answers `owner`, or that Response for a failed one. Returns the callback's answer.
+ */
+export async function twitchSignIn(
+  t: TestContext,
+  env: Env,
+  query: string,
+  { as = VIEWER, scopes = [], owner = OWNER }: { as?: User; scopes?: string[]; owner?: User | Response } = {},
+): Promise<Response> {
+  const helix = (u: User) => Response.json({ data: [{ id: u.id, login: u.login, display_name: u.displayName }] });
+  const twitch = t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL) => {
+    const u = String(url);
+    if (u.endsWith("/oauth2/token")) return Response.json({ access_token: "user-token", refresh_token: "refresh-1" });
+    if (u.endsWith("/oauth2/validate"))
+      return Response.json({ client_id: SECRETS.TWITCH_CLIENT_ID, user_id: as.id, scopes });
+    if (u.includes("users?login=" + OWNER.login)) return owner instanceof Response ? owner : helix(owner);
+    return helix(as);
+  });
+  const login = await worker.fetch(new Request(ORIGIN + "/auth/login?" + query), env),
+    state = new URL(must(login.headers.get("Location"))).searchParams.get("state");
+  const r = await worker.fetch(
+    new Request(ORIGIN + "/auth/callback?code=c&state=" + state, { headers: { Cookie: "mini_oauth=" + state } }),
+    env,
+  );
+  twitch.mock.restore();
+  return r;
 }
