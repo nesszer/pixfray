@@ -235,7 +235,7 @@ of drop logs one `console.warn` per page load. Fields a client doesn't read pass
 makes the overlay fetch its own page again (at most every 30 s), so a server that sends a shape an old overlay
 can't read still reloads that overlay to the new code.
 
-Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` in `server/channel.ts`):
+Between snapshots the server may also send a looks push (`lookChanged` / `flushLooks` on `ChannelRoom` in `server/channel.ts`):
 
 ```
 Looks = {type:"looks", looks:{[login]: Look|null}, reset?:true}
@@ -571,12 +571,22 @@ subset of fields. Versioning works like this:
 
 | Lane | Owns | Contract |
 |---|---|---|
-| A (backend core) | `server/worker.ts`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
+| A (backend core) | `server/worker.ts`, `server/channel.ts` with `server/room-*.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
 | B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.ts` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.ts`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
 | E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.ts` | The signatures below |
 
-Keep these signatures; worker.ts and channel.ts call them.
+The channel Durable Object is split along these seams; each room module takes the `ChannelRoom` as its first argument:
+
+| File | Holds |
+|---|---|
+| `server/channel.ts` | `ChannelRoom`: storage and schema setup, state load and save, the live sockets and looks push, `alarm()` |
+| `server/room-routes.ts` | `route(room, request)`: the DO's paths in one `ROUTES` table plus `PREFIXES`; `ADMIN_ACTIONS` and `ADMIN_PAYLOADS` tables for `POST /admin`; profile save, sprites, leaderboard |
+| `server/room-bot.ts` | `botCommand` (the one `BOT_TARGET_ACTIONS` check), `QUICK_COMMANDS` shared by the bot and dev chat, `processChatMessage`, custom commands, result and expiry lines |
+| `server/room-economy.ts` | `checkin`, wallet, `give`, shop `buy` and builds, pets, `payDuels`, the live-stream lookup |
+| `server/room-shared.ts` | Row and message types, headers and limits, profile reads and writes, `json`, `own`, `errorText` |
+
+Keep these signatures; worker.ts and the room modules call them.
 
 ```js
 // server/uploads.ts (Lane D)
