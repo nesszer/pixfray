@@ -73,7 +73,7 @@ and `cf build` strip the types from the pages and the Worker.
   - `tsconfig.web.json`: browser code, every file in `src/` (the served modules in `src/served/` included),
     and `types/dom.ts`. DOM types and `vite/client`, no Worker or Node types. A browser file that imports a
     server module pulls it into this program too, so such a module (today `server/upgrades.ts`, and through
-    type imports in `src/dashboard.ts` and `src/parse.ts`, `server/cosmetics.ts` and `server/model.ts`)
+    type imports in `src/dashboard/` and `src/parse.ts`, `server/cosmetics.ts` and `server/model.ts`)
     must type-check with DOM types as well.
   - `tsconfig.node.json`: the scripts that use no DOM or Buffer methods (`scripts/`), `vite.config.ts` and
     `cloudflare.config.ts`, the Node-only test runners (`tests/chrome.ts`, `tests/seed-local.ts`,
