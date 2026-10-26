@@ -289,7 +289,7 @@ try {
   assert.notEqual(ranked.duels[0]?.hp?.["101"], 1, "stale snapshot health is not applied");
 
   // Sprites load and frames render asynchronously: wait for paint instead of sampling once.
-  await page
+  const canvas = await page
     .waitForFunction(
       () => {
         // !: the overlay page always has the #stage canvas with a 2d context
@@ -297,24 +297,15 @@ try {
           d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data; // !: a canvas gives a 2d context
         let painted = 0;
         // !: i stays below the pixel data's length
-        for (let i = 3; i < d.length; i += 4) if (d[i]! > 0 && ++painted > 500) return true;
-        return false;
+        for (let i = 3; i < d.length; i += 4) if (d[i]! > 0) painted++;
+        return painted > 500 && [c.width, c.height, getComputedStyle(document.body).backgroundColor];
       },
       null,
       { timeout: 6000 },
     )
-    .catch(() => {});
-  const canvas = await page.evaluate(() => {
-    // !: the overlay page always has the #stage canvas with a 2d context
-    const canvas = document.querySelector<HTMLCanvasElement>("#stage")!;
-    const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data; // !: a canvas gives a 2d context
-    let painted = 0;
-    // !: i stays below the pixel data's length
-    for (let i = 3; i < pixels.length; i += 4) if (pixels[i]! > 0) painted++;
-    return [canvas.width, canvas.height, getComputedStyle(document.body).backgroundColor, painted] as const; // as: a fixed tuple for the asserts
-  });
-  assert.deepEqual(canvas.slice(0, 3), [1280, 720, "rgba(0, 0, 0, 0)"]);
-  assert.ok(canvas[3] > 500, "ranked characters and arena bars render onto a transparent canvas");
+    .then((handle) => handle.jsonValue())
+    .catch(() => assert.fail("ranked characters and arena bars render onto a transparent canvas"));
+  assert.deepEqual(canvas, [1280, 720, "rgba(0, 0, 0, 0)"]);
 
   await page.evaluate(() => window.__arenaSockets[0]!.close()); // !: the wait above saw this page's one arena socket
   await page.waitForFunction(() => window.__arenaSockets.length === 2, null, { timeout: 6000 });
@@ -458,27 +449,16 @@ try {
 
   // Two duels at once: each keeps its own line in the top banner, and a bystander standing on the meeting
   // point walks clear of the fighters so nameplates don't run together.
-  const cast = [
-    ...initial.players,
-    {
-      userId: "303",
-      username: "cy",
-      displayName: "Cy",
-      avatar: "player",
-      color: "#ffaa22",
-      elo: 1000,
-      registered: true,
-    },
-    {
-      userId: "404",
-      username: "dot",
-      displayName: "Dot",
-      avatar: "player",
-      color: "#22aaff",
-      elo: 1000,
-      registered: true,
-    },
-  ];
+  const viewer = (userId: string, displayName: string, color: string) => ({
+    userId,
+    username: displayName.toLowerCase(),
+    displayName,
+    avatar: "player",
+    color,
+    elo: 1000,
+    registered: true,
+  });
+  const cast = [...initial.players, viewer("303", "Cy", "#ffaa22"), viewer("404", "Dot", "#22aaff")];
   const crowd = await openOverlay(ARENA, {
     "**/api/state/**": (route) => route.fulfill(json({ ...initial, players: cast, duels: [] })),
     "**/api/catalog/**": (route) => route.fulfill(json([])),

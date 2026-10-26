@@ -117,8 +117,8 @@ export function resize() {
   const ratio = Math.min(devicePixelRatio || 1, 2);
   ctx.canvas.width = Math.round(width * ratio);
   ctx.canvas.height = Math.round(height * ratio);
-  ctx.canvas.style.width = width + "px";
-  ctx.canvas.style.height = height + "px";
+  ctx.canvas.style.width = `${width}px`;
+  ctx.canvas.style.height = `${height}px`;
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.imageSmoothingEnabled = false;
   for (const p of players.values()) p.x = Math.max(size / 2, Math.min(width - size / 2, p.x));
@@ -140,14 +140,12 @@ export async function configure() {
           .then((j) => String(j.defaultChannel || ""))
           .catch(() => "")) ||
     "demo";
-  storageKey = "mini-chat:cosmetics:" + channel;
+  storageKey = `mini-chat:cosmetics:${channel}`;
   try {
     const saved = parseCosmeticSettings(localStorage.getItem(storageKey));
     if (saved.ok) settings = saved.value;
     else warnOnce("the saved chat looks", saved.error);
-  } catch {
-    /* OBS may disable local storage. */
-  }
+  } catch {} // OBS may disable local storage
 }
 export function persist() {
   // Bound storage so chat activity cannot grow an unlimited local profile file.
@@ -155,9 +153,7 @@ export function persist() {
   for (const key of keys.slice(0, Math.max(0, keys.length - 1000))) delete settings[key];
   try {
     localStorage.setItem(storageKey, JSON.stringify(settings));
-  } catch {
-    /* Storage is optional. */
-  }
+  } catch {} // storage is optional
 }
 
 export const players = new Map<string, Player>();

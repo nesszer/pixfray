@@ -60,9 +60,8 @@ function addSprite(id: string, item: CatalogItem) {
     fps: Math.max(1, Math.min(30, Number(item.fps) || 8)),
   };
   image.onload = () => {
-    if (!sprite.frames.length && image.naturalWidth && image.naturalHeight) {
+    if (!sprite.frames.length && image.naturalWidth && image.naturalHeight)
       sprite.frames = [{ x: 0, y: 0, w: image.naturalWidth, h: image.naturalHeight }];
-    }
     sprite.loaded = sprite.frames.length > 0;
     if (sprite.loaded) sprite.fit = bulkFit(image, sprite.frames[0]!); // loaded means frames is not empty
   };
@@ -88,7 +87,7 @@ export async function addCatalog(url: string) {
 // Custom characters can be uploaded while OBS is running; fetch the merged catalog again when one is missing.
 export async function loadArenaCatalog() {
   lastCatalogFetch = Date.now();
-  await addCatalog("/api/catalog/" + encodeURIComponent(channel)); // on failure the bundled sprite set stays
+  await addCatalog(`/api/catalog/${encodeURIComponent(channel)}`); // on failure the bundled sprite set stays
 }
 
 // Uploaded pets are PNGs served by /api/pets/<channel>/<id>; built-in pets are drawn in code (src/served/pets.ts).
@@ -97,7 +96,7 @@ export function petArt(id: string) {
   if (!/^p-[a-z0-9-]{1,40}$/.test(id)) return id;
   if (!petImages.has(id)) {
     const img = new Image();
-    img.src = "/api/pets/" + encodeURIComponent(channel) + "/" + id;
+    img.src = `/api/pets/${encodeURIComponent(channel)}/${id}`;
     petImages.set(id, { image: img });
   }
   return petImages.get(id);
