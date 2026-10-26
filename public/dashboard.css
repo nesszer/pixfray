@@ -59,6 +59,15 @@
   --chart-5: #7d6c55;
   --chart-6: #8fbf9a;
   color-scheme: dark;
+  --bg: #0d0906;
+  --surface: #18110b;
+  --raised: #22180f;
+  --topbar: #0d0906;
+  --panel: rgb(13 9 6 / 0.86);
+  --border: #33261a;
+  --accent-soft: #2a2013;
+  /* four gold corner brackets; border-image stretches the empty edges, so the corners stay 10px at any size */
+  --lock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30' width='30' height='30'%3E%3Cpath d='M1 10V1h9M20 1h9v9M29 20v9h-9M10 29H1v-9' fill='none' stroke='%23c9a45c' stroke-width='2'/%3E%3C/svg%3E");
 }
 
 /* ---------- base ---------- */
@@ -70,6 +79,7 @@
 html {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: rgb(201 164 92 / 0.25);
+  scroll-padding-top: var(--space-4);
 }
 a,
 button,
@@ -87,6 +97,8 @@ body {
   font: 400 var(--text-md)/1.55 var(--font-sans);
   font-feature-settings: "tnum" 0;
   -webkit-font-smoothing: antialiased;
+  position: relative;
+  isolation: isolate;
 }
 h1,
 h2,
@@ -199,6 +211,8 @@ video {
 }
 .section > h2:first-child {
   margin-top: 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
 }
 .stack > * + * {
   margin-top: var(--space-4);
@@ -318,6 +332,8 @@ video {
 .table-wrap {
   width: 100%;
   overflow-x: auto;
+  /* .table-wrap is positioned so absolutely placed children (sr-only headers) scroll with it instead of widening the page */
+  position: relative;
 }
 table.data {
   width: 100%;
@@ -499,6 +515,50 @@ textarea {
   .table-wrap > table.data td:first-child {
     min-width: 160px;
   }
+  /* rank columns are short numbers; skip the 160px first-column minimum on phones */
+  .table-wrap > table.data td.num:first-child {
+    min-width: 0;
+  }
+  /* tables of explanations wrap their text on phones instead of scrolling it out of view */
+  .table-wrap > table.data.prose-table {
+    width: 100%;
+  }
+  .table-wrap > table.data.prose-table td:first-child {
+    min-width: 0;
+  }
+  table.data.prose-table th {
+    white-space: normal;
+  }
+  /* leaderboard: drop the Character column so rank, viewer, Elo, wins and losses fit without sideways scrolling */
+  #leaderboard .col-char {
+    display: none;
+  }
+  /* mod tables: keep who, state and the row's button on screen; the detail columns are on wider screens */
+  table#duels :is(th, td):nth-child(n + 3):nth-child(-n + 5),
+  table#players :is(th, td):nth-child(n + 3):nth-child(-n + 6),
+  table#ranks :is(th, td):nth-child(n + 4):nth-child(-n + 5),
+  table#points-redemptions :is(th, td):nth-child(odd):not(:last-child) {
+    display: none;
+  }
+  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) {
+    width: 100%;
+  }
+  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) td:first-child {
+    min-width: 0;
+  }
+  #points-table td:first-child,
+  #points-redemptions td {
+    white-space: normal;
+  }
+  .die-strip li:nth-child(3) {
+    border-left: 0;
+  }
+  .channel-go {
+    flex: 1 0 100%;
+  }
+  .stage-figure .stage {
+    aspect-ratio: 1 / 1;
+  }
 }
 @media print {
   .page {
@@ -518,10 +578,6 @@ textarea {
 [hidden] {
   display: none !important;
 }
-/* .table-wrap is positioned so absolutely placed children (sr-only headers) scroll with it instead of widening the page */
-.table-wrap {
-  position: relative;
-}
 .sr-only {
   position: absolute;
   width: 1px;
@@ -530,15 +586,8 @@ textarea {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
-html {
-  scroll-padding-top: var(--space-4);
-}
 .btn-primary {
   font-weight: 650;
-}
-.section > h2:first-child {
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border);
 }
 .page > .section:first-child {
   margin-top: 0;
@@ -574,6 +623,10 @@ td code {
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-4);
   font-size: var(--text-sm);
+  /* header: brand left, links and sign-in on the right, like the intro's HUD */
+  margin-left: auto;
+  /* the header nav matches the intro's: plain links, then "Pick your fighter" as a gold-edged button */
+  align-items: center;
 }
 .topbar nav a {
   color: var(--text-2);
@@ -647,6 +700,8 @@ fieldset {
 legend {
   margin-bottom: var(--space-2);
   padding: 0;
+  font: 650 var(--text-md)/1.3 var(--font-display);
+  color: var(--text);
 }
 input[type="radio"],
 input[type="checkbox"] {
@@ -692,6 +747,9 @@ input[type="color"] {
 }
 .hero-copy h1 {
   margin-bottom: var(--space-3);
+  font-size: 52px;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
 }
 .hero-copy .how {
   margin-top: var(--space-4);
@@ -806,6 +864,10 @@ input[type="color"] {
   cursor: pointer;
   font-weight: 500;
   text-align: center;
+
+  /* picks: selected tiles lock on with corners instead of a filled frame */
+  position: relative;
+  background: var(--panel);
 }
 .char-option input:focus-visible + label {
   outline: 2px solid var(--accent);
@@ -813,6 +875,7 @@ input[type="color"] {
 }
 .char-option input:disabled + label {
   cursor: default;
+  opacity: 0.7;
 }
 .char-option .tag {
   font-weight: 400;
@@ -924,9 +987,6 @@ fieldset .status:empty {
 }
 .points-link {
   font-weight: 600;
-}
-.char-option input:disabled + label {
-  opacity: 0.7;
 }
 
 /* upgrades: one row per stat, name and effect on the left, − value + on the right */
@@ -1143,6 +1203,9 @@ details.history[open] > summary {
   gap: var(--space-3);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
+
+  /* Stream setup steps: the step list spans the content width so tables can use it; prose and fields stay at reading width */
+  max-width: none;
 }
 .checklist > li:focus {
   outline: none;
@@ -1222,6 +1285,29 @@ details.history[open] > summary {
   .checklist > li {
     grid-template-columns: 1fr;
     gap: var(--space-1);
+  }
+  .step-grid > li:last-child {
+    padding-bottom: 0;
+  }
+  .topbar nav {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    flex: 1 1 0;
+    min-width: 0;
+    scrollbar-width: none;
+  }
+  .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/start/"] {
+    display: inline-flex;
+  }
+  .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/intro/"] {
+    display: none;
+  }
+  /* phones: /admin drops "Pick your fighter" from the bar, so the wordmark and links never touch */
+  .admin-page .topbar nav .nav-cta {
+    display: none;
+  }
+  .admin-page .topbar nav a#dev-link {
+    display: none;
   }
 }
 
@@ -1438,6 +1524,153 @@ html:has(.config-bar.dirty) {
   .changelog .page-index {
     display: none;
   }
+  /* phones: the sticky bar shows the 3D fighter beside the on-stream view */
+  .hero-card.has-3d {
+    background: var(--bg);
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .hero-card.has-3d .showcase {
+    aspect-ratio: auto;
+    min-height: 0;
+    grid-area: show;
+    height: 232px;
+  }
+  .hero-card.has-3d .showcase::after {
+    inset: 4px;
+  }
+  .hero-card.has-3d .showcase-tag {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+  }
+  .hero-card.has-3d .showcase-tag .hint-turn {
+    display: none;
+  }
+  /* the caption gets its own line so "Adventurer" never truncates; the button sits under it */
+  .hero-card.has-3d .preview-bar {
+    gap: var(--space-1);
+    flex-wrap: nowrap;
+  }
+  .hero-card.has-3d .preview-bar .caption {
+    flex: 1 0 100%;
+    font-size: var(--text-xs);
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .hero-card.has-3d .preview-bar .btn {
+    justify-content: center;
+  }
+  .hero-card .signin-hint {
+    display: none;
+  }
+  .hero-card.has-3d .points-link:not([hidden]) + .toolbar {
+    margin: 0;
+  }
+  .topbar nav a {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .hero-card.has-3d > :not(.showcase):not(.toolbar):not(:empty) {
+    margin-top: var(--space-2);
+  }
+  /* keyboard focus and scrolled-to items stay clear of the fixed Save bar */
+  html:has(.hero-card.has-3d) {
+    scroll-padding-bottom: 88px;
+  }
+  .hero-card.has-3d .preview {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .hero-card.has-3d .stage-canvas {
+    height: 56px;
+  }
+  /* phones: once you scroll into the picker the stuck preview becomes a short strip (dashboard.ts compactPreview) */
+  html.compact .hero-card.has-3d .preview,
+  html.compact .hero-card.has-3d .points-link {
+    display: none;
+  }
+  /* the Save bar steps aside while scrolling down and on Ranks and Rules (dashboard.ts tuckSaveBar) */
+  html.bar-away .hero-card.has-3d .toolbar {
+    transform: translateY(110%);
+  }
+  /* with the preview compact, the tabs stick right under it so switching sections never needs a scroll back up */
+  html.compact .hero-pick .tabs {
+    position: sticky;
+    z-index: 2;
+    top: var(--stuck-h, 0px);
+    background: var(--bg);
+    margin-inline: calc(-1 * var(--space-4));
+    padding-inline: var(--space-4);
+  }
+  .hero-card.has-3d .toolbar::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    height: 24px;
+    background: linear-gradient(to top, rgb(12 9 7 / 0.8), transparent);
+    pointer-events: none;
+  }
+  body:has(.hero-card.has-3d) {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
+  }
+  /* phones: a taller pinned stage, and the drag hint while it is full size */
+  html:not(.compact) .hero-card.has-3d .showcase-tag .hint-turn {
+    display: inline;
+  }
+  /* a tucked-away Save bar is gone, not just moved, so it never sits over content */
+  html:is(.bar-away, .at-top) .hero-card.has-3d .toolbar {
+    visibility: hidden;
+    transition:
+      transform 0.2s ease-out,
+      visibility 0s 0.2s;
+  }
+  /* picker, phones: the live arena is a banner over the heading, with the top fighter standing in it */
+  .landing.is-live .landing-inner {
+    padding-top: 272px;
+  }
+  /* the Save bar is there from the first screen; it only steps aside while scrolling down */
+  html.at-top .hero-card.has-3d .toolbar {
+    transform: none;
+  }
+  html.at-top:not(.bar-away) .hero-card.has-3d .toolbar {
+    visibility: visible;
+    transition: transform 0.2s ease-out;
+  }
+  .hero-card.has-3d .preview.is-playing .preview-label {
+    display: block;
+    position: absolute;
+    top: auto;
+    bottom: 108px;
+    left: 10px;
+    color: var(--text-2);
+  }
+  html.compact .hero-card.has-3d .preview:not(.is-playing) {
+    display: none;
+  }
+  html.compact .hero-card.has-3d .preview.is-playing {
+    display: block;
+  }
+  html.compact .hero-card.has-3d .preview.is-playing .preview-bar {
+    display: none;
+  }
+  html {
+    scroll-padding-bottom: 72px;
+  }
+  .showcase .readout span {
+    display: none;
+  }
+  html[data-tab="ranks"] .hero-card.has-3d,
+  html[data-tab="rules"] .hero-card.has-3d {
+    display: none;
+  }
 }
 @media (max-width: 760px) {
   .topbar-inner {
@@ -1463,41 +1696,6 @@ html:has(.config-bar.dirty) {
   }
   .tabs [role="tab"] {
     margin: 0;
-  }
-  /* rank columns are short numbers; skip the 160px first-column minimum on phones */
-  .table-wrap > table.data td.num:first-child {
-    min-width: 0;
-  }
-  /* tables of explanations wrap their text on phones instead of scrolling it out of view */
-  .table-wrap > table.data.prose-table {
-    width: 100%;
-  }
-  .table-wrap > table.data.prose-table td:first-child {
-    min-width: 0;
-  }
-  table.data.prose-table th {
-    white-space: normal;
-  }
-  /* leaderboard: drop the Character column so rank, viewer, Elo, wins and losses fit without sideways scrolling */
-  #leaderboard .col-char {
-    display: none;
-  }
-  /* mod tables: keep who, state and the row's button on screen; the detail columns are on wider screens */
-  table#duels :is(th, td):nth-child(n + 3):nth-child(-n + 5),
-  table#players :is(th, td):nth-child(n + 3):nth-child(-n + 6),
-  table#ranks :is(th, td):nth-child(n + 4):nth-child(-n + 5),
-  table#points-redemptions :is(th, td):nth-child(odd):not(:last-child) {
-    display: none;
-  }
-  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) {
-    width: 100%;
-  }
-  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) td:first-child {
-    min-width: 0;
-  }
-  #points-table td:first-child,
-  #points-redemptions td {
-    white-space: normal;
   }
   .stat .value {
     font-size: var(--text-xl);
@@ -1534,11 +1732,6 @@ html:has(.config-bar.dirty) {
 #se-table .btn {
   white-space: nowrap;
 }
-
-/* Stream setup steps: the step list spans the content width so tables can use it; prose and fields stay at reading width */
-.checklist > li {
-  max-width: none;
-}
 .setup-steps .stack > :not(.table-wrap) {
   max-width: var(--measure);
 }
@@ -1566,21 +1759,6 @@ html:has(.config-bar.dirty) {
 }
 
 /* ---------- night arena (matches /intro): the scene behind the header, HUD lines, lock-on corners ---------- */
-:root {
-  --bg: #0d0906;
-  --surface: #18110b;
-  --raised: #22180f;
-  --topbar: #0d0906;
-  --panel: rgb(13 9 6 / 0.86);
-  --border: #33261a;
-  --accent-soft: #2a2013;
-  /* four gold corner brackets; border-image stretches the empty edges, so the corners stay 10px at any size */
-  --lock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30' width='30' height='30'%3E%3Cpath d='M1 10V1h9M20 1h9v9M29 20v9h-9M10 29H1v-9' fill='none' stroke='%23c9a45c' stroke-width='2'/%3E%3C/svg%3E");
-}
-body {
-  position: relative;
-  isolation: isolate;
-}
 body::before {
   content: "";
   position: absolute;
@@ -1606,19 +1784,11 @@ body::before {
   width: 20px;
   height: 20px;
   flex: none;
+  fill: var(--accent);
 }
 .hero {
   background: none;
   border-bottom: 1px solid var(--border);
-}
-.hero-copy h1 {
-  font-size: 52px;
-  line-height: 1.05;
-  letter-spacing: -0.015em;
-}
-legend {
-  font: 650 var(--text-md)/1.3 var(--font-display);
-  color: var(--text);
 }
 .char-option input:checked + label::after,
 .build[aria-pressed="true"]::after {
@@ -1628,12 +1798,6 @@ legend {
   border: 10px solid transparent;
   border-image: var(--lock) 10;
   pointer-events: none;
-}
-
-/* picks: selected tiles lock on with corners instead of a filled frame */
-.char-option label {
-  position: relative;
-  background: var(--panel);
 }
 .char-option input:checked + label {
   border-color: var(--border-strong);
@@ -1807,6 +1971,10 @@ body:has(.landing:not([hidden]))::before {
 .landing .channel-list li {
   max-width: none;
   border-bottom: 1px solid var(--border-strong);
+  /* picker rows answer the pointer: a short lift and a gold edge */
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
 }
 .channel {
   position: relative;
@@ -1819,10 +1987,6 @@ body:has(.landing:not([hidden]))::before {
 .channel-name {
   font: 650 var(--text-xl)/1.2 var(--font-display);
   overflow-wrap: anywhere;
-}
-.channel-go {
-  font-size: var(--text-sm);
-  white-space: nowrap;
 }
 .channel-go::after {
   content: " →";
@@ -1874,42 +2038,6 @@ body:has(.landing:not([hidden]))::before {
   .hero-copy h1 {
     font-size: 36px;
   }
-  /* phones: the sticky bar shows the 3D fighter beside the on-stream view */
-  .hero-card.has-3d {
-    background: var(--bg);
-  }
-  .hero-card.has-3d .showcase {
-    aspect-ratio: auto;
-    min-height: 0;
-  }
-  .hero-card.has-3d .showcase::after {
-    inset: 4px;
-  }
-  .hero-card.has-3d .showcase-tag {
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
-  }
-  .hero-card.has-3d .showcase-tag .hint-turn {
-    display: none;
-  }
-  /* the caption gets its own line so "Adventurer" never truncates; the button sits under it */
-  .hero-card.has-3d .preview-bar {
-    gap: var(--space-1);
-  }
-  .hero-card.has-3d .preview-bar .caption {
-    flex: 1 0 100%;
-    font-size: var(--text-xs);
-  }
-  .hero-card.has-3d .preview-bar .btn {
-    justify-content: center;
-  }
-  .hero-card.has-3d .toolbar {
-    justify-self: end;
-  }
-  .hero-card .signin-hint {
-    display: none;
-  }
   .upgrade .btn {
     min-width: 40px;
     min-height: 40px;
@@ -1941,10 +2069,6 @@ body:has(.landing:not([hidden]))::before {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   counter-reset: step;
 }
-.step-grid > li {
-  counter-increment: step;
-  color: var(--text-2);
-}
 .step-grid > li::before {
   content: counter(step);
   font-variant-numeric: tabular-nums;
@@ -1953,6 +2077,13 @@ body:has(.landing:not([hidden]))::before {
 .step-grid strong {
   display: block;
   color: var(--text);
+  font-size: var(--text-lg);
+  line-height: 1.3;
+  margin-bottom: var(--space-2);
+  /* /start: step titles use the display face like every other heading */
+  font-family: var(--font-display);
+  font-weight: 650;
+  letter-spacing: 0;
 }
 /* /admin signed out: what's locked on the left, what's inside on the right, as one panel */
 .gate {
@@ -1964,6 +2095,10 @@ body:has(.landing:not([hidden]))::before {
   border: 1px solid rgb(201 164 92 / 0.45);
   border-radius: var(--radius);
   position: relative;
+
+  /* admin gate: on the page grid, square markers replaced by gold rules */
+  margin: var(--space-7) 0 var(--space-8);
+  max-width: none;
 }
 .gate::after {
   content: "";
@@ -2002,12 +2137,19 @@ body:has(.landing:not([hidden]))::before {
   content: "";
   position: absolute;
   left: 0;
+  top: 0.75em;
+  width: 10px;
+  height: 0;
+  border: 0;
+  border-top: 2px solid var(--trim);
+  border-radius: 0;
 }
 @media (max-width: 760px) {
   .gate {
     grid-template-columns: minmax(0, 1fr);
     padding: var(--space-5);
     gap: var(--space-5);
+    margin: var(--space-5) 0 var(--space-6);
   }
 }
 
@@ -2043,6 +2185,9 @@ body:has(.landing:not([hidden]))::before {
 .channel-crew {
   display: flex;
   flex: none;
+
+  /* /play/: every row has the same avatar slot; the open spot is a dimmed fighter */
+  justify-content: flex-start;
 }
 .channel-crew canvas {
   width: 48px;
@@ -2072,11 +2217,8 @@ body:has(.landing:not([hidden]))::before {
 @media (max-width: 480px) {
   .step-grid {
     grid-template-columns: minmax(0, 1fr);
+    margin-left: var(--space-3);
   }
-}
-/* header: brand left, links and sign-in on the right, like the intro's HUD */
-.topbar nav {
-  margin-left: auto;
 }
 .topbar nav + .who {
   margin-left: 0;
@@ -2146,9 +2288,6 @@ body:has(.landing:not([hidden]))::before {
   .die-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .die-strip li:nth-child(3) {
-    border-left: 0;
-  }
   .die-strip li:nth-child(n + 3) {
     border-top: 1px solid var(--border-strong);
   }
@@ -2156,35 +2295,17 @@ body:has(.landing:not([hidden]))::before {
     white-space: normal;
   }
 }
-
-/* admin gate: on the page grid, square markers replaced by gold rules */
-.gate {
-  margin: var(--space-7) 0 var(--space-8);
-}
-.gate-list li::before {
-  top: 0.75em;
-  width: 10px;
-  height: 0;
-  border: 0;
-  border-top: 2px solid var(--trim);
-  border-radius: 0;
-}
-@media (max-width: 760px) {
-  .gate {
-    margin: var(--space-5) 0 var(--space-6);
-  }
-}
-
-/* /play/: every row has the same avatar slot; the open spot is a dimmed fighter */
-.channel-crew {
-  justify-content: flex-start;
-}
 .channel-go {
+  font-size: var(--text-sm);
+  white-space: nowrap;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--trim);
   border-radius: var(--radius-sm);
   color: var(--accent-hover);
   font-weight: 600;
+  /* Picker: both row actions share one width, so their edges line up */
+  min-width: 168px;
+  text-align: center;
 }
 .channel:hover .channel-go,
 .channel:focus-visible .channel-go {
@@ -2202,32 +2323,18 @@ body:has(.landing:not([hidden]))::before {
     height: 40px;
     margin-right: -16px;
   }
-  .channel-go {
-    flex: 1 0 100%;
-  }
 }
 
 /* phones: the 3D fighter fills the sticky card's width; under it, the on-stream view beside the save button */
 @media (max-width: 900px) {
-  .hero-card.has-3d .showcase {
-    grid-area: show;
-  }
-  .hero-card.has-3d .preview-bar .caption {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  .hero-card.has-3d .preview-bar .btn,
-  .hero-card.has-3d .win-link {
-    text-align: center;
-  }
   /* tabs keep the HUD underline on phones too, at a 44px touch height */
   .tabs {
     gap: var(--space-4);
     border-bottom: 1px solid var(--border);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
   .tabs [role="tab"] {
     padding: 0 2px;
@@ -2236,6 +2343,7 @@ body:has(.landing:not([hidden]))::before {
     border-radius: 0;
     background: none;
     font: 650 var(--text-md)/1 var(--font-display);
+    flex: 0 0 auto;
   }
   .tabs [role="tab"][aria-selected="true"] {
     background: none;
@@ -2254,6 +2362,13 @@ body:has(.landing:not([hidden]))::before {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  margin-top: var(--space-2);
+  /* /start: the mock-ups read at body size; the step-3 command shows in full */
+  font-size: var(--text-sm);
+  /* /start: every step starts at the same line; the optional tag sits in its heading */
+  align-content: start;
+  /* /start mocks: labels at body contrast */
+  color: var(--text-2);
 }
 .step-mock .field {
   padding: 4px var(--space-2);
@@ -2261,6 +2376,10 @@ body:has(.landing:not([hidden]))::before {
   border-radius: var(--radius-sm);
   color: var(--text);
   overflow: hidden;
+  white-space: normal;
+  text-overflow: clip;
+  font-family: var(--font-mono);
+  line-height: 1.5;
 }
 .step-mock .row {
   display: flex;
@@ -2311,34 +2430,23 @@ body:has(.landing:not([hidden]))::before {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-5);
   }
-  .stage-figure .stage {
-    aspect-ratio: 1 / 1;
-  }
 }
 /* admin signed out: the gate spans the page grid, with no rule floating above it */
 body:has(#gate:not([hidden])) .page-header {
   border-bottom: 0;
   margin-bottom: 0;
 }
-.gate {
-  max-width: none;
-}
 /* phones: tabs and type filters are one scrolling row, like the desktop underline */
 @media (max-width: 900px) {
-  .tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-  }
-  .tabs [role="tab"] {
-    flex: 0 0 auto;
-  }
   .filter-buttons {
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
     padding-bottom: 2px;
+    /* the chip row fades over a full chip width, so it plainly scrolls */
+    mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
+    padding-right: var(--space-8);
   }
   .filter-buttons .btn {
     flex: none;
@@ -2396,6 +2504,8 @@ body:has(#gate:not([hidden])) > main.page {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  min-height: 0;
+  padding-block: var(--space-7) var(--space-6);
 }
 body:has(#gate:not([hidden])) .gate {
   margin: var(--space-6) 0 0;
@@ -2422,13 +2532,8 @@ body:has(#gate:not([hidden])) .gate {
 }
 /* phones: a big 3D fighter with the on-stream view as a small inset in its corner; Save is a bar fixed to the bottom */
 @media (max-width: 900px) {
-  .hero-card.has-3d {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .hero-card.has-3d .points-link:not([hidden]) + .toolbar {
-    margin: 0;
-  }
   .hero-card.has-3d .toolbar {
+    justify-self: end;
     position: fixed;
     z-index: 3;
     left: 0;
@@ -2439,17 +2544,15 @@ body:has(#gate:not([hidden])) .gate {
     max-width: none;
     margin: 0;
     padding: var(--space-2) var(--space-4) calc(var(--space-2) + env(safe-area-inset-bottom));
-  }
-  .hero-card.has-3d .toolbar > .btn {
-    width: 100%;
-    height: auto;
-    white-space: nowrap;
+    transition: transform 0.2s ease-out;
   }
 }
 @media (max-width: 900px) {
   .hero-card.has-3d .preview-label {
     top: 4px;
     left: var(--space-2);
+    position: static;
+    display: block;
   }
 }
 .text-link {
@@ -2465,6 +2568,8 @@ body:has(#gate:not([hidden])) .gate {
   gap: 0;
 }
 .step-grid > li {
+  counter-increment: step;
+  color: var(--text-2);
   position: relative;
   border-top: 2px solid var(--border-strong);
   padding: var(--space-5) var(--space-5) 0 0;
@@ -2475,26 +2580,11 @@ body:has(#gate:not([hidden])) .gate {
   position: absolute;
   left: 0;
 }
-.step-grid strong {
-  font-size: var(--text-lg);
-  line-height: 1.3;
-  margin-bottom: var(--space-2);
-}
-.step-mock {
-  margin-top: var(--space-2);
-}
-.step-mock .field {
-  white-space: normal;
-  text-overflow: clip;
-}
 @media (max-width: 480px) {
   .step-grid > li {
     border-top: 0;
     border-left: 2px solid var(--border-strong);
     padding: 0 0 var(--space-6) var(--space-6);
-  }
-  .step-grid > li:last-child {
-    padding-bottom: 0;
   }
 }
 .perm-lists ul.marks {
@@ -2527,6 +2617,12 @@ body:has(#gate:not([hidden])) .gate {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   display: grid;
+  /* the locked gate: a quiet look at the real controls, centred against the sign-in */
+  gap: var(--space-3);
+  /* the gate's preview is plainly not live */
+  pointer-events: none;
+  user-select: none;
+  opacity: 1;
 }
 .gate-peek .peek-tabs {
   display: flex;
@@ -2537,12 +2633,17 @@ body:has(#gate:not([hidden])) .gate {
 }
 .gate-peek .peek-tabs .on {
   color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--text-3);
 }
 .gate-peek .peek-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  font-size: var(--text-sm);
+  /* the mod gate: the locked preview reads clearly, it is the picture of what signing in opens */
+  color: var(--text);
+  filter: none;
 }
 .gate-peek .switch {
   width: 30px;
@@ -2559,6 +2660,7 @@ body:has(#gate:not([hidden])) .gate {
   width: 10px;
   height: 10px;
   border-radius: 2px;
+  background: var(--text-3);
 }
 .gate-peek .bar {
   flex: 0 0 55%;
@@ -2570,11 +2672,6 @@ body:has(#gate:not([hidden])) .gate {
   flex-basis: 35%;
 }
 @media (max-width: 900px) {
-  .topbar nav a {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-  }
   .tabs [role="tab"],
   .filter-buttons button {
     min-height: 44px;
@@ -2586,6 +2683,7 @@ body:has(#gate:not([hidden])) .gate {
     grid-template-areas: "crew text" "crew go";
     align-items: center;
     gap: var(--space-2) var(--space-3);
+    grid-template-columns: 88px minmax(0, 1fr);
   }
   .landing .channel-crew {
     grid-area: crew;
@@ -2604,6 +2702,12 @@ body:has(#gate:not([hidden])) .gate {
   .landing-inner {
     padding-top: 196px;
   }
+  .landing .channel-crew .thumb.is-open {
+    opacity: 0.92;
+  }
+  .landing .channel.is-shown .channel-crew::after {
+    display: none;
+  } /* phones show one fighter in the banner, so no row label */
 }
 .landing .channel-go {
   gap: var(--space-1);
@@ -2611,15 +2715,6 @@ body:has(#gate:not([hidden])) .gate {
 @media (max-width: 900px) {
   .hero-card.has-3d {
     row-gap: 0;
-  }
-  .hero-card.has-3d > :not(.showcase):not(.toolbar):not(:empty) {
-    margin-top: var(--space-2);
-  }
-}
-/* keyboard focus and scrolled-to items stay clear of the fixed Save bar */
-@media (max-width: 900px) {
-  html:has(.hero-card.has-3d) {
-    scroll-padding-bottom: 88px;
   }
 }
 
@@ -2646,6 +2741,8 @@ body:has(#gate:not([hidden])) .gate {
 .item-grid .char-option canvas.vox {
   width: 80px;
   height: 80px;
+  /* character tiles: the voxel render is larger and stands on its own shadow, so it reads as the same model as the stage */
+  filter: drop-shadow(0 6px 4px rgb(0 0 0 / 0.6));
 }
 @media (prefers-reduced-motion: no-preference) {
   .char-option canvas.vox {
@@ -2655,32 +2752,23 @@ body:has(#gate:not([hidden])) .gate {
   .char-option input:checked + label canvas.vox {
     transform: translateY(-3px) scale(1.06);
   }
+  [role="tabpanel"]:not([hidden]) {
+    animation: panel-in 0.2s ease-out;
+  }
+  .char-option label {
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease;
+  }
 }
 /* phone: the on-stream strip sits under the 3D view as one slim row, not over it; the Save bar is slimmer */
 @media (max-width: 900px) {
   .hero-card.has-3d {
     grid-template-areas: "show" "preview" "points" "status" "others" "next";
   }
-  .hero-card.has-3d .showcase {
-    height: 232px;
-  }
-  .hero-card.has-3d .preview {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .hero-card.has-3d .preview-label {
-    position: static;
-    display: block;
-  }
-  .hero-card.has-3d .stage-canvas {
-    height: 56px;
-  }
-  .hero-card.has-3d .preview-bar {
-    flex-wrap: nowrap;
-  }
   .hero-card.has-3d .preview-bar .btn,
   .hero-card.has-3d .win-link {
+    text-align: center;
     flex: none;
     font-size: var(--text-xs);
     min-height: 44px;
@@ -2688,6 +2776,9 @@ body:has(#gate:not([hidden])) .gate {
     align-items: center;
   }
   .hero-card.has-3d .toolbar > .btn {
+    width: 100%;
+    height: auto;
+    white-space: nowrap;
     min-height: 44px;
   }
 }
@@ -2704,17 +2795,6 @@ body:has(#gate:not([hidden])) .gate {
   .topbar .brand {
     min-height: 44px;
   }
-  .topbar nav {
-    flex-wrap: nowrap;
-    white-space: nowrap;
-  }
-}
-/* the locked gate: a quiet look at the real controls, centred against the sign-in */
-.gate-peek {
-  gap: var(--space-3);
-}
-.gate-peek .peek-row {
-  font-size: var(--text-sm);
 }
 .gate-peek .peek-btn {
   padding: 4px var(--space-2);
@@ -2724,6 +2804,8 @@ body:has(#gate:not([hidden])) .gate {
 .gate-peek .peek-link {
   text-decoration: underline;
   text-underline-offset: 3px;
+  /* the gate's preview reads as a picture of the controls: drawn controls, not live ones */
+  color: var(--text-2);
 }
 @media (max-width: 760px) {
   .gate-peek {
@@ -2739,6 +2821,46 @@ body:has(#gate:not([hidden])) .gate {
 @media (min-width: 901px) {
   .hero-grid {
     grid-template-rows: auto 1fr;
+  }
+  .step-mock {
+    height: 144px;
+  }
+  /* builder, desktop: a wider card and a closer stage; the on-stream strip is one slim lane, not a black box */
+  .hero-card.has-3d .preview-label {
+    top: var(--space-2);
+  }
+  .hero-grid:has(.has-3d) {
+    grid-template-columns: minmax(0, 1fr) 500px;
+  }
+  .hero-card.has-3d .signin-hint {
+    display: none;
+  }
+  /* the on-stream lane is tall enough for the sprite, its nameplate and the "On stream" label */
+  .hero-card.has-3d .stage-canvas {
+    height: 104px;
+  }
+  .item-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  #leaderboard td:nth-child(2),
+  #leaderboard .lb-char {
+    white-space: nowrap;
+  }
+  .landing .channel-list {
+    max-width: 560px;
+  }
+  /* Builder Ranks beside the stage: the character column shows the fighter only (its name stays for screen readers and on hover), so every column fits */
+  #leaderboard .lb-char:has(.thumb) > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  #leaderboard th,
+  #leaderboard td {
+    padding-inline: var(--space-2);
   }
 }
 #leaderboard td {
@@ -2783,32 +2905,10 @@ body:has(#gate:not([hidden])) .gate {
 .step-grid > li.optional > .badge {
   margin-bottom: var(--space-2);
 }
-@media (min-width: 901px) {
-  .step-mock {
-    height: 144px;
-  }
-}
 @media (max-width: 480px) {
-  .step-grid {
-    margin-left: var(--space-3);
-  }
   .step-grid > li::before {
     top: -4px;
     left: -17px;
-  }
-}
-/* /start: the mock-ups read at body size; the step-3 command shows in full */
-.step-mock {
-  font-size: var(--text-sm);
-}
-.step-mock .field {
-  font-family: var(--font-mono);
-  line-height: 1.5;
-}
-/* builder, desktop: a wider card and a closer stage; the on-stream strip is one slim lane, not a black box */
-@media (min-width: 901px) {
-  .hero-card.has-3d .preview-label {
-    top: var(--space-2);
   }
 }
 /* phone: the hero is just the title; the rules sit one tab away */
@@ -2825,9 +2925,6 @@ body:has(#gate:not([hidden])) .gate {
 }
 /* tabs: the new panel settles in; tiles answer the pointer */
 @media (prefers-reduced-motion: no-preference) {
-  [role="tabpanel"]:not([hidden]) {
-    animation: panel-in 0.2s ease-out;
-  }
   @keyframes panel-in {
     from {
       opacity: 0;
@@ -2835,11 +2932,6 @@ body:has(#gate:not([hidden])) .gate {
     to {
       opacity: 1;
     }
-  }
-  .char-option label {
-    transition:
-      border-color 0.15s ease,
-      background-color 0.15s ease;
   }
 }
 .char-option label:hover {
@@ -2849,10 +2941,6 @@ body:has(#gate:not([hidden])) .gate {
 /* the signed-out mod gate: copy and preview share a top edge */
 .gate {
   align-items: start;
-}
-.gate-peek .peek-tag {
-  margin-left: auto;
-  border-radius: var(--radius-sm);
 }
 /* the gate: what's inside sits under the sign-in, the preview stands beside it */
 .gate-list {
@@ -2952,30 +3040,8 @@ body:has(#gate:not([hidden])) .gate {
 .table-wrap > table#leaderboard {
   width: 100%;
 }
-/* the gate's preview is plainly not live */
-.gate-peek {
-  pointer-events: none;
-  user-select: none;
-}
 .gate-peek .peek-tabs {
   font-size: var(--text-sm);
-}
-/* phones: the Save bar waits until you scroll into the picker, so the first screen shows the grid it would cover */
-@media (max-width: 900px) {
-  .hero-card.has-3d .toolbar {
-    transition: transform 0.2s ease-out;
-  }
-}
-/* phones: once you scroll into the picker the stuck preview becomes a short strip (dashboard.ts compactPreview) */
-@media (max-width: 900px) {
-  html.compact .hero-card.has-3d .preview,
-  html.compact .hero-card.has-3d .points-link {
-    display: none;
-  }
-}
-/* /start: every step starts at the same line; the optional tag sits in its heading */
-.step-mock {
-  align-content: start;
 }
 .step-grid strong .badge {
   margin-left: var(--space-2);
@@ -3019,11 +3085,6 @@ body:has(#gate:not([hidden])) .gate {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
-.top3 .place {
-  top: var(--space-2);
-  left: var(--space-3);
-  font-variant-numeric: tabular-nums;
-}
 .top3 .thumb canvas.sprite {
   width: 64px;
   height: 64px;
@@ -3049,21 +3110,6 @@ body:has(#gate:not([hidden])) .gate {
     font-size: var(--text-md);
   }
 }
-@media (max-width: 900px) {
-  /* the Save bar steps aside while scrolling down and on Ranks and Rules (dashboard.ts tuckSaveBar) */
-  html.bar-away .hero-card.has-3d .toolbar {
-    transform: translateY(110%);
-  }
-  /* with the preview compact, the tabs stick right under it so switching sections never needs a scroll back up */
-  html.compact .hero-pick .tabs {
-    position: sticky;
-    z-index: 2;
-    top: var(--stuck-h, 0px);
-    background: var(--bg);
-    margin-inline: calc(-1 * var(--space-4));
-    padding-inline: var(--space-4);
-  }
-}
 .nowrap {
   white-space: nowrap;
 }
@@ -3076,6 +3122,12 @@ body:has(#gate:not([hidden])) .gate {
   display: inline-flex;
   align-items: center;
   text-decoration: none;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font: 650 var(--text-sm)/1 var(--font-display);
+  color: var(--text-2);
 }
 .jump a:hover,
 .jump a:focus-visible {
@@ -3138,16 +3190,10 @@ body:has(#gate:not([hidden])) .gate {
   }
   .jump a {
     flex: none;
+    min-height: 44px;
   }
 }
 @media (max-width: 620px) {
-  .landing .channel-crew,
-  .landing .channel-crew:empty {
-    overflow: hidden;
-  }
-  .landing .channel-crew .thumb + .thumb {
-    margin-left: -32px;
-  }
   .landing .channel-crew .thumb:nth-child(n + 3) {
     display: none;
   }
@@ -3162,6 +3208,31 @@ body:has(#gate:not([hidden])) .gate {
   display: block;
   touch-action: pan-y;
   cursor: grab;
+  /* the picker's arena fades into the page instead of ending on a line */
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(
+      to right,
+      transparent 0%,
+      rgba(0, 0, 0, 0.08) 12%,
+      rgba(0, 0, 0, 0.3) 24%,
+      rgba(0, 0, 0, 0.62) 36%,
+      rgba(0, 0, 0, 0.88) 48%,
+      #000 60%
+    ),
+    linear-gradient(to bottom, #000 78%, transparent);
+  -webkit-mask-image:
+    linear-gradient(
+      to right,
+      transparent 0%,
+      rgba(0, 0, 0, 0.08) 12%,
+      rgba(0, 0, 0, 0.3) 24%,
+      rgba(0, 0, 0, 0.62) 36%,
+      rgba(0, 0, 0, 0.88) 48%,
+      #000 60%
+    ),
+    linear-gradient(to bottom, #000 78%, transparent);
 }
 .landing-3d.is-dragging {
   cursor: grabbing;
@@ -3191,6 +3262,12 @@ body:has(#gate:not([hidden])) .gate {
   font-variant-numeric: tabular-nums;
   pointer-events: none;
   text-shadow: 0 1px 2px rgb(0 0 0 / 0.85);
+  /* the lock-on readout sits clear of the moon */
+  left: auto;
+  right: 24px;
+  border-left: 0;
+  border-right: 1px solid var(--accent);
+  text-align: right;
 }
 .showcase .readout b {
   color: var(--text);
@@ -3205,22 +3282,16 @@ body:has(#gate:not([hidden])) .gate {
     display: none;
   }
 }
-@media (max-width: 480px) {
-  .topbar nav {
-    flex: 1 1 0;
-    min-width: 0;
-    scrollbar-width: none;
-  }
-}
-/* the gate's preview reads as a picture of the controls: drawn controls, not live ones */
-.gate-peek .peek-link {
-  color: var(--text-2);
-}
-.gate-peek .switch::after {
-  background: var(--text-3);
-}
 .gate-peek .peek-tag {
+  margin-left: auto;
+  border-radius: var(--radius-sm);
   font-size: var(--text-xs);
+  border: 0;
+  padding: 0;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 /* the sky's moon sits above the locked card instead of half behind it */
 body:has(.gate:not([hidden]))::before {
@@ -3249,11 +3320,23 @@ body:has(.gate:not([hidden]))::before {
 @media (min-width: 761px) {
   .gate-inside {
     align-self: stretch;
+    min-height: 440px;
+    justify-content: flex-end;
   }
 }
 /* /start ends on the next step: the arena scene with the sign-in link over it */
 .ready {
   margin-top: var(--space-8);
+  padding: var(--space-7) 0;
+  border: 0;
+  border-top: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4) var(--space-6);
 }
 .ready h2 {
   font-size: var(--text-2xl);
@@ -3274,6 +3357,8 @@ body:has(.gate:not([hidden]))::before {
 .char-option .tag .price {
   color: var(--accent-hover);
   font-weight: 650;
+  /* a tile's price gets its own line instead of trailing a "·" */
+  display: block;
 }
 /* tap targets: steppers, show-all and the inline rules link reach 44px */
 .upgrade .btn-small,
@@ -3291,19 +3376,6 @@ body:has(.gate:not([hidden]))::before {
   .hero-card.has-3d .toolbar {
     border-top: 1px solid var(--trim);
     background: rgb(12 9 7 / 0.94);
-  }
-  .hero-card.has-3d .toolbar::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 100%;
-    height: 24px;
-    background: linear-gradient(to top, rgb(12 9 7 / 0.8), transparent);
-    pointer-events: none;
-  }
-  body:has(.hero-card.has-3d) {
-    padding-bottom: calc(88px + env(safe-area-inset-bottom));
   }
 }
 /* the phone header keeps the wordmark */
@@ -3331,13 +3403,6 @@ body:has(.gate:not([hidden]))::before {
     margin: 0;
   }
 }
-/* /start mocks: labels at body contrast */
-.step-mock {
-  color: var(--text-2);
-}
-.step-mock .eg {
-  color: var(--text-2);
-}
 /* shop section links: hovering only brightens the word; the gold rule stays on the section in view */
 .jump a:focus-visible {
   outline: 2px solid var(--trim);
@@ -3364,10 +3429,6 @@ body:has(.gate:not([hidden]))::before {
     white-space: nowrap;
     overflow-wrap: normal;
   }
-}
-/* the mod gate: the locked preview reads clearly, it is the picture of what signing in opens */
-.gate-peek .peek-row {
-  color: var(--text);
 }
 /* every page ends on the same quiet footer */
 .site-foot {
@@ -3430,9 +3491,6 @@ body:has(.gate:not([hidden]))::before {
 }
 /* desktop: the preview is the stage. The card frame goes, the arena grows to the window's height and stays in view */
 @media (min-width: 901px) {
-  .hero-grid:has(.has-3d) {
-    grid-template-columns: minmax(0, 1fr) 500px;
-  }
   .fighter-card.has-3d {
     background: none;
     border: 0;
@@ -3441,63 +3499,13 @@ body:has(.gate:not([hidden]))::before {
   .hero-card.has-3d .showcase {
     aspect-ratio: auto;
     border-color: rgb(201 164 92 / 0.45);
-  }
-  .hero-card.has-3d .signin-hint {
-    display: none;
-  }
-}
-/* the lock-on readout sits clear of the moon */
-.showcase .readout {
-  left: auto;
-  right: 24px;
-  border-left: 0;
-  border-right: 1px solid var(--accent);
-  text-align: right;
-}
-/* phones: a taller pinned stage, and the drag hint while it is full size */
-@media (max-width: 900px) {
-  html:not(.compact) .hero-card.has-3d .showcase-tag .hint-turn {
-    display: inline;
-  }
-  /* a tucked-away Save bar is gone, not just moved, so it never sits over content */
-  html:is(.bar-away, .at-top) .hero-card.has-3d .toolbar {
-    visibility: hidden;
-    transition:
-      transform 0.2s ease-out,
-      visibility 0s 0.2s;
+    height: clamp(400px, calc(100vh - 340px), 600px);
   }
 }
 /* small controls read at 14px */
 .filter-buttons button,
 .upgrade .btn-small {
   font-size: var(--text-sm);
-}
-/* the picker's arena fades into the page instead of ending on a line */
-.landing-3d {
-  mask-composite: intersect;
-  -webkit-mask-composite: source-in;
-  mask-image:
-    linear-gradient(
-      to right,
-      transparent 0%,
-      rgba(0, 0, 0, 0.08) 12%,
-      rgba(0, 0, 0, 0.3) 24%,
-      rgba(0, 0, 0, 0.62) 36%,
-      rgba(0, 0, 0, 0.88) 48%,
-      #000 60%
-    ),
-    linear-gradient(to bottom, #000 78%, transparent);
-  -webkit-mask-image:
-    linear-gradient(
-      to right,
-      transparent 0%,
-      rgba(0, 0, 0, 0.08) 12%,
-      rgba(0, 0, 0, 0.3) 24%,
-      rgba(0, 0, 0, 0.62) 36%,
-      rgba(0, 0, 0, 0.88) 48%,
-      #000 60%
-    ),
-    linear-gradient(to bottom, #000 78%, transparent);
 }
 /* /start: mock labels at 14px; the closing band is a plain ruled band, the hero keeps the scene */
 .step-mock .badge,
@@ -3507,18 +3515,6 @@ body:has(.gate:not([hidden]))::before {
 .ready,
 .ready-copy {
   max-width: none;
-}
-.ready {
-  padding: var(--space-7) 0;
-  border: 0;
-  border-top: 1px solid var(--border-strong);
-  border-radius: 0;
-  background: none;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4) var(--space-6);
 }
 .ready p {
   max-width: var(--measure);
@@ -3539,14 +3535,6 @@ body:has(.gate:not([hidden]))::before {
 .jump {
   gap: var(--space-2);
 }
-.jump a {
-  min-height: 40px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  font: 650 var(--text-sm)/1 var(--font-display);
-  color: var(--text-2);
-}
 .jump a[aria-current] {
   border-color: var(--trim);
   border-bottom-color: var(--trim);
@@ -3558,54 +3546,12 @@ body:has(.gate:not([hidden]))::before {
   border-color: var(--text-2);
   color: var(--text);
 }
-@media (max-width: 900px) {
-  .jump a {
-    min-height: 44px;
-  }
-}
-/* a tile's price gets its own line instead of trailing a "·" */
-.char-option .tag .price {
-  display: block;
-}
-@media (min-width: 901px) {
-  /* the on-stream lane is tall enough for the sprite, its nameplate and the "On stream" label */
-  .hero-card.has-3d .stage-canvas {
-    height: 104px;
-  }
-  .hero-card.has-3d .showcase {
-    height: clamp(400px, calc(100vh - 340px), 600px);
-  }
-  .item-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-/* picker, phones: the live arena is a banner over the heading, with the top fighter standing in it */
-@media (max-width: 900px) {
-  .landing-3d {
-    width: 100%;
-    height: 320px;
-    bottom: auto;
-    mask-composite: add;
-    -webkit-mask-composite: source-over;
-  }
-  .landing.is-live .landing-inner {
-    padding-top: 272px;
-  }
-}
 /* mod gate: the card title sits under the page h1, so it is a size smaller; the page ends after the card */
 #gate h2 {
   font-size: var(--text-xl);
 }
-body:has(#gate:not([hidden])) > main.page {
-  min-height: 0;
-  padding-block: var(--space-7) var(--space-6);
-}
 body:has(#gate:not([hidden])) .gate {
   margin-bottom: 0;
-}
-/* the header nav matches the intro's: plain links, then "Pick your fighter" as a gold-edged button */
-.topbar nav {
-  align-items: center;
 }
 .topbar nav a.nav-cta {
   display: inline-flex;
@@ -3656,9 +3602,6 @@ main.page:has(> .ready:last-child) {
 #gate::after {
   content: none;
 }
-.gate-inside {
-  position: relative;
-}
 @media (min-width: 761px) {
   .gate-inside::after {
     content: "";
@@ -3668,14 +3611,6 @@ main.page:has(> .ready:last-child) {
     border-image: var(--lock) 10;
     pointer-events: none;
   }
-}
-.gate-peek .peek-tag {
-  border: 0;
-  padding: 0;
-  color: var(--text-2);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 .gate-peek .peek-tag::before {
   content: "";
@@ -3693,14 +3628,6 @@ main.page:has(> .ready:last-child) {
     border-width: 1px 0;
     border-color: var(--border-strong);
     border-radius: 0;
-  }
-  /* the Save bar is there from the first screen; it only steps aside while scrolling down */
-  html.at-top .hero-card.has-3d .toolbar {
-    transform: none;
-  }
-  html.at-top:not(.bar-away) .hero-card.has-3d .toolbar {
-    visibility: visible;
-    transition: transform 0.2s ease-out;
   }
 }
 /* the picker has one primary action: the first stream's button is filled, the rest stay outlined */
@@ -3731,15 +3658,10 @@ main.page:has(> .ready:last-child) {
 }
 /* /start: the mock example lines read at 14px like the rest of the mock */
 .step-mock .eg {
+  color: var(--text-2);
   font-size: var(--text-sm);
 }
 @media (max-width: 900px) {
-  /* the chip row fades over a full chip width, so it plainly scrolls */
-  .filter-buttons {
-    mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
-    padding-right: var(--space-8);
-  }
   /* the page ends clear of the fixed Save bar */
   body:has(.hero-card.has-3d) .site-foot {
     padding-bottom: calc(88px + env(safe-area-inset-bottom));
@@ -3761,10 +3683,6 @@ main.page:has(> .ready:last-child) {
     font-size: var(--text-md);
     color: var(--text-2);
   }
-}
-/* character tiles: the voxel render is larger and stands on its own shadow, so it reads as the same model as the stage */
-.item-grid .char-option canvas.vox {
-  filter: drop-shadow(0 6px 4px rgb(0 0 0 / 0.6));
 }
 @media (min-width: 901px) {
   .item-grid .char-option canvas.vox {
@@ -3803,9 +3721,15 @@ main.page:has(> .ready:last-child) {
   display: flex;
   margin-top: var(--space-2);
   max-width: 240px;
+  /* upgrade meters: lit gold cells, empty cells a dim gold outline, readable at a glance */
+  gap: 4px;
 }
 .upgrade .meter i {
   flex: 1;
+  height: 10px;
+  border-radius: 2px;
+  background: none;
+  box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.4);
 }
 @media (max-width: 900px) {
   /* phones: the flat on-stream view rides over the 3D stage instead of taking a row. Only its "Preview a win" chip shows;
@@ -3865,30 +3789,10 @@ main.page:has(> .ready:last-child) {
     background: var(--topbar);
     border-top: 1px solid var(--border-strong);
   }
-  .hero-card.has-3d .preview.is-playing .preview-label {
-    display: block;
-    position: absolute;
-    top: auto;
-    bottom: 108px;
-    left: 10px;
-    color: var(--text-2);
-  }
-  html.compact .hero-card.has-3d .preview:not(.is-playing) {
-    display: none;
-  }
-  html.compact .hero-card.has-3d .preview.is-playing {
-    display: block;
-  }
-  html.compact .hero-card.has-3d .preview.is-playing .preview-bar {
-    display: none;
-  }
   /* a slimmer Save bar, and taps near the bottom scroll clear of it */
   .hero-card.has-3d .toolbar {
     padding-top: 6px;
     padding-bottom: calc(6px + env(safe-area-inset-bottom));
-  }
-  html {
-    scroll-padding-bottom: 72px;
   }
 }
 /* /start step 3: what chat sees once the command is pasted */
@@ -3909,9 +3813,6 @@ main.page:has(> .ready:last-child) {
     right: 8px;
     padding: 2px 8px;
   }
-  .showcase .readout span {
-    display: none;
-  }
 }
 /* admin gate: the "Inside" list heading reads at body contrast */
 .gate-list h3 {
@@ -3924,8 +3825,6 @@ main.page:has(> .ready:last-child) {
     grid-template-columns: minmax(0, 1fr) 540px;
     column-gap: var(--space-8);
   }
-}
-@media (min-width: 1101px) {
   /* Save sits right under the stage, so the one primary action stays in the first screen */
   .hero-card.has-3d > * {
     order: 2;
@@ -3935,6 +3834,71 @@ main.page:has(> .ready:last-child) {
   }
   .hero-card.has-3d > .toolbar {
     order: 1;
+  }
+  .hero-card.has-3d .loadout {
+    display: block;
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-3);
+  }
+  .loadout-title {
+    font: 650 var(--text-sm)/1.2 var(--font-display);
+    color: var(--text-2);
+    margin: 0 0 var(--space-2);
+  }
+  #loadout {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: var(--space-1) var(--space-3);
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+  #loadout dt {
+    color: var(--text-2);
+  }
+  #loadout dd {
+    margin: 0;
+    color: var(--text);
+    min-width: 0;
+    gap: var(--space-1);
+    white-space: nowrap;
+  }
+  #loadout dd.muted {
+    color: var(--text-3);
+  }
+  #loadout .badge {
+    font-size: var(--text-xs);
+    padding: 0 var(--space-1);
+  }
+  .loadout-total {
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-xs);
+    color: var(--text-2);
+  }
+  /* the strip's caption repeats the Wearing list, so its action moves up into the label row and the sticky card fits an 800px screen */
+  .hero-card.has-3d .preview-bar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    border: 0;
+    background: none;
+    padding: var(--space-1) var(--space-2);
+  }
+  .hero-card.has-3d .preview-bar .caption {
+    display: none;
+  }
+  .hero-card.has-3d .preview-bar .btn {
+    min-height: 28px;
+    padding: 2px var(--space-2);
+    font-size: var(--text-xs);
+  }
+  .hero-card.has-3d .preview-bar .win-link {
+    font-size: var(--text-xs);
+  }
+  .hero-card.has-3d .showcase {
+    height: clamp(400px, calc(100vh - 376px), 640px);
+  }
+  .hero-card.has-3d > .status:empty {
+    display: none;
   }
 }
 /* admin gate: the peek is a picture of the controls, not controls; dashed outlines and no underline say so */
@@ -3953,18 +3917,8 @@ main.page:has(> .ready:last-child) {
 /* Ranks and Rules are reading tabs: on desktop the stage stays, so switching tabs never moves the page;
    on phones the stuck stage steps aside so the table gets the screen */
 @media (min-width: 901px) {
-  #leaderboard td:nth-child(2),
-  #leaderboard .lb-char {
-    white-space: nowrap;
-  }
   .hero-pick [role="tabpanel"] {
     min-height: 640px;
-  }
-}
-@media (max-width: 900px) {
-  html[data-tab="ranks"] .hero-card.has-3d,
-  html[data-tab="rules"] .hero-card.has-3d {
-    display: none;
   }
 }
 /* admin gate: the peek sits on a solid panel, so the scene behind never shows through it */
@@ -3972,24 +3926,12 @@ main.page:has(> .ready:last-child) {
 .gate-peek {
   background: var(--surface);
 }
-.gate-peek {
-  opacity: 1;
-}
-.gate-peek .peek-row {
-  filter: none;
-}
 /* phones: the bar drops the page you're already on (the heading says it) and keeps "See a duel" instead */
 @media (max-width: 480px) {
   .topbar nav a[href="/intro/"] {
     display: inline-flex;
   }
   .topbar nav a[aria-current] {
-    display: none;
-  }
-  .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/start/"] {
-    display: inline-flex;
-  }
-  .topbar nav:has(a[href^="/admin/"]:not([hidden])) a[href="/intro/"] {
     display: none;
   }
 }
@@ -4005,11 +3947,6 @@ main.page:has(> .ready:last-child) {
     height: 216px;
   }
 }
-/* Picker: both row actions share one width, so their edges line up */
-.channel-go {
-  min-width: 168px;
-  text-align: center;
-}
 @media (max-width: 480px) {
   .channel-go {
     min-width: 0;
@@ -4019,22 +3956,21 @@ main.page:has(> .ready:last-child) {
 @media (min-width: 481px) {
   .topbar-inner {
     padding-block: 0;
+    min-height: 76px;
   }
   .topbar nav a.nav-cta {
     min-height: 36px;
     display: inline-flex;
     align-items: center;
   }
-}
-/* upgrade meters: lit gold cells, empty cells a dim gold outline, readable at a glance */
-.upgrade .meter {
-  gap: 4px;
-}
-.upgrade .meter i {
-  height: 10px;
-  border-radius: 2px;
-  background: none;
-  box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.4);
+  .topbar .brand {
+    font-size: 22px;
+    gap: 10px;
+  }
+  .topbar .brand .mark {
+    width: 22px;
+    height: 22px;
+  }
 }
 .upgrade .meter i.on {
   background: var(--trim);
@@ -4049,13 +3985,6 @@ main.page:has(> .ready:last-child) {
   .gate {
     display: flex;
     flex-direction: column;
-  }
-  .gate-inside {
-    order: 1;
-    margin-top: var(--space-5);
-  }
-  .gate-inside .gate-peek {
-    display: grid;
   }
   .gate-list {
     display: none;
@@ -4106,6 +4035,9 @@ main.page:has(> .ready:last-child) {
   min-height: 88px;
 }
 .top3 .place {
+  top: var(--space-2);
+  left: var(--space-3);
+  font-variant-numeric: tabular-nums;
   position: static;
   font: 650 var(--text-2xl)/1 var(--font-display);
   color: var(--trim);
@@ -4174,12 +4106,6 @@ main.page:has(> .ready:last-child) {
     padding-right: 0;
   }
 }
-/* picker rows answer the pointer: a short lift and a gold edge */
-.landing .channel-list li {
-  transition:
-    background-color 120ms ease,
-    box-shadow 120ms ease;
-}
 .landing .channel-list li:has(.channel:hover),
 .landing .channel-list li:has(.channel:focus-visible) {
   background: rgb(201 164 92 / 0.07);
@@ -4190,85 +4116,9 @@ main.page:has(> .ready:last-child) {
     transition: none;
   }
 }
-@media (min-width: 761px) {
-  .gate-inside {
-    min-height: 440px;
-  }
-}
 /* desktop: what the fighter wears, under the stage, as a compact two-column list; tried-on items carry their price */
 .loadout {
   display: none;
-}
-@media (min-width: 1101px) {
-  .hero-card.has-3d .loadout {
-    display: block;
-    border-top: 1px solid var(--border);
-    padding-top: var(--space-3);
-  }
-  .loadout-title {
-    font: 650 var(--text-sm)/1.2 var(--font-display);
-    color: var(--text-2);
-    margin: 0 0 var(--space-2);
-  }
-  #loadout {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
-    gap: var(--space-1) var(--space-3);
-    margin: 0;
-    font-size: var(--text-sm);
-  }
-  #loadout dt {
-    color: var(--text-2);
-  }
-  #loadout dd {
-    margin: 0;
-    color: var(--text);
-    min-width: 0;
-    gap: var(--space-1);
-    white-space: nowrap;
-  }
-  #loadout dd.muted {
-    color: var(--text-3);
-  }
-  #loadout .badge {
-    font-size: var(--text-xs);
-    padding: 0 var(--space-1);
-  }
-  .loadout-total {
-    margin: var(--space-2) 0 0;
-    font-size: var(--text-xs);
-    color: var(--text-2);
-  }
-}
-@media (min-width: 1101px) {
-  /* the strip's caption repeats the Wearing list, so its action moves up into the label row and the sticky card fits an 800px screen */
-  .hero-card.has-3d .preview-bar {
-    position: absolute;
-    top: 0;
-    right: 0;
-    border: 0;
-    background: none;
-    padding: var(--space-1) var(--space-2);
-  }
-  .hero-card.has-3d .preview-bar .caption {
-    display: none;
-  }
-  .hero-card.has-3d .preview-bar .btn {
-    min-height: 28px;
-    padding: 2px var(--space-2);
-    font-size: var(--text-xs);
-  }
-  .hero-card.has-3d .preview-bar .win-link {
-    font-size: var(--text-xs);
-  }
-}
-@media (min-width: 1101px) {
-  .hero-card.has-3d .showcase {
-    height: clamp(400px, calc(100vh - 376px), 640px);
-  }
-  .hero-card.has-3d > .status:empty {
-    display: none;
-  }
 }
 /* builder: the tabs hold every section, so the page's own main keeps only the credits line; it no longer pads out an empty band */
 body:has(.hero-card.has-3d) .page {
@@ -4371,6 +4221,8 @@ body:has(> .scene-sky.is-ready)::before {
     transition:
       opacity 0.25s ease,
       border-color 0.25s ease;
+    border-left-color: rgb(201 164 92 / 0.35);
+    padding-block: var(--space-6);
   }
   .story .step-grid > li.is-active {
     opacity: 1;
@@ -4395,13 +4247,34 @@ body:has(> .scene-sky.is-ready)::before {
   .story .step-grid strong {
     font-size: var(--text-xl);
   }
-  .story .step-grid > li {
-    border-left-color: rgb(201 164 92 / 0.35);
-  }
   .story-stage {
     position: sticky;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
+    /* the scene is square like its frames, so nothing is cropped, and it pins near the middle of the screen */
+    height: auto;
+    aspect-ratio: 1 / 1;
+    width: min(100%, calc(100vh - 64px));
+    max-height: calc(100vh - 64px);
+    top: max(32px, calc(50vh - 300px));
+    justify-self: center;
+  }
+  .hero-grid:has(.signup-card) {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "copy pick" "card pick";
+    column-gap: var(--space-7);
+    row-gap: var(--space-5);
+    align-items: start;
+  }
+  .hero-grid:has(.signup-card) .hero-copy h1 {
+    font-size: 48px;
+  }
+  .hero-grid:has(.signup-card) .stage {
+    aspect-ratio: 4 / 3;
+  }
+  .hero-grid .signup-card {
+    max-width: 440px;
   }
 }
 /* phones and tablets: the scene fills the screen behind the steps, which pass over it as cards */
@@ -4416,18 +4289,15 @@ body:has(> .scene-sky.is-ready)::before {
   .story-stage {
     order: -1;
     flex: none;
-  }
-  .story .step-grid {
-    position: relative;
-    z-index: 1;
-    display: block;
-    margin: 0;
-  }
-  .story .step-grid > li {
-    padding: var(--space-5);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: rgb(13 9 6 / 0.92);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    margin: 0 calc(50% - 50vw) var(--space-5);
+    border-bottom: 1px solid var(--border-strong);
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
   }
   .story .step-grid > li:last-child {
     margin-bottom: 0;
@@ -4436,19 +4306,24 @@ body:has(> .scene-sky.is-ready)::before {
     position: static;
     margin-bottom: var(--space-3);
   }
+  .hero-grid:has(.signup-card) .lead {
+    font-size: var(--text-md);
+  }
+  .story .step-grid > li.is-active {
+    opacity: 1;
+    border-color: rgb(201 164 92 / 0.6);
+  }
+  /* /start phones: the strip's caption sits under the picture instead of over it, and the picture is shorter */
+  .story-stage canvas {
+    flex: none;
+    height: 168px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .story .step-grid > li,
   .story-stage canvas {
     transition: none;
   }
-}
-/* builder: an empty loadout slot is a link to where it gets filled */
-#loadout .slot-empty {
-  padding: 0 var(--space-2);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-sm);
-  text-decoration: none;
 }
 #loadout .slot-empty:hover {
   border-color: var(--trim);
@@ -4463,6 +4338,8 @@ body:has(> .scene-sky.is-ready)::before {
   background: var(--accent-soft);
   box-shadow: none;
   color: var(--text);
+  /* the picker and the builder are where "Pick your fighter" leads, so they drop it */
+  display: none;
 }
 /* Rules: the table keeps a reading width beside the stage */
 #panel-rules .table-wrap {
@@ -4473,12 +4350,35 @@ body:has(> .scene-sky.is-ready)::before {
   .landing .channel-crew,
   .landing .channel-crew:empty {
     overflow: hidden;
-  }
-  .landing .channel-crew .thumb + .thumb {
-    margin-left: -48px;
+    flex: 0 0 112px;
+    width: 112px;
+    min-width: 112px;
+    height: 112px;
+    justify-content: center;
+    align-items: flex-end;
+    border-radius: var(--radius);
+    background:
+      radial-gradient(ellipse 60% 55% at 50% 72%, rgb(232 170 90 / 0.26), rgb(232 170 90 / 0) 70%),
+      linear-gradient(to bottom, rgb(255 255 255 / 0.02), rgb(0 0 0 / 0.25));
+    box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.22);
   }
   .landing .channel-crew .thumb:nth-child(n + 3) {
     display: none;
+  }
+  .landing .channel-crew .thumb canvas {
+    width: 104px;
+    height: 104px;
+  }
+  .landing .channel-crew .thumb + .thumb {
+    margin-left: -48px;
+    display: none;
+  }
+  .landing .channel-crew .thumb.is-open {
+    opacity: 0.92;
+  }
+  .landing .channel.is-shown {
+    box-shadow: inset 3px 0 0 var(--trim);
+    background: rgb(201 164 92 / 0.06);
   }
 }
 /* One header on every page, the intro's: no bar or rule, the cream wordmark at the page edge */
@@ -4493,26 +4393,6 @@ body:has(> .scene-sky.is-ready)::before {
 .topbar .brand {
   color: var(--text);
 }
-.topbar .brand .mark {
-  fill: var(--accent);
-}
-@media (min-width: 481px) {
-  .topbar-inner {
-    min-height: 76px;
-  }
-  .topbar .brand {
-    font-size: 22px;
-    gap: 10px;
-  }
-  .topbar .brand .mark {
-    width: 22px;
-    height: 22px;
-  }
-}
-/* the picker and the builder are where "Pick your fighter" leads, so they drop it */
-.topbar nav a.nav-cta[aria-current] {
-  display: none;
-}
 /* the picker: both channels get the same outlined button, filled on hover; rows read larger */
 .landing .channel-list li .channel:hover .channel-go,
 .landing .channel-list li .channel:focus-visible .channel-go {
@@ -4521,9 +4401,6 @@ body:has(> .scene-sky.is-ready)::before {
   color: var(--on-accent);
 }
 @media (min-width: 901px) {
-  .landing .channel-list {
-    max-width: 560px;
-  }
   .landing-inner > * {
     max-width: 560px;
   }
@@ -4545,6 +4422,8 @@ body:has(> .scene-sky.is-ready)::before {
   border-radius: var(--radius-sm);
   color: var(--text);
   font-size: var(--text-sm);
+  /* picker: the busiest channel's button leads (solid gold, from round 18); the fighter caption sits clear of the fold */
+  bottom: calc(var(--space-6) + 24px);
 }
 .landing-who:empty {
   display: none;
@@ -4563,17 +4442,6 @@ body:has(> .scene-sky.is-ready)::before {
 }
 .step-grid .step-mock {
   margin: var(--space-3) 0 0;
-}
-@media (min-width: 961px) {
-  .story .step-grid > li {
-    padding-block: var(--space-6);
-  }
-}
-/* admin gate: the locked controls are the bottom of the arena card, not a panel floating on it */
-@media (min-width: 761px) {
-  .gate-inside {
-    justify-content: flex-end;
-  }
 }
 /* with no rule under the header, the picker's arena fades in from the top instead of starting on a hard edge */
 @media (min-width: 901px) {
@@ -4600,16 +4468,24 @@ body:has(> .scene-sky.is-ready)::before {
         #000 60%
       ),
       linear-gradient(to bottom, transparent, #000 96px, #000 78%, transparent);
+    bottom: auto;
+    height: min(100%, 100svh);
   }
 }
 @media (max-width: 900px) {
   .landing-3d {
+    width: 100%;
+    height: 320px;
+    bottom: auto;
+    mask-composite: add;
+    -webkit-mask-composite: source-over;
     mask-image: linear-gradient(to bottom, transparent, #000 48px, #000 62%, transparent);
     -webkit-mask-image: linear-gradient(to bottom, transparent, #000 48px, #000 62%, transparent);
   }
 }
 /* admin gate: the arena picture and the locked controls are two stacked parts of one card, so the controls never cover the fighters */
 .gate-inside {
+  position: relative;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -4636,7 +4512,10 @@ body:has(> .scene-sky.is-ready)::before {
 }
 @media (max-width: 760px) {
   .gate-inside {
+    order: 1;
+    margin-top: var(--space-5);
     padding: 0;
+    align-self: stretch;
   }
   .gate-inside::before {
     min-height: 200px;
@@ -4644,6 +4523,7 @@ body:has(> .scene-sky.is-ready)::before {
       linear-gradient(to bottom, rgb(12 9 7 / 0) 55%, rgb(12 9 7 / 0.55)), url("/assets/scene/arena-top-800.webp");
   }
   .gate-inside .gate-peek {
+    display: grid;
     padding: var(--space-4);
   }
 }
@@ -4653,10 +4533,6 @@ body:has(> .scene-sky.is-ready)::before {
   border-left: 2px solid var(--trim);
   color: var(--text-2);
   font-size: var(--text-sm);
-}
-/* picker: the busiest channel's button leads (solid gold, from round 18); the fighter caption sits clear of the fold */
-.landing-who {
-  bottom: calc(var(--space-6) + 24px);
 }
 /* credits: inline links get taller lines on phones so each is easy to tap */
 @media (max-width: 760px) {
@@ -4681,56 +4557,38 @@ body:has(> .scene-sky.is-ready)::before {
 .hero-grid .signup-card #signup-text {
   color: var(--text-2);
 }
-@media (min-width: 961px) {
-  .hero-grid:has(.signup-card) {
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    grid-template-rows: auto 1fr;
-    grid-template-areas: "copy pick" "card pick";
-    column-gap: var(--space-7);
-    row-gap: var(--space-5);
-    align-items: start;
-  }
-  .hero-grid:has(.signup-card) .hero-copy h1 {
-    font-size: 48px;
-  }
-  .hero-grid:has(.signup-card) .stage {
-    aspect-ratio: 4 / 3;
-  }
-  .hero-grid .signup-card {
-    max-width: 440px;
-  }
-}
-@media (max-width: 960px) {
-  .hero-grid:has(.signup-card) .lead {
-    font-size: var(--text-md);
-  }
-}
 /* /start phones: the scene is a strip pinned along the top, with its caption, and the steps scroll by beneath it */
 @media (max-width: 960px) {
-  .story-stage {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    margin: 0 calc(50% - 50vw) var(--space-5);
-    border-bottom: 1px solid var(--border-strong);
-  }
   .story-stage figcaption {
     display: block;
     left: var(--space-3);
     right: var(--space-3);
     bottom: var(--space-3);
     font-size: var(--text-sm);
+    position: static;
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: 0;
+    border-left: 3px solid var(--trim);
+    background: var(--surface);
+    line-height: 1.4;
+    min-height: calc(2 * 1.4em + var(--space-4));
   }
   .story .step-grid {
+    position: relative;
+    z-index: 1;
+    display: block;
+    margin: 0;
     padding: 0 0 var(--space-6);
   } /* the sections below keep the page scrolling, so the last step still reaches the middle */
   .story .step-grid > li {
+    padding: var(--space-5);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: rgb(13 9 6 / 0.92);
     margin: 0 0 var(--space-5);
     transition: opacity 0.25s ease;
-  }
-  .story .step-grid > li.is-active {
-    opacity: 1;
-    border-color: rgb(201 164 92 / 0.6);
+    scroll-margin-top: 240px;
   }
 }
 /* admin gate: the page header says who it's for, so the gate opens on the sign-in line; the locked tabs read as locked */
@@ -4744,43 +4602,15 @@ body:has(> .scene-sky.is-ready)::before {
 }
 .gate-peek .peek-tabs > span[aria-disabled] {
   cursor: not-allowed;
-}
-.gate-peek .peek-tabs .on {
-  box-shadow: inset 0 -2px 0 var(--text-3);
+  /* admin gate: the locked tabs read at full contrast; the lock label and the not-allowed cursor say they're locked */
+  opacity: 1;
+  color: var(--text-2);
 }
 .page-header .meta:empty {
   display: none;
 } /* an empty status line takes no room */
 /* Picker: each stream's fighter stands lit in its own portrait box, and the row whose fighter is on the island says so */
 @media (min-width: 621px) {
-  .landing .channel-crew,
-  .landing .channel-crew:empty {
-    flex: 0 0 112px;
-    width: 112px;
-    min-width: 112px;
-    height: 112px;
-    justify-content: center;
-    align-items: flex-end;
-    border-radius: var(--radius);
-    background:
-      radial-gradient(ellipse 60% 55% at 50% 72%, rgb(232 170 90 / 0.26), rgb(232 170 90 / 0) 70%),
-      linear-gradient(to bottom, rgb(255 255 255 / 0.02), rgb(0 0 0 / 0.25));
-    box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.22);
-  }
-  .landing .channel-crew .thumb canvas {
-    width: 104px;
-    height: 104px;
-  }
-  .landing .channel-crew .thumb + .thumb {
-    display: none;
-  }
-  .landing .channel-crew .thumb.is-open {
-    opacity: 0.92;
-  }
-  .landing .channel.is-shown {
-    box-shadow: inset 3px 0 0 var(--trim);
-    background: rgb(201 164 92 / 0.06);
-  }
   .landing-who {
     display: none;
   }
@@ -4789,19 +4619,13 @@ body:has(> .scene-sky.is-ready)::before {
 .story .step-grid > li {
   opacity: 1;
 }
-@media (min-width: 961px) {
-  /* the scene is square like its frames, so nothing is cropped, and it pins near the middle of the screen */
-  .story-stage {
-    height: auto;
-    aspect-ratio: 1 / 1;
-    width: min(100%, calc(100vh - 64px));
-    max-height: calc(100vh - 64px);
-    top: max(32px, calc(50vh - 300px));
-    justify-self: center;
-  }
-}
 /* builder: an empty slot is a real button (solid edge), not a placeholder; the phone preview strip gives the controls more room */
 #loadout .slot-empty {
+  /* builder: an empty loadout slot is a link to where it gets filled */
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
   border-style: solid;
   border-color: rgb(201 164 92 / 0.45);
   color: var(--text);
@@ -4844,11 +4668,9 @@ body:has(> .scene-sky.is-ready)::before {
   font: 500 var(--text-xs)/1.4 var(--font-sans);
 }
 @media (max-width: 620px) {
-  .landing .channel {
-    grid-template-columns: 88px minmax(0, 1fr);
-  }
   .landing .channel-crew,
   .landing .channel-crew:empty {
+    overflow: hidden;
     width: 88px;
     min-width: 88px;
     height: 88px;
@@ -4860,54 +4682,8 @@ body:has(> .scene-sky.is-ready)::before {
     height: 80px;
   }
   .landing .channel-crew .thumb + .thumb {
+    margin-left: -32px;
     display: none;
-  }
-  .landing .channel-crew .thumb.is-open {
-    opacity: 0.92;
-  }
-  .landing .channel.is-shown .channel-crew::after {
-    display: none;
-  } /* phones show one fighter in the banner, so no row label */
-}
-/* /start phones: the strip's caption sits under the picture instead of over it, and the picture is shorter */
-@media (max-width: 960px) {
-  .story-stage {
-    height: auto;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-  }
-  .story-stage canvas {
-    flex: none;
-    height: 168px;
-  }
-  .story-stage figcaption {
-    position: static;
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
-    border-radius: 0;
-    border-left: 3px solid var(--trim);
-    background: var(--surface);
-    line-height: 1.4;
-    min-height: calc(2 * 1.4em + var(--space-4));
-  }
-  .story .step-grid > li {
-    scroll-margin-top: 240px;
-  }
-}
-/* Builder Ranks beside the stage: the character column shows the fighter only (its name stays for screen readers and on hover), so every column fits */
-@media (min-width: 901px) {
-  #leaderboard .lb-char:has(.thumb) > span:last-child {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  #leaderboard th,
-  #leaderboard td {
-    padding-inline: var(--space-2);
   }
 }
 /* builder: each Wearing label lines up with its button */
@@ -4916,24 +4692,6 @@ body:has(> .scene-sky.is-ready)::before {
   display: flex;
   align-items: center;
   min-height: 40px;
-}
-/* /start: step titles use the display face like every other heading */
-.step-grid strong {
-  font-family: var(--font-display);
-  font-weight: 650;
-  letter-spacing: 0;
-}
-/* admin gate: the locked tabs read at full contrast; the lock label and the not-allowed cursor say they're locked */
-.gate-peek .peek-tabs > span[aria-disabled] {
-  opacity: 1;
-  color: var(--text-2);
-}
-/* picker: the island is at most one screen tall, so with any number of channels the fighter stands in the first view, feet included */
-@media (min-width: 901px) {
-  .landing-3d {
-    bottom: auto;
-    height: min(100%, 100svh);
-  }
 }
 
 /* The not-found page: the arena island floats off to the right, the way back sits on the left */
@@ -4998,13 +4756,6 @@ body.is-lost::before {
   }
 }
 
-/* phones: the locked preview fills the gate width whatever its rows hold (.gate centres its items) */
-@media (max-width: 760px) {
-  .gate-inside {
-    align-self: stretch;
-  }
-}
-
 /* Mod panel: the header is one short block so the live state and Pause duels sit in the first screen */
 .admin-page main.page {
   padding-top: var(--space-5);
@@ -5057,15 +4808,6 @@ body.is-lost::before {
     overflow-wrap: normal;
   }
 }
-/* phones: /admin drops "Pick your fighter" from the bar, so the wordmark and links never touch */
-@media (max-width: 480px) {
-  .admin-page .topbar nav .nav-cta {
-    display: none;
-  }
-  .admin-page .topbar nav a#dev-link {
-    display: none;
-  }
-}
 /* phones: each StreamElements command is a stacked row (what it does + status, name, Copy reply), with no sideways scroll */
 @media (max-width: 640px) {
   #se-table thead {
@@ -5096,8 +4838,6 @@ body.is-lost::before {
   #se-table td:nth-child(1) {
     font-weight: 650;
     align-self: center;
-  }
-  #se-table td:nth-child(1) {
     grid-area: 1 / 1;
   }
   #se-table td:nth-child(3) {
@@ -5120,32 +4860,6 @@ body.is-lost::before {
   #se-table .reply-preview {
     display: none;
   }
-}
-/* Chat commands: the reply takes the spare width and wraps; buttons and counter boxes stay compact and line up with the text */
-#bot-commands-table td,
-#bot-counters-table td {
-  vertical-align: middle;
-}
-#bot-commands-table td:nth-child(2) {
-  width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-#bot-commands-table td:last-child,
-#bot-counters-table td:last-child {
-  white-space: nowrap;
-  text-align: right;
-}
-#bot-counters-table td:nth-child(2) {
-  width: 100%;
-}
-#bot-counters-table input {
-  width: 10rem;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-/* phones: each command is a row of name + buttons with its reply underneath, with no sideways scroll */
-@media (max-width: 640px) {
   #bot-commands-table thead {
     position: absolute;
     width: 1px;
@@ -5193,6 +4907,32 @@ body.is-lost::before {
   .table-wrap > #bot-counters-table td:first-child {
     min-width: 0;
   }
+}
+/* Chat commands: the reply takes the spare width and wraps; buttons and counter boxes stay compact and line up with the text */
+#bot-commands-table td,
+#bot-counters-table td {
+  vertical-align: middle;
+}
+#bot-commands-table td:nth-child(2) {
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+#bot-commands-table td:last-child,
+#bot-counters-table td:last-child {
+  white-space: nowrap;
+  text-align: right;
+}
+#bot-counters-table td:nth-child(2) {
+  width: 100%;
+}
+#bot-counters-table input {
+  width: 10rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* phones: each command is a row of name + buttons with its reply underneath, with no sideways scroll */
+@media (max-width: 640px) {
   #bot-counters-table input {
     width: 7rem;
     min-height: 44px;
