@@ -1,5 +1,6 @@
 import { isArenaChat, isObject, parseArenaEvent, parseArenaSnapshot, parseLooksMessage, warnOnce } from "./parse.ts";
-import type { ArenaChat, ArenaEvent, ArenaSnapshot, JsonObject, LooksMessage } from "./parse.ts";
+import type { ArenaChat, ArenaEvent, ArenaSnapshot, LooksMessage } from "./parse.ts";
+import { channelName } from "./text.ts";
 
 type SnapshotMeta = { revision: number | null; source: string };
 type ArenaStatus = {
@@ -28,20 +29,12 @@ type ArenaClientOptions = {
 const MAX_SEEN_EVENTS = 2000;
 const MAX_RETRY_MS = 30_000;
 
-/** The snapshot inside a frame or an /api/state answer: { snapshot }, { state } or the object itself. */
-function snapshotFrom(value: JsonObject): unknown {
-  return value.snapshot ?? value.state ?? value;
-}
-
 function revisionOf(value: unknown) {
   const revision = Number(isObject(value) ? value.revision : undefined);
   return Number.isFinite(revision) && revision >= 0 ? revision : null;
 }
 
-/**
- * Read-only client for the channel arena stream. The backend owns every player
- * profile, duel health value, event and rating. This client only renders them.
- */
+/** Read-only client for the channel arena stream: the backend owns every profile, health value, event and rating. */
 export function createArenaClient({
   channel,
   role = "", // 'overlay' lets the admin page count open OBS overlays
@@ -63,10 +56,7 @@ export function createArenaClient({
     return new WebSocket(url);
   } as unknown as new (url: string) => WebSocket,
 }: ArenaClientOptions) {
-  const normalizedChannel = String(channel ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9_]/g, "")
-    .slice(0, 25);
+  const normalizedChannel = channelName(channel);
   if (!normalizedChannel) throw new Error("Invalid arena channel");
 
   let stopped = false;
@@ -117,15 +107,10 @@ export function createArenaClient({
     return true;
   }
 
-  function dispatchEvents(events: ArenaEvent[] | undefined) {
-    for (const event of events ?? []) {
-      if (rememberEvent(event)) onEvent(event);
-    }
-  }
-
-  /** The snapshot in a frame or an /api/state answer, parsed; undefined (after one warning) when it is dropped. */
+  /** The snapshot in a frame or an /api/state answer ({ snapshot }, { state } or the object itself), parsed;
+   * undefined (after one warning) when it is dropped. */
   function parsedSnapshot(input: unknown) {
-    const parsed = isObject(input) ? parseArenaSnapshot(snapshotFrom(input)) : parseArenaSnapshot(input);
+    const parsed = parseArenaSnapshot(isObject(input) ? (input.snapshot ?? input.state ?? input) : input);
     if (parsed.ok) return parsed.value;
     warnOnce("an arena snapshot", parsed.error);
     onDrop();
@@ -139,7 +124,7 @@ export function createArenaClient({
     if (incomingRevision !== null && revision !== null && incomingRevision < revision) return null;
     if (incomingRevision !== null) revision = incomingRevision;
     onSnapshot(snapshot, { revision, source });
-    dispatchEvents(snapshot.events);
+    for (const event of snapshot.events ?? []) if (rememberEvent(event)) onEvent(event);
     return snapshot;
   }
 
@@ -147,17 +132,16 @@ export function createArenaClient({
     const controller = new AbortController();
     const activeGeneration = generation;
     try {
-      const response = await fetchImpl("/api/state/" + encodeURIComponent(normalizedChannel), {
-        method: "GET",
+      const response = await fetchImpl(`/api/state/${encodeURIComponent(normalizedChannel)}`, {
         cache: "no-store",
         headers: { accept: "application/json" },
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error("Arena state HTTP " + response.status);
+      if (!response.ok) throw new Error(`Arena state HTTP ${response.status}`);
       const payload: unknown = await response.json();
       if (stopped || activeGeneration !== generation) return;
       const snapshot = parsedSnapshot(payload);
-      if (snapshot) receiveSnapshot(snapshot, "http:" + reason);
+      if (snapshot) receiveSnapshot(snapshot, `http:${reason}`);
     } catch (error: any) {
       // any: whatever was thrown; ?. reads its name and message when it has them
       if (stopped || activeGeneration !== generation || error?.name === "AbortError") return;
@@ -280,14 +264,9 @@ export function createArenaClient({
     const activeGeneration = ++generation;
     socket = null;
     status("connecting", { revision });
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const url =
-      protocol +
-      "//" +
-      location.host +
-      "/api/live/" +
-      encodeURIComponent(normalizedChannel) +
-      (role === "overlay" ? "?role=overlay" : "");
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:",
+      query = role === "overlay" ? "?role=overlay" : "";
+    const url = `${protocol}//${location.host}/api/live/${encodeURIComponent(normalizedChannel)}${query}`;
     let activeSocket: WebSocket;
     try {
       activeSocket = new WebSocketImpl(url);

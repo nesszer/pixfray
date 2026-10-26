@@ -37,22 +37,11 @@ export function checkFrames(groups: Groups, limits: { maxFrames: number; frameSi
   const all = ANIMATION_SLOTS.flatMap((slot) => (groups[slot] || []).map((f, i) => ({ ...f, slot, i })));
   if (!all.length) problems.push("Add at least one PNG frame.");
   if (all.length > limits.maxFrames)
-    problems.push("Use at most " + limits.maxFrames + " frames in total (you have " + all.length + ").");
+    problems.push(`Use at most ${limits.maxFrames} frames in total (you have ${all.length}).`);
   for (const f of all) {
     if (f.w > limits.frameSize || f.h > limits.frameSize)
       problems.push(
-        f.slot +
-          " frame " +
-          (f.i + 1) +
-          " is " +
-          f.w +
-          " x " +
-          f.h +
-          " px; the limit is " +
-          limits.frameSize +
-          " x " +
-          limits.frameSize +
-          ".",
+        `${f.slot} frame ${f.i + 1} is ${f.w} x ${f.h} px; the limit is ${limits.frameSize} x ${limits.frameSize}.`,
       );
   }
   return problems;
@@ -129,5 +118,5 @@ export function uploadBody(
 }
 
 export function formatBytes(n: number) {
-  return n >= 1048576 ? (n / 1048576).toFixed(2) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B";
+  return n >= 1048576 ? `${(n / 1048576).toFixed(2)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
 }

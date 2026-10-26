@@ -1,5 +1,11 @@
 // The overlay's pure helpers, kept apart from the canvas so Node tests can import them: link options (?cap=), chat
 // commands, nameplate text and colors, and the overlay's own code version.
+// A Twitch login from a link or option: lowercase letters, digits and _, at most 25.
+export const channelName = (v: unknown) =>
+  String(v ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "")
+    .slice(0, 25);
 export function sanitizeColor(value: unknown) {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : null;
 }
