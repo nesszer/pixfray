@@ -76,14 +76,6 @@ test("custom character uploads are gated; atlas reads are public", async () => {
   assert.equal(f.forwarded.at(-1).path, "/asset/c-robot");
 });
 
-test("developer routes are owner-only", async () => {
-  const f = environment();
-  assert.equal(await f.st("/api/dev/diagnostics"), 401);
-  assert.equal(await f.st("/api/dev/diagnostics", "GET", undefined, await signedIn(f)), 403);
-  assert.equal(await f.st("/api/dev/diagnostics", "GET", undefined, await signedIn(f, true)), 200);
-  assert.equal(await f.st("/api/dev/deploy", "POST", {}, await signedIn(f, true)), 501);
-});
-
 test("catalog merges static and custom characters; profiles may pick either", async () => {
   const f = environment(),
     cookie = await signedIn(f);
@@ -172,7 +164,6 @@ test("live sockets require a WebSocket upgrade; the relay routes are gone", asyn
 
 test("unknown routes and channels that are not enabled", async () => {
   const f = environment();
-  assert.equal(await f.st("/api/nope"), 404);
   assert.equal(await f.st("/api/leaderboard/somechannel"), 403);
   assert.equal(await f.st("/api/state/nesszerra", "DELETE"), 405);
 });

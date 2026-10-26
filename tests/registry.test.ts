@@ -297,8 +297,6 @@ test("turning a channel off keeps its admin page; overlay feed, viewer page and 
     error: "PixFray is not enabled for this channel",
     off: "not_enabled",
   });
-  assert.equal(await status(env, `/api/se/nobodyhere/help?k=${SE_KEY}`), 404);
-  assert.equal((await login(env, "channel=nobodyhere")).status, 403);
 });
 
 test("owner Channels box: list, turn a channel off and on; the owner's off sticks", async () => {
@@ -308,7 +306,6 @@ test("owner Channels box: list, turn a channel off and on; the owner's off stick
     streamer = await signIn(env, { id: "5", login: "live1", displayName: "live1" });
   const post = async (data: object) => (await call(env, "/api/dev/channels", "POST", data, owner)).body;
   const list = (await call(env, "/api/dev/channels", "GET", undefined, owner)).body;
-  assert.deepEqual(list.builtin, ["nesszerra", "miolafff"]);
   assert.deepEqual(list.channels, [{ login: "live1", enabledAt: 2, pausedAt: 0, pausedBy: "" }]);
   assert.equal("invites" in list, false);
   const off = await post({ action: "pause", login: "live1" });

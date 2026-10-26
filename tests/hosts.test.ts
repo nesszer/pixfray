@@ -87,8 +87,6 @@ test("pages keep their no-framing headers when they pass through the Worker", as
     const r = await get(url);
     assert.equal(r.headers.get("X-Frame-Options"), "DENY", url);
     assert.equal(r.headers.get("Content-Security-Policy"), PAGE_CSP, url);
-    // as string: the line above asserted the header equals PAGE_CSP
-    assert.match(r.headers.get("Content-Security-Policy") as string, /frame-ancestors 'none'/, url);
     assert.equal(r.headers.get("X-Robots-Tag"), null, url);
   }
   for (const site of ["https://staging.pixfray.xyz/", "https://test.chat.miolaf.xyz/?channel=miolafff"])

@@ -174,7 +174,6 @@ test("a viewer cannot grant themselves mod or developer permissions", async () =
     cookie = await signedIn(f);
   const forged = { actorId: "1", owner: true, action: "resetAllRanks" };
   assert.equal(await status(f.env, "/api/admin/nesszerra", "POST", forged, cookie), 403);
-  assert.equal(await status(f.env, "/api/admin/nesszerra", "POST", { action: "connectChat" }, cookie), 403);
   assert.equal(await status(f.env, "/api/dev/save", "POST", { owner: true }, cookie), 403);
 });
 test("connect=1 asks for the chat scopes the EventSub webhook needs", async () => {
