@@ -15,6 +15,7 @@ type Secrets = { DEV_TOOLS_TOKEN?: string; TWITCH_CLIENT_ID?: string; TWITCH_CLI
 type Alt = { access_token: string; refresh_token: string; expires_at: number; user_id: string; login: string };
 /** A Twitch OAuth token answer (a 200); a refused one carries only `message`. */
 type TokenReply = { access_token: string; refresh_token: string; expires_in: number; message?: string };
+
 /** Helix answers list their results under `data`. */
 type HelixList<T> = { data?: T[] };
 
@@ -63,14 +64,12 @@ if ([siteConfig.origins.production, ...productionHosts].includes(BASE))
 async function site<T = unknown>(pathname: string, body?: unknown): Promise<T> {
   const token = secrets().DEV_TOOLS_TOKEN;
   if (!token) fail(`DEV_TOOLS_TOKEN not found in ${path.basename(SECRETS)} or the environment`);
-  const method = body === undefined ? "GET" : "POST";
+  const post = body !== undefined,
+    method = post ? "POST" : "GET";
   const res = await fetch(BASE + pathname, {
     method,
-    headers: {
-      Authorization: "Bearer " + token,
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    headers: { Authorization: "Bearer " + token, ...(post ? { "Content-Type": "application/json" } : {}) },
+    ...(post ? { body: JSON.stringify(body) } : {}),
   });
   const text = await res.text();
   let data: unknown;
@@ -79,10 +78,8 @@ async function site<T = unknown>(pathname: string, body?: unknown): Promise<T> {
   } catch {
     data = text;
   }
-  if (!res.ok)
-    fail(
-      `${method} ${pathname} -> ${res.status} ${typeof data === "string" ? data.slice(0, 200) : JSON.stringify(data)}`,
-    );
+  const shown = typeof data === "string" ? data.slice(0, 200) : JSON.stringify(data);
+  if (!res.ok) fail(`${method} ${pathname} -> ${res.status} ${shown}`);
   return data as T; // the route's JSON answer; each caller names the fields it reads
 }
 const dev = <T = unknown>(route: string, body: unknown) => site<T>(`/api/devtools/${CHANNEL}/${route}`, body);
@@ -341,10 +338,8 @@ async function realDuel() {
     await sleep(1000);
     pending = (await state()).duels.find((d) => d.status === "pending" && d.a === alt.user_id && d.b === target.userId);
   }
-  if (!pending)
-    fail(
-      `no challenge reached ${BASE} within 20 s. Check that the StreamElements !challenge command points at this site and that ${alt.login} has a fighter (run alt-profile).`,
-    );
+  const missed = `no challenge reached ${BASE} within 20 s. Check that the StreamElements !challenge command points at this site and that ${alt.login} has a fighter (run alt-profile).`;
+  if (!pending) fail(missed);
   console.log(`challenge arrived through StreamElements (${pending.id}); ${target.username} answers`);
   console.log(`${target.username}: !fight\n  -> ${await say(target, "!fight", "se")}`);
 }
