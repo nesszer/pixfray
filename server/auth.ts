@@ -131,13 +131,11 @@ export class AuthStore extends DurableObject<Env, unknown> {
     if (n) await this.ctx.storage.setAlarm(Date.now() + 3600000);
   }
 }
-export const randomToken = () =>
-  Array.from(crypto.getRandomValues(new Uint8Array(32)), (x) => x.toString(16).padStart(2, "0")).join("");
-export async function digest(value: string): Promise<string> {
-  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), (x) =>
-    x.toString(16).padStart(2, "0"),
-  ).join("");
-}
+export const hex = (bytes: ArrayBuffer | Uint8Array): string =>
+  Array.from(new Uint8Array(bytes), (x) => x.toString(16).padStart(2, "0")).join("");
+export const randomToken = () => hex(crypto.getRandomValues(new Uint8Array(32)));
+export const digest = async (value: string): Promise<string> =>
+  hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
 // Sign-in lasts 30 days, so a viewer coming back for the next stream still sees their own fighter. Signing out ends it.
 export const SESSION_S = 30 * 86400;
 // T is what the caller knows the key holds (null when it is missing or expired). The default is any for the .js
@@ -399,17 +397,11 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   } else if (pending.connect) return fail("Cannot resolve channel owner", 502);
   const lacking = (need: string[]) => need.filter((x) => !validation.scopes?.includes(x));
   const notGranted = (missing: string[], restart: string) =>
-    fail(
-      "Twitch permissions were not granted: " + missing.join(", ") + ". Restart at /auth/login?" + restart + ".",
-      403,
-    );
+    fail(`Twitch permissions were not granted: ${missing.join(", ")}. Restart at /auth/login?${restart}.`, 403);
   // The broadcaster token, sealed with the account it belongs to, plus the mods-connected marker.
   const keepToken = async (channel: string, extra: { scopes?: string[] } = {}) => {
-    await keepBroadcaster(
-      env,
-      channel,
-      await seal(env, { ...tokens, userId: user.id, ...extra, validatedAt: Date.now() }),
-    );
+    const sealed = await seal(env, { ...tokens, userId: user.id, ...extra, validatedAt: Date.now() });
+    await keepBroadcaster(env, channel, sealed);
     await markModsConnected(env, channel);
   };
   if (pending.connect) {
@@ -424,12 +416,7 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
       return fail("Sign in as the bot account " + env.BOT_LOGIN + ", not " + user.login, 403);
     const missing = lacking(BOT_SCOPES);
     if (missing.length) return notGranted(missing, "bot=1");
-    await record(
-      env,
-      "bot:twitch",
-      { id: user.id, login: user.login, at: Date.now() },
-      Date.now() + 20 * 365 * 86400000,
-    );
+    await record(env, "bot:twitch", { id: user.id, login: user.login, at: Date.now() }, Date.now() + MARKER_MS);
   }
   const modScope = validation.scopes?.includes("moderation:read"),
     botScope = env.CHAT_BOT === "1" && validation.scopes?.includes("channel:bot");
@@ -556,11 +543,11 @@ export async function openBroadcaster(env: Env, channel: string): Promise<Broadc
     },
   };
 }
-const verdict = (moderator: boolean): Access => ({
+const verdict = (moderator: boolean, reason = moderator ? "" : "Current Twitch moderator role required"): Access => ({
   owner: false,
   moderator,
   canManage: moderator,
-  reason: moderator ? "" : "Current Twitch moderator role required",
+  reason,
 });
 export async function access(env: Env, user: TwitchUser | null | undefined, channel: string): Promise<Access> {
   const owner = await isOwner(env, user);
@@ -574,13 +561,7 @@ export async function access(env: Env, user: TwitchUser | null | undefined, chan
     cached = await record<boolean | null>(env, cacheKey);
   if (cached !== null) return verdict(cached === true);
   const broadcaster = await openBroadcaster(env, channel);
-  if (!broadcaster)
-    return {
-      owner: false,
-      moderator: false,
-      canManage: false,
-      reason: "Broadcaster must connect moderator authorization",
-    };
+  if (!broadcaster) return verdict(false, "Broadcaster must connect moderator authorization");
   const { scopes, checked } = await broadcaster.validate();
   if (checked && !scopes.includes("moderation:read")) throw new Error("Broadcaster authorization is invalid");
   const r = await broadcaster.helix(

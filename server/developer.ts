@@ -1,6 +1,6 @@
 import { chatStatus } from "./game.ts";
 import site from "../site.config.js";
-import { CHANNELS, record } from "./auth.ts";
+import { CHANNELS, hex, record } from "./auth.ts";
 import { channelState, overview, listRecords, setPaused, LOGIN } from "./channels.ts";
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.ts";
 import { rankHistory } from "./ranklog.ts";
@@ -777,8 +777,7 @@ async function dispatch(
   ref: string,
   inputs: { [input: string]: unknown },
 ): Promise<Dispatched> {
-  const requestId =
-    "r" + Array.from(crypto.getRandomValues(new Uint8Array(5)), (x) => x.toString(16).padStart(2, "0")).join("");
+  const requestId = "r" + hex(crypto.getRandomValues(new Uint8Array(5)));
   const all = {
     operation: "deploy",
     target: "test",

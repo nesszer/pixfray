@@ -62,6 +62,7 @@ const ago = (t: number | null | undefined) => {
 };
 const short = (id: unknown) => (id ? String(id).slice(0, 8) : "–");
 const badge = (kind: string, text: unknown) => h("span", { class: "badge " + kind }, text);
+const GITHUB_BUTTONS = "#deploy-test #promote #rollback #hotfix #save-file #open-pr #load-file #load-tree".split(" ");
 function rows(tbody: string, list: Node[], empty: string, cols: number) {
   $(tbody).replaceChildren(...(list.length ? list : [emptyRow(cols, empty)]));
 }
@@ -213,8 +214,6 @@ function renderIntegrations(i: { github?: Integration; cloudflare?: Integration 
     ? "Developer tools: code editor, releases and raw settings"
     : "Developer tools: raw settings and integrations";
 }
-
-const GITHUB_BUTTONS = "#deploy-test #promote #rollback #hotfix #save-file #open-pr #load-file #load-tree".split(" ");
 
 // ---------- release ----------
 function branch() {
