@@ -7,7 +7,7 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { sampleSprite, VoxelFighter } from "./intro/voxels.ts";
+import { sampleSprite, VoxelFighter, type VoxelOptions } from "./intro/voxels.ts";
 import {
   addNightLights,
   bakeNightEnv,
@@ -29,12 +29,7 @@ export interface Look {
   pet: HTMLCanvasElement | null;
   petH: number;
 }
-export interface Fighter3D {
-  set(look: Look | null | undefined): void;
-  wake(): void;
-  readonly slow: boolean;
-  readonly count: number;
-}
+export type Fighter3D = { set: (look: Look | null | undefined) => void };
 
 export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?: number } = {}): Fighter3D {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -74,10 +69,8 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
   const islets = buildIslets();
   scene.add(islets.group);
 
-  const composer = new EffectComposer(
-    renderer,
-    new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }),
-  );
+  const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }),
+    composer = new EffectComposer(renderer, target);
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.6, 0.55, 0.8);
   composer.addPass(bloom);
@@ -105,28 +98,16 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
   const frames: number[] = [];
 
   // src: a canvas; refH: the height in its pixels that stands for `height` world units; rows: cubes across refH
-  function voxels(
-    src: HTMLCanvasElement,
-    refH: number,
-    height: number,
-    opts: { rows: number; layers: number; seed: number },
-  ) {
-    const step = Math.max(1, Math.round(refH / opts.rows));
+  function voxels(src: HTMLCanvasElement, refH: number, height: number, rows: number, opts: VoxelOptions) {
+    const step = Math.max(1, Math.round(refH / rows));
     const s = sampleSprite(src, { x: 0, y: 0, w: src.width, h: src.height }, step);
     if (!s.cells.length) return null;
-    return new VoxelFighter(s, {
-      size: (step * height) / refH,
-      scatter: "burst",
-      layers: opts.layers,
-      seed: opts.seed,
-      shadows: true,
-    });
+    return new VoxelFighter(s, { size: (step * height) / refH, scatter: "burst", shadows: true, ...opts });
   }
   // a swapped-out look bursts apart while the new one gathers in through it, so the stage is never empty
   const OUT = 460,
     leaving: { f: VoxelFighter; at: number }[] = [];
 
-  // look: ui.ts composeLook() — { key, body, frameH, pet, petH }
   function set(look: Look | null | undefined) {
     if (!look || look.key === lookKey) return;
     const first = !lookKey;
@@ -137,9 +118,9 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
       pet?.dispose();
     } else for (const f of [fighter, pet]) if (f) leaving.push({ f, at: performance.now() });
     const small = innerWidth < 700;
-    fighter = voxels(look.body, look.frameH, HEIGHT, { rows: small ? 40 : 52, layers: 14, seed: 3 });
+    fighter = voxels(look.body, look.frameH, HEIGHT, small ? 40 : 52, { layers: 14, seed: 3 });
     if (fighter) table.add(fighter.group);
-    pet = look.pet ? voxels(look.pet, look.petH, HEIGHT * 0.42, { rows: small ? 16 : 22, layers: 6, seed: 9 }) : null;
+    pet = look.pet ? voxels(look.pet, look.petH, HEIGHT * 0.42, small ? 16 : 22, { layers: 6, seed: 9 }) : null;
     if (pet) {
       pet.group.position.set(-1.0, 0, -0.4);
       table.add(pet.group);
@@ -158,8 +139,7 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
       renderer.setSize(w, h, false);
       composer.setSize(w, h);
       camera.aspect = w / h;
-      // frame the fighter: wider cards pull back a little so the arena shows around it
-      // ...but a short, wide card (the phone's sticky stage) steps in so the fighter fills its height
+      // wider cards pull back so the arena shows; a short, wide card (the phone's sticky stage) steps in instead
       const strip = camera.aspect > 1.5 && h < 320,
         dist = strip ? 4.5 : (6.0 + Math.max(0, camera.aspect - 0.8) * 0.4) / zoom;
       camera.position.set(0, strip ? 1.45 : 1.85, dist);
@@ -180,18 +160,13 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
   const ray = new THREE.Raycaster(),
     plane = new THREE.Plane(),
     hit = new THREE.Vector3(),
-    nrm = new THREE.Vector3();
+    nrm = new THREE.Vector3(),
+    ndc = new THREE.Vector2();
   function pointerOn(f: VoxelFighter | null, e: PointerEvent) {
     if (!f) return null;
     const r = canvas.getBoundingClientRect();
-    // setFromCamera reads only .x and .y, so a plain object stands in for the Vector2.
-    ray.setFromCamera(
-      {
-        x: ((e.clientX - r.left) / r.width) * 2 - 1,
-        y: -((e.clientY - r.top) / r.height) * 2 + 1,
-      } as THREE.Vector2, // as: setFromCamera reads only .x and .y
-      camera,
-    );
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
     f.group.updateWorldMatrix(true, false);
     nrm.set(0, 0, 1).transformDirection(f.group.matrixWorld);
     plane.setFromNormalAndCoplanarPoint(nrm, hit.setFromMatrixPosition(f.group.matrixWorld));
@@ -253,10 +228,7 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
     raf = 0;
     if (!canvas.isConnected || !resize()) return;
     // phones keep the card in view the whole time (sticky bar): idle at 30 fps there to save battery
-    if (innerWidth < 900 && !drag && !dirty && now - drawn < 30) {
-      kick();
-      return;
-    }
+    if (innerWidth < 900 && !drag && !dirty && now - drawn < 30) return kick();
     drawn = now;
     const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016);
     last = now;
@@ -290,18 +262,16 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
       pet.pointer = null;
       pet.update(Math.max(0, a * 1.15 - 0.15));
     }
+    for (const { mesh, seed } of lanterns.flames)
+      mesh.material.emissiveIntensity = live
+        ? 2.8 + Math.sin(t * 9 + seed) * 0.35 + Math.sin(t * 23 + seed * 3) * 0.2
+        : 2.8;
     if (live) {
       sky.material.uniforms.uTime.value = t;
       embers.material.uniforms.uTime.value = t;
       island.userData.rune.uTime.value = t;
-      lanterns.flames.forEach((f) => {
-        f.mesh.material.emissiveIntensity = 2.8 + Math.sin(t * 9 + f.seed) * 0.35 + Math.sin(t * 23 + f.seed * 3) * 0.2;
-      });
       if (fighter) fighter.group.position.y = Math.max(0, Math.sin(t * 2.2)) * 0.015 * calm; // a breath
-    } else
-      lanterns.flames.forEach((f) => {
-        f.mesh.material.emissiveIntensity = 2.8;
-      });
+    }
     composer.render(dt);
     dirty = false;
     // a slow machine (software rendering) gets a still arena: render only when something changes
@@ -329,14 +299,5 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
     } // at rest: the next wake starts a fresh clock and a fresh speed sample
   }
   kick();
-  return {
-    set,
-    wake,
-    get slow() {
-      return slow;
-    },
-    get count() {
-      return (fighter?.count || 0) + (pet?.count || 0);
-    },
-  };
+  return { set };
 }

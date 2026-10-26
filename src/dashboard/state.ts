@@ -1,5 +1,4 @@
-// The fighter page's state and the helpers every tab shares: the loadout being edited, what the fighter owns,
-// the 3D preview and the voxel thumbnails.
+// Fighter page state and shared helpers: the loadout being edited, what the fighter owns, preview, thumbnails.
 import {
   h,
   $,
@@ -61,7 +60,6 @@ export const KINDS = {
   { field: LookField; look: "char" | "pet" | "sample" | "text"; none: string; noun: string }
 >;
 const LOOK_FIELDS = Object.values(KINDS).map((k) => k.field);
-// as unknown as Owned: Object.fromEntries types its keys as string; they are the KINDS keys
 export const emptyOwned = () =>
   ({
     pets: [],
@@ -70,7 +68,7 @@ export const emptyOwned = () =>
     slots: 1,
     rolls: {},
     rerolled: [],
-  }) as unknown as Owned; // the spread's keys are the KINDS keys (see above)
+  }) as unknown as Owned; // as: Object.fromEntries types its keys as string; they are the KINDS keys
 export const state: {
   session: Session | null;
   catalog: CatalogEntry[];
@@ -147,16 +145,15 @@ export function vox(canvas: HTMLCanvasElement, make: () => Look | null) {
   voxJobs.set(canvas, make);
   voxThumb?.(canvas, make);
 }
+const redraw = () => voxJobs.forEach((make, c) => c.isConnected && voxThumb?.(c, make));
 // a hat, pet or accessory drawing module arriving changes how the tiles' looks draw
-onLooksReady($<HTMLCanvasElement>("#preview3d"), () => {
-  for (const [c, make] of voxJobs) if (c.isConnected) voxThumb?.(c, make);
-});
+onLooksReady($<HTMLCanvasElement>("#preview3d"), redraw);
 if (!navigator.connection?.saveData) {
   import("../voxthumb.ts")
     .then((m) => {
       voxThumb = m.voxThumb;
       voxAll = m.voxAll;
-      for (const [c, make] of voxJobs) if (c.isConnected) voxThumb(c, make);
+      redraw();
     })
     .catch(() => {});
 }
@@ -174,16 +171,14 @@ export function thumb(entry: CatalogEntry | null, size: number, opts: SpriteOpts
 // Hovering a tile tries it on the 3D fighter for a moment; leaving puts the picked look back.
 let peekTimer = 0;
 export function peekOn(el: HTMLElement, field: keyof Loadout, value: string) {
-  el.addEventListener("pointerenter", (e) => {
-    if (e.pointerType !== "mouse") return;
-    clearTimeout(peekTimer);
-    peekTimer = setTimeout(() => render3d({ ...state.d, [field]: value }), 140);
-  });
-  el.addEventListener("pointerleave", (e) => {
-    if (e.pointerType !== "mouse") return;
-    clearTimeout(peekTimer);
-    peekTimer = setTimeout(() => render3d(), 80);
-  });
+  const peek = (type: "pointerenter" | "pointerleave", ms: number, d: () => Loadout) =>
+    el.addEventListener(type, (e) => {
+      if (e.pointerType !== "mouse") return;
+      clearTimeout(peekTimer);
+      peekTimer = setTimeout(() => render3d(d()), ms);
+    });
+  peek("pointerenter", 140, () => ({ ...state.d, [field]: value }));
+  peek("pointerleave", 80, () => state.d);
 }
 
 // Shop and save error codes, as the end of "Not bought: ..." and "Not saved: ...".
@@ -241,8 +236,7 @@ export const entryOf = (id: string | undefined) => state.catalog.find((x) => x.i
 // A viewer's approved sprite (server/sprites.ts) is only for them; state.catalog keeps everyone's for the ranks.
 export const pickable = () => state.catalog.filter((e) => !e.owner || e.owner === state.session?.user?.id);
 export const looks = (d = state.d) => Object.fromEntries(LOOK_FIELDS.map((f) => [f, d[f]]));
-// "+2 power, +1 guard", or "+1 guard, crit, dodge and vitality" when three or more stats share one number (as
-// server/pets.ts boostText).
+// "+2 power, +1 guard", or "+1 guard, crit, dodge and vitality" when 3+ stats share a number (as server/pets.ts).
 export function boostText(b: Partial<Stats> | undefined) {
   const keys = STATS.filter((k) => b?.[k]);
   const first = keys[0];
@@ -257,13 +251,11 @@ export function petBoost(pet: ShopPet | null): Partial<Stats> | undefined {
   const roll = state.owned.rolls?.[pet.id] || [];
   return Object.fromEntries(STATS.filter((k) => roll.includes(k)).map((k) => [k, 1]));
 }
-export const petTag = (pet: ShopPet) =>
-  pet.tier.charAt(0).toUpperCase() +
-  pet.tier.slice(1) +
-  ", " +
-  (pet.tier === "legendary" && !state.owned.rolls?.[pet.id]?.length
-    ? "+1 to 4 random stats"
-    : boostText(petBoost(pet)));
+export const petTag = (pet: ShopPet) => {
+  const unrolled = pet.tier === "legendary" && !state.owned.rolls?.[pet.id]?.length;
+  const tier = pet.tier.charAt(0).toUpperCase() + pet.tier.slice(1);
+  return tier + ", " + (unrolled ? "+1 to 4 random stats" : boostText(petBoost(pet)));
+};
 export const canShop = () => Boolean(state.session?.user && state.profile) && !state.off;
 export const signedIn = () => Boolean(state.session?.user);
 export const money = (n: number | null | undefined) => "$" + (n || 0);

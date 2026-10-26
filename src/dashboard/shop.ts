@@ -61,87 +61,13 @@ async function reroll(pet: ShopPet, btn: HTMLButtonElement, out: Element) {
   if (!r.ok) {
     retry(btn, REROLL);
     if (r.status === 401) expired();
-    setStatus(
-      out,
-      "Not rerolled: " +
-        (r.status === 401 ? "your session expired. Sign in again." : REASONS[r.data?.error] || errorText(r)),
-      "error",
-    );
+    const why = r.status === 401 ? "your session expired. Sign in again." : REASONS[r.data?.error] || errorText(r);
+    setStatus(out, "Not rerolled: " + why, "error");
     return;
   }
   state.owned = { ...emptyOwned(), ...(r.data.owned || state.owned) };
   renderAll();
   setStatus(out, "Rerolled " + pet.label + ": " + boostText(petBoost(pet)) + ".", "ok");
-}
-// A bought item is worn right away; Save brings it on stream. A bought build slot opens as a copy of this build.
-async function buy(
-  kind: BuyKind,
-  item: string,
-  label: string,
-  price: number,
-  btn: HTMLButtonElement,
-  out: Element,
-  text: string,
-) {
-  if (confirmFirst(btn, "Confirm: spend $" + price, text)) return;
-  btn.disabled = true;
-  setStatus(out, "Buying…");
-  const r = parseAnswer(
-    await api("/api/shop/" + CHANNEL, { method: "POST", body: { kind, id: item, price } }),
-    parseBought,
-    "a purchase",
-  );
-  if (r.data?.error === "price_changed") {
-    // A mod changed the price after this page loaded: show the new prices and let the viewer decide again.
-    const shop = parseAnswer(await api("/api/shop/" + CHANNEL), parseShop, "the shop");
-    if (shop.ok) state.shop = shop.data;
-    renderAll();
-    setStatus(out, "Not bought: the price changed to $" + r.data.price + ". Check it and buy again.", "error");
-    return;
-  }
-  if (r.status === 401) {
-    retry(btn, text);
-    expired();
-    setStatus(out, "Not bought: your session expired. Sign in again to buy.", "error");
-    return;
-  }
-  if (acceptedUnreadable(r)) {
-    // The dollars may be spent already, so the button stays off: a second click could buy it twice.
-    setStatus(
-      out,
-      "Your purchase may have gone through, but this page couldn't read the answer. Reload the page to check.",
-      "error",
-    );
-    return;
-  }
-  if (!r.ok) {
-    retry(btn, text);
-    setStatus(out, "Not bought: " + (REASONS[r.data?.error] || errorText(r)), "error");
-    return;
-  }
-  // as Profile: only a fighter with a profile can buy (canShop), so the spread copies one
-  state.profile = {
-    ...state.profile,
-    dollars: r.data.dollars,
-    styleDollars: r.data.styleDollars ?? state.profile?.styleDollars,
-  } as Profile;
-  state.owned = { ...emptyOwned(), ...(r.data.owned || state.owned) };
-  if (kind === "slot") switchBuild(state.owned.slots - 1, copy(state.d));
-  else if (kind === "pet") state.d.pet = item;
-  else if (kind === "hat") state.d.hat = item;
-  else state.d[KINDS[kind].field] = item;
-  renderAll();
-  setStatus(
-    out,
-    kind === "slot"
-      ? "Bought build " +
-          state.owned.slots +
-          " for $" +
-          price +
-          ". It starts as a copy; change it and save to put it on stream."
-      : "Bought " + label + " for $" + price + ". Save your fighter to bring it on stream.",
-    "ok",
-  );
 }
 export const buyButton = (
   kind: BuyKind,
@@ -154,6 +80,65 @@ export const buyButton = (
   // A pet takes duel dollars only; anything else spends style dollars (channel point rewards) first.
   const have = (state.profile?.dollars || 0) + (kind === "pet" ? 0 : state.profile?.styleDollars || 0),
     short = canShop() && have < price;
+  // A bought item is worn right away; Save brings it on stream. A bought build slot opens as a copy of this build.
+  const buy = async (btn: HTMLButtonElement) => {
+    if (confirmFirst(btn, "Confirm: spend $" + price, text)) return;
+    btn.disabled = true;
+    setStatus(out, "Buying…");
+    const r = parseAnswer(
+      await api("/api/shop/" + CHANNEL, { method: "POST", body: { kind, id: item, price } }),
+      parseBought,
+      "a purchase",
+    );
+    if (r.data?.error === "price_changed") {
+      // A mod changed the price after this page loaded: show the new prices and let the viewer decide again.
+      const shop = parseAnswer(await api("/api/shop/" + CHANNEL), parseShop, "the shop");
+      if (shop.ok) state.shop = shop.data;
+      renderAll();
+      setStatus(out, "Not bought: the price changed to $" + r.data.price + ". Check it and buy again.", "error");
+      return;
+    }
+    if (r.status === 401) {
+      retry(btn, text);
+      expired();
+      setStatus(out, "Not bought: your session expired. Sign in again to buy.", "error");
+      return;
+    }
+    if (acceptedUnreadable(r)) {
+      // The dollars may be spent already, so the button stays off: a second click could buy it twice.
+      setStatus(
+        out,
+        "Your purchase may have gone through, but this page couldn't read the answer. Reload the page to check.",
+        "error",
+      );
+      return;
+    }
+    if (!r.ok) {
+      retry(btn, text);
+      setStatus(out, "Not bought: " + (REASONS[r.data?.error] || errorText(r)), "error");
+      return;
+    }
+    // as Profile: only a fighter with a profile can buy (canShop), so the spread copies one
+    state.profile = {
+      ...state.profile,
+      dollars: r.data.dollars,
+      styleDollars: r.data.styleDollars ?? state.profile?.styleDollars,
+    } as Profile;
+    state.owned = { ...emptyOwned(), ...(r.data.owned || state.owned) };
+    if (kind === "slot") switchBuild(state.owned.slots - 1, copy(state.d));
+    else if (kind === "pet") state.d.pet = item;
+    else if (kind === "hat") state.d.hat = item;
+    else state.d[KINDS[kind].field] = item;
+    renderAll();
+    setStatus(
+      out,
+      kind === "slot"
+        ? `Bought build ${state.owned.slots} for $${price}. ` +
+            "It starts as a copy; change it and save to put it on stream."
+        : `Bought ${label} for $${price}. Save your fighter to bring it on stream.`,
+      "ok",
+    );
+  };
   // Out of reach: say how far, so the affordable items are the only gold buttons
   return h(
     "button",
@@ -162,15 +147,11 @@ export const buyButton = (
       class: "btn btn-small buy" + (short ? " short" : ""),
       disabled: !canShop() || short,
       title: short
-        ? "Costs $" +
-          price +
-          "; you have $" +
-          have +
-          (kind === "pet" && state.profile?.styleDollars ? " duel dollars" : "")
+        ? `Costs $${price}; you have $${have}` + (kind === "pet" && state.profile?.styleDollars ? " duel dollars" : "")
         : null,
       "aria-label": "Buy " + label + " for $" + price + (short ? ", you need $" + (price - have) + " more" : ""),
       // as: the handler sits on this button
-      onclick: (e: MouseEvent) => buy(kind, item, label, price, e.currentTarget as HTMLButtonElement, out, text),
+      onclick: (e: MouseEvent) => buy(e.currentTarget as HTMLButtonElement),
     },
     short
       ? (kind === "slot" ? "Build " + label.split(" ").pop() + ": need $" : "Need $") + (price - have) + " more"
@@ -207,7 +188,12 @@ function tile({
   const input = h("input", { type: "radio", name: kind, id: inputId, value: id });
   input.addEventListener("change", () => {
     onPick(id);
-    tryOnNote(kind, id, out);
+    const how = canShop()
+      ? "Buy it to wear it on stream."
+      : signedIn()
+        ? "Save your fighter, then buy it to wear it."
+        : "Sign in to buy it.";
+    setStatus(out, owns(kind, id) ? "" : `Trying on ${itemLabel(kind, id)} in the preview. ${how}`);
     renderPreview();
     renderSave();
   });
@@ -215,12 +201,8 @@ function tile({
   const forSale = !have && (price as number) > 0;
   // Signed out, nothing can be bought yet, so the price is a quiet line instead of a row of disabled Buy buttons.
   const quiet = forSale && !signedIn(),
-    note =
-      tag || quiet
-        ? [tag, quiet ? h("b", { class: "price" }, (tag && kind === "hat" ? "or " : "") + money(price)) : ""].filter(
-            Boolean,
-          )
-        : null;
+    shown = quiet ? h("b", { class: "price" }, (tag && kind === "hat" ? "or " : "") + money(price)) : "",
+    note = tag || quiet ? [tag, shown].filter(Boolean) : null;
   const option = h(
     "div",
     { class: "char-option" + (have ? "" : " locked") + (tier ? " tier-" + tier : "") },
@@ -239,32 +221,14 @@ function tile({
     // as number: forSale checked the price is above 0
     forSale && !quiet ? buyButton(kind, id, buyLabel || label, price as number, out) : null,
   );
-  const look = kind === "hat" || kind === "pet" ? null : KINDS[kind].look;
   if (kind === "hat" || kind === "pet") peekOn(option, kind, id);
-  else if (look === "char" || look === "pet") peekOn(option, KINDS[kind].field, id);
+  else if (KINDS[kind].look === "char" || KINDS[kind].look === "pet") peekOn(option, KINDS[kind].field, id);
   return option;
-}
-function tryOnNote(kind: ItemKind, id: string, out: Element) {
-  if (owns(kind, id)) return setStatus(out, "");
-  setStatus(
-    out,
-    "Trying on " +
-      itemLabel(kind, id) +
-      " in the preview. " +
-      (canShop()
-        ? "Buy it to wear it on stream."
-        : signedIn()
-          ? "Save your fighter, then buy it to wear it."
-          : "Sign in to buy it."),
-  );
 }
 export const checkPicked = (box: Element, value: string) => {
   const r = box.querySelector<HTMLInputElement>("input[value='" + CSS.escape(value) + "']");
   if (r) r.checked = true;
-  else
-    box.querySelectorAll("input").forEach((x) => {
-      x.checked = false;
-    });
+  else for (const x of box.querySelectorAll("input")) x.checked = false;
 };
 
 // Thumbnails of the picked character wearing an item; they follow the character as it changes.
@@ -364,7 +328,7 @@ export function renderItems(kind: KindKey) {
   checkPicked(box, state.d[k.field]);
   const have = state.owned[kind]?.length || 0;
   $("#note-" + kind).textContent = list[0]?.price
-    ? "(" + money(list[0].price) + " each" + (canShop() ? ", you own " + have : "") + ")"
+    ? `(${money(list[0].price)} each${canShop() ? `, you own ${have}` : ""})`
     : "";
 }
 
@@ -410,13 +374,10 @@ export function renderPets() {
   };
   box.replaceChildren(option(null), ...state.shop.pets.map(withReroll));
   checkPicked(box, state.d.pet);
+  const p = state.profile!; // profile!: read only when canShop(), which needs one
   $("#pet-note").textContent = canShop()
-    ? "(you own " +
-      state.owned.pets.length +
-      ", you have " +
-      money(state.profile!.dollars) + // profile!: canShop() needs one
-      (state.profile!.styleDollars ? " in duel dollars; style dollars don't buy pets" : "") + // as above
-      ")"
+    ? `(you own ${state.owned.pets.length}, you have ${money(p.dollars)}` +
+      `${p.styleDollars ? " in duel dollars; style dollars don't buy pets" : ""})`
     : "";
   $("#petcolor-help").textContent = petById(state.d.pet)
     ? "Tints your pet on stream."

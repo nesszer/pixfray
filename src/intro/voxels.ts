@@ -1,42 +1,23 @@
 // PixFray's own sprites rebuilt as voxels: every opaque pixel cell of a sprite frame becomes a small cube, two layers deep.
 // A VoxelFighter flies its cubes in from scattered start points (assemble 0..1), and the cursor can push them aside.
+// Every `!` below reads an index inside its typed array, pixel buffer or cell list.
 import * as THREE from "three";
 import { bevel } from "./bevel.ts";
 
-/** A frame's rectangle on a sprite sheet, in pixels. */
-export interface SpriteFrame {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-/** One opaque cell of a sampled frame: grid column q and row r, and its place with the feet on y = 0. */
-interface SpriteCell {
-  q: number;
-  r: number;
-  color: THREE.Color;
-  x: number;
-  y: number;
-}
-/** What sampleSprite returns: the opaque cells and the grid size they span. */
-interface SampledSprite {
-  cells: SpriteCell[];
-  cols: number;
-  rows: number;
-}
-/** VoxelFighter options: cube edge in world units, depth in cubes, how the cubes fly in, a seed, shadow casting. */
-export interface VoxelOptions {
+export type SpriteFrame = { x: number; y: number; w: number; h: number };
+// Grid column q and row r, and the cell's place with the feet on y = 0.
+type SpriteCell = { q: number; r: number; color: THREE.Color; x: number; y: number };
+type SampledSprite = { cells: SpriteCell[]; cols: number; rows: number };
+// size: cube edge in world units; layers: depth in cubes.
+export type VoxelOptions = {
   size?: number;
   layers?: number;
   scatter?: "rain" | "burst";
   seed?: number;
   shadows?: boolean;
-}
-/** A point in the fighter's local x/y plane (a THREE.Vector3 fits). */
-interface LocalPoint {
-  x: number;
-  y: number;
-}
+};
+// A point in the fighter's local x/y plane (a THREE.Vector3 fits).
+type LocalPoint = { x: number; y: number };
 
 export async function loadImage(url: string): Promise<HTMLImageElement> {
   const img = new Image();
@@ -74,38 +55,26 @@ export function sampleSprite(img: CanvasImageSource, frame: SpriteFrame, step: n
         const x = Math.min(frame.w - 1, Math.max(0, Math.floor(q * step + step / 2) + dx)),
           y = Math.min(frame.h - 1, Math.max(0, Math.floor(r * step + step / 2) + dy));
         const i = (y * frame.w + x) * 4;
-        // in range: x and y stay inside the frame's pixels
         if (d[i + 3]! > best) {
-          best = d[i + 3]!; // in range: as above
+          best = d[i + 3]!;
           bi = i;
         }
       }
       if (best < 150) continue;
-      // x and y are set below, once the sprite's bounds are known
-      cells.push({
-        q,
-        r,
-        // in range: bi indexes a pixel inside the frame
-        color: new THREE.Color().setRGB(d[bi]! / 255, d[bi + 1]! / 255, d[bi + 2]! / 255, THREE.SRGBColorSpace),
-      } as SpriteCell); // as: x and y are set below
+      const color = new THREE.Color().setRGB(d[bi]! / 255, d[bi + 1]! / 255, d[bi + 2]! / 255, THREE.SRGBColorSpace);
+      cells.push({ q, r, color, x: 0, y: 0 }); // x and y follow once the sprite's bounds are known
     }
   if (!cells.length) return { cells, cols, rows: 0 };
-  let minQ = Infinity,
-    maxQ = -Infinity,
-    maxR = -Infinity,
-    minR = Infinity;
+  const qs = cells.map((c) => c.q),
+    rs = cells.map((c) => c.r);
+  const minQ = Math.min(...qs),
+    maxQ = Math.max(...qs),
+    maxR = Math.max(...rs);
   for (const c of cells) {
-    minQ = Math.min(minQ, c.q);
-    maxQ = Math.max(maxQ, c.q);
-    maxR = Math.max(maxR, c.r);
-    minR = Math.min(minR, c.r);
-  }
-  const mid = (minQ + maxQ) / 2;
-  for (const c of cells) {
-    c.x = c.q - mid;
+    c.x = c.q - (minQ + maxQ) / 2;
     c.y = maxR - c.r;
   }
-  return { cells, cols: maxQ - minQ + 1, rows: maxR - minR + 1 };
+  return { cells, cols: maxQ - minQ + 1, rows: maxR - Math.min(...rs) + 1 };
 }
 
 const m4 = new THREE.Matrix4(),
@@ -135,7 +104,6 @@ export class VoxelFighter {
   pointer: LocalPoint | null = null; // local-space cursor point
   settling = false;
 
-  // sprite: result of sampleSprite; size: cube edge in world units; layers: depth in cubes.
   constructor(
     sprite: SampledSprite,
     { size = 0.07, layers = 2, scatter = "rain", seed = 1, shadows = false }: VoxelOptions = {},
@@ -192,7 +160,7 @@ export class VoxelFighter {
     const rand = () => (rnd = (rnd * 9301 + 49297) % 233280) / 233280;
     let i = 0;
     cells.forEach((c, ci) => {
-      const n = depth[ci]!; // in range: depth has one entry per cell
+      const n = depth[ci]!;
       for (let l = 0; l < n; l++, i++) {
         const hx = c.x * size,
           hy = c.y * size + size / 2,
@@ -208,7 +176,7 @@ export class VoxelFighter {
         // the front layer (+z, toward the camera) keeps the sprite colour, with a little per-cube grain; the back and sides go darker
         const col =
           l === n - 1
-            ? c.color.clone().multiplyScalar(0.94 + 0.12 * this.rnd[i]!) // in range: i < count, set just above
+            ? c.color.clone().multiplyScalar(0.94 + 0.12 * this.rnd[i]!)
             : c.color.clone().multiplyScalar(0.55 + 0.3 * (l / Math.max(1, n - 1)));
         this.mesh.setColorAt(i, col);
       }
@@ -237,62 +205,58 @@ export class VoxelFighter {
       HR = this.height * (0.22 + 0.3 * hk),
       hx0 = this.hurtAt.x,
       hy0 = this.hurtAt.y;
+    const { home, from, spin, push, rnd, delay, count } = this;
     let moving = false;
-    // in range below: i < count, and k = i * 3 indexes the count * 3 arrays (home, from, spin, push)
-    for (let i = 0; i < this.count; i++) {
+    for (let i = 0; i < count; i++) {
       const k = i * 3;
-      const a = easeOut(Math.min(1, Math.max(0, (t - this.delay[i]! * 0.55) / 0.45))); // in range: i < count
+      const a = easeOut(Math.min(1, Math.max(0, (t - delay[i]! * 0.55) / 0.45)));
       let px = 0,
         py = 0,
         pz = 0;
       if (pointer && a === 1) {
-        const dx = this.home[k]! - pointer.x, // in range
-          dy = this.home[k + 1]! - pointer.y, // in range
+        const dx = home[k]! - pointer.x,
+          dy = home[k + 1]! - pointer.y,
           d2 = dx * dx + dy * dy;
         if (d2 < R2) {
           const d = Math.sqrt(d2) || 1e-4,
             f = Math.pow(1 - d / R, 2) * this.height * 0.22;
           px = (dx / d) * f;
           py = (dy / d) * f;
-          pz = f * 1.4 * (this.home[k + 2]! >= 0 ? 1 : 0.6); // in range
+          pz = f * 1.4 * (home[k + 2]! >= 0 ? 1 : 0.6);
         }
       }
-      let ex = this.push[k]! + (px - this.push[k]!) * 0.16, // in range
-        ey = this.push[k + 1]! + (py - this.push[k + 1]!) * 0.16, // in range
-        ez = this.push[k + 2]! + (pz - this.push[k + 2]!) * 0.16; // in range
-      this.push[k] = ex;
-      this.push[k + 1] = ey;
-      this.push[k + 2] = ez;
+      let ex = push[k]! + (px - push[k]!) * 0.16,
+        ey = push[k + 1]! + (py - push[k + 1]!) * 0.16,
+        ez = push[k + 2]! + (pz - push[k + 2]!) * 0.16;
+      push.set([ex, ey, ez], k);
       if (Math.abs(ex) + Math.abs(ey) + Math.abs(ez) > 1e-4) moving = true;
       if (a <= 0) {
         m4.makeScale(0, 0, 0);
         this.mesh.setMatrixAt(i, m4);
         continue;
       }
-      let knock = 0;
       if (hk > 0 && a === 1) {
         // cubes near the impact break off and hang in the air, away from the blow
-        const dx = this.home[k]! - hx0, // in range
-          dy = this.home[k + 1]! - hy0, // in range
+        const dx = home[k]! - hx0,
+          dy = home[k + 1]! - hy0,
           d = Math.hypot(dx, dy);
-        // in range: i < count
-        if (d < HR && this.rnd[i]! < hk * 0.75 * (1 - d / HR)) {
-          knock = (0.5 + this.rnd[i]! * 2.2) * this.size * 12 * hk; // in range
-          const n = d || 1e-4;
-          ex += knock * (0.35 + 0.4 * this.rnd[(i * 3) % this.count]!); // in range
+        if (d < HR && rnd[i]! < hk * 0.75 * (1 - d / HR)) {
+          const knock = (0.5 + rnd[i]! * 2.2) * this.size * 12 * hk,
+            n = d || 1e-4;
+          ex += knock * (0.35 + 0.4 * rnd[(i * 3) % count]!);
           ey += (dy / n) * knock * 0.45 + knock * 0.1;
-          ez += knock * (0.5 + this.rnd[(i * 7) % this.count]!); // in range
+          ez += knock * (0.5 + rnd[(i * 7) % count]!);
         }
       }
       v3.set(
-        this.from[k]! + (this.home[k]! - this.from[k]!) * a + ex, // in range
-        this.from[k + 1]! + (this.home[k + 1]! - this.from[k + 1]!) * a + ey, // in range
-        this.from[k + 2]! + (this.home[k + 2]! - this.from[k + 2]!) * a + ez, // in range
+        from[k]! + (home[k]! - from[k]!) * a + ex,
+        from[k + 1]! + (home[k + 1]! - from[k + 1]!) * a + ey,
+        from[k + 2]! + (home[k + 2]! - from[k + 2]!) * a + ez,
       );
       const r = 1 - a,
         sc = a < 1 ? 0.18 + 0.82 * a * a : 1;
       if (r > 0 || ez > 0.002) {
-        e3.set(this.spin[k]! * r + ez * 6, this.spin[k + 1]! * r, this.spin[k + 2]! * r); // in range
+        e3.set(spin[k]! * r + ez * 6, spin[k + 1]! * r, spin[k + 2]! * r);
         q4.setFromEuler(e3);
       } else q4.identity();
       s3.setScalar(sc);

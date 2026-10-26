@@ -73,16 +73,9 @@ function renderBotHealth(b: BotStatus | null | undefined) {
       ? `Bot: last command ${timeAgo(b.heardAt)} (${b.heard}), last reply sent ${timeAgo(b.sentAt)}. ${b.sent} sent, ${b.failed} dropped.`
       : "Bot: no commands heard yet.",
   ];
-  if (b.failedAt)
-    parts.push(
-      (failing ? "The last reply was dropped " : "Last dropped reply ") +
-        timeAgo(b.failedAt) +
-        ": " +
-        b.failedText +
-        ".",
-    );
-  if (b.heldAt)
-    parts.push("Last held back " + timeAgo(b.heldAt) + ": " + (HELD_TEXT[b.heldReason] || b.heldReason) + ".");
+  const dropped = failing ? "The last reply was dropped" : "Last dropped reply";
+  if (b.failedAt) parts.push(`${dropped} ${timeAgo(b.failedAt)}: ${b.failedText}.`);
+  if (b.heldAt) parts.push(`Last held back ${timeAgo(b.heldAt)}: ${HELD_TEXT[b.heldReason] || b.heldReason}.`);
   parts.push("Type !fray debug in chat for the same check.");
   box.textContent = parts.join(" ");
   box.className = "small" + (failing ? " callout warning" : "");
@@ -96,16 +89,13 @@ export async function chatAct(action: string, b: HTMLButtonElement, takeover = f
   setStatus(status, action === "connectChat" ? "Asking Twitch for a chat subscription…" : "Disconnecting…");
   const r = await busy(b, () => post(takeover ? { action, takeover: true } : { action }));
   // One Twitch app serves both sites, and Twitch allows one chat subscription per channel: offer to move it here.
+  const move = `Chat is connected to ${r.data?.connectedElsewhere}. Only one site can receive chat at a time.`;
   if (
     r.status === 409 &&
     r.data?.connectedElsewhere &&
     !takeover &&
     mayBroadcast() &&
-    confirm(
-      "Chat is connected to " +
-        r.data.connectedElsewhere +
-        ". Only one site can receive chat at a time. Move chat to this site? The other site pauses.",
-    )
+    confirm(move + " Move chat to this site? The other site pauses.")
   )
     return chatAct(action, b, true, status);
   if (!r.ok) {
@@ -170,31 +160,21 @@ export function renderSe() {
   const host = se.origin ? new URL(se.origin).host : location.host,
     test = " in chat to test.",
     decline = se.names?.decline || "!decline";
+  const reached = `No StreamElements command has reached ${host}`;
   let warn = "",
     note = "";
   if (!twitchChat(c) && !se.lastCommandAt && !using)
-    note =
-      "No StreamElements command has reached " +
-      host +
-      " yet. Add the commands from the table below, then type " +
-      decline +
-      test;
+    note = `${reached} yet. Add the commands from the table below, then type ${decline}${test}`;
   else if (using && !se.lastCommandAt)
     warn =
-      "No StreamElements command has reached " +
-      host +
-      " with this key yet. If the replies in StreamElements were copied from another site, such as the test site, copy every reply again from the table below (they point at " +
-      host +
-      "), paste them into StreamElements, then type " +
-      decline +
-      test;
+      `${reached} with this key yet. If the replies in StreamElements were copied from another site, such as the ` +
+      `test site, copy every reply again from the table below (they point at ${host}), paste them into ` +
+      `StreamElements, then type ${decline}${test}`;
   else if (se.rejectedAt > se.lastCommandAt)
     warn =
-      "A StreamElements command arrived " +
-      timeAgo(se.rejectedAt) +
-      " with an old key and was refused. Copy every reply again from the table below and paste it into StreamElements.";
-  else if (se.lastCommandAt)
-    note = "Last StreamElements command reached " + host + " " + timeAgo(se.lastCommandAt) + ".";
+      `A StreamElements command arrived ${timeAgo(se.rejectedAt)} with an old key and was refused. ` +
+      "Copy every reply again from the table below and paste it into StreamElements.";
+  else if (se.lastCommandAt) note = `Last StreamElements command reached ${host} ${timeAgo(se.lastCommandAt)}.`;
   health.hidden = !(warn || note);
   health.className = warn
     ? "callout warning small" + (se.rejectedAt > se.lastCommandAt ? " negative" : "")
@@ -224,16 +204,10 @@ function drawSeTable(se: Se, tbody: HTMLElement) {
         "data-action": cmd.action,
       });
       // The cell shows where the command points but not the key, so the page is safe to show on stream; Copy reply copies the whole line.
-      const copy = button(
-        "Copy reply",
-        () =>
-          copyText(
-            cmd.response,
-            seStatus,
-            "Copied the reply for " + input.value + ". Paste it as the response of that StreamElements command.",
-          ),
-        { "aria-label": "Copy reply for " + cmd.name },
-      );
+      const msg = () => `Copied the reply for ${input.value}. Paste it as the response of that StreamElements command.`;
+      const copy = button("Copy reply", () => copyText(cmd.response, seStatus, msg()), {
+        "aria-label": "Copy reply for " + cmd.name,
+      });
       const preview = cmd.response.replace(/https?:\/\/[^/]+/, "").replace(/\?k=.*$/, "?k=…)");
       return h(
         "tr",
@@ -327,11 +301,8 @@ function renderBotStep(done: boolean | undefined) {
     login = a.chatBot?.login || "",
     actions = $("#bot-actions");
   if (!login) {
-    detail(
-      "check-bot",
-      "The PixFray bot account isn't signed in on this site yet. " +
-        (S.access?.owner ? "Sign it in, then come back and add it." : "Ask " + site.owner.login + " to sign it in."),
-    );
+    const ask = S.access?.owner ? "Sign it in, then come back and add it." : `Ask ${site.owner.login} to sign it in.`;
+    detail("check-bot", "The PixFray bot account isn't signed in on this site yet. " + ask);
     return actions.replaceChildren(
       ...(S.access?.owner ? [h("a", { class: "btn", href: "/auth/login?bot=1" }, "Sign in the bot account")] : []),
     );
@@ -343,16 +314,10 @@ function renderBotStep(done: boolean | undefined) {
     detail(
       "check-bot",
       a.config?.botEnabled === false
-        ? "The PixFray bot (" +
-            login +
-            ") is turned off: it ignores every command and posts nothing. Type !fray on in your chat, or turn on Bot answers commands under Rules, Chat bot."
-        : "The PixFray bot (" +
-            login +
-            ") reads your chat and answers the duel commands." +
-            heard +
-            " Type /mod " +
-            login +
-            " in your chat so it can answer more than one command a second.",
+        ? `The PixFray bot (${login}) is turned off: it ignores every command and posts nothing. Type !fray on in ` +
+            "your chat, or turn on Bot answers commands under Rules, Chat bot."
+        : `The PixFray bot (${login}) reads your chat and answers the duel commands.${heard} Type /mod ${login} in ` +
+            "your chat so it can answer more than one command a second.",
     );
     return actions.replaceChildren();
   }
@@ -363,10 +328,8 @@ function renderBotStep(done: boolean | undefined) {
   if (broadcasterHere()) {
     detail(
       "check-bot",
-      "The bot (" +
-        login +
-        ") reads your chat and answers !challenge, !fight and the other commands. Twitch asks you to allow it, then chat connects here." +
-        se,
+      `The bot (${login}) reads your chat and answers !challenge, !fight and the other commands. ` +
+        `Twitch asks you to allow it, then chat connects here.${se}`,
     );
     actions.replaceChildren(
       h(
@@ -382,12 +345,8 @@ function renderBotStep(done: boolean | undefined) {
   } else {
     detail(
       "check-bot",
-      "Ask " +
-        CHANNEL +
-        " to open this page and click Add the PixFray bot, or to type /mod " +
-        login +
-        " in their chat. Then Connect chat works for you too." +
-        se,
+      `Ask ${CHANNEL} to open this page and click Add the PixFray bot, or to type /mod ${login} in their chat. ` +
+        `Then Connect chat works for you too.${se}`,
     );
     actions.replaceChildren(
       button("Connect chat", (b) => chatAct("connectChat", b, false, $("#bot-status")), {
@@ -424,20 +383,12 @@ export function renderChecklist() {
   if (twitch) detail("check-commands", "Twitch chat is connected directly, so StreamElements commands aren't needed.");
   else if (!se) detail("check-commands", "StreamElements isn't available for this channel.");
   else {
-    const missing = se.commands.filter((x) => !se.seen?.[x.action]);
-    detail(
-      "check-commands",
-      se.commands.length -
-        missing.length +
-        " of " +
-        se.commands.length +
-        " commands have reached PixFray." +
-        (missing.length
-          ? " Not used yet: " +
-            missing.map((x) => x.name).join(", ") +
-            ". Type each one in your chat; any reply from the bot counts."
-          : ""),
-    );
+    const missing = se.commands.filter((x) => !se.seen?.[x.action]).map((x) => x.name),
+      total = se.commands.length;
+    const left = missing.length
+      ? ` Not used yet: ${missing.join(", ")}. Type each one in your chat; any reply from the bot counts.`
+      : "";
+    detail("check-commands", `${total - missing.length} of ${total} commands have reached PixFray.${left}`);
   }
   if (a.chatBot) renderBotStep(twitch);
   detail("check-mods", ...modsDetail());
@@ -446,10 +397,8 @@ export function renderChecklist() {
     b.textContent = "Expired";
     b.className = "badge warning";
   }
-  $("#check-title").textContent =
-    done === required.length
-      ? "Stream setup is done"
-      : "Stream setup: " + done + " of " + required.length + " steps done";
+  const progress = `Stream setup: ${done} of ${required.length} steps done`;
+  $("#check-title").textContent = done === required.length ? "Stream setup is done" : progress;
   const next = required.find((s) => !s.done),
     pointer = $("#setup-next");
   // one primary button: the bot step's while it's the next step, otherwise Copy link
@@ -460,14 +409,17 @@ export function renderChecklist() {
   pointer.hidden = !next;
   if (next)
     pointer.replaceChildren(
-      "Stream setup: " + done + " of " + required.length + " steps done. Next: ",
+      progress + ". Next: ",
       h(
         "a",
         {
           href: "#chat",
           onclick: (e: Event) => {
             e.preventDefault();
-            goToStep(next.id);
+            selectTab($("#tab-chat"));
+            const li = $("#" + next.id);
+            li.scrollIntoView({ block: "center" });
+            li.focus({ preventScroll: true });
           },
         },
         next.next,
@@ -491,20 +443,11 @@ function modsDetail() {
         lapsed ? "Reconnect mod access" : "Connect mod access",
       ),
     ];
-  const verb = lapsed ? "reconnect" : "connect";
-  return [
-    (lapsed ? "Mod access expired" : "Mod access isn't connected") +
-      ". " +
-      (S.access?.owner
-        ? CHANNEL + " has to " + verb + " it from their own Stream setup page."
-        : "Ask " + CHANNEL + " to " + verb + " it."),
-  ];
-}
-function goToStep(id: string) {
-  selectTab($("#tab-chat"));
-  const li = $("#" + id);
-  li.scrollIntoView({ block: "center" });
-  li.focus({ preventScroll: true });
+  const verb = lapsed ? "reconnect" : "connect",
+    fix = S.access?.owner
+      ? `${CHANNEL} has to ${verb} it from their own Stream setup page.`
+      : `Ask ${CHANNEL} to ${verb} it.`;
+  return [`${lapsed ? "Mod access expired" : "Mod access isn't connected"}. ${fix}`];
 }
 on<HTMLInputElement>(
   "#duel-module-off",
@@ -537,15 +480,11 @@ const testOn = () => {
 };
 export function renderCheckinTest() {
   $("#checkin-test").hidden = !admin().checkinTestAllowed;
-  const t = testOn();
+  const t = testOn(),
+    until = t && new Date(t.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   $("#checkin-test-title").textContent = t ? "!checkin test mode is on" : "Test !checkin while offline";
   $("#checkin-test-text").replaceChildren(
-    t
-      ? "Until " +
-          new Date(t.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) +
-          (t.by ? " (turned on by " + t.by + ")" : "") +
-          ", "
-      : "For 15 minutes, ",
+    t ? `Until ${until}${t.by ? ` (turned on by ${t.by})` : ""}, ` : "For 15 minutes, ",
     h("code", {}, "!checkin"),
     t
       ? " answers while the stream is offline with a reply that starts [Test, not saved]. Nothing is saved: no points, no streak. While the stream is live, check-ins count as usual."

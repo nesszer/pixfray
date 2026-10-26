@@ -27,24 +27,23 @@ export function renderBotCommands() {
   if (key === shownCommands || (focused?.tagName === "INPUT" && section.contains(focused.closest("#bot-counters"))))
     return;
   shownCommands = key;
+  const commands = data.commands.map((c) =>
+    row([
+      h("code", {}, c.name),
+      c.reply,
+      [
+        button("Edit", () => editCommand(c.name), { "data-edit": c.name, "aria-label": "Edit " + c.name }),
+        " ",
+        button("Delete", (b) => deleteCommand(c.name, b), {
+          class: "btn btn-small btn-danger",
+          "data-delete": c.name,
+          "aria-label": "Delete " + c.name,
+        }),
+      ],
+    ]),
+  );
   $("#bot-commands-table tbody").replaceChildren(
-    ...(data.commands.length
-      ? data.commands.map((c) =>
-          row([
-            h("code", {}, c.name),
-            c.reply,
-            [
-              button("Edit", () => editCommand(c.name), { "data-edit": c.name, "aria-label": "Edit " + c.name }),
-              " ",
-              button("Delete", (b) => deleteCommand(c.name, b), {
-                class: "btn btn-small btn-danger",
-                "data-delete": c.name,
-                "aria-label": "Delete " + c.name,
-              }),
-            ],
-          ]),
-        )
-      : [emptyRow(3, "No commands yet. Add one below.")]),
+    ...(commands.length ? commands : [emptyRow(3, "No commands yet. Add one below.")]),
   );
   $("#bot-counters").hidden = !data.counters.length;
   $("#bot-counters-table tbody").replaceChildren(
@@ -79,7 +78,7 @@ function editCommand(name: string) {
 async function commandAction(action: string, payload: Record<string, unknown>, status: Element) {
   const r = await post({ action, payload });
   if (!r.ok) {
-    setStatus(status, "Couldn't save: " + (COMMAND_ERRORS[r.data?.error] || errorText(r)) + ".", "error");
+    setStatus(status, `Couldn't save: ${COMMAND_ERRORS[r.data?.error] || errorText(r)}.`, "error");
     return false;
   }
   admin().botCommands = r.data.botCommands;
@@ -99,18 +98,9 @@ onSubmit("#command-form", async () => {
     );
   if (!saved) return;
   editCommand("");
-  const done = (was ? "Saved " : "Added ") + name + ". ";
-  if (saved.warning === "reply_may_be_cut")
-    setStatus(
-      commandStatus,
-      done +
-        "With long names or counters it can reach " +
-        saved.longest +
-        " characters, so the bot cuts it at " +
-        saved.max +
-        ".",
-      "warning",
-    );
+  const done = `${was ? "Saved" : "Added"} ${name}. `,
+    cut = `With long names or counters it can reach ${saved.longest} characters, so the bot cuts it at ${saved.max}.`;
+  if (saved.warning === "reply_may_be_cut") setStatus(commandStatus, done + cut, "warning");
   else setStatus(commandStatus, done + "Type it in chat to try it.", "ok");
 });
 on("#command-cancel", () => {
@@ -128,7 +118,7 @@ async function saveCounter(name: string, value: number, b: HTMLButtonElement) {
   if (!Number.isInteger(value) || value < 0 || value > 1e9)
     return setStatus(status, "Pick a whole number from 0 to 1000000000.", "error");
   if (await busy(b, () => commandAction("setCounter", { name, value }, status)))
-    setStatus(status, "Counter " + name + " is " + value + " now.", "ok");
+    setStatus(status, `Counter ${name} is ${value} now.`, "ok");
 }
 
 // ---------- channel point rewards (server/points.ts; the broadcaster or the owner adds and deletes, mods read) ----------
@@ -168,62 +158,58 @@ export function renderPoints() {
   $("#points-form").hidden = !(owner && ready);
   $<HTMLButtonElement>("#points-add").disabled = rewards.length >= max;
   $("#points-note").textContent = !owner
-    ? "Only " + CHANNEL + " can add or delete rewards." + (ready ? "" : " Channel point rewards aren't allowed yet.")
+    ? `Only ${CHANNEL} can add or delete rewards.${ready ? "" : " Channel point rewards aren't allowed yet."}`
     : !ready && !broadcasterHere()
       ? CHANNEL + " has to allow channel point rewards, signed in to Twitch as themself."
       : ready && rewards.length >= max
-        ? max + " of " + max + " rewards. Delete one to add another."
+        ? `${max} of ${max} rewards. Delete one to add another.`
         : "";
   const key = JSON.stringify([p, owner]);
   if (key === shownPoints) return;
   shownPoints = key;
-  $("#points-table tbody").replaceChildren(
-    ...(rewards.length
-      ? rewards.map((r) =>
-          row(
-            [
-              r.title,
-              r.cost.toLocaleString("en-US"),
-              usd(r.dollars),
-              owner
-                ? button("Delete", (b) => deleteReward(r.rewardId, r.title, b), {
-                    class: "btn btn-small btn-danger",
-                    "data-reward": r.rewardId,
-                    "aria-label": "Delete " + r.title,
-                  })
-                : "",
-            ],
-            [1, 2],
-          ),
-        )
-      : [emptyRow(4, "No rewards yet.")]),
+  const rewardRows = rewards.map((r) =>
+    row(
+      [
+        r.title,
+        r.cost.toLocaleString("en-US"),
+        usd(r.dollars),
+        owner
+          ? button("Delete", (b) => deleteReward(r.rewardId, r.title, b), {
+              class: "btn btn-small btn-danger",
+              "data-reward": r.rewardId,
+              "aria-label": "Delete " + r.title,
+            })
+          : "",
+      ],
+      [1, 2],
+    ),
   );
+  $("#points-table tbody").replaceChildren(...(rewardRows.length ? rewardRows : [emptyRow(4, "No rewards yet.")]));
   const titles = new Map(rewards.map((r) => [r.rewardId, r.title]));
+  const redemptionRows = redemptions.map((x) => {
+    // marked: 0 until Twitch answers, -1 when PixFray leaves it alone, else Twitch's HTTP status (1: no answer)
+    const unmarked = x.marked > 0 && (x.marked < 200 || x.marked > 299);
+    const outcome = POINT_OUTCOMES[x.outcome] || x.outcome;
+    return row(
+      [
+        dateTime(x.at),
+        x.user,
+        titles.get(x.rewardId) || "A deleted reward",
+        outcome + (unmarked ? ". Twitch's request queue wasn't updated, so check it there" : ""),
+        x.dollars ? usd(x.dollars) : "0",
+      ],
+      [4],
+    );
+  });
   $("#points-redemptions tbody").replaceChildren(
-    ...(redemptions.length
-      ? redemptions.map((x) => {
-          // marked: 0 until Twitch answers, -1 when PixFray leaves it alone, else Twitch's HTTP status (1: no answer)
-          const unmarked = x.marked > 0 && (x.marked < 200 || x.marked > 299);
-          return row(
-            [
-              dateTime(x.at),
-              x.user,
-              titles.get(x.rewardId) || "A deleted reward",
-              (POINT_OUTCOMES[x.outcome] || x.outcome) +
-                (unmarked ? ". Twitch's request queue wasn't updated, so check it there" : ""),
-              x.dollars ? usd(x.dollars) : "0",
-            ],
-            [4],
-          );
-        })
-      : [emptyRow(5, "No redemptions yet.")]),
+    ...(redemptionRows.length ? redemptionRows : [emptyRow(5, "No redemptions yet.")]),
   );
 }
 async function pointsAction(action: string, payload: Record<string, unknown>) {
   setStatus(pointsStatus, "Working…");
   const r = await post({ action, payload });
   if (!r.ok) {
-    setStatus(pointsStatus, "That didn't work: " + (POINT_ERRORS[r.data?.reason] || errorText(r)) + ".", "error");
+    setStatus(pointsStatus, `That didn't work: ${POINT_ERRORS[r.data?.reason] || errorText(r)}.`, "error");
     if (r.data?.reason === "points_not_connected") await load();
     return false;
   }
@@ -245,7 +231,7 @@ onSubmit("#points-form", async () => {
   renderPoints();
   if (!ok) return;
   $<HTMLFormElement>("#points-form").reset();
-  setStatus(pointsStatus, "Added " + title + ". It shows under channel points on Twitch now.", "ok");
+  setStatus(pointsStatus, `Added ${title}. It shows under channel points on Twitch now.`, "ok");
 });
 async function deleteReward(rewardId: string, title: string, b: HTMLButtonElement) {
   if (!confirm("Delete " + title + "? It disappears from Twitch too. Dollars already added stay.")) return;
@@ -264,9 +250,8 @@ export function renderPower() {
   $("#power-title").textContent = paused ? "PixFray is off on " + CHANNEL : "Turn PixFray off";
   $("#power-text").textContent = paused
     ? "The overlay, the chat commands and the viewer page are stopped. Fighters and ranks are kept, so turning it back on picks up where it left off."
-    : "Stops the overlay, the chat commands and the viewer page on " +
-      CHANNEL +
-      ". Fighters and ranks are kept, and you can turn it back on here at any time.";
+    : `Stops the overlay, the chat commands and the viewer page on ${CHANNEL}. ` +
+      "Fighters and ranks are kept, and you can turn it back on here at any time.";
   powerToggle.textContent = paused ? "Turn PixFray back on" : "Turn PixFray off";
   powerToggle.className = paused ? "btn btn-primary" : "btn btn-danger";
   const note = $("#paused-note");
@@ -293,15 +278,8 @@ export function renderPower() {
 }
 on("#power-toggle", async (b) => {
   const pause = admin().channelState !== "paused";
-  if (
-    pause &&
-    !confirm(
-      "Turn PixFray off on " +
-        CHANNEL +
-        "? The overlay, the commands and the viewer page stop until you turn it back on. Fighters and ranks are kept.",
-    )
-  )
-    return;
+  const stops = "The overlay, the commands and the viewer page stop until you turn it back on.";
+  if (pause && !confirm(`Turn PixFray off on ${CHANNEL}? ${stops} Fighters and ranks are kept.`)) return;
   const r = await busy(b, () => post({ action: pause ? "pauseChannel" : "resumeChannel" }));
   if (!r.ok) return setStatus(powerStatus, "Couldn't change it: " + errorText(r) + ".", "error");
   setStatus(

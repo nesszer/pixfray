@@ -54,7 +54,9 @@ export function renderBuilds() {
     max = state.shop?.slots?.max || 5;
   box.hidden = !canShop();
   if (box.hidden) return;
-  const price = slots < max ? state.shop?.slots?.prices?.[slots - 1] : null;
+  const price = slots < max ? state.shop?.slots?.prices?.[slots - 1] : null,
+    n = slots + 1,
+    status = $<HTMLParagraphElement>("#status-slot");
   $<HTMLDivElement>("#build-list").replaceChildren(
     ...Array.from({ length: slots }, (_, i) => {
       const b = state.builds[i];
@@ -78,18 +80,7 @@ export function renderBuilds() {
         ),
       );
     }),
-    ...(price
-      ? [
-          buyButton(
-            "slot",
-            "",
-            "build slot " + (slots + 1),
-            price,
-            $<HTMLParagraphElement>("#status-slot"),
-            "Add build " + (slots + 1) + " for $" + price,
-          ),
-        ]
-      : []),
+    ...(price ? [buyButton("slot", "", `build slot ${n}`, price, status, `Add build ${n} for $${price}`)] : []),
   );
   $("#build-note").textContent = "(" + slots + " of " + max + ")";
 }
@@ -105,11 +96,7 @@ const STAT_TEXT = {
   counter: {
     label: "Counter",
     effect: (n: number) =>
-      "+" +
-      pct("counter", n) +
-      " counter damage, " +
-      Math.round(counterChance(n) * 1000) / 10 +
-      "% of foe misses countered",
+      `+${pct("counter", n)} counter damage, ${Math.round(counterChance(n) * 1000) / 10}% of foe misses countered`,
   },
   vitality: { label: "Vitality", effect: (n: number) => "+" + bonusHp(n) + " max HP in duels" },
 };
@@ -126,16 +113,11 @@ export function renderUpgrades() {
   ].filter(Boolean);
   const from = parts.length > 1 ? " You have " + parts.slice(0, -1).join(", ") + " and " + parts.at(-1) + "." : "";
   $("#upgrades-help").textContent = canEdit
-    ? "Each win, each stream check-in (!checkin in chat) and every " +
-      r.lossesPerPoint +
-      " losses give a point. Levels 1 to 8 cost 1 point each, and the cost doubles every 8 levels after that. Levels above " +
-      r.maxLevel +
-      " don't count on this channel." +
-      from +
-      " Move points between stats whenever you're not in a duel."
-    : "Save your fighter, then each win, each stream check-in (!checkin in chat) and every " +
-      r.lossesPerPoint +
-      " losses give an upgrade point.";
+    ? `Each win, each stream check-in (!checkin in chat) and every ${r.lossesPerPoint} losses give a point. ` +
+      `Levels 1 to 8 cost 1 point each, and the cost doubles every 8 levels after that. Levels above ${r.maxLevel} ` +
+      `don't count on this channel.${from} Move points between stats whenever you're not in a duel.`
+    : `Save your fighter, then each win, each stream check-in (!checkin in chat) and every ${r.lossesPerPoint} ` +
+      "losses give an upgrade point.";
   const shown = canEdit ? state.d.stats : emptyStats();
   const link = $<HTMLAnchorElement>("#points-link");
   link.hidden = !canEdit || left <= 0;
@@ -156,9 +138,7 @@ export function renderUpgrades() {
         atCap = n >= r.maxLevel;
       const step = (d: number) => () => restat({ ...state.d.stats, [k]: state.d.stats[k] + d });
       // The plain effect of everything the fighter has in this stat, pet included.
-      const effect = total
-        ? t.effect(total) + (extra ? " (" + extra + " from your pet)" : "")
-        : t.effect(1) + " per level";
+      const effect = total ? t.effect(total) + (extra ? ` (${extra} from your pet)` : "") : t.effect(1) + " per level";
       // Why "+" is off, or what it costs, in quiet text next to the stat.
       const next = !canEdit
         ? ""
@@ -185,33 +165,19 @@ export function renderUpgrades() {
             ),
           ),
         ),
-        h(
-          "button",
-          {
-            type: "button",
-            class: "btn btn-small",
-            "aria-label": "Take a level out of " + t.label + ", refunds " + points(levelCost(n)),
-            disabled: !canEdit || n <= 0,
-            onclick: step(-1),
-          },
-          "−",
-        ),
+        button("−", step(-1), {
+          "aria-label": "Take a level out of " + t.label + ", refunds " + points(levelCost(n)),
+          disabled: !canEdit || n <= 0,
+        }),
         h(
           "span",
           { class: "upgrade-value num", title: extra ? "+" + extra + " from your pet" : null },
           n + " / " + r.maxLevel + (extra ? " +" + extra : ""),
         ),
-        h(
-          "button",
-          {
-            type: "button",
-            class: "btn btn-small",
-            "aria-label": "Put a level into " + t.label + " for " + points(cost),
-            disabled: !canEdit || cost > left || atCap,
-            onclick: step(1),
-          },
-          "+",
-        ),
+        button("+", step(1), {
+          "aria-label": "Put a level into " + t.label + " for " + points(cost),
+          disabled: !canEdit || cost > left || atCap,
+        }),
       );
     }),
   );
@@ -347,6 +313,23 @@ export function renderSwatches() {
 }
 colorInput.addEventListener("input", () => recolor(colorInput.value.toLowerCase()));
 
+// Desktop: what the fighter wears, under the preview. Items only tried on show their price; the total is what
+// buying the look costs.
+const priceOf = (kind: ItemKind, id: string) =>
+  kind === "hat"
+    ? (state.shop?.hatPricePerWin || 0) * (rules().hats.find((x) => x.id === id)?.wins || 0)
+    : kind === "pet"
+      ? petById(id)?.price || 0
+      : state.shop?.items?.[kind]?.find((x) => x.id === id)?.price || 0;
+// An empty slot links to where it's filled, instead of reading "None".
+const EMPTY: Partial<Record<ItemKind, [string, string]>> = {
+  hat: ["hats", "Add a hat"],
+  pet: ["pets", "Add a pet"],
+  accessory: ["shop-accessory", "Add an accessory"],
+  trail: ["shop-trail", "Add a trail"],
+  effect: ["win-effects", "Add a win effect"],
+  title: ["shop-title", "Add a title"],
+};
 export function renderPreview() {
   const d = state.d,
     entry = entryOf(d.avatar),
@@ -366,9 +349,8 @@ export function renderPreview() {
   for (const s of document.querySelectorAll<HTMLButtonElement>(".swatch"))
     s.setAttribute("aria-pressed", String(s.dataset.color === d.color));
   colorInput.value = d.color;
-  const several = (state.owned.slots || 1) > 1;
-  $("#preview-caption").textContent =
-    (entry ? entry.label || entry.id : "") + (several ? " · Build " + (state.slot + 1) : "");
+  const build = (state.owned.slots || 1) > 1 ? ` · Build ${state.slot + 1}` : "";
+  $("#preview-caption").textContent = (entry ? entry.label || entry.id : "") + build;
   const words = [
     entry?.label,
     d.hat && itemLabel("hat", d.hat),
@@ -386,40 +368,8 @@ export function renderPreview() {
   playBtn.disabled = !d.winEffect && !d.taunt;
   playBtn.hidden = playBtn.disabled;
   $("#win-link").hidden = !playBtn.disabled;
-  renderLoadout();
-}
-// on phones the on-stream strip is tucked over the 3D stage and only shows while a win plays
-let playing = 0;
-export function playWin() {
-  stage.play();
-  const fig = $(".hero-card .preview");
-  fig.classList.add("is-playing");
-  clearTimeout(playing);
-  playing = setTimeout(() => fig.classList.remove("is-playing"), 4500);
-}
-playBtn.addEventListener("click", playWin);
-// Desktop: what the fighter wears, under the preview. Items only tried on show their price; the total is what
-// buying the look costs.
-const priceOf = (kind: ItemKind, id: string) =>
-  kind === "hat"
-    ? (state.shop?.hatPricePerWin || 0) * (rules().hats.find((x) => x.id === id)?.wins || 0)
-    : kind === "pet"
-      ? petById(id)?.price || 0
-      : state.shop?.items?.[kind]?.find((x) => x.id === id)?.price || 0;
-// An empty slot links to where it's filled, instead of reading "None".
-const EMPTY: Partial<Record<ItemKind, [string, string]>> = {
-  hat: ["hats", "Add a hat"],
-  pet: ["pets", "Add a pet"],
-  accessory: ["shop-accessory", "Add an accessory"],
-  trail: ["shop-trail", "Add a trail"],
-  effect: ["win-effects", "Add a win effect"],
-  title: ["shop-title", "Add a title"],
-};
-function renderLoadout() {
   const box = $<HTMLDListElement | null>("#loadout");
   if (!box) return;
-  const d = state.d,
-    entry = entryOf(d.avatar);
   const rows: [string, ItemKind | null, string][] = [
     ["Character", null, d.avatar],
     ["Colors", "recolor", d.recolor],
@@ -460,3 +410,13 @@ function renderLoadout() {
   t.hidden = !total;
   t.textContent = total ? "Buying this look costs " + money(total) + ". Duels earn PixFray dollars." : "";
 }
+// on phones the on-stream strip is tucked over the 3D stage and only shows while a win plays
+let playing = 0;
+export function playWin() {
+  stage.play();
+  const fig = $(".hero-card .preview");
+  fig.classList.add("is-playing");
+  clearTimeout(playing);
+  playing = setTimeout(() => fig.classList.remove("is-playing"), 4500);
+}
+playBtn.addEventListener("click", playWin);

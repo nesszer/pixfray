@@ -1,5 +1,4 @@
-// Viewer dashboard ("/"): an on-stream preview above the Fighter, Shop, Pets, Ranks and Rules tabs, or the /play/
-// channel picker without ?channel=. Talks only to the routes in docs/CONTRACTS.md section 2.
+// Viewer dashboard ("/") with its tabs, or the /play/ channel picker without ?channel= (routes: docs/CONTRACTS.md §2).
 // Each part lives in src/dashboard/; this entry wires the tabs and loads the page.
 import { api, $, tabKey, CHANNEL, CHANNEL_PICKED, applyChannel } from "./ui.ts";
 import { skyBackdrop } from "./scrub.ts";
@@ -27,24 +26,13 @@ skyBackdrop();
 applyChannel();
 
 const TABS = ["fighter", "shop", "pets", "ranks", "rules"];
-const HASH_TAB: Record<string, string> = {
-  fighter: "fighter",
-  upgrades: "fighter",
-  builds: "fighter",
-  shop: "shop",
-  hats: "shop",
-  "hat-picker": "shop",
-  pets: "pets",
-  "pet-color": "pets",
-  ranks: "ranks",
-  leaderboard: "ranks",
-  rules: "rules",
-  duels: "rules",
-};
 const tabs = $(".hero-pick .tabs"),
   card = $(".hero-card");
+// A tab's name, or a section id (#upgrades, #duels, …) inside its panel, opens that tab.
 const tabOf = (hash: string) =>
-  HASH_TAB[hash] || document.getElementById(hash)?.closest("[role=tabpanel]")?.id.replace("panel-", "") || null;
+  TABS.includes(hash)
+    ? hash
+    : document.getElementById(hash)?.closest("[role=tabpanel]")?.id.replace("panel-", "") || null;
 function showTab(
   name: string,
   // hash may be undefined: the default then applies
@@ -118,9 +106,8 @@ function showShopPart(id: string | null) {
   const target = id && document.getElementById(id),
     i = shopParts.findIndex((el) => el && target && el.contains(target));
   if (i < 0 && id) return false; // a plain tab switch keeps the section picked earlier
-  shopParts.forEach((el, j) => {
-    el!.hidden = j !== Math.max(0, i); // el!: each .jump link names a section in the page HTML (a missing one throws)
-  });
+  // el!: each .jump link names a section in the page HTML (a missing one throws)
+  for (const [j, el] of shopParts.entries()) el!.hidden = j !== Math.max(0, i);
   shopLinks.forEach((a, j) => a.toggleAttribute("aria-current", j === Math.max(0, i)));
   return i >= 0;
 }
@@ -150,6 +137,11 @@ export function applyProfile(p: Profile | null) {
   state.d = loadoutOf(p);
 }
 
+const remember = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+};
 const loadProfile = () => api("/api/profile/" + CHANNEL).then((r) => parseAnswer(r, parseProfileOrNone, "the profile"));
 async function init() {
   renderSwatches();
@@ -169,25 +161,17 @@ async function init() {
   }
   const [session, catalog, live, shop] = await calls;
   state.loading = false;
-  let list = shop.ok ? shop.data : null;
-  if (!list) {
-    const pets = parseAnswer(await api("/api/pets/" + CHANNEL), parseShop, "the pet list");
-    list = pets.ok ? pets.data : null;
-  } // pets still work without the shop list
-  state.shop = list;
+  // pets still work without the shop list
+  const list = shop.ok ? shop : parseAnswer(await api("/api/pets/" + CHANNEL), parseShop, "the pet list");
+  state.shop = list.ok ? list.data : null;
   state.session = session.ok ? session.data : null;
   if (catalog.ok && Array.isArray(catalog.data) && catalog.data.length) state.catalog = catalog.data; // else the static list stays
   state.config = live.ok ? live.data : null;
   // the intro's main button offers this channel next time (src/intro/back.ts)
-  if (live.ok)
-    try {
-      localStorage.setItem("pixfray:channel", CHANNEL);
-    } catch {}
-  const hash = location.hash.slice(1);
-  showTab(tabOf(hash) || "fighter", {
-    hash: tabOf(hash) ? hash : "fighter",
-    scroll: Boolean(tabOf(hash)) && hash !== "fighter",
-  });
+  if (live.ok) remember("pixfray:channel", CHANNEL);
+  const hash = location.hash.slice(1),
+    tab = tabOf(hash);
+  showTab(tab || "fighter", { hash: tab ? hash : "fighter", scroll: Boolean(tab) && hash !== "fighter" });
   if (live.status === 403 && live.data?.off) {
     state.off = live.data.off;
     showOff(live.data.off);
@@ -203,10 +187,7 @@ async function init() {
     $("#admin-link").hidden = !(access.ok && access.data.canManage);
   }
   applyProfile(state.profile);
-  if (signedIn())
-    try {
-      localStorage.setItem(KNOWN_KEY, "1");
-    } catch {}
+  if (signedIn()) remember(KNOWN_KEY, "1");
   renderAll();
   welcome();
   if (!restoreDraft()) loadOthers();
@@ -222,9 +203,10 @@ async function reloadCharacters() {
   renderCharacters();
   renderAll();
 }
-// Phones: once the tabs scroll under the stuck preview, it shrinks to a short strip so the choices get the screen.
-// Shrinking moves the page, so it switches back only after scrolling clearly above the tabs.
-function compactPreview() {
+if (CHANNEL_PICKED) {
+  watchSaveBar();
+  // Phones: once the tabs scroll under the stuck preview, it shrinks to a short strip so the choices get the screen.
+  // Shrinking moves the page, so it switches back only after scrolling clearly above the tabs.
   const root = document.documentElement;
   const update = () => {
     if (innerWidth > 900 || !card.classList.contains("has-3d")) return root.classList.remove("compact");
@@ -237,9 +219,5 @@ function compactPreview() {
   };
   addEventListener("scroll", update, { passive: true });
   addEventListener("resize", update);
-}
-if (CHANNEL_PICKED) {
-  watchSaveBar();
-  compactPreview();
   init();
 } else pickChannel();

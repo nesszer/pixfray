@@ -1,4 +1,5 @@
 import { launchChrome } from "./chrome.ts";
+import type { Page } from "@playwright/test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -21,25 +22,30 @@ const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const out = fileURLToPath(new URL("../screenshots", import.meta.url));
 fs.mkdirSync(out, { recursive: true });
 const errors: string[] = [];
-try {
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-  await enforceCsp(page);
+function watch(page: Page) {
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text()))
       errors.push("CSP: " + m.text());
   });
+}
+const statusHas = (page: Page, text: string, timeout = 30000) =>
+  page.waitForFunction((t) => document.querySelector("#status")?.textContent?.includes(t), text, { timeout });
+const statusText = async (page: Page) => (await page.locator("#status").textContent()) ?? "";
+try {
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  await enforceCsp(page);
+  watch(page);
   await page.goto(base);
   assert.match(await page.title(), /PixFray/);
   await page.screenshot({ path: out + "/setup-preview.png", fullPage: true });
   await page.goto(base + "/overlay.html?demo=1&debug=1&cap=50&size=64");
-  // !: the overlay page always has #status, and an element's textContent is a string, never null
-  await page.waitForFunction(() => document.querySelector("#status")!.textContent!.includes("8/50"));
+  await statusHas(page, "8/50");
   await page.waitForTimeout(700);
   const pixels = await page.evaluate(() => {
     // !: the overlay page always has the #stage canvas, and a canvas always gives a 2d context here
     const c = document.querySelector<HTMLCanvasElement>("#stage")!,
-      ctx = c.getContext("2d")!; // !: a canvas gives a 2d context
+      ctx = c.getContext("2d")!;
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
     let bottom = 0;
     for (let i = 3; i < d.length; i += 4) if (d[i]) bottom++;
@@ -80,79 +86,45 @@ try {
     window.__irc = (data) => window.__sockets.at(-1)!.onmessage?.({ data });
   });
   const mock = await context.newPage();
-  mock.on("pageerror", (e) => errors.push(e.message));
-  mock.on("console", (m) => {
-    if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text()))
-      errors.push("CSP: " + m.text());
-  });
+  watch(mock);
+  const irc = (data: string) => mock.evaluate((m) => window.__irc(m), data);
+  const message = (id: string, user: string, text: string) =>
+    `@id=${id};user-id=${user};display-name=${user};color=#aabbcc :${user}!${user}@${user}.tmi.twitch.tv` +
+    ` PRIVMSG #nesszerra :${text}\r\n`;
+  // the cosmetics key the !avatar and !color commands save; null before the first one
+  const prefs = () => mock.evaluate(() => JSON.parse(localStorage.getItem("mini-chat:cosmetics:nesszerra") ?? "null"));
   await mock.goto(base + "/overlay.html?debug=1&cap=2");
   await mock.waitForFunction(() => window.__sockets.length > 0);
-  await mock.evaluate(() => window.__irc(":tmi.twitch.tv 366 anon #nesszerra :End of /NAMES list\r\n"));
-  const message = (id: string, user: string, text: string) =>
-    "@id=" +
-    id +
-    ";user-id=" +
-    user +
-    ";display-name=" +
-    user +
-    ";color=#aabbcc :" +
-    user +
-    "!" +
-    user +
-    "@" +
-    user +
-    ".tmi.twitch.tv PRIVMSG #nesszerra :" +
-    text +
-    "\r\n";
-  await mock.evaluate((m) => window.__irc(m), message("a", "alice", "!avatar soldier"));
-  // !: #status and its text, as above
-  await mock.waitForFunction(() => document.querySelector("#status")!.textContent!.includes("1/2"));
-  await mock.evaluate((m) => window.__irc(m), message("b", "alice", "!color #ff8844"));
-  // !: the !avatar and !color commands above saved the cosmetics key
-  const prefs = await mock.evaluate(() => JSON.parse(localStorage.getItem("mini-chat:cosmetics:nesszerra")!));
-  assert.equal(prefs.alice.avatar, "soldier");
-  assert.equal(prefs.alice.color, "#ff8844");
-  await mock.evaluate((m) => window.__irc(m), message("c", "bob", "hello") + message("d", "charlie", "hello"));
-  // !: #status exists, so its textContent is a string
-  assert.match((await mock.locator("#status").textContent())!, /2\/2/);
-  await mock.evaluate(() => window.__irc("@target-user-id=bob :tmi.twitch.tv CLEARCHAT #nesszerra :bob\r\n"));
-  // !: #status exists, so its textContent is a string
-  assert.match((await mock.locator("#status").textContent())!, /1\/2/);
+  await irc(":tmi.twitch.tv 366 anon #nesszerra :End of /NAMES list\r\n");
+  await irc(message("a", "alice", "!avatar soldier"));
+  await statusHas(mock, "1/2");
+  await irc(message("b", "alice", "!color #ff8844"));
+  const saved = await prefs();
+  assert.equal(saved.alice.avatar, "soldier");
+  assert.equal(saved.alice.color, "#ff8844");
+  await irc(message("c", "bob", "hello") + message("d", "charlie", "hello"));
+  assert.match(await statusText(mock), /2\/2/);
+  await irc("@target-user-id=bob :tmi.twitch.tv CLEARCHAT #nesszerra :bob\r\n");
+  assert.match(await statusText(mock), /1\/2/);
   await mock.reload();
   await mock.waitForFunction(() => window.__sockets.length > 0);
-  assert.equal(
-    // !: the cosmetics key survives the reload, as above
-    await mock.evaluate(() => JSON.parse(localStorage.getItem("mini-chat:cosmetics:nesszerra")!).alice.avatar),
-    "soldier",
-  );
-  await mock.evaluate((m) => window.__irc(m), message("e", "alice", "!jump"));
-  // !: #status and its text, as above
-  await mock.waitForFunction(() => document.querySelector("#status")!.textContent!.includes("1/2"));
-  await mock.evaluate(() => window.__irc(":tmi.twitch.tv CLEARCHAT #nesszerra\r\n"));
-  // !: #status exists, so its textContent is a string
-  assert.match((await mock.locator("#status").textContent())!, /0\/2/);
+  assert.equal((await prefs()).alice.avatar, "soldier", "the cosmetics key survives the reload");
+  await irc(message("e", "alice", "!jump"));
+  await statusHas(mock, "1/2");
+  await irc(":tmi.twitch.tv CLEARCHAT #nesszerra\r\n");
+  assert.match(await statusText(mock), /0\/2/);
   // !: the socket the overlay opened, waited for above
   await mock.evaluate(() => window.__sockets.at(-1)!.close());
-  // !: #status and its text, as above
-  await mock.waitForFunction(() => document.querySelector("#status")!.textContent!.includes("reconnecting"));
+  await statusHas(mock, "reconnecting");
   await mock.waitForFunction(() => window.__sockets.length === 2, {}, { timeout: 5000 });
   await mock.close();
   await context.close();
   const live = await browser.newPage();
   await enforceCsp(live);
-  live.on("pageerror", (e) => errors.push(e.message));
-  live.on("console", (m) => {
-    if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text()))
-      errors.push("CSP: " + m.text());
-  });
+  watch(live);
   await live.goto(base + "/overlay.html?channel=nesszerra&debug=1");
-  await live.waitForFunction(
-    // !: #status and its text, as above
-    () => document.querySelector("#status")!.textContent!.includes("connected"),
-    {},
-    { timeout: 15000 },
-  );
-  console.log("LIVE_BROWSER", await live.locator("#status").textContent());
+  await statusHas(live, "connected", 15000);
+  console.log("LIVE_BROWSER", await statusText(live));
   await live.close();
   assert.deepEqual(errors, []);
   console.log(

@@ -1,6 +1,5 @@
-// Saving the fighter: the Save bar and its status line, sign-in state, drafts kept across the Twitch round trip,
-// and the fighters the viewer has on other channels.
-import { api, errorText, h, $, setStatus, renderWho, signOut, CHANNEL } from "../ui.ts";
+// The Save bar and its status line, sign-in state, drafts kept across the Twitch round trip, other-channel fighters.
+import { api, errorText, h, $, setStatus, renderWho, signOut, button, CHANNEL } from "../ui.ts";
 import { acceptedUnreadable, parseAnswer, parseDraft, parseProfileSaved } from "../parse.ts";
 import { warnOnce } from "../served/parse.ts";
 import {
@@ -68,15 +67,9 @@ export function renderSave() {
   }
   renderOthers();
   saveBtn.textContent = state.slot !== activeBuild() ? "Save and wear build " + (state.slot + 1) : "Save profile";
-  renderNextStep();
-}
-
-// profile!: Boolean(state.profile) first (TypeScript doesn't narrow through Boolean())
-const fresh = () => Boolean(state.profile) && !(state.profile!.wins + state.profile!.losses);
-// Until the first duel: what to type in chat now that the fighter is saved.
-function renderNextStep() {
+  // Until the first duel: what to type in chat now that the fighter is saved.
   const next = $("#next-step"),
-    show = Boolean(signedIn() && state.profile && !state.off && !dirty() && !lockedWorn().length && fresh());
+    show = Boolean(signedIn() && state.profile && !state.off && !dirty() && !locked.length && fresh());
   next.hidden = !show;
   if (show)
     next.replaceChildren(
@@ -89,6 +82,9 @@ function renderNextStep() {
     );
 }
 
+// profile!: Boolean(state.profile) first (TypeScript doesn't narrow through Boolean())
+const fresh = () => Boolean(state.profile) && !(state.profile!.wins + state.profile!.losses);
+
 // Back from Twitch sign-in (?signed_in=1): say who is signed in and what to do, then drop the flag from the address.
 export function welcome() {
   const params = new URLSearchParams(location.search),
@@ -97,14 +93,8 @@ export function welcome() {
   params.delete("signed_in");
   history.replaceState(null, "", location.pathname + (params.size ? "?" + params : "") + location.hash);
   if (!user) return;
-  setStatus(
-    status,
-    "Signed in as " +
-      (user.displayName || user.login) +
-      ". " +
-      (state.profile ? "Your fighter is loaded." : "Pick a fighter and save."),
-    "ok",
-  );
+  const next = state.profile ? "Your fighter is loaded." : "Pick a fighter and save.";
+  setStatus(status, `Signed in as ${user.displayName || user.login}. ${next}`, "ok");
   if (!state.profile) $("#fighter").scrollIntoView({ block: "start" });
 }
 
@@ -152,11 +142,8 @@ export function restoreDraft() {
   if (sameLook(d, state.d) && state.slot === activeBuild()) return false;
   state.d = d;
   renderAll();
-  setStatus(
-    status,
-    "Your changes from before you signed in are back, not saved yet. " +
-      (state.profile ? "Save to keep them, or reload the page to see your saved fighter." : "Save to keep them."),
-  );
+  const how = state.profile ? "Save to keep them, or reload the page to see your saved fighter." : "Save to keep them.";
+  setStatus(status, "Your changes from before you signed in are back, not saved yet. " + how);
   return true;
 }
 // Every "Sign in" link (the Save button's and the header's) carries data-login.
@@ -188,13 +175,7 @@ function renderOthers() {
     h(
       "div",
       { class: "others-actions" },
-      ...list.map((f) =>
-        h(
-          "button",
-          { class: "btn btn-small", type: "button", onclick: () => useOther(f) },
-          "Use my " + f.channel + " fighter",
-        ),
-      ),
+      ...list.map((f) => button("Use my " + f.channel + " fighter", () => useOther(f))),
     ),
   );
 }

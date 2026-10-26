@@ -1,7 +1,7 @@
 // The Rules tab: the channel config editor (docs/CONTRACTS.md section 7) and its version history.
-import { errorText, h, $, setStatus, seconds, dateTime, onSubmit, on, button, row, emptyRow } from "../ui.ts";
+import { errorText, h, $, setStatus, seconds, dateTime, onSubmit, on, button, row } from "../ui.ts";
 import type { Admin, AdminConfig as Config } from "../parse.ts";
-import { S, admin, liveChat, nameOf, act, post, load } from "./state.ts";
+import { S, admin, liveChat, nameOf, act, post, load, fillTable } from "./state.ts";
 
 type NumberField = { key: string; label: string; unit: string; min: number; max: number; ms?: true; bool?: never };
 type BoolField = { key: string; label: string; bool: true; hint: string; ms?: never; unit?: never };
@@ -145,14 +145,10 @@ export function renderConfig() {
   const a = admin(),
     config = a.config;
   if (fields.childElementCount && formDirty()) {
-    if (editedBase !== a.configVersion)
-      setStatus(
-        configStatus,
-        "Version " +
-          a.configVersion +
-          " was saved by someone else while you were editing. Discard your changes to load it.",
-        "error",
-      );
+    if (editedBase !== a.configVersion) {
+      const why = `Version ${a.configVersion} was saved by someone else while you were editing.`;
+      setStatus(configStatus, why + " Discard your changes to load it.", "error");
+    }
     return;
   }
   editedBase = a.configVersion;
@@ -295,15 +291,8 @@ onSubmit("#config-form", async () => {
     const mine = diff(editedConfig, mergeConfig(editedConfig!, patch as Partial<Config>));
     fields.replaceChildren();
     await load();
-    setStatus(
-      configStatus,
-      "Not saved: someone else saved version " +
-        admin().configVersion +
-        " first. The form now shows the current values. Your change was: " +
-        mine +
-        ".",
-      "error",
-    );
+    const now = `Not saved: someone else saved version ${admin().configVersion} first.`;
+    setStatus(configStatus, `${now} The form now shows the current values. Your change was: ${mine}.`, "error");
     return;
   }
   if (!r.ok) {
@@ -328,31 +317,27 @@ function diff(prev: Config | null | undefined, next: Config) {
 export function renderHistory() {
   const a = admin(),
     rows = a.history || [];
-  $("#history-title").textContent =
-    "Version history (" + rows.length + (rows.length === 1 ? " version)" : " versions)");
-  $("#history tbody").replaceChildren(
-    ...(rows.length
-      ? rows.map((v, i) =>
-          row(
-            [
-              "v" + v.version,
-              dateTime(v.at),
-              nameOf(v.actorId),
-              diff(rows[i + 1]?.config, v.config),
-              v.note || "",
-              v.version === a.configVersion
-                ? h("span", { class: "badge positive" }, "Current")
-                : button("Revert to v" + v.version, (b) =>
-                    act(
-                      "rollbackConfig",
-                      { version: v.version },
-                      { button: b, done: "Restored v" + v.version + " as a new version." },
-                    ),
-                  ),
-            ],
-            [0],
-          ),
-        )
-      : [emptyRow(6, "No saved versions yet. The first save is recorded here.")]),
+  $("#history-title").textContent = `Version history (${rows.length} version${rows.length === 1 ? "" : "s"})`;
+  const list = rows.map((v, i) =>
+    row(
+      [
+        "v" + v.version,
+        dateTime(v.at),
+        nameOf(v.actorId),
+        diff(rows[i + 1]?.config, v.config),
+        v.note || "",
+        v.version === a.configVersion
+          ? h("span", { class: "badge positive" }, "Current")
+          : button("Revert to v" + v.version, (b) =>
+              act(
+                "rollbackConfig",
+                { version: v.version },
+                { button: b, done: `Restored v${v.version} as a new version.` },
+              ),
+            ),
+      ],
+      [0],
+    ),
   );
+  fillTable("history", list, 6, "No saved versions yet. The first save is recorded here.");
 }
