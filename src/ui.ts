@@ -141,6 +141,78 @@ export function setStatus(node: Element, message: string | null | undefined, kin
   node.textContent = message || "";
   node.className = "status" + (kind ? " " + kind : "");
 }
+// Calls fn with the element itself on each event, so handlers need no currentTarget cast.
+export function on<T extends HTMLElement = HTMLButtonElement>(
+  selector: string,
+  fn: (el: T, e: Event) => unknown,
+  type = "click",
+) {
+  const el = $<T>(selector);
+  el.addEventListener(type, (e) => fn(el, e));
+}
+// The tab that arrow keys, Home and End move to from tabs[i], wrapping around; undefined for any other key.
+export function tabKey<T>(tabs: T[], i: number, key: string) {
+  // as: any other key reads as undefined
+  const next = ({ ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 } as Record<string, number>)[key];
+  return next === undefined ? undefined : tabs[(next + tabs.length) % tabs.length];
+}
+// A form's submit handler, without the page reload.
+export const onSubmit = (selector: string, fn: () => unknown) =>
+  on<HTMLFormElement>(
+    selector,
+    (_, e) => {
+      e.preventDefault();
+      fn();
+    },
+    "submit",
+  );
+// Keeps control disabled while work runs.
+export async function busy<T>(control: { disabled: boolean }, work: () => Promise<T>) {
+  control.disabled = true;
+  const result = await work();
+  control.disabled = false;
+  return result;
+}
+// A small button; onClick gets the button itself.
+export function button(label: string, onClick: (b: HTMLButtonElement) => unknown, attrs: Record<string, unknown> = {}) {
+  const b = h("button", { class: "btn btn-small", type: "button", ...attrs }, label);
+  b.addEventListener("click", () => onClick(b));
+  return b;
+}
+// A table row; cells at the `num` indexes hold right-aligned numbers.
+export const row = (cells: unknown[], num: number[] = []) =>
+  h(
+    "tr",
+    {},
+    cells.map((c, i) => h("td", num.includes(i) ? { class: "num" } : {}, c)),
+  );
+export const emptyRow = (cols: number, text: string) => h("tr", {}, h("td", { colspan: cols, class: "muted" }, text));
+// .table-wrap > table.data; an empty heading names the actions column for screen readers only.
+export const dataTable = (head: string[], rows: unknown[][], num: number[] = []) =>
+  h(
+    "div",
+    { class: "table-wrap" },
+    h(
+      "table",
+      { class: "data" },
+      h(
+        "thead",
+        {},
+        h(
+          "tr",
+          {},
+          head.map((t, i) =>
+            h("th", num.includes(i) ? { class: "num" } : {}, t || h("span", { class: "sr-only" }, "Actions")),
+          ),
+        ),
+      ),
+      h(
+        "tbody",
+        {},
+        rows.map((r) => row(r, num)),
+      ),
+    ),
+  );
 
 export const seconds = (ms: number) => {
   const s = ms / 1000;
