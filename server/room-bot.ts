@@ -153,7 +153,7 @@ function agoText(ms: number): string {
 }
 
 /** A read or wallet command's asker, as runCommand and the test site's /dev-chat hand it to QUICK_COMMANDS. */
-export type QuickAsk = {
+type QuickAsk = {
   channel: string;
   userId: string;
   username: string;
@@ -233,7 +233,7 @@ export const QUICK_COMMANDS: {
 };
 
 // One saved profile with its leaderboard place (same order as leaderboard()), or null.
-export function eloLookup(
+function eloLookup(
   room: ChannelRoom,
   channel: string,
   { userId = "", username = "" }: { userId?: string; username?: string },
@@ -464,7 +464,7 @@ export function botReplyRoom(room: ChannelRoom, now: number): number {
 // The bot's reply lines that fit under BOT_REPLIES_PER_30S, as the Worker expects them: { reply, replies }.
 // Replies to commands stop BOT_RESERVED_LINES short of the cap; the bot's own lines (results, expired challenges;
 // the first `system` lines) may use the rest, so a chatter spamming commands can't crowd out who won.
-export function sendBotLines(
+function sendBotLines(
   room: ChannelRoom,
   lines: string[],
   channel = "",
@@ -513,7 +513,7 @@ export async function botPlays(
 }
 
 // Sparring partner (BOT_DEBUG): a challenge or rematch aimed at the bot is accepted, and dollars paid to it are paid back.
-export async function botAnswer(
+async function botAnswer(
   room: ChannelRoom,
   channel: string,
   input: CommandInput,
@@ -537,7 +537,7 @@ export async function botAnswer(
 
 // "!fray spar": the bot challenges whoever asked. "!fray e2e [@name]" (broadcaster, mods or the bot account): the bot
 // plays every chat command once against @name (default: whoever asked) and posts which steps passed.
-export async function botDebug(
+async function botDebug(
   room: ChannelRoom,
   channel: string,
   mode: string,
@@ -584,7 +584,7 @@ export async function botDebug(
   return botE2e(room, channel, bot, opponent, { ...ctx, kind: "e2e" });
 }
 
-export async function botE2e(
+async function botE2e(
   room: ChannelRoom,
   channel: string,
   bot: Profile,
@@ -788,7 +788,7 @@ export async function runCommand(
   );
 }
 
-export function noteBotHeard(room: ChannelRoom, what: string): void {
+function noteBotHeard(room: ChannelRoom, what: string): void {
   room.ctx.storage.sql.exec(
     "UPDATE bot_status SET heard_at = ?, heard = ? WHERE id = 1",
     Date.now(),
@@ -797,13 +797,7 @@ export function noteBotHeard(room: ChannelRoom, what: string): void {
 }
 
 // A reply the room didn't send. Logged as a warning at most once a minute per reason (cooldowns aren't logged).
-export function noteBotHeld(
-  room: ChannelRoom,
-  channel: string,
-  reason: string,
-  context: JsonObject = {},
-  log = true,
-): void {
+function noteBotHeld(room: ChannelRoom, channel: string, reason: string, context: JsonObject = {}, log = true): void {
   const now = Date.now(),
     last = (room.heldLogged ||= {});
   room.ctx.storage.sql.exec("UPDATE bot_status SET held_at = ?, held_reason = ? WHERE id = 1", now, reason);
@@ -845,7 +839,7 @@ export function noteBotSent(
 }
 
 // "!fray debug": the health line, from the status before this command was heard.
-export function botStatusLine(
+function botStatusLine(
   room: ChannelRoom,
   state: GameState,
   s: ReturnType<ChannelRoom["botStatus"]>,
@@ -1152,7 +1146,7 @@ export function processChatMessage(
 
 // "Challenge expired" lines for challenges that ran out after revision `since`, on a channel the bot reads. Each is said
 // once: the alarm and a later command can both notice the same one.
-export function expiredLines(room: ChannelRoom, state: GameState, since: number): string[] {
+function expiredLines(room: ChannelRoom, state: GameState, since: number): string[] {
   if (!room.botSource(state)) return [];
   room.expiredSaid ||= new Set();
   const names = botNames(room.seSettings().names),
@@ -1191,7 +1185,7 @@ export async function postResults(room: ChannelRoom, channel: string, now: numbe
   return room.postingResults;
 }
 
-export async function postResultsOnce(room: ChannelRoom, channel: string, now: number): Promise<void> {
+async function postResultsOnce(room: ChannelRoom, channel: string, now: number): Promise<void> {
   const state = room.readState(channel),
     due = room.dueResults(state, now);
   if (!due.length) return;
@@ -1226,7 +1220,7 @@ export async function postResultsOnce(room: ChannelRoom, channel: string, now: n
 }
 
 // Lines the bot posts on its own (no chat line to answer), under the reply cap.
-export async function postBotLines(room: ChannelRoom, channel: string, lines: string[]): Promise<void> {
+async function postBotLines(room: ChannelRoom, channel: string, lines: string[]): Promise<void> {
   if (!lines.length || room.readState(channel).config.botEnabled === false) return;
   const sender = botSender(room);
   if (!sender) return;
@@ -1262,7 +1256,7 @@ function fighterName(room: ChannelRoom, state: GameState, id: string): string {
 }
 
 // Saves who the reminder posts as (the bot) and in which channel, from a bot command. Writes only when something changed.
-export function rememberReminder(room: ChannelRoom, broadcasterId: unknown, botId: string, origin: unknown): void {
+function rememberReminder(room: ChannelRoom, broadcasterId: unknown, botId: string, origin: unknown): void {
   broadcasterId = validUserId(broadcasterId);
   if (!broadcasterId || !botId) return;
   origin = String(origin || "").slice(0, 200);

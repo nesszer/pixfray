@@ -1,18 +1,7 @@
 import { cleanStats, emptyStats, knownHat } from "./upgrades.ts";
 import { petOf } from "./pets.ts";
 import { cleanCosmetics } from "./cosmetics.ts";
-import { SE_SUBSCRIPTION_ID } from "./streamelements.ts";
-import type {
-  ChatEvent,
-  Config,
-  Cosmetics,
-  Duel,
-  GameEvent,
-  GameState,
-  Player,
-  ReduceOutput,
-  Snapshot,
-} from "./model.ts";
+import type { ChatEvent, Config, Cosmetics, Player, ReduceOutput } from "./model.ts";
 import type { ChannelRoom } from "./channel.ts";
 
 /** A JSON object request body, as readJson parses it; routes check each field they read. */
@@ -80,19 +69,6 @@ export type Profile = Player & {
   styleDollars: number;
   build: number;
 };
-/** The bot_status row (the constructor's DDL). */
-export type BotStatusRow = {
-  id: number;
-  heard_at: number;
-  heard: string;
-  sent_at: number;
-  sent_total: number;
-  failed_at: number;
-  failed_total: number;
-  failed_reason: string;
-  held_at: number;
-  held_reason: string;
-};
 // A chat message as /eventsub, /chat and /dev-chat hand it to the room: the EventSub fields read, each unchecked.
 export type BotMessage = {
   messageId?: unknown;
@@ -106,26 +82,14 @@ export type BotMessage = {
   botPlays?: boolean; // set only by runCommand for the BOT_DEBUG bot account
   [field: string]: unknown;
 };
-/** What the overlay sockets get: the state, or the saved looks that changed. */
-export type LiveMessage =
-  | (Snapshot & { build: string })
-  | { type: "looks"; looks: { [login: string]: Look | null }; reset?: boolean };
 /** What an overlay draws for a saved fighter (savedLook). */
 export type Look = ReturnType<typeof savedLook>;
 /** What a chat message did to the game (processChatMessage, advance). */
 export type ChatOutcome = Pick<ReduceOutput, "state" | "result" | "changed" | "visible">;
 /** A caught value: anything can be thrown, and an Error's message reads best. */
 type Thrown = { message?: unknown } | null | undefined;
-/** A duel whose result chat may now hear (dueResults): completed, rated and revealed. */
-export type DueDuel = Duel & { ratings: NonNullable<Duel["ratings"]>; revealAt: number };
-/** readJson's answer. Each side names the other's fields as optional, for the loose worker program. */
-export type ReadJson =
-  | { ok: false; error: string; value?: undefined }
-  | { ok: true; value: JsonObject; error?: undefined };
-/** An event advance takes: any reducer event; the admin fields it logs are absent on the others. */
-export type RoomEvent = GameEvent & { actorId?: unknown; actorName?: unknown; note?: unknown };
 /** The fields upsertProfile writes: a state player, a saved profile or saveProfile's loadout. */
-export type ProfileWrite = Pick<
+type ProfileWrite = Pick<
   Player,
   | "userId"
   | "username"
@@ -150,17 +114,9 @@ export type SavedProfile = ProfileWrite & {
   styleDollars: number;
   build: number;
 };
-export const INTERNAL_HEADER = "X-Mini-Internal";
-export const CHANNEL_HEADER = "X-Mini-Channel";
-export const MAX_PROFILE_ID_LENGTH = 64;
-export const MAX_LIVE_SOCKETS = 200;
-export const MAX_SOCKETS_PER_CLIENT = 16; // one network can't fill the room and lock OBS out
+const MAX_PROFILE_ID_LENGTH = 64;
 export const BOT_REPLIES_PER_30S = 18; // the bot's chat replies per channel; Twitch allows 20 per 30 s unless it is a mod
-export const RESULT_WINDOW_MS = 120000; // a result line not sent within 2 minutes of its reveal is given up
 export const RESULT_RETRY_MS = 5000; // how often the alarm retries a due result line that couldn't go out
-export const MAX_EVENTSUB_IDS = 5_000;
-export const CHAT_CHECK_MS = 60 * 60_000; // the alarm re-checks the Helix subscription at most hourly
-export const CHAT_PENDING_CHECK_MS = 3 * 60_000; // a subscription still awaiting webhook verification is re-checked sooner
 export const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 // Every query that builds a profile with normalizeProfileRow reads these columns.
 export const PROFILE_COLUMNS =
@@ -169,15 +125,6 @@ export const PROFILE_COLUMNS =
 // What was thrown, as text: anything can be thrown.
 export function errorText(error: unknown, max?: number): string {
   return String((error as Thrown)?.message || error).slice(0, max);
-}
-// Adds each "name TYPE ..." column the table doesn't have yet (the schema's later versions).
-export function addColumns(sql: SqlStorage, table: string, columns: string[]): void {
-  const have = sql
-    .exec<{ name: string }>(`PRAGMA table_info(${table})`)
-    .toArray()
-    .map((c) => c.name);
-  for (const column of columns)
-    if (!have.includes(column.slice(0, column.indexOf(" ")))) sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
 }
 // A table's own entry for a name a client sent (never an Object.prototype method).
 export function own<T>(table: { [name: string]: T }, name: string): T | undefined {
@@ -197,13 +144,6 @@ export function text(value: string, status = 200): Response {
   });
 }
 
-export function normalizeChannel(value: unknown): string {
-  const channel = String(value || "")
-    .trim()
-    .toLowerCase();
-  return /^[a-z0-9_]{1,25}$/.test(channel) ? channel : "";
-}
-
 export function validUserId(value: unknown): string {
   const id = String(value ?? "").trim();
   return id.length > 0 && id.length <= MAX_PROFILE_ID_LENGTH && /^[a-zA-Z0-9_:-]+$/.test(id) ? id : "";
@@ -218,7 +158,7 @@ export function normalizeUsername(value: unknown): string {
 }
 
 // Stage 4 cosmetics: profile field -> profiles column (server/cosmetics.ts).
-export const COSMETIC_COLUMNS: { [field in keyof Cosmetics]: keyof ProfileTable } = {
+const COSMETIC_COLUMNS: { [field in keyof Cosmetics]: keyof ProfileTable } = {
   recolor: "recolor",
   petColor: "pet_color",
   accessory: "accessory",
@@ -290,7 +230,7 @@ export function normalizeProfileRow(row: ProfileRow | null | undefined, config: 
 }
 
 // The active pet (server/pets.ts): id, tier and boost (a legendary's from the owner's roll); none for a deleted upload.
-export function petFieldsOf(row: { pet: string; pet_custom: string | null; pet_roll: string | null }) {
+function petFieldsOf(row: { pet: string; pet_custom: string | null; pet_roll: string | null }) {
   const pet = petOf(row.pet, row.pet_custom, row.pet_roll);
   return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };
 }
@@ -314,13 +254,6 @@ export function timingSafeEqual(a: unknown, b: unknown): boolean {
   let difference = 0;
   for (let i = 0; i < a.length; i += 1) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return difference === 0;
-}
-
-// Next Helix check time, or null: hourly while connected, every few minutes while a subscription awaits verification.
-export function chatCheckDue(state: GameState): number | null {
-  const id = state.chat?.subscriptionId;
-  if (!id || id.startsWith("local-") || id === SE_SUBSCRIPTION_ID) return null;
-  return (Number(state.chat.checkedAt) || 0) + (state.chat.connected ? CHAT_CHECK_MS : CHAT_PENDING_CHECK_MS);
 }
 
 export function getProfile(room: ChannelRoom, userId: string, config: Config): Profile | null {

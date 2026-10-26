@@ -14,44 +14,23 @@ import { ensurePetSchema } from "./pets.ts";
 import { ensureSpriteSchema } from "./sprites.ts";
 import { botNames, DEFAULT_SE_NAMES, SE_ACTIONS, SE_SUBSCRIPTION_ID, seReminderText } from "./streamelements.ts";
 import type { SeNames } from "./streamelements.ts";
-import type { Config, GameEvent, GameState, ReduceOutput, Snapshot } from "./model.ts";
+import type { Config, Duel, GameEvent, GameState, ReduceOutput, Snapshot } from "./model.ts";
 import type { Env } from "./env.ts";
 import {
   BOT_REPLIES_PER_30S,
-  CHANNEL_HEADER,
-  chatCheckDue,
-  INTERNAL_HEADER,
   json,
-  MAX_EVENTSUB_IDS,
-  MAX_LIVE_SOCKETS,
-  MAX_SOCKETS_PER_CLIENT,
-  normalizeChannel,
   normalizeProfileRow,
   normalizeUsername,
   PROFILE_COLUMNS,
-  addColumns,
   errorText,
   randomHex,
   RESULT_RETRY_MS,
-  RESULT_WINDOW_MS,
   safeJsonParse,
   savedLook,
   timingSafeEqual,
   upsertProfile,
 } from "./room-shared.ts";
-import type {
-  BotMessage,
-  BotStatusRow,
-  ChatOutcome,
-  DueDuel,
-  JsonObject,
-  LiveMessage,
-  Look,
-  ProfileRow,
-  ProfileTable,
-  ReadJson,
-  RoomEvent,
-} from "./room-shared.ts";
+import type { BotMessage, ChatOutcome, JsonObject, Look, ProfileRow, ProfileTable } from "./room-shared.ts";
 import { route } from "./room-routes.ts";
 import { botCommand, checkAccountAge, noteBotSent, postExpired, postResults, processChatMessage } from "./room-bot.ts";
 import { currentStream, payDuels, streamNews, syncPetBoosts } from "./room-economy.ts";
@@ -66,6 +45,62 @@ export type SeSettings = {
   seen: { [action: string]: number };
   duelModuleOff: boolean;
 };
+
+/** The bot_status row (the constructor's DDL). */
+type BotStatusRow = {
+  id: number;
+  heard_at: number;
+  heard: string;
+  sent_at: number;
+  sent_total: number;
+  failed_at: number;
+  failed_total: number;
+  failed_reason: string;
+  held_at: number;
+  held_reason: string;
+};
+/** What the overlay sockets get: the state, or the saved looks that changed. */
+type LiveMessage =
+  | (Snapshot & { build: string })
+  | { type: "looks"; looks: { [login: string]: Look | null }; reset?: boolean };
+/** A duel whose result chat may now hear (dueResults): completed, rated and revealed. */
+type DueDuel = Duel & { ratings: NonNullable<Duel["ratings"]>; revealAt: number };
+/** readJson's answer. */
+type ReadJson = { ok: false; error: string; value?: undefined } | { ok: true; value: JsonObject; error?: undefined };
+/** An event advance takes: any reducer event; the admin fields it logs are absent on the others. */
+type RoomEvent = GameEvent & { actorId?: unknown; actorName?: unknown; note?: unknown };
+const INTERNAL_HEADER = "X-Mini-Internal";
+const CHANNEL_HEADER = "X-Mini-Channel";
+const MAX_LIVE_SOCKETS = 200;
+const MAX_SOCKETS_PER_CLIENT = 16; // one network can't fill the room and lock OBS out
+const RESULT_WINDOW_MS = 120000; // a result line not sent within 2 minutes of its reveal is given up
+const MAX_EVENTSUB_IDS = 5_000;
+const CHAT_CHECK_MS = 60 * 60_000; // the alarm re-checks the Helix subscription at most hourly
+const CHAT_PENDING_CHECK_MS = 3 * 60_000; // a subscription still awaiting webhook verification is re-checked sooner
+
+function normalizeChannel(value: unknown): string {
+  const channel = String(value || "")
+    .trim()
+    .toLowerCase();
+  return /^[a-z0-9_]{1,25}$/.test(channel) ? channel : "";
+}
+
+// Adds each "name TYPE ..." column the table doesn't have yet (the schema's later versions).
+function addColumns(sql: SqlStorage, table: string, columns: string[]): void {
+  const have = sql
+    .exec<{ name: string }>(`PRAGMA table_info(${table})`)
+    .toArray()
+    .map((c) => c.name);
+  for (const column of columns)
+    if (!have.includes(column.slice(0, column.indexOf(" ")))) sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
+}
+
+// Next Helix check time, or null: hourly while connected, every few minutes while a subscription awaits verification.
+function chatCheckDue(state: GameState): number | null {
+  const id = state.chat?.subscriptionId;
+  if (!id || id.startsWith("local-") || id === SE_SUBSCRIPTION_ID) return null;
+  return (Number(state.chat.checkedAt) || 0) + (state.chat.connected ? CHAT_CHECK_MS : CHAT_PENDING_CHECK_MS);
+}
 
 export class ChannelRoom extends DurableObject<Env> {
   // public, so the room helpers in pets, sprites, uploads and developer can take the room

@@ -743,7 +743,7 @@ export function saveProfile(room: ChannelRoom, channel: string, userId: string, 
 
 // An approved viewer sprite goes on its uploader's saved fighter, and replaces their previous sprite in every build
 // slot. Returns the new game state when the overlay needs it, else null.
-export function wearSprite(room: ChannelRoom, channel: string, row: SpriteRow, previous: string): GameState | null {
+function wearSprite(room: ChannelRoom, channel: string, row: SpriteRow, previous: string): GameState | null {
   const sql = room.ctx.storage.sql;
   if (previous)
     sql.exec(
@@ -765,7 +765,7 @@ export function wearSprite(room: ChannelRoom, channel: string, row: SpriteRow, p
 }
 
 // A removed viewer sprite: fighters wearing it, saved or on stage, go back to the default character.
-export function dropSprite(room: ChannelRoom, channel: string, id: string): GameState | null {
+function dropSprite(room: ChannelRoom, channel: string, id: string): GameState | null {
   const sql = room.ctx.storage.sql;
   for (const row of sql.exec<{ user_id: string }>("SELECT user_id FROM profiles WHERE avatar = ?", id).toArray())
     room.lookChanged(row.user_id);
