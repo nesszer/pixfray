@@ -276,17 +276,12 @@ async function checkOverlayVersion() {
   build.checking = true;
   build.checkAt = Date.now();
   try {
-    const response = await fetch(location.pathname + location.search, {
-      cache: "no-store",
-      headers: { accept: "text/html" },
-    });
+    const response = await fetch(location.href, { cache: "no-store", headers: { accept: "text/html" } }); // no #hash is sent
     if (!response.ok) throw new Error(`Overlay page HTTP ${response.status}`);
     const latest = overlayVersionFromHtml(await response.text());
     build.changed = false;
     if (latest && latest !== ownVersion) build.stale = true;
-  } catch {
-    /* keep build.changed: the next tick asks again */
-  }
+  } catch {} // keep build.changed: the next tick asks again
   build.checking = false;
 }
 export function watchBuild() {
