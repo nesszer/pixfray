@@ -16,7 +16,7 @@ import { eventsubSecret, signEventsub } from "../server/eventsub.ts";
 import { channelOrigins } from "../server/hosts.ts";
 import { ensureUploadSchema, handleRoomAssets } from "../server/uploads.ts";
 import { asEnv, fakeCtx, fakeSql, type Loose } from "./fakes.ts";
-import { INTERNAL, SECRETS, call, memoryAuth, namespace, req, signedIn } from "./worker-fakes.ts";
+import { INTERNAL, SECRETS, call, memoryAuth, namespace, realRooms, req, roomCall, signedIn } from "./worker-fakes.ts";
 
 const DEV = "dev-token-for-tests-0123456789abcdefghij";
 /** A 1x1 PNG. */
@@ -626,29 +626,14 @@ const roomEnv = asEnv({ INTERNAL_SECRET: INTERNAL, DEV_TOOLS_TOKEN: DEV });
 /** One room, called the way the Worker calls it. */
 function room() {
   const r = new ChannelRoom(fakeCtx(), roomEnv);
-  return async (path: string, body: unknown, userId?: string) => {
-    const headers = {
-      "X-Mini-Internal": INTERNAL,
-      "X-Mini-Channel": "nesszerra",
-      "Content-Type": "application/json",
-      ...(userId ? { "X-Mini-User-Id": userId } : {}),
-    };
-    const res = await r.fetch(
-      new Request("https://room" + path, { method: "POST", headers, body: JSON.stringify(body) }),
-    );
-    return { status: res.status, body: await res.json<unknown>() };
-  };
+  return (path: string, body: unknown, userId?: string) =>
+    roomCall(r, path, { method: "POST", body, ...(userId ? { userId } : {}) });
 }
 
 /** The Worker with an in-memory AuthStore and real rooms. */
 function environment(extra: Record<string, unknown> = {}) {
   const entries = new Map<string, Loose>(),
-    rooms = new Map<string, ChannelRoom>();
-  const ROOMS = namespace(async (name, url, init) => {
-    const r = rooms.get(name) ?? new ChannelRoom(fakeCtx(), roomEnv);
-    rooms.set(name, r);
-    return r.fetch(new Request(url, init));
-  });
+    ROOMS = namespace(realRooms({ DEV_TOOLS_TOKEN: DEV }).fetch);
   const env = asEnv({
     ...SECRETS,
     AUTH: memoryAuth(entries),

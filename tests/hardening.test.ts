@@ -3,12 +3,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../server/worker.ts";
-import { ChannelRoom } from "../server/channel.ts";
 import { seal, unseal, isOwner, access } from "../server/auth.ts";
 import { forgetRefused, seKeyHash, WRONG_KEY_TEXT, LOST_TEXT, OFF_TEXT, SE_KEY } from "../server/streamelements.ts";
 import { forgetChannel } from "../server/channels.ts";
-import { asEnv, fakeCtx, must, type Loose } from "./fakes.ts";
-import { INTERNAL, ORIGIN, SECRETS, memoryAuth, namespace, signIn, sqliteAuth, twitchSignIn } from "./worker-fakes.ts";
+import { asEnv, must, type Loose } from "./fakes.ts";
+import {
+  INTERNAL,
+  ORIGIN,
+  SECRETS,
+  memoryAuth,
+  namespace,
+  realRooms,
+  signIn,
+  sqliteAuth,
+  twitchSignIn,
+} from "./worker-fakes.ts";
 import type { StubInit } from "./worker-fakes.ts";
 
 const DAY = 86400000,
@@ -169,17 +178,8 @@ test("SE: a refused (channel, key) pair is answered locally for 60 s, then asked
   assert.equal(f.fetched.length, 6, "asked again after 60 s");
 });
 
-// Real ChannelRooms on SQLite behind the Worker: the first refusal is recorded for the admin page.
-function realRooms(): RoomFetch {
-  const rooms = new Map<string, ChannelRoom>();
-  return async (channel, url, init) => {
-    if (!rooms.has(channel)) rooms.set(channel, new ChannelRoom(fakeCtx(), asEnv({ INTERNAL_SECRET: INTERNAL })));
-    return must(rooms.get(channel)).fetch(new Request(url, init));
-  };
-}
-
 test("SE with a real room: the first refusal records rejected_at, repeats are served from the cache, the right key works", async () => {
-  const f = environment(realRooms()),
+  const f = environment(realRooms().fetch), // real ChannelRooms on SQLite: the first refusal is recorded
     room = f.env.ROOMS.get(f.env.ROOMS.idFromName("nesszerra"));
   const admin = async () =>
     (

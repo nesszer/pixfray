@@ -2,6 +2,7 @@
 // namespaces, a signed-in session, and requests shaped like the browser's.
 import worker from "../server/worker.ts";
 import { AuthStore, digest, record } from "../server/auth.ts";
+import { ChannelRoom } from "../server/channel.ts";
 import type { TestContext } from "node:test";
 import type { Env } from "../server/env.ts";
 import { asEnv, fakeCtx, must, type Loose } from "./fakes.ts";
@@ -30,6 +31,42 @@ export const namespace = (fetch: (name: string, url: string, init: StubInit) => 
     idFromName: (x: string) => x,
     get: (name: string) => ({ fetch: (url: string, init: StubInit = {}) => fetch(name, url, init) }),
   }) satisfies Namespace as Namespace & DurableObjectNamespace; // a fake in place of the binding
+
+/** Real ChannelRooms, one per name, made on first use over fresh storage with INTERNAL plus `env`. */
+export function realRooms(env: object = {}) {
+  const rooms = new Map<string, ChannelRoom>();
+  const room = (name: string): ChannelRoom => {
+    if (!rooms.has(name)) rooms.set(name, new ChannelRoom(fakeCtx(), asEnv({ INTERNAL_SECRET: INTERNAL, ...env })));
+    return must(rooms.get(name));
+  };
+  return {
+    rooms,
+    room,
+    fetch: (name: string, url: string, init: StubInit) => room(name).fetch(new Request(url, init)),
+  };
+}
+/** A request to `room` the way the Worker sends it (internal secret, channel nesszerra, the user id when given). */
+export async function roomCall(
+  room: ChannelRoom,
+  path: string,
+  {
+    method = "GET",
+    body,
+    userId,
+    secret = INTERNAL,
+  }: { method?: string; body?: unknown; userId?: string; secret?: string },
+): Promise<{ status: number; body: Loose }> {
+  const headers = {
+    "X-Mini-Internal": secret,
+    "X-Mini-Channel": "nesszerra",
+    ...(userId ? { "X-Mini-User-Id": userId } : {}),
+    ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+  };
+  const init = { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) };
+  const res = await room.fetch(new Request("https://room" + path, init));
+  const json = (res.headers.get("content-type") || "").includes("json");
+  return { status: res.status, body: json ? await res.json<Loose>() : await res.text() };
+}
 
 const DAY = 86400000;
 /**

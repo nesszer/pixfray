@@ -10,7 +10,7 @@ import { ChannelRoom } from "../server/channel.ts";
 import { validPath, usage, logRoomEvent } from "../server/developer.ts";
 import { asEnv, asExecutionContext, fakeCtx, must } from "./fakes.ts";
 import type { FakeState, Loose } from "./fakes.ts";
-import { INTERNAL, SECRETS, memoryAuth, namespace, signedIn, req, call } from "./worker-fakes.ts";
+import { INTERNAL, SECRETS, memoryAuth, namespace, realRooms, signedIn, req, call } from "./worker-fakes.ts";
 
 /** A ChannelRoom built on fakeCtx(), so its storage reads come back as plain rows. */
 type DevRoom = Omit<ChannelRoom, "ctx"> & { ctx: FakeState };
@@ -32,7 +32,6 @@ type Route = [method: string, url: RegExp, status: number, body: unknown];
 function environment(extra: Record<string, unknown> = {}) {
   // entries hold whatever JSON the Worker stored; tests read them by property
   const entries = new Map<string, Loose>(),
-    rooms = new Map<string, DevRoom>(),
     reads: string[] = [],
     down = new Set<string>();
   const env = asEnv({
@@ -41,23 +40,17 @@ function environment(extra: Record<string, unknown> = {}) {
     ASSETS: { fetch: async () => Response.json([{ id: "player" }]) },
     ...extra,
   });
-  const room = (name: string) => {
-    if (!rooms.has(name))
-      // built on fakeCtx(), so its ctx is the FakeState
-      rooms.set(
-        name,
-        new ChannelRoom(fakeCtx(), asEnv({ INTERNAL_SECRET: INTERNAL, BACKUPS: env.BACKUPS })) as DevRoom,
-      );
-    return must(rooms.get(name));
-  };
+  const real = realRooms({ BACKUPS: env.BACKUPS }),
+    // built on fakeCtx(), so its ctx is the FakeState
+    room = (name: string) => real.room(name) as DevRoom;
   env.ROOMS = namespace(async (name, url, init) => {
     reads.push(name);
     if (down.has(name)) throw new Error("room down");
-    return room(name).fetch(new Request(url, init));
+    return real.fetch(name, url, init);
   });
   const owner = () => signedIn({ env, entries }, true),
     viewer = () => signedIn({ env, entries });
-  return { env, entries, rooms, room, reads, down, owner, viewer };
+  return { env, entries, rooms: real.rooms, room, reads, down, owner, viewer };
 }
 // D1 (prepare/bind/run/all/first/batch) over node:sqlite. Blobs come back as arrays of numbers, as D1 returns them.
 function fakeD1() {
