@@ -1,4 +1,4 @@
-// Lane E UI check: owner page (/admin/dev/) at 1280px and 390px.
+// The owner page (/admin/dev/) at 1280px and 390px.
 // Signed-out runs against the real local server; owner states stub /api/session and /api/dev/* with page.route,
 // unless MINI_OWNER_COOKIE (a local test session id) is set, which adds one unstubbed owner run.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5195 node tests/dev-ui.ts   (screenshots go to the OS temp dir)
@@ -16,8 +16,7 @@ const sizes = [
   { name: "1280", width: 1280, height: 900 },
   { name: "390", width: 390, height: 844 },
 ];
-type Size = { name: string; width: number; height: number };
-type RegChannel = { login: string; enabledAt: number; pausedAt?: number; pausedBy?: string };
+type Size = (typeof sizes)[number];
 type StubOptions = { configured: boolean; calls?: { progress: string[][] } };
 type OpenSetup = { cookie?: string; stub?: StubOptions };
 const json = (route: Route, data: unknown, status = 200) =>
@@ -25,58 +24,35 @@ const json = (route: Route, data: unknown, status = 200) =>
 const owner = { id: "900001", login: "nesszerra", displayName: "nesszerra" };
 const now = Date.now(),
   errors: string[] = [];
+// The page shows these as raw JSON and diffs edits against them; a few keys stand in for the full config.
 const config = {
   enabled: true,
   maxHp: 100,
   maxDuels: 5,
-  challengeTimeoutMs: 30000,
-  inactivityMs: 45000,
-  respawnMs: 3000,
-  rematchDelayMs: 30000,
-  sharedCooldownMs: 1000,
-  initialElo: 1000,
-  eloK: 24,
   abilities: {
     strike: { damage: 20, cooldownMs: 2000 },
     heavy: { damage: 35, cooldownMs: 5000 },
     heal: { amount: 15, cooldownMs: 12000 },
   },
 };
+// /api/dev/diagnostics, only the fields the page reads (it isn't parsed, so nothing else is required)
 const diag = (configured: boolean) => ({
   worker: {
     version: "0.2.0",
-    twitchConfigured: true,
-    productionEnabled: false,
-    deployedVersion: configured
-      ? { id: "5d1c9a3e-0000-4000-8000-000000000001", tag: "gh-1a2b3c4-1234", timestamp: "" }
-      : null,
+    deployedVersion: configured ? { id: "5d1c9a3e-0000-4000-8000-000000000001", tag: "gh-1a2b3c4-1234" } : null,
   },
   room: {
-    channel: "nesszerra",
-    revision: 42,
-    chat: { connected: configured, lastSeen: now - 4000, status: configured ? "enabled" : "disconnected" },
-    chatStatus: {
-      connected: configured,
-      status: configured ? "enabled" : "disconnected",
-      subscriptionId: configured ? "sub-1" : "",
-      createdAt: now - 86400000,
-      lastNotificationAt: now - 4000,
-      lastRevocationReason: "",
-      checkedAt: now - 600000,
-    },
-    paused: !configured,
-    configVersion: 3,
+    chatStatus: { connected: configured, lastNotificationAt: now - 4000 },
     players: 6,
     openDuels: 1,
     sockets: { live: 2 },
     errors: 2,
-    errorsBySource: { room: 1, worker: 1 },
-    lastError: { at: now - 600000, source: "room", message: "room error" },
+    lastError: { at: now - 600000 },
   },
   integrations: {
     github: configured
-      ? { configured: true, missing: [], repo: "Finesssee/pixfray", base: "main", workflow: "deploy.yml" }
-      : { configured: false, missing: ["GITHUB_TOKEN", "GITHUB_REPO"], repo: "", base: "main", workflow: "deploy.yml" },
+      ? { configured: true, missing: [], repo: "Finesssee/pixfray" }
+      : { configured: false, missing: ["GITHUB_TOKEN", "GITHUB_REPO"], repo: "" },
     cloudflare: {
       configured,
       missing: configured ? [] : ["CF_API_TOKEN", "CF_ACCOUNT_ID"],
@@ -84,14 +60,8 @@ const diag = (configured: boolean) => ({
     },
   },
   usage: configured
-    ? {
-        configured: true,
-        limit: 100000,
-        requests: 18234,
-        percent: 18.2,
-        resetsAt: new Date(Date.UTC(2026, 9, 2)).toISOString(),
-      }
-    : { configured: false, limit: 100000, error: "Set CF_API_TOKEN and CF_ACCOUNT_ID to read request usage" },
+    ? { configured: true, requests: 18234, percent: 18.2, resetsAt: new Date(Date.UTC(2026, 9, 2)).toISOString() }
+    : { configured: false },
 });
 const progress = (p: Record<string, string | number | boolean>) => ({
   overlays: 0,
@@ -103,11 +73,10 @@ const progress = (p: Record<string, string | number | boolean>) => ({
   lastCommandAt: 0,
   rejectedAt: 0,
   lastChatAt: 0,
-  players: 0,
   ...p,
 });
 async function stub(page: Page, { configured, calls = { progress: [] } }: StubOptions) {
-  const reg: { builtin: string[]; max: number; channels: RegChannel[] } = {
+  const reg: { builtin: string[]; max: number; channels: { login: string; enabledAt: number }[] } = {
     builtin: ["nesszerra", "miolafff"],
     max: 200,
     channels: [{ login: "oldstreamer", enabledAt: now - 86400000 }],
@@ -128,15 +97,8 @@ async function stub(page: Page, { configured, calls = { progress: [] } }: StubOp
       ],
     },
     logs: [
+      { at: now - 600000, source: "room", message: "room error", context: { path: "/eventsub", method: "POST" } },
       {
-        id: 2,
-        at: now - 600000,
-        source: "room",
-        message: "room error",
-        context: { path: "/eventsub", method: "POST" },
-      },
-      {
-        id: 1,
         at: now - 900000,
         source: "worker",
         message: "Unexpected token in JSON at position 0",
@@ -228,14 +190,12 @@ async function stub(page: Page, { configured, calls = { progress: [] } }: StubOp
     if (op === "channels" && method === "POST") {
       // !: the page's channel actions always POST a JSON body
       const b: { action: string; login: string } = JSON.parse(r.request().postData()!);
-      if (b.action === "pause" || b.action === "resume") {
-        // !: the page offers Turn off and Turn on only for rows from the registry above
-        const c = reg.channels.find((x) => x.login === b.login)!;
-        if (b.action === "pause") Object.assign(c, { pausedAt: Date.now(), pausedBy: "owner" });
-        else {
-          delete c.pausedAt;
-          delete c.pausedBy;
-        }
+      // the test only turns a channel off; !: the page offers Turn off only for rows from the registry above
+      if (b.action === "pause") {
+        Object.assign(
+          reg.channels.find((x) => x.login === b.login)!,
+          { pausedAt: Date.now(), pausedBy: "owner" },
+        );
         return json(r, { ok: true, ...reg });
       }
     }
@@ -282,6 +242,8 @@ const waitText = (page: Page, sel: string, re: RegExp) =>
     ([s, source, flags]) => new RegExp(source, flags).test(document.querySelector(s)?.textContent ?? ""),
     [sel, re.source, re.flags] as const,
   );
+const hidden = (page: Page, sel: string) => page.$eval(sel, (x: HTMLElement) => x.hidden);
+const devToolsOpen = (page: Page) => page.$eval("#dev-tools", (d: HTMLDetailsElement) => d.open);
 // no sideways scroll, then a full-page screenshot
 async function shot(page: Page, name: string) {
   const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -315,19 +277,14 @@ for (const size of sizes) {
   assert.equal(await page.textContent("#stats-head"), "Counter10-1610-15");
   assert.equal(await page.isDisabled("#deploy-test"), true);
   assert.equal(await page.isDisabled("#save-file"), true);
-  assert.deepEqual(await page.$$eval("#sec-code, #sec-release", (s: HTMLElement[]) => s.map((x) => x.hidden)), [
-    true,
-    true,
-  ]);
-  assert.equal(await page.$eval("#local-release", (p: HTMLElement) => p.hidden), false);
+  assert.deepEqual(
+    [await hidden(page, "#sec-code"), await hidden(page, "#sec-release"), await hidden(page, "#local-release")],
+    [true, true, false],
+  );
   assert.match(await text(page, "#local-release"), /bunx cf deploy --mode test/);
   assert.equal(await page.textContent("#dev-tools-title"), "Developer tools: raw settings and integrations");
   assert.match(await text(page, "#s-requests-note"), /not configured/);
-  assert.equal(
-    await page.$eval("#dev-tools", (d: HTMLDetailsElement) => d.open),
-    false,
-    "developer tools start folded",
-  );
+  assert.equal(await devToolsOpen(page), false, "developer tools start folded");
   assert.equal(await page.locator("#sec-codex, #codex-toggle").count(), 0);
   await shot(page, `unconfigured-${size.name}`);
   await ctx.close();
@@ -364,7 +321,7 @@ for (const size of sizes) {
     "Copy sign-up link stays the one primary action",
   );
   await page.click('a[href="#dev-tools"]');
-  assert.equal(await page.$eval("#dev-tools", (d: HTMLDetailsElement) => d.open), true);
+  assert.equal(await devToolsOpen(page), true);
   assert.match(await text(page, "#s-requests"), /18,234/);
   assert.match(await text(page, "#runs"), /deploy test live-fix\/overlay-text/);
   assert.match(await text(page, "#deployments"), /promote #7/);
@@ -402,7 +359,7 @@ if (process.env.MINI_OWNER_COOKIE) {
   const { ctx, page } = await open(sizes[0]!, { cookie: process.env.MINI_OWNER_COOKIE });
   assert.equal(await page.isVisible("#app"), true);
   assert.match(await text(page, "#github-missing"), /GITHUB_TOKEN/);
-  assert.equal(await page.$eval("#local-release", (p: HTMLElement) => p.hidden), false);
+  assert.equal(await hidden(page, "#local-release"), false);
   assert.match(await text(page, "#config-version"), /version \d+/);
   assert.match(await text(page, "#channels"), /nesszerra.*Built in/s);
   await page.screenshot({ path: path.join(shots, "dev-real-owner-1280.png"), fullPage: true });
