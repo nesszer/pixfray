@@ -151,12 +151,8 @@ export async function handleRoomAssets(
       );
       return true;
     });
-    if (!inserted)
-      return fail(
-        409,
-        "custom_limit_reached",
-        "This channel already has " + UPLOAD_LIMITS.maxCharacters + " custom characters; delete one first",
-      );
+    const full = `This channel already has ${UPLOAD_LIMITS.maxCharacters} custom characters; delete one first`;
+    if (!inserted) return fail(409, "custom_limit_reached", full);
     return json(
       {
         ok: true,
@@ -219,7 +215,7 @@ export function validateUpload(body: { [field: string]: unknown } | null | undef
   if (!body || typeof body !== "object" || Array.isArray(body)) reject(400, "invalid_upload", "JSON object required");
   const label = typeof body.label === "string" ? body.label.replace(/[\u0000-\u001f\u007f]/g, "").trim() : "";
   if (!label || label.length > UPLOAD_LIMITS.maxLabel)
-    reject(400, "invalid_label", "Name must be 1 to " + UPLOAD_LIMITS.maxLabel + " characters");
+    reject(400, "invalid_label", `Name must be 1 to ${UPLOAD_LIMITS.maxLabel} characters`);
   const mode = body.mode === undefined ? "frames" : body.mode;
   if (mode !== "single" && mode !== "frames") reject(400, "invalid_upload", 'mode must be "single" or "frames"');
   const fps = body.fps === undefined ? 8 : body.fps;
@@ -227,27 +223,20 @@ export function validateUpload(body: { [field: string]: unknown } | null | undef
   const bytes = decodeAtlas(body.atlas);
   const png = readPng(bytes);
   if (png.width > UPLOAD_LIMITS.maxAtlasSide || png.height > UPLOAD_LIMITS.maxAtlasSide)
-    reject(400, "atlas_dimensions", "Atlas must be at most " + UPLOAD_LIMITS.maxAtlasSide + " px on each side");
+    reject(400, "atlas_dimensions", `Atlas must be at most ${UPLOAD_LIMITS.maxAtlasSide} px on each side`);
+  const { frameSize, maxFrames } = UPLOAD_LIMITS;
   const unique = new Set<string>();
   const rects = (list: unknown, name: string): Frame[] => {
-    if (!Array.isArray(list) || !list.length || list.length > UPLOAD_LIMITS.maxFrames)
-      reject(400, "invalid_frames", name + " must list 1 to " + UPLOAD_LIMITS.maxFrames + " frames");
+    if (!Array.isArray(list) || !list.length || list.length > maxFrames)
+      reject(400, "invalid_frames", `${name} must list 1 to ${maxFrames} frames`);
     return list.map((f) => {
       if (!f || typeof f !== "object" || ![f.x, f.y, f.w, f.h].every(Number.isInteger))
-        reject(400, "invalid_frames", name + " has a frame that is not {x,y,w,h} integers");
-      if (f.w < 1 || f.h < 1 || f.w > UPLOAD_LIMITS.frameSize || f.h > UPLOAD_LIMITS.frameSize)
-        reject(
-          400,
-          "frame_too_large",
-          "Frames must be at most " + UPLOAD_LIMITS.frameSize + " x " + UPLOAD_LIMITS.frameSize + " px",
-        );
+        reject(400, "invalid_frames", `${name} has a frame that is not {x,y,w,h} integers`);
+      if (f.w < 1 || f.h < 1 || f.w > frameSize || f.h > frameSize)
+        reject(400, "frame_too_large", `Frames must be at most ${frameSize} x ${frameSize} px`);
       if (f.x < 0 || f.y < 0 || f.x + f.w > png.width || f.y + f.h > png.height)
-        reject(
-          400,
-          "frame_out_of_bounds",
-          name + " has a frame outside the " + png.width + " x " + png.height + " atlas",
-        );
-      unique.add(f.x + "," + f.y + "," + f.w + "," + f.h);
+        reject(400, "frame_out_of_bounds", `${name} has a frame outside the ${png.width} x ${png.height} atlas`);
+      unique.add(`${f.x},${f.y},${f.w},${f.h}`);
       return { x: f.x, y: f.y, w: f.w, h: f.h };
     });
   };
@@ -258,19 +247,11 @@ export function validateUpload(body: { [field: string]: unknown } | null | undef
     reject(400, "invalid_animation", "animations must be an object");
   for (const [name, list] of Object.entries(anims)) {
     if (!ANIMATIONS.includes(name))
-      reject(
-        400,
-        "invalid_animation",
-        'Unknown animation "' + String(name).slice(0, 20) + '"; use ' + ANIMATIONS.join(", "),
-      );
+      reject(400, "invalid_animation", `Unknown animation "${name.slice(0, 20)}"; use ${ANIMATIONS.join(", ")}`);
     animations[name] = rects(list, name);
   }
-  if (unique.size > UPLOAD_LIMITS.maxFrames)
-    reject(
-      400,
-      "too_many_frames",
-      "At most " + UPLOAD_LIMITS.maxFrames + " frames per character (got " + unique.size + ")",
-    );
+  if (unique.size > maxFrames)
+    reject(400, "too_many_frames", `At most ${maxFrames} frames per character (got ${unique.size})`);
   const meta: UploadMeta = {
     label,
     mode,
@@ -304,7 +285,7 @@ function decodeAtlas(value: unknown): Uint8Array<ArrayBuffer> {
 // bytes may be anything: the instanceof check below refuses what isn't a Uint8Array.
 export function readPng(bytes: unknown): PngSize {
   // Annotated on the const so a call narrows like a throw
-  const notPng: (why: string) => never = (why) => reject(415, "not_png", "Only PNG images are accepted (" + why + ")");
+  const notPng: (why: string) => never = (why) => reject(415, "not_png", `Only PNG images are accepted (${why})`);
   if (!(bytes instanceof Uint8Array) || bytes.length < 57) notPng("file too short");
   for (let i = 0; i < 8; i++) if (bytes[i] !== PNG_SIGNATURE[i]) notPng("bad signature");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -377,5 +358,5 @@ export function slugId(prefix: string, label: string, fallback: string): string 
 // Stored meta that is not a JSON object adds no fields.
 function catalogEntry(channel: string, row: { id: string; meta: string }): CatalogEntry {
   const meta = parseUploadMeta(row.meta);
-  return { ...(meta.ok ? meta.value : {}), id: row.id, url: "/api/assets/" + channel + "/" + row.id, custom: true };
+  return { ...(meta.ok ? meta.value : {}), id: row.id, url: `/api/assets/${channel}/${row.id}`, custom: true };
 }

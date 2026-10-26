@@ -97,18 +97,15 @@ export const AI_PROMPT =
 const BODY_LIMIT = Math.ceil(SPRITE_LIMITS.maxBytes / 3) * 4 + 2_000;
 const AI_BODY_LIMIT = Math.ceil(SPRITE_LIMITS.aiMaxBytes / 3) * 4 + 2_000;
 const JPEG = [0xff, 0xd8, 0xff];
+const LABEL_ERROR = `Name your sprite (1-${SPRITE_LIMITS.maxLabel} characters)`;
 
 export const spriteDay = (now: number = Date.now()): string => new Date(now).toISOString().slice(0, 10);
 
 function decodeB64(value: unknown, maxBytes: number): OrRefusal<{ bytes: Uint8Array<ArrayBuffer> }, SpriteRefusal> {
   const b64 = String(value || "").replace(/^data:[^,]*;base64,/, "");
   if (!b64) return { status: 400, reason: "invalid_image", error: "Choose an image" };
-  if (b64.length > Math.ceil(maxBytes / 3) * 4)
-    return {
-      status: 413,
-      reason: "image_too_large",
-      error: `The image is larger than ${Math.round(maxBytes / 1024)} KB`,
-    };
+  const error = `The image is larger than ${Math.round(maxBytes / 1024)} KB`;
+  if (b64.length > Math.ceil(maxBytes / 3) * 4) return { status: 413, reason: "image_too_large", error };
   try {
     return { bytes: fromBase64(b64) };
   } catch {
@@ -126,7 +123,7 @@ export function validateSprite(
     .trim()
     .replace(/\s+/g, " ");
   if (!label || label.length > SPRITE_LIMITS.maxLabel)
-    return { status: 400, reason: "invalid_label", error: `Name your sprite (1-${SPRITE_LIMITS.maxLabel} characters)` };
+    return { status: 400, reason: "invalid_label", error: LABEL_ERROR };
   const image = decodeB64(body.image, SPRITE_LIMITS.maxBytes);
   if (image.reason) return image;
   let size: PngSize;
@@ -136,18 +133,15 @@ export function validateSprite(
     // readPng throws only UploadError (an Error)
     return { status: 415, reason: "not_png", error: (error as Error).message };
   }
-  if (size.width > SPRITE_LIMITS.maxSide || size.height > SPRITE_LIMITS.maxSide)
-    return {
-      status: 400,
-      reason: "image_dimensions",
-      error: `Sprites are at most ${SPRITE_LIMITS.maxSide}x${SPRITE_LIMITS.maxSide} pixels`,
-    };
+  const { maxSide } = SPRITE_LIMITS;
+  const error = `Sprites are at most ${maxSide}x${maxSide} pixels`;
+  if (size.width > maxSide || size.height > maxSide) return { status: 400, reason: "image_dimensions", error };
   return { label, bytes: image.bytes, width: size.width, height: size.height, ai: body.ai === true };
 }
 
 // The message for a parseSpriteSubmit refusal, the same one validateSprite gives for that field.
 function submitError(reason: string): string {
-  if (reason === "invalid_label") return `Name your sprite (1-${SPRITE_LIMITS.maxLabel} characters)`;
+  if (reason === "invalid_label") return LABEL_ERROR;
   if (reason === "invalid_image") return "Choose an image";
   return "Send {label, image, ai?}";
 }
@@ -162,12 +156,8 @@ export function validateRedrawImage(value: unknown): OrRefusal<RedrawImage, Spri
   try {
     size = jpeg ? jpegSize(b) : readPng(b);
   } catch {}
-  if (!size)
-    return {
-      status: 415,
-      reason: "invalid_image",
-      error: jpeg ? "The JPEG couldn't be read" : "Send a PNG or JPEG image",
-    };
+  const error = jpeg ? "The JPEG couldn't be read" : "Send a PNG or JPEG image";
+  if (!size) return { status: 415, reason: "invalid_image", error };
   if (size.width > SPRITE_LIMITS.aiMaxSide || size.height > SPRITE_LIMITS.aiMaxSide)
     return { status: 400, reason: "image_dimensions", error: `Send at most ${SPRITE_LIMITS.aiMaxSide} px a side` };
   return { bytes: b, type: jpeg ? "image/jpeg" : "image/png" };
@@ -202,19 +192,17 @@ export async function handleSprites(request: Request, env: Env, c: SpritesContex
   const post = (path: string, body: unknown): Promise<Response> => c.roomFetch(path, postJson(body));
   const who = { userId: c.user.id, username: c.user.login, displayName: c.user.displayName || c.user.login };
   if (mine) {
+    const viewer = "userId=" + encodeURIComponent(c.user.id);
     if (request.method === "GET" && !c.id) {
-      const r = await c.roomFetch("/sprites/mine?userId=" + encodeURIComponent(c.user.id));
+      const r = await c.roomFetch("/sprites/mine?" + viewer);
       if (!r.ok) return r;
       // The room's /sprites/mine answer (handleRoomSprites below)
       const data = await r.json<{ [field: string]: unknown; aiLeft: number }>();
       return json({ ...data, ai: { available: Boolean(env.AI), left: env.AI ? data.aiLeft : 0 } });
     }
-    if (request.method === "GET" && c.id === "pending")
-      return c.roomFetch("/sprites/png/pending?userId=" + encodeURIComponent(c.user.id));
+    if (request.method === "GET" && c.id === "pending") return c.roomFetch("/sprites/png/pending?" + viewer);
     if (request.method === "DELETE" && (c.id === "pending" || c.id === "live"))
-      return c.roomFetch("/sprites/mine?kind=" + c.id + "&userId=" + encodeURIComponent(c.user.id), {
-        method: "DELETE",
-      });
+      return c.roomFetch(`/sprites/mine?kind=${c.id}&${viewer}`, { method: "DELETE" });
     if (request.method === "POST" && !c.id) {
       const body = await bodyOr(c.bodyJson(request, BODY_LIMIT), [
         "image_too_large",
@@ -395,12 +383,8 @@ export async function handleRoomSprites(
     const userId = url.searchParams.get("userId") || "",
       kind = url.searchParams.get("kind");
     const status = kind === "live" ? "live" : "pending";
-    const row = first<{ id: string }>(
-      sql,
-      "SELECT id FROM viewer_sprites WHERE user_id = ? AND status = ?",
-      userId,
-      status,
-    );
+    const query = "SELECT id FROM viewer_sprites WHERE user_id = ? AND status = ?";
+    const row = first<{ id: string }>(sql, query, userId, status);
     if (!row)
       return fail(404, "not_found", kind === "live" ? "You have no approved sprite" : "You have no sprite waiting");
     sql.exec("DELETE FROM viewer_sprites WHERE id = ?", row.id);
@@ -420,12 +404,9 @@ export async function handleRoomSprites(
     if (!userId || !username) return fail(400, "invalid_upload", "Missing viewer");
     const id = slugId("v-", sprite.label, "sprite");
     const result = room.ctx.storage.transactionSync(() => {
-      if (usage(sql, userId, day).submits >= SPRITE_LIMITS.submitsPerDay)
-        return fail(
-          429,
-          "daily_limit",
-          `You can send ${SPRITE_LIMITS.submitsPerDay} sprites a day. Try again tomorrow.`,
-        );
+      const { submitsPerDay } = SPRITE_LIMITS;
+      if (usage(sql, userId, day).submits >= submitsPerDay)
+        return fail(429, "daily_limit", `You can send ${submitsPerDay} sprites a day. Try again tomorrow.`);
       // A new sprite replaces the viewer's waiting one and clears an old rejection.
       sql.exec("DELETE FROM viewer_sprites WHERE user_id = ? AND status IN ('pending', 'rejected')", userId);
       if (count(sql, "SELECT COUNT(*) AS n FROM viewer_sprites WHERE status = 'pending'") >= SPRITE_LIMITS.maxPending)
@@ -444,11 +425,9 @@ export async function handleRoomSprites(
         sprite.ai ? 1 : 0,
         now,
       );
-      sql.exec(
-        "INSERT INTO sprite_usage (user_id, day, submits) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET submits = submits + 1",
-        userId,
-        day,
-      );
+      const bump =
+        "INSERT INTO sprite_usage (user_id, day, submits) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET submits = submits + 1";
+      sql.exec(bump, userId, day);
       return null;
     });
     if (result) return result;
@@ -466,23 +445,16 @@ export async function handleRoomSprites(
       return json({ ok: true });
     }
     return room.ctx.storage.transactionSync(() => {
-      if (usage(sql, userId, day).ai >= SPRITE_LIMITS.aiPerDay)
-        return fail(
-          429,
-          "ai_daily_limit",
-          `You've used your ${SPRITE_LIMITS.aiPerDay} AI redraws today. The pixel version still works.`,
-        );
-      if (aiLeft(sql, userId, day) <= 0)
-        return fail(
-          429,
-          "ai_channel_limit",
-          "This channel has used today's AI redraws. The pixel version still works.",
-        );
-      sql.exec(
-        "INSERT INTO sprite_usage (user_id, day, ai) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET ai = ai + 1",
-        userId,
-        day,
-      );
+      const { aiPerDay } = SPRITE_LIMITS;
+      if (usage(sql, userId, day).ai >= aiPerDay) {
+        const error = `You've used your ${aiPerDay} AI redraws today. The pixel version still works.`;
+        return fail(429, "ai_daily_limit", error);
+      }
+      const spent = "This channel has used today's AI redraws. The pixel version still works.";
+      if (aiLeft(sql, userId, day) <= 0) return fail(429, "ai_channel_limit", spent);
+      const bump =
+        "INSERT INTO sprite_usage (user_id, day, ai) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET ai = ai + 1";
+      sql.exec(bump, userId, day);
       return json({ ok: true, left: aiLeft(sql, userId, day) });
     });
   }
@@ -518,38 +490,25 @@ export async function handleRoomSprites(
       return fail(409, "wrong_status", "That sprite was already reviewed; reload the list");
     if (action === "approve") {
       const result = room.ctx.storage.transactionSync(() => {
-        const others = count(
-          sql,
-          "SELECT COUNT(*) AS n FROM viewer_sprites WHERE status = 'live' AND user_id <> ?",
-          row.userId,
-        );
-        if (others >= SPRITE_LIMITS.maxLive)
-          return fail(
-            409,
-            "live_limit",
-            `This channel has ${SPRITE_LIMITS.maxLive} approved sprites; remove one first`,
-          );
+        const othersLive = "SELECT COUNT(*) AS n FROM viewer_sprites WHERE status = 'live' AND user_id <> ?";
+        if (count(sql, othersLive, row.userId) >= SPRITE_LIMITS.maxLive) {
+          const error = `This channel has ${SPRITE_LIMITS.maxLive} approved sprites; remove one first`;
+          return fail(409, "live_limit", error);
+        }
         const query = "SELECT id FROM viewer_sprites WHERE user_id = ? AND status = 'live'";
         const previous = first<{ id: string }>(sql, query, row.userId)?.id || "";
         if (previous) sql.exec("DELETE FROM viewer_sprites WHERE id = ?", previous);
-        sql.exec(
-          "UPDATE viewer_sprites SET status = 'live', reviewed_by = ?, reviewed_at = ? WHERE id = ?",
-          actor,
-          now,
-          id,
-        );
+        const approve = "UPDATE viewer_sprites SET status = 'live', reviewed_by = ?, reviewed_at = ? WHERE id = ?";
+        sql.exec(approve, actor, now, id);
         return { previous };
       });
       if (result instanceof Response) return result;
       // Outside the transaction: the hook saves the profile, which runs its own.
       hooks.approved?.(shape(row), result.previous);
     } else if (action === "reject") {
-      sql.exec(
-        "UPDATE viewer_sprites SET status = 'rejected', png = X'', bytes = 0, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
-        actor,
-        now,
-        id,
-      );
+      const reject =
+        "UPDATE viewer_sprites SET status = 'rejected', png = X'', bytes = 0, reviewed_by = ?, reviewed_at = ? WHERE id = ?";
+      sql.exec(reject, actor, now, id);
     } else {
       sql.exec("DELETE FROM viewer_sprites WHERE id = ?", id);
       hooks.removed?.(id, row.userId);
