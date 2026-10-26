@@ -50,13 +50,17 @@ export async function readBody(request: Request, limit: number): Promise<Uint8Ar
     }
     chunks.push(value);
   }
-  const raw = new Uint8Array(bytes);
+  return concat(chunks);
+}
+/** The parts as one byte array. */
+export function concat(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let at = 0;
-  for (const chunk of chunks) {
-    raw.set(chunk, at);
-    at += chunk.length;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
   }
-  return raw;
+  return out;
 }
 
 /** The body as a JSON object (an empty body reads {}); throws an HttpError with status 400 or 413 otherwise. */
