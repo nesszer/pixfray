@@ -62,13 +62,9 @@ export function renderCommandReply(
   });
 }
 
-// The longest a reply can get once filled in: a name is up to 25 characters, a counter up to 10 digits.
+// The longest a reply can get once filled in: a name is up to 25 characters, a counter up to MAX_COUNTER (10 digits).
 export function replyWorstCase(reply: unknown): number {
-  return String(reply).replace(VARIABLE, (whole: string, kind: string, name: string | undefined) => {
-    kind = kind.toLowerCase();
-    if (kind === "count" || kind === "getcount") return name ? "0".repeat(String(MAX_COUNTER).length) : whole;
-    return "x".repeat(25);
-  }).length;
+  return renderCommandReply(reply, { user: "x".repeat(25), count: () => MAX_COUNTER }).length;
 }
 
 // A line cut to MAX_CHAT_LINE characters at a word break, with "…" when cut.

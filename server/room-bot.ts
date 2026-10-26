@@ -38,6 +38,7 @@ import {
   seTarget,
   seTopText,
   seWalletText,
+  WRONG_KEY_TEXT,
 } from "./streamelements.ts";
 import type { SeNames } from "./streamelements.ts";
 import type { ChatEvent, GameEvent, GameResult, GameState, ReduceOutput, SendResult } from "./model.ts";
@@ -46,9 +47,7 @@ import {
   BOT_REPLIES_PER_30S,
   getProfile,
   getProfileByUsername,
-  normalizeProfileRow,
   normalizeUsername,
-  PROFILE_COLUMNS,
   errorText,
   randomHex,
   timingSafeEqual,
@@ -56,32 +55,19 @@ import {
   validUserId,
 } from "./room-shared.ts";
 import { json } from "./http.ts";
-import type { BotMessage, ChatOutcome, JsonObject, Profile, ProfileRow, ProfileTable } from "./room-shared.ts";
+import type { BotMessage, ChatOutcome, JsonObject, Profile, ProfileTable } from "./room-shared.ts";
 import { leaderboard } from "./room-routes.ts";
 import { checkin, give, payDuels, petInfo, resetPair, statsInfo, streamNews, wallet } from "./room-economy.ts";
 import type { ChannelRoom, SeSettings } from "./channel.ts";
 
 /** How a bot command reached the room, for its replies and the command log. */
 type BotCtx = { origin: string; settings: SeSettings; subscriptionId: string };
-/** A command as runCommand takes it: from StreamElements (/se), the bot (botCommand) or the test site. */
-type CommandInput = {
-  action?: unknown;
-  userId?: unknown;
-  username?: unknown;
-  displayName?: unknown;
-  target?: unknown;
-  targetRaw?: unknown;
-  amount?: unknown;
-  messageId?: unknown;
-  key?: unknown;
-  [field: string]: unknown;
-};
-/** runCommand's answer (the /se body). */
-type CommandReply = { reply: string; reason: string; switchedFrom?: string };
+/** runCommand's answer: the chat line, the reason it logged, and the subscription StreamElements took over from. */
+type CommandReply = { reply: string; reason: string; switchedFrom: string };
 
 const REJECTED_WRITE_MS = 60_000; // a wrong StreamElements key is recorded at most once a minute
 const SEEN_WRITE_MS = 60_000; // each command's "last seen" time is written at most once a minute
-const BOT_RESERVED_LINES = 4; // of those, kept for the bot's own result and expired-challenge lines
+const BOT_RESERVED_LINES = 4; // of BOT_REPLIES_PER_30S, kept for the bot's own result and expired-challenge lines
 // Hidden bot-channel aliases for words new viewers guess: !accept and !duel, and !top (StreamElements owns it on SE channels).
 const BOT_ALIASES: { [word: string]: string } = { "!accept": "accept", "!duel": "challenge", "!top": "top" };
 // Commands that refuse the bot account as their target, with the reply (outside the BOT_DEBUG test site).
@@ -143,13 +129,9 @@ const ACCOUNT_RETRY_MS = 3_600_000; // a failed Twitch account-age lookup is ret
 // "45 s", "12 min", "3 h", "2 d": how long ago (or until) for the bot's one-line status.
 function agoText(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
-  return s < 90
-    ? s + " s"
-    : s < 5400
-      ? Math.round(s / 60) + " min"
-      : s < 172800
-        ? Math.round(s / 3600) + " h"
-        : Math.round(s / 86400) + " d";
+  if (s < 90) return s + " s";
+  if (s < 5400) return Math.round(s / 60) + " min";
+  return s < 172800 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " d";
 }
 
 /** A read or wallet command's asker, as runCommand and the test site's /dev-chat hand it to QUICK_COMMANDS. */
@@ -224,30 +206,19 @@ export const QUICK_COMMANDS: {
     reason: "top",
   }),
   elo(room, { channel, userId, who, target, origin }) {
-    const found = eloLookup(room, channel, target ? { username: target } : { userId });
-    return {
-      reply: seEloText(found, { self: !target, askerName: who, target, origin, channel }),
-      reason: found ? "elo" : "elo_not_found",
-    };
+    const found = eloLookup(room, channel, userId, target);
+    return { reply: seEloText(found, { who, target, origin, channel }), reason: found ? "elo" : "elo_not_found" };
   },
 };
 
-// One saved profile with its leaderboard place (same order as leaderboard()), or null.
-function eloLookup(
-  room: ChannelRoom,
-  channel: string,
-  { userId = "", username = "" }: { userId?: string; username?: string },
-) {
-  const sql = room.ctx.storage.sql;
-  const row = (
-    userId
-      ? sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, userId)
-      : sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE username = ? COLLATE NOCASE`, username)
-  ).toArray()[0];
-  if (!row) return null;
+// The asker's (or the target's) saved profile with its leaderboard place (same order as leaderboard()), or null.
+function eloLookup(room: ChannelRoom, channel: string, userId: string, target: string) {
   const state = room.readState(channel),
     hidden = hiddenResults(state, Date.now());
-  const profile = shownProfile(normalizeProfileRow(row, state.config), hidden);
+  const saved = target ? getProfileByUsername(room, target, state.config) : getProfile(room, userId, state.config);
+  if (!saved) return null;
+  const profile = shownProfile(saved, hidden),
+    sql = room.ctx.storage.sql;
   let ahead = Number(
     sql
       .exec<{ n: number }>(
@@ -258,17 +229,15 @@ function eloLookup(
         profile.wins,
         profile.elo,
         profile.wins,
-        row.username,
+        profile.username,
       )
       .toArray()[0]!.n, // COUNT(*) always returns one row
   );
   // The count used everyone's saved numbers; swap in the shown ones for fighters whose result is still hidden.
   for (const id of hidden.keys()) {
-    if (id === profile.userId) continue;
-    const other = sql.exec<ProfileRow>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE user_id = ?`, id).toArray()[0];
-    if (!other) continue;
-    const saved = normalizeProfileRow(other, state.config);
-    ahead += Number(boardOrder(shownProfile(saved, hidden), profile) < 0) - Number(boardOrder(saved, profile) < 0);
+    const other = id === profile.userId ? null : getProfile(room, id, state.config);
+    if (other)
+      ahead += Number(boardOrder(shownProfile(other, hidden), profile) < 0) - Number(boardOrder(other, profile) < 0);
   }
   const total = sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM profiles").toArray()[0]!.n; // one row, as above
   return { profile, rank: ahead + 1, total: Number(total) };
@@ -278,14 +247,14 @@ function eloLookup(
 export async function streamElements(
   room: ChannelRoom,
   channel: string,
-  input: CommandInput,
+  input: JsonObject,
   origin: string,
 ): Promise<Response> {
   const settings = room.seSettings();
   if (!timingSafeEqual(String(input.key || ""), settings.secret)) {
     if (Date.now() - settings.rejectedAt > REJECTED_WRITE_MS)
       room.ctx.storage.sql.exec("UPDATE se_settings SET rejected_at = ? WHERE id = 1", Date.now());
-    return json({ reply: "PixFray: wrong key. Copy the commands again from the admin page." }, 403);
+    return json({ reply: WRONG_KEY_TEXT }, 403);
   }
   // The bot answers every command itself, so StreamElements posts nothing (no double replies) and keeps the chat source.
   if (room.botSource(room.readState(channel))) return json({ reply: "" });
@@ -298,7 +267,11 @@ export async function streamElements(
       JSON.stringify({ ...settings.seen, [action]: Date.now() }),
     );
   } else room.ctx.storage.sql.exec("UPDATE se_settings SET last_command_at = ? WHERE id = 1", Date.now());
-  return runCommand(room, channel, input, origin, settings, { kind: "se", subscriptionId: SE_SUBSCRIPTION_ID });
+  const { reply, switchedFrom } = await runCommand(room, channel, input, origin, settings, {
+    kind: "se",
+    subscriptionId: SE_SUBSCRIPTION_ID,
+  });
+  return json({ reply, ...(switchedFrom ? { switchedFrom } : {}) });
 }
 
 // A chat line read by the PixFray bot: only the channel's command names get a reply, capped per 30 s.
@@ -342,7 +315,8 @@ export async function botCommand(
     return json({ ok: true, reason: "unknown_subscription", reply: "" });
   }
   const before = room.botStatus();
-  noteBotHeard(room, `${normalizeUsername(ev.chatter_user_login) || "?"} ${first}`);
+  const heard = `${normalizeUsername(ev.chatter_user_login) || "?"} ${first}`.slice(0, 80);
+  room.ctx.storage.sql.exec("UPDATE bot_status SET heard_at = ?, heard = ? WHERE id = 1", Date.now(), heard);
   rememberReminder(room, String(ev.broadcaster_user_id || ""), validUserId(msg.botId), origin);
   if (!state.chat.connected) {
     // Twitch only notifies enabled subscriptions, so this confirms a pending one
@@ -353,7 +327,7 @@ export async function botCommand(
   // "!fray off" / "!fray on" (broadcaster or a mod): while off, every other command gets no reply.
   const chatterId = validUserId(ev.chatter_user_id),
     boss = chatterId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
-  const say = (line: string) => sendBotLines(room, [line], channel);
+  const say = (line: string) => json(sendBotLines(room, [line], channel));
   const sub = action === "help" ? String(words[1] || "").toLowerCase() : "",
     toggle = boss ? sub : "";
   const off = state.config.botEnabled === false;
@@ -437,9 +411,7 @@ export async function botCommand(
     lines = [BOT_TARGET_ACTIONS[action]!(settings.names)]; // checked in the condition above
   } else {
     const since = room.readState(channel).revision;
-    const out = await (
-      await runCommand(room, channel, input, origin, settings, { kind: "bot", subscriptionId })
-    ).json<CommandReply>(); // runCommand's answer
+    const out = await runCommand(room, channel, input, origin, settings, { kind: "bot", subscriptionId });
     const expired = expiredLines(room, room.readState(channel), since);
     lines = [
       ...expired,
@@ -448,9 +420,9 @@ export async function botCommand(
         ? await botAnswer(room, channel, input, out, { botId, origin, settings, subscriptionId })
         : []),
     ];
-    return sendBotLines(room, lines, channel, { system: expired.length });
+    return json(sendBotLines(room, lines, channel, expired.length));
   }
-  return sendBotLines(room, lines, channel);
+  return json(sendBotLines(room, lines, channel));
 }
 
 // How many more command replies fit under the cap right now.
@@ -464,12 +436,7 @@ export function botReplyRoom(room: ChannelRoom, now: number): number {
 // The bot's reply lines that fit under BOT_REPLIES_PER_30S, as the Worker expects them: { reply, replies }.
 // Replies to commands stop BOT_RESERVED_LINES short of the cap; the bot's own lines (results, expired challenges;
 // the first `system` lines) may use the rest, so a chatter spamming commands can't crowd out who won.
-function sendBotLines(
-  room: ChannelRoom,
-  lines: string[],
-  channel = "",
-  { system = 0 }: { system?: number } = {},
-): Response {
+function sendBotLines(room: ChannelRoom, lines: string[], channel: string, system = 0) {
   const now = Date.now(),
     sent: string[] = [];
   room.botReplies = (room.botReplies || []).filter((at) => now - at < 30000);
@@ -485,12 +452,12 @@ function sendBotLines(
   const cut = lines.filter(Boolean).length - sent.length;
   if (cut) noteBotHeld(room, channel, "reply_limit", { cut });
   if (!sent.length)
-    return json({ ok: true, reason: lines.some(Boolean) ? "reply_limit" : "no_reply", reply: "", replies: [] });
-  return json({ ok: true, reply: sent[0], replies: sent });
+    return { ok: true, reason: lines.some(Boolean) ? "reply_limit" : "no_reply", reply: "", replies: sent };
+  return { ok: true, reply: sent[0], replies: sent };
 }
 
-// One command played by the bot account (BOT_DEBUG), through the same path as a chat line. Returns { reply, reason }.
-export async function botPlays(
+// One command played by the bot account (BOT_DEBUG), through the same path as a chat line.
+export function botPlays(
   room: ChannelRoom,
   channel: string,
   bot: Profile,
@@ -507,21 +474,18 @@ export async function botPlays(
     targetRaw: target ? "@" + target : "",
     ...(amount !== undefined ? { amount: String(amount) } : {}),
   };
-  return (
-    await runCommand(room, channel, input, origin, settings, { kind, subscriptionId, botPlays: true })
-  ).json<CommandReply>(); // runCommand's answer
+  return runCommand(room, channel, input, origin, settings, { kind, subscriptionId, botPlays: true });
 }
 
 // Sparring partner (BOT_DEBUG): a challenge or rematch aimed at the bot is accepted, and dollars paid to it are paid back.
 async function botAnswer(
   room: ChannelRoom,
   channel: string,
-  input: CommandInput,
+  input: JsonObject,
   out: CommandReply,
   ctx: BotCtx & { botId: string },
 ): Promise<string[]> {
-  const config = room.readState(channel).config,
-    bot = getProfile(room, ctx.botId, config);
+  const bot = getProfile(room, ctx.botId, room.readState(channel).config);
   if (!bot) return [];
   const userId = validUserId(input.userId);
   if (room.readState(channel).duels.some((d) => d.status === "pending" && d.a === userId && d.b === ctx.botId))
@@ -541,15 +505,9 @@ async function botDebug(
   room: ChannelRoom,
   channel: string,
   mode: string,
-  {
-    ev,
-    words,
-    botId,
-    origin,
-    settings,
-    subscriptionId,
-  }: BotCtx & { ev: Partial<ChatEvent>; words: string[]; botId: string },
+  { ev, words, botId, ...ctx }: BotCtx & { ev: Partial<ChatEvent>; words: string[]; botId: string },
 ): Promise<string[]> {
+  const { origin, settings } = ctx;
   const config = room.readState(channel).config,
     bot = getProfile(room, botId, config);
   const userId = validUserId(ev.chatter_user_id),
@@ -558,7 +516,6 @@ async function botDebug(
     return [
       `PixFray debug: the bot account has no saved fighter here yet. Sign in as the bot at ${origin}/?channel=${channel} and save one.`,
     ];
-  const ctx = { origin, settings, subscriptionId };
   if (mode === "spar") {
     if (userId === botId)
       return ["PixFray debug: the bot can't spar with itself. Type !fray spar from another account."];
@@ -581,34 +538,24 @@ async function botDebug(
           : `PixFray debug: @${username} has no saved fighter here. Save one at ${origin}/?channel=${channel}`,
     ];
   if (opponent.userId === botId) return ["PixFray debug: the opponent can't be the bot itself."];
-  return botE2e(room, channel, bot, opponent, { ...ctx, kind: "e2e" });
-}
-
-async function botE2e(
-  room: ChannelRoom,
-  channel: string,
-  bot: Profile,
-  opponent: Profile,
-  ctx: BotCtx & { kind: string },
-): Promise<string[]> {
-  const names = ctx.settings.names,
+  const e2e = { ...ctx, kind: "e2e" },
     results: { label: string; action: string; ok: boolean; reason: string; want: string[] }[] = [];
   const player = { B: bot, O: opponent };
   for (const [who, action, target, want, gate] of E2E_STEPS) {
     const actor = player[who],
       aimed = target ? player[target].username : "";
     const out = await botPlays(room, channel, actor, action, aimed, {
-      ...ctx,
+      ...e2e,
       amount: action === "give" ? 1 : undefined,
     });
     const ok = Boolean(out.reply) && want.includes(out.reason);
     const label =
-      String(names[action] || action).replace(/^!/, "") +
+      String(settings.names[action] || action).replace(/^!/, "") +
       (aimed ? " @" + aimed : "") +
       (who === "O" ? " by " + opponent.username : "");
     results.push({ label, action, ok, reason: out.reason, want });
     // A rematch the game allowed leaves a challenge open; the opponent declines it so the run ends clean.
-    if (action === "rematch" && out.reason === "challenge") await botPlays(room, channel, opponent, "decline", "", ctx);
+    if (action === "rematch" && out.reason === "challenge") await botPlays(room, channel, opponent, "decline", "", e2e);
     if (!ok && gate) break; // the steps after this one need its duel
   }
   const passed = results.filter((r) => r.ok).length,
@@ -635,11 +582,11 @@ async function botE2e(
 export async function runCommand(
   room: ChannelRoom,
   channel: string,
-  input: CommandInput,
+  input: JsonObject,
   origin: string,
   settings: SeSettings,
   source: { kind: string; subscriptionId: string; botPlays?: boolean },
-): Promise<Response> {
+): Promise<CommandReply> {
   // includes() is true only for one of those strings
   const action = SE_ACTIONS.includes(input.action as string) ? (input.action as string) : "";
   const userId = validUserId(input.userId);
@@ -668,7 +615,7 @@ export async function runCommand(
     state0 = switched.state;
   }
   // Every command is logged with what came in, what the game decided and what the bot said.
-  const done = (reply: string, reason: string, extra: JsonObject = {}) => {
+  const done = (reply: string, reason: string, extra: JsonObject = {}): CommandReply => {
     logRoomEvent(
       room,
       "command",
@@ -687,8 +634,10 @@ export async function runCommand(
         ...extra,
       },
     );
-    return json({ reply, ...(source.kind === "se" ? {} : { reason }), ...(switchedFrom ? { switchedFrom } : {}) }); // the bot reads reason
+    return { reply, reason, switchedFrom };
   };
+  const answer = (result: GameResult, state: GameState, actorRegistered = true) =>
+    seReplyText({ result, state, actorId: userId, action, target, names, origin, now, actorRegistered });
   if (!action) return done(`Lost in the arena? Type ${names.help}`, "unknown_action");
   if (!userId || !username)
     return done(
@@ -703,33 +652,9 @@ export async function runCommand(
     return done(out.reply, out.reason, out.extra);
   }
   if (!state0.chat.connected || state0.chat.subscriptionId !== source.subscriptionId)
-    return done(
-      seReplyText({
-        result: { ok: false, reason: "chat_offline" },
-        state: state0,
-        actorId: userId,
-        action,
-        target,
-        names,
-        origin,
-        now,
-      }),
-      "chat_offline",
-    );
+    return done(answer({ ok: false, reason: "chat_offline" }, state0), "chat_offline");
   if (action === "challenge" && !target)
-    return done(
-      seReplyText({
-        result: { ok: false, reason: "target_required" },
-        state: state0,
-        actorId: userId,
-        action,
-        target,
-        names,
-        origin,
-        now,
-      }),
-      "target_required",
-    );
+    return done(answer({ ok: false, reason: "target_required" }, state0), "target_required");
   const messageId = source.kind + ":" + (String(input.messageId || "").slice(0, 60) || randomHex().slice(0, 24));
   const msg: BotMessage = {
     messageId,
@@ -762,37 +687,15 @@ export async function runCommand(
     r.reason !== "ranked_sign_in_required" ||
     room.ctx.storage.sql.exec("SELECT 1 FROM profiles WHERE user_id = ?", userId).toArray().length > 0;
   return done(
-    seReplyText({
-      result: r,
-      state: result.state,
-      actorId: userId,
-      action,
-      target,
-      names,
-      origin,
-      now,
-      actorRegistered,
-    }),
+    answer(r, result.state, actorRegistered),
     r.reason || (r.ok ? action : "error"),
     r.swings
       ? {
           duelId: r.duelId,
-          // other outcomes use their first letter (each outcome is a non-empty word)
-          swings: r.swings
-            .map(
-              (s) => s.die + (({ crit: "x" } as { [outcome: string]: string | undefined })[s.outcome] || s.outcome[0]!),
-            )
-            .join(" "),
+          // a crit is "x", other outcomes their first letter (each outcome is a non-empty word)
+          swings: r.swings.map((s) => s.die + (s.outcome === "crit" ? "x" : s.outcome[0]!)).join(" "),
         }
       : {},
-  );
-}
-
-function noteBotHeard(room: ChannelRoom, what: string): void {
-  room.ctx.storage.sql.exec(
-    "UPDATE bot_status SET heard_at = ?, heard = ? WHERE id = 1",
-    Date.now(),
-    String(what).slice(0, 80),
   );
 }
 
@@ -819,8 +722,7 @@ export function noteBotSent(
 ): void {
   const sql = room.ctx.storage.sql,
     now = Date.now();
-  // an empty list of results to add these to
-  for (const r of ([] as (Partial<SendResult> | null | undefined)[]).concat(results || [])) {
+  for (const r of results) {
     if (r?.sent === true) {
       sql.exec("UPDATE bot_status SET sent_at = ?, sent_total = sent_total + 1 WHERE id = 1", now);
       count(room, "bot_sent");
@@ -868,14 +770,8 @@ function botStatusLine(
 export function botCommands(room: ChannelRoom) {
   const sql = room.ctx.storage.sql;
   return {
-    commands: sql
-      .exec<{ name: string; reply: string }>("SELECT name, reply FROM bot_commands ORDER BY name")
-      .toArray()
-      .map((r) => ({ name: r.name, reply: r.reply })),
-    counters: sql
-      .exec<{ name: string; value: number }>("SELECT name, value FROM bot_counters ORDER BY name")
-      .toArray()
-      .map((r) => ({ name: r.name, value: r.value })),
+    commands: sql.exec<{ name: string; reply: string }>("SELECT name, reply FROM bot_commands ORDER BY name").toArray(),
+    counters: sql.exec<{ name: string; value: number }>("SELECT name, value FROM bot_counters ORDER BY name").toArray(),
     max: MAX_BOT_COMMANDS,
   };
 }
@@ -999,9 +895,7 @@ export async function checkAccountAge(room: ChannelRoom, userId: unknown): Promi
     if (at > 0) sql.exec("UPDATE profiles SET account_created_at = ? WHERE user_id = ?", at, id);
   } catch (error) {
     // anything can be thrown
-    logRoomEvent(room, "warn", `account age lookup failed: ${errorText(error, 80)}`, {
-      userId: id,
-    });
+    logRoomEvent(room, "warn", `account age lookup failed: ${errorText(error, 80)}`, { userId: id });
   }
 }
 
@@ -1040,13 +934,8 @@ export function processChatMessage(
   const outcome = room.ctx.storage.transactionSync((): ChatOutcome => {
     let state = room.readState(channel);
     since = state.revision;
-    const none = (reason: string): ChatOutcome => ({
-      state,
-      result: { ok: false, reason },
-      changed: false,
-      visible: false,
-    });
-    if (!subscriptionId || subscriptionId !== state.chat.subscriptionId) return none("unknown_subscription");
+    if (!subscriptionId || subscriptionId !== state.chat.subscriptionId)
+      return { state, result: { ok: false, reason: "unknown_subscription" }, changed: false, visible: false };
     const steps: ReduceOutput[] = [];
     const step = (event: GameEvent) => {
       const r = reduceGame(state, event, now);
@@ -1156,14 +1045,8 @@ function expiredLines(room: ChannelRoom, state: GameState, since: number): strin
     if (e.type !== "challenge_expired" || Number(e.id) <= since || room.expiredSaid.has(e.id)) continue;
     room.expiredSaid.add(e.id);
     // a challenge_expired event names both fighters' ids
-    lines.push(
-      seExpiredText({
-        a: name(e.a as string),
-        b: name(e.b as string),
-        timeoutMs: state.config.challengeTimeoutMs,
-        names,
-      }),
-    );
+    const [a, b] = [name(e.a as string), name(e.b as string)];
+    lines.push(seExpiredText({ a, b, timeoutMs: state.config.challengeTimeoutMs, names }));
   }
   if (room.expiredSaid.size > 200) room.expiredSaid = new Set([...room.expiredSaid].slice(-100));
   return lines;
@@ -1171,7 +1054,13 @@ function expiredLines(room: ChannelRoom, state: GameState, since: number): strin
 
 // Posts the expired-challenge lines from the alarm as the bot (there is no chat line to answer), under the reply cap.
 export async function postExpired(room: ChannelRoom, channel: string, since: number): Promise<void> {
-  await postBotLines(room, channel, expiredLines(room, room.readState(channel), since));
+  const state = room.readState(channel),
+    lines = expiredLines(room, state, since);
+  if (!lines.length || state.config.botEnabled === false) return;
+  const sender = botSender(room);
+  if (!sender) return;
+  for (const message of sendBotLines(room, lines, channel, lines.length).replies)
+    noteBotSent(room, channel, [(await sendAsBot(room, sender, message)).out]);
 }
 
 // The result of each duel the stream has now played (revealAt in the last 2 minutes), once, so chat never spoils the
@@ -1196,16 +1085,13 @@ async function postResultsOnce(room: ChannelRoom, channel: string, now: number):
     // in reveal order; one that can't go out now stops the rest, so chat keeps the order
     const loser = d.winnerId === d.a ? d.b : d.a;
     const line = seResultText({
+      ...d,
       winner: name(d.winnerId as string), // a completed duel has a winner
       loser: name(loser),
       w: d.ratings[d.winnerId as string], // as above
       l: d.ratings[loser],
-      decision: d.decision,
-      flawless: d.flawless,
-      unrated: d.unrated,
-      lastRanked: d.lastRanked,
     });
-    const { replies } = await sendBotLines(room, [line], channel, { system: 1 }).json<{ replies: string[] }>(); // sendBotLines's answer
+    const { replies } = sendBotLines(room, [line], channel, 1);
     if (!replies.length) return;
     // A failed call (network, Twitch 5xx or 429 after its retries) is tried again; a line Twitch read and dropped
     // (AutoMod, chat settings) would be dropped again, so it counts as done.
@@ -1219,20 +1105,11 @@ async function postResultsOnce(room: ChannelRoom, channel: string, now: number):
   }
 }
 
-// Lines the bot posts on its own (no chat line to answer), under the reply cap.
-async function postBotLines(room: ChannelRoom, channel: string, lines: string[]): Promise<void> {
-  if (!lines.length || room.readState(channel).config.botEnabled === false) return;
-  const sender = botSender(room);
-  if (!sender) return;
-  const { replies } = await sendBotLines(room, lines, channel, { system: lines.length }).json<{ replies: string[] }>(); // sendBotLines's answer
-  for (const message of replies) noteBotSent(room, channel, [(await sendAsBot(room, sender, message)).out]);
-}
-
-type BotSender = { broadcaster_id: string; bot_id: string };
-// Who the bot posts as and in which channel, saved from a bot command (bot_reminder); null before one.
+type BotSender = { broadcaster_id: string; bot_id: string; origin: string };
+// Who the bot posts as, in which channel and for which site, saved from a bot command (bot_reminder); null before one.
 function botSender(room: ChannelRoom): BotSender | null {
   const row = room.ctx.storage.sql
-    .exec<BotSender>("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1")
+    .exec<BotSender>("SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1")
     .toArray()[0];
   return row?.broadcaster_id && row.bot_id ? row : null;
 }
@@ -1260,14 +1137,9 @@ function rememberReminder(room: ChannelRoom, broadcasterId: unknown, botId: stri
   broadcasterId = validUserId(broadcasterId);
   if (!broadcasterId || !botId) return;
   origin = String(origin || "").slice(0, 200);
-  const sql = room.ctx.storage.sql,
-    row = sql
-      .exec<{ broadcaster_id: string; bot_id: string; origin: string }>(
-        "SELECT broadcaster_id, bot_id, origin FROM bot_reminder WHERE id = 1",
-      )
-      .toArray()[0];
-  if (row && row.broadcaster_id === broadcasterId && row.bot_id === botId && row.origin === origin) return;
-  sql.exec(
+  const row = botSender(room);
+  if (row?.broadcaster_id === broadcasterId && row.bot_id === botId && row.origin === origin) return;
+  room.ctx.storage.sql.exec(
     "INSERT INTO bot_reminder (id, broadcaster_id, bot_id, origin) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET broadcaster_id = excluded.broadcaster_id, bot_id = excluded.bot_id, origin = excluded.origin",
     broadcasterId,
     botId,
