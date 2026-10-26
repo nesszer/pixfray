@@ -34,7 +34,14 @@ export function perSource<T>() {
     return byKey.get(key) as T; // as: set on the line above
   };
 }
-export const frameKey = (f: Frame) => f.x + "," + f.y + "," + f.w + "," + f.h;
+export const frameKey = (f: Frame) => `${f.x},${f.y},${f.w},${f.h}`;
+
+// Fills a circle; the path stays set, so a stroke() after it outlines the same circle.
+export function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
 
 // The box of the opaque pixels of `frame` (inclusive, in frame pixels), over rows y0..y1 only when given; null when
 // none are opaque or the image can't be read (cross-origin).

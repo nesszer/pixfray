@@ -10,6 +10,7 @@ import {
 } from "./cosmetics.ts";
 import { drawHat } from "./hats.ts";
 import { drawPet } from "./pets.ts";
+import { dot } from "./pixels.ts";
 import { parseDemoMessage, warnOnce } from "./parse.ts";
 import type { ArenaDuel } from "./parse.ts";
 import { readableColor, truncateText } from "./text.ts";
@@ -65,9 +66,7 @@ function drawFallback(p: Player, x: number, y: number, time: number) {
   ctx.fillRect(x - 11, y - 31, 22, 22);
   ctx.fillRect(x - 8, y - 12, 6, 12 + step);
   ctx.fillRect(x + 2, y - 12, 6, 12 - step);
-  ctx.beginPath();
-  ctx.arc(x, y - 39, 13, 0, Math.PI * 2);
-  ctx.fill();
+  dot(ctx, x, y - 39, 13);
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(x + p.direction * 3 - 5, y - 42, 3, 4);
   ctx.fillRect(x + p.direction * 3 + 2, y - 42, 3, 4);

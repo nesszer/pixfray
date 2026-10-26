@@ -1,6 +1,7 @@
 // Duel effects: hit sparks and glows, the knockout push-in, shakes, floating text, dice, banners and sounds.
 import { ctx, DUEL_GROW, FLOOR, fxOn, height, players, size, sound, width } from "./overlay-stage.ts";
 import type { Player, Span } from "./overlay-stage.ts";
+import { dot } from "./pixels.ts";
 
 // A particle, a spark or a glow; x and y are relative to the owner's lane.
 type Fx = { owner: Player; color: string; y: number; born: number; life: number };
@@ -172,9 +173,7 @@ function drawDie(p: Player, x: number, y: number, s: number, now: number) {
   // value is a whole number from 1 to 6, and PIPS has all six
   for (const cell of PIPS[value]!) {
     const n = Number(cell);
-    ctx.beginPath();
-    ctx.arc(((n % 3) - 1) * side * 0.27, (Math.floor(n / 3) - 1) * side * 0.27, side * 0.09, 0, Math.PI * 2);
-    ctx.fill();
+    dot(ctx, ((n % 3) - 1) * side * 0.27, (Math.floor(n / 3) - 1) * side * 0.27, side * 0.09);
   }
   ctx.restore();
 }

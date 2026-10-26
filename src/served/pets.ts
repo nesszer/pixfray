@@ -7,6 +7,14 @@ type PetArt = { fly?: boolean; colors: Record<string, string>; rows: string[]; w
 /** A built-in pet id, or an uploaded pet's loaded image. */
 type PetArg = string | { image?: HTMLImageElement | null } | null | undefined;
 type PetCanvas = HTMLCanvasElement | OffscreenCanvas;
+type PetOptions = {
+  facing?: number;
+  t?: number;
+  moving?: boolean;
+  tier?: string | undefined;
+  still?: boolean;
+  tint?: string | undefined;
+};
 import { blank, drawGrid, filtered, perSource } from "./pixels.ts";
 
 const PETS: Record<string, PetArt> = {
@@ -219,7 +227,7 @@ const CELL = 8,
   frames = perSource<PetCanvas | null>(),
   tinted = perSource<CanvasImageSource>();
 function petFrame(art: PetArt, rows: string[], cols: number, tint: string): PetCanvas | null {
-  return frames(art, (rows === art.rows ? "" : "wings") + "|" + tint, () => {
+  return frames(art, `${rows === art.rows ? "" : "wings"}|${tint}`, () => {
     if (tint !== "none") {
       const plain = petFrame(art, rows, cols, "none");
       return plain && filtered(plain, { x: 0, y: 0, w: plain.width, h: plain.height }, tint);
@@ -240,35 +248,14 @@ export function drawPet(
   x: number,
   baseY: number,
   size: number,
-  {
-    facing = 1,
-    t = 0,
-    moving = false,
-    tier = "",
-    still = false,
-    tint = "none",
-  }: {
-    facing?: number;
-    t?: number;
-    moving?: boolean;
-    tier?: string | undefined;
-    still?: boolean;
-    tint?: string | undefined;
-  } = {},
+  { facing = 1, t = 0, moving = false, tier = "", still = false, tint = "none" }: PetOptions = {},
 ) {
   const art = typeof pet === "string" ? PETS[pet] : null;
   const image = pet && typeof pet === "object" ? pet.image : null;
   if (!art && !(image?.complete && image.naturalWidth)) return false;
   const hover = art?.fly || tier === "legendary";
-  const lift = still
-    ? hover
-      ? size * 0.25
-      : 0
-    : hover
-      ? size * (0.3 + 0.08 * Math.sin(t / 260))
-      : moving
-        ? Math.abs(Math.sin(t / 110)) * size * 0.18
-        : 0;
+  const hop = moving && !still ? Math.abs(Math.sin(t / 110)) * size * 0.18 : 0;
+  const lift = hover ? size * (still ? 0.25 : 0.3 + 0.08 * Math.sin(t / 260)) : hop;
   const filter = tint || "none";
   ctx.save();
   ctx.translate(x, baseY - lift);

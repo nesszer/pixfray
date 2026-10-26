@@ -16,7 +16,7 @@ export const optString = (v: unknown): v is string | undefined => v === undefine
 export const optNumber = (v: unknown): v is number | undefined =>
   v === undefined || (typeof v === "number" && Number.isFinite(v));
 export const optBoolean = (v: unknown): v is boolean | undefined => v === undefined || typeof v === "boolean";
-export const isNumberMap = (v: unknown): v is Record<string, number> =>
+const isNumberMap = (v: unknown): v is Record<string, number> =>
   isObject(v) && Object.values(v).every((n) => typeof n === "number" && Number.isFinite(n));
 
 const warned = new Set<string>();

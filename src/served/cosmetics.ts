@@ -2,7 +2,7 @@
 // The lists, prices and ownership live in server/cosmetics.ts; the ids here must match (tests/cosmetics.test.ts).
 import { headFor } from "./hats.ts";
 import type { Head } from "./hats.ts";
-import { filtered, frameKey, perSource } from "./pixels.ts";
+import { dot, filtered, frameKey, perSource } from "./pixels.ts";
 import type { Frame } from "./pixels.ts";
 type Ctx = CanvasRenderingContext2D;
 
@@ -42,14 +42,13 @@ const RECOLORS: Record<string, string> = {
   negative: "invert(1) hue-rotate(180deg)",
 };
 export const recolorFilter = (id: string) => RECOLORS[id] || "";
-// One sprite frame with a recolor (and an optional extra filter, the overlay's hit flash) baked in, cached per image,
-// frame and filter (pixels.ts filtered says why).
+// One sprite frame with a recolor (and the overlay's hit flash, if any) baked in, cached (pixels.ts filtered says why).
 const recolored = perSource<HTMLCanvasElement | OffscreenCanvas | null>();
 export function recoloredFrame(image: CanvasImageSource, frame: Frame, id: string, extra = "") {
   const filter = [recolorFilter(id), extra].filter(Boolean).join(" ");
   if (!filter) return null;
   const px = (n: number) => Math.max(1, Math.round(n));
-  return recolored(image, filter + "|" + frameKey(frame), () =>
+  return recolored(image, `${filter}|${frameKey(frame)}`, () =>
     filtered(image, frame, filter, px(frame.w), px(frame.h)),
   );
 }
@@ -59,6 +58,7 @@ export function recoloredFrame(image: CanvasImageSource, frame: Frame, id: strin
 // the rest in front. Placement follows the head found by hats.ts: x0 and hw are its left edge and width.
 type Wear = { x0: number; hw: number; cx: number; eyeY: number; neckY: number; line: number; bottom: number };
 type Sway = { t: number; moving: boolean };
+type Wearing = { headHint?: Head | null | undefined; layer?: string; t?: number; moving?: boolean };
 function specs(ctx: Ctx, { x0, hw, cx, eyeY, line }: Wear, shades: boolean) {
   const r = hw * 0.13,
     a = cx + hw * 0.02,
@@ -89,9 +89,7 @@ function specs(ctx: Ctx, { x0, hw, cx, eyeY, line }: Wear, shades: boolean) {
       ctx.lineWidth = line;
     } else {
       ctx.fillStyle = "rgba(190,225,255,.35)";
-      ctx.beginPath();
-      ctx.arc(ex, eyeY, r, 0, Math.PI * 2);
-      ctx.fill();
+      dot(ctx, ex, eyeY, r);
       ctx.stroke();
     }
   }
@@ -105,9 +103,7 @@ const ACCESSORIES: Record<string, (ctx: Ctx, w: Wear, s: Sway) => void> = {
     ctx.strokeStyle = "#d4a017";
     ctx.lineWidth = line;
     ctx.fillStyle = "rgba(190,225,255,.3)";
-    ctx.beginPath();
-    ctx.arc(ex, eyeY, r, 0, Math.PI * 2);
-    ctx.fill();
+    dot(ctx, ex, eyeY, r);
     ctx.stroke();
     ctx.lineWidth = line * 0.6;
     ctx.beginPath();
@@ -167,9 +163,7 @@ const ACCESSORIES: Record<string, (ctx: Ctx, w: Wear, s: Sway) => void> = {
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = "#f2c94c";
-    ctx.beginPath();
-    ctx.arc(cx - hw * 0.08, neckY, hw * 0.06, 0, Math.PI * 2);
-    ctx.fill(); // the clasp
+    dot(ctx, cx - hw * 0.08, neckY, hw * 0.06); // the clasp
   },
 };
 export function drawAccessory(
@@ -181,12 +175,7 @@ export function drawAccessory(
   dy: number,
   dw: number,
   dh: number,
-  {
-    headHint = null,
-    layer = "front",
-    t = 0,
-    moving = false,
-  }: { headHint?: Head | null | undefined; layer?: string; t?: number; moving?: boolean } = {},
+  { headHint = null, layer = "front", t = 0, moving = false }: Wearing = {},
 ) {
   const draw = ACCESSORIES[id];
   if (!draw || !image || !frame || (id === "cape") !== (layer === "back")) return;
@@ -224,9 +213,7 @@ const TRAILS: Record<string, TrailKind> = {
     vy: -0.35,
     draw(ctx, r, k) {
       ctx.fillStyle = k < 0.3 ? "#fde047" : k < 0.6 ? "#fb923c" : "#dc2626";
-      ctx.beginPath();
-      ctx.arc(0, 0, r * (1.2 - k * 0.9), 0, Math.PI * 2);
-      ctx.fill();
+      dot(ctx, 0, 0, r * (1.2 - k * 0.9));
     },
   },
   bubbles: {
@@ -351,8 +338,8 @@ function heart(ctx: Ctx, r: number, color: string) {
 }
 
 // ---------- win effects ----------
-// Played over the winner for WIN_EFFECT_MS after a duel. Pure function of the time (k = 0..1) and a seed, so the
-// overlay and the preview draw the same thing and a test frame is repeatable.
+// Played over the winner for WIN_EFFECT_MS after a duel: a pure function of the time (k = 0..1) and a seed, so the
+// overlay and the preview match and a test frame repeats.
 export const WIN_EFFECT_MS = 3000;
 const rnd = (seed: number, i: number) => {
   const v = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
@@ -405,9 +392,7 @@ const WIN_EFFECTS: Record<string, (ctx: Ctx, w: Win) => void> = {
         const a = (i / 22) * Math.PI * 2 + rnd(seed, b * 30 + i) * 0.2,
           d = radius * (0.85 + rnd(seed, b * 60 + i) * 0.15);
         const r = Math.max(1.5, size * 0.03 * (1 - q * 0.5));
-        ctx.beginPath();
-        ctx.arc(bx + Math.cos(a) * d, by + Math.sin(a) * d + q * q * size * 0.25, r, 0, Math.PI * 2);
-        ctx.fill();
+        dot(ctx, bx + Math.cos(a) * d, by + Math.sin(a) * d + q * q * size * 0.25, r);
       }
     }
   },
@@ -437,7 +422,7 @@ const WIN_EFFECTS: Record<string, (ctx: Ctx, w: Win) => void> = {
     ctx.fillRect(x - w / 2, cy - hgt / 2, w, hgt * 0.14);
     if (unroll < 1) return;
     ctx.fillStyle = "#3b1d04";
-    ctx.font = "800 " + Math.round(hgt * 0.62) + "px system-ui, sans-serif";
+    ctx.font = `800 ${Math.round(hgt * 0.62)}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("VICTORY", x, cy + hgt * 0.04, w * 0.9);
