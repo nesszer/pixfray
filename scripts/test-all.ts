@@ -6,8 +6,7 @@
 // Connect chat records a local subscription, and e2e-local.ts signs EventSub webhooks with the AUTH_SECRET from
 // .dev.vars. That value is passed to the e2e process environment only and is never printed.
 import { spawn, spawnSync } from "node:child_process";
-import type { ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,43 +18,36 @@ const external = process.env.MINI_BASE_URL;
 const base = external || "http://127.0.0.1:" + port;
 const results: [name: string, status: string, time: string][] = [];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// A .dev.vars value (MINI_<name> in the environment wins); it goes to a child's environment only, never to output.
 function devVar(name: string) {
+  const file = path.join(root, ".dev.vars");
   if (process.env["MINI_" + name]) return process.env["MINI_" + name];
-  let text = "";
-  try {
-    text = fs.readFileSync(path.join(root, ".dev.vars"), "utf8");
-  } catch {
-    throw new Error(".dev.vars is missing; it must define " + name);
-  }
-  const line = text.split(/\r?\n/).find((l) => l.startsWith(name + "="));
-  if (!line) throw new Error(".dev.vars does not define " + name);
-  return line
-    .slice(name.length + 1)
-    .trim()
-    .replace(/^(["'])(.*)\1$/, "$2");
+  if (!fs.existsSync(file)) throw new Error(".dev.vars is missing; it must define " + name);
+  const value = new RegExp(`^${name}=(.*)$`, "m").exec(fs.readFileSync(file, "utf8"))?.[1];
+  if (value === undefined) throw new Error(".dev.vars does not define " + name);
+  return value.trim().replace(/^(["'])(.*)\1$/, "$2");
+}
+function finish(code: number): never {
+  stop();
+  summary();
+  process.exit(code);
 }
 function run(name: string, cmd: string, env: Record<string, string | undefined> = {}) {
   const started = Date.now();
   console.log("\n=== " + name + ": " + cmd);
   const r = spawnSync(cmd, { cwd: root, shell: true, stdio: "inherit", env: { ...process.env, ...env } });
   results.push([name, r.status === 0 ? "PASS" : "FAIL", Math.round((Date.now() - started) / 1000) + " s"]);
-  if (r.status !== 0) {
-    stop();
-    summary();
-    process.exit(1);
-  }
+  if (r.status !== 0) finish(1);
 }
-let server: ChildProcessByStdio<null, Readable, Readable> | null = null;
+let server: ChildProcess | null = null;
 async function start() {
   console.log("\n=== start: bunx cf dev on " + base + " (state " + persist + ")");
   server = spawn("bunx cf dev", {
     cwd: root,
     shell: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: "ignore",
     env: { ...process.env, MINI_PORT: port, MINI_PERSIST: persist, MINI_LOCAL_TEST: "1" },
   });
-  server.stdout.on("data", () => {});
-  server.stderr.on("data", () => {});
   for (let i = 0; i < 120; i++) {
     try {
       if ((await fetch(base + "/api/health")).ok) return;
@@ -98,9 +90,6 @@ try {
 } catch (error) {
   console.error(error);
   results.push(["harness", "FAIL", ""]);
-  stop();
-  summary();
-  process.exit(1);
+  finish(1);
 }
-stop();
-summary();
+finish(0);
