@@ -14,11 +14,11 @@ import { LATEST_RELEASE } from "../server/release.ts";
 import { tierBoost, petOf, PETS, boostText, cleanBoost, parseRoll, rollLegendary } from "../server/pets.ts";
 import { asEnv, fakeCtx, fullStats, must } from "./fakes.ts";
 import type { FakeSocketLike, FakeState, Loose } from "./fakes.ts";
-import type { Env } from "../server/env.ts";
 import type { Duel, GameState } from "../server/model.ts";
 
 const SECRET = "test-only-internal-secret-0123456789";
 const SITE = "https://test.example/?channel=nesszerra";
+const DEV = { DEV_TOOLS_TOKEN: "x".repeat(40) };
 const noFighter = (who: string) => `@${who}, you have no fighter in the arena yet! Gear up at ${SITE}`;
 const noRival = (who: string) => `@${who} has no fighter in the arena yet! Send them to ${SITE}`;
 
@@ -57,50 +57,18 @@ function fakeSocket(attachment: unknown, tag: string): FakeSocket {
   };
 }
 
-type CallOptions = { method?: string; body?: unknown; userId?: string; secret?: string };
-// Loose: the body is the room's JSON (or text) reply, which each test reads by property and asserts on
-type CallResult = { status: number; body: Loose };
+type CallOptions = { method?: string; body?: unknown; userId?: string | undefined; secret?: string };
 type Extra = Record<string, unknown>;
+type Actor = { actorId?: string; actorName?: string };
 // Loose: a leaderboard or player row from a JSON reply; tests read whichever fields they assert on
 type Ranked = Loose;
 // Loose: a console.error or dev-log record; tests read message and context fields
 type LogRow = Loose;
 /** A StreamElements call: `key` overrides the room's key; false leaves the origin, messageId or displayName out. */
 type SeOptions = { key?: string; origin?: false; messageId?: string | false; displayName?: false } & Extra;
-
-/** A ChannelRoom with the request helpers room() attaches, and its fake context still readable. */
-type TestRoom = ChannelRoom & {
-  ctx: FakeState;
-  call(path: string, options?: CallOptions): Promise<CallResult>;
-  save(id: string, login: string, extra?: Extra): Promise<CallResult>;
-  /** Saves each login in turn under its id in LOGIN_IDS. */
-  saveAll(...logins: string[]): Promise<void>;
-  connectChat(subscriptionId?: string, status?: string): Promise<CallResult>;
-  notify(messageType: string, extra?: Extra): Promise<CallResult>;
-  chat(id: string, login: string, text: string, options?: { color?: string } & Extra): Promise<CallResult>;
-  live(): FakeSocket;
-  state(): GameState;
-  edit(change: (s: GameState) => void): void;
-  // Loose: SQL rows, read by column
-  sql(query: string, ...params: SQLInputValue[]): Loose[];
-  // Loose: the stored profile from /profile, or null
-  profile(userId: string): Promise<Loose>;
-  admin(action: string, payload?: unknown, actor?: { actorId?: string; actorName?: string }): Promise<CallResult>;
-  cfg(patch: Extra): Promise<CallResult>;
-  seAdmin(body: Extra): Promise<CallResult>;
-  se(id: string, login: string, action: string, target?: string, options?: SeOptions): Promise<CallResult>;
-  reply(id: string, login: string, action: string, target?: string, options?: SeOptions): Promise<string>;
-  logs(source?: string): Promise<LogRow[]>;
-  board(mods?: boolean): Promise<Ranked[]>;
-  devLive(live: boolean, streamId?: string): Promise<CallResult>;
-  devChat(id: string, login: string, text: string): Promise<CallResult>;
-};
-
-/** botRoom() adds a helper that posts a chat line as the bot's EventSub delivery. */
-// Loose: say returns the room's JSON reply to the bot delivery (reply, replies, reason), read by property
-type BotRoom = TestRoom & {
-  say(id: string, login: string, text: string, opts?: { mod?: boolean; sub?: string }): Promise<Loose>;
-};
+/** SeOptions for a bare call: no origin, messageId or displayName. */
+const BARE: SeOptions = { origin: false, messageId: false, displayName: false };
+const OWNER: Actor = { actorId: "owner1", actorName: "nesszerra" };
 
 // as: WebSocketPair and WebSocketRequestResponsePair are Workers globals declared outside globalThis's type; tests swap
 // in fakes and restore them
@@ -109,169 +77,156 @@ const workerGlobals = globalThis as unknown as { WebSocketPair?: unknown; WebSoc
 /** A completed duel, which always carries the time the stream reveals it (Duel types revealAt as optional). */
 type Revealed = Duel & { revealAt: number };
 
-const LOGIN_IDS: Record<string, string> = {
-  alice: "u1",
-  bob: "u2",
-  cara: "u3",
-  dan: "u4",
-  pixbot: "u9",
-  pixfray: "u9",
-};
+const BOT = "u9"; // the bot account's id, under either login
+const LOGIN_IDS: Record<string, string> = { alice: "u1", bob: "u2", cara: "u3", dan: "u4", pixbot: BOT, pixfray: BOT };
+/** The chatter fields of an EventSub chat message. */
+const chatter = (id: string, who: string) => ({ chatter_user_id: id, chatter_user_login: who, chatter_user_name: who });
 
-// HP-fight tests run with quick duels off; pass { quick: true } for the one-hit mode.
-function room(env: Extra = {}, { quick = false } = {}): TestRoom {
-  const ctx = fakeCtx();
-  // TestRoom: room() attaches the helpers and ctx below before returning; Env: a partial Env on purpose (the test reads)
-  const r = new ChannelRoom(ctx, { INTERNAL_SECRET: SECRET, ...env } as Env) as TestRoom;
-  if (!quick) r.writeState({ ...createInitialState("nesszerra"), config: { ...defaultConfig(), quickDuel: false } });
-  r.call = async (path, { method = "GET", body, userId, secret = SECRET } = {}) => {
+/** A ChannelRoom with request helpers for the tests; its fake context stays readable. */
+class TestRoom extends ChannelRoom {
+  declare ctx: FakeState;
+  #events = 0;
+  #seCalls = 0;
+  #seKey = "";
+
+  call = async (path: string, { method = "GET", body, userId, secret = SECRET }: CallOptions = {}) => {
     const headers: Record<string, string> = { "X-Mini-Internal": secret, "X-Mini-Channel": "nesszerra" };
     if (userId) headers["X-Mini-User-Id"] = userId;
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const res = await r.fetch(
-      new Request("https://room" + path, {
-        method,
-        headers,
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      }),
-    );
+    const init = { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) };
+    const res = await this.fetch(new Request("https://room" + path, init));
     const type = res.headers.get("content-type") || "";
-    // Loose: CallResult.body, the room's JSON reply read by property
+    // Loose: the room's JSON (or text) reply, which each test reads by property and asserts on
     return { status: res.status, body: type.includes("json") ? await res.json<Loose>() : await res.text() };
   };
-  r.save = (id, login, extra = {}) =>
-    r.call("/profile", {
-      method: "POST",
-      userId: id,
-      body: {
-        userId: id,
-        username: login,
-        displayName: login,
-        avatar: "player",
-        color: "#123456",
-        defaultAbility: "strike",
-        ...extra,
-      },
-    });
-  r.saveAll = async (...logins) => {
-    for (const login of logins) await r.save(must(LOGIN_IDS[login]), login);
+  post = (path: string, body: unknown, userId?: string) => this.call(path, { method: "POST", body, userId });
+  save = (id: string, login: string, extra: Extra = {}) => {
+    const look = { avatar: "player", color: "#123456", defaultAbility: "strike" };
+    return this.post("/profile", { userId: id, username: login, displayName: login, ...look, ...extra }, id);
   };
+  /** Saves each login in turn under its id in LOGIN_IDS. */
+  saveAll = async (...logins: string[]) => {
+    for (const login of logins) await this.save(must(LOGIN_IDS[login]), login);
+  };
+  shop = (userId: string, kind: string, id = "", extra: Extra = {}) =>
+    this.post("/shop", { userId, kind, id, ...extra }, userId);
   // Chat arrives as verified EventSub messages that the Worker forwards to POST /eventsub.
-  r.connectChat = (subscriptionId = "sub-1", status = "enabled") =>
-    r.call("/chat", { method: "POST", body: { action: "connected", subscriptionId, status, createdAt: Date.now() } });
-  let n = 0;
-  r.notify = (messageType, extra = {}) =>
-    r.call("/eventsub", {
-      method: "POST",
-      body: {
-        messageId: "e" + ++n,
-        messageType,
-        subscriptionType: "channel.chat.message",
-        timestamp: Date.now(),
-        subscription: { id: "sub-1", status: "enabled" },
-        event: null,
-        ...extra,
-      },
-    });
-  r.chat = (id, login, text, { color = "#FF4500", ...extra } = {}) =>
-    r.notify("notification", {
+  connectChat = (subscriptionId = "sub-1", status = "enabled") =>
+    this.post("/chat", { action: "connected", subscriptionId, status, createdAt: Date.now() });
+  disconnect = () => this.post("/chat", { action: "disconnected", reason: "disconnected" });
+  notify = (messageType: string, extra: Extra = {}) => {
+    const delivery = { messageId: "e" + ++this.#events, messageType, subscriptionType: "channel.chat.message" };
+    const subscription = { id: "sub-1", status: "enabled" };
+    return this.post("/eventsub", { ...delivery, timestamp: Date.now(), subscription, event: null, ...extra });
+  };
+  chat = (id: string, login: string, text: string, { color = "#FF4500", ...extra }: { color?: string } & Extra = {}) =>
+    this.notify("notification", {
       event: {
         broadcaster_user_login: "nesszerra",
-        chatter_user_id: id,
-        chatter_user_login: login,
-        chatter_user_name: login,
-        message_id: "m" + (n + 1),
+        ...chatter(id, login),
+        message_id: "m" + (this.#events + 1),
         message: { text },
         color,
       },
       ...extra,
     });
-  r.live = () => {
+  live = () => {
     const ws = fakeSocket({ kind: "live", channel: "nesszerra" }, "live");
-    ctx.sockets.push(ws);
+    this.ctx.sockets.push(ws);
     return ws;
   };
-  r.state = () => r.readState("nesszerra");
-  r.edit = (change) => {
-    const s = r.state();
+  state = () => this.readState("nesszerra");
+  edit = (change: (s: GameState) => void) => {
+    const s = this.state();
     change(s);
-    r.writeState(s);
+    this.writeState(s);
   };
-  r.sql = (query, ...params) => ctx.storage.sql.exec(query, ...params).toArray();
-  r.profile = async (userId) => (await r.call("/profile?userId=" + userId)).body;
-  r.admin = (action, payload, { actorId = "mod1", actorName } = {}) =>
-    r.call("/admin", { method: "POST", body: { actorId, actorName, action, payload } });
-  r.cfg = (patch) => r.admin("config", { patch });
-  let seKey = "";
-  r.seAdmin = (body) => {
-    if (body.action === "rotateSeKey") seKey = "";
-    return r.call("/se-admin", { method: "POST", body });
+  player = (userId: string) => must(this.state().players.find((p) => p.userId === userId));
+  // as: a completed duel always carries its reveal time; paid is the room's own field on top of Duel
+  completed = () => must(this.state().duels.find((d) => d.status === "completed")) as Revealed & { paid?: boolean };
+  /** Clears rematch locks and knockouts so the same fighters can duel again at once. */
+  rested = () =>
+    this.edit((s) => {
+      s.rematchLocks = [];
+      for (const p of s.players) p.respawnAt = 0;
+    });
+  // Loose: SQL rows, read by column
+  sql = (query: string, ...params: SQLInputValue[]): Loose[] => this.ctx.storage.sql.exec(query, ...params).toArray();
+  profile = async (userId: string) => (await this.call("/profile?userId=" + userId)).body;
+  admin = (action: string, payload?: unknown, { actorId = "mod1", actorName }: Actor = {}) =>
+    this.post("/admin", { actorId, actorName, action, payload });
+  adminView = async () => (await this.call("/admin")).body;
+  cfg = (patch: Extra) => this.admin("config", { patch });
+  seAdmin = (body: Extra) => {
+    if (body.action === "rotateSeKey") this.#seKey = "";
+    return this.post("/se-admin", body);
   };
-  let m = 0;
-  r.se = async (id, login, action, target = "", { key, origin, messageId, displayName, ...extra } = {}) => {
-    seKey ||= (await r.call("/admin")).body.streamelements.secret;
-    return r.call(origin === false ? "/se" : "/se?origin=https%3A%2F%2Ftest.example", {
-      method: "POST",
-      body: {
-        key: key ?? seKey,
-        action,
-        userId: id,
-        username: login,
-        target,
-        ...(displayName === false ? {} : { displayName: login }),
-        ...(messageId === false ? {} : { messageId: messageId ?? "se" + ++m }),
-        ...extra,
-      },
+  se = async (id: string, login: string, action: string, target = "", options: SeOptions = {}) => {
+    const { key, origin, messageId, displayName, ...extra } = options;
+    this.#seKey ||= (await this.adminView()).streamelements.secret;
+    return this.post(origin === false ? "/se" : "/se?origin=https%3A%2F%2Ftest.example", {
+      key: key ?? this.#seKey,
+      action,
+      userId: id,
+      username: login,
+      target,
+      ...(displayName === false ? {} : { displayName: login }),
+      ...(messageId === false ? {} : { messageId: messageId ?? "se" + ++this.#seCalls }),
+      ...extra,
     });
   };
-  r.reply = async (...args) => (await r.se(...args)).body.reply;
-  r.logs = async (source) => (await r.call(source ? "/dev/logs?source=" + source : "/dev/logs")).body;
-  r.board = async (mods) => (await r.call(mods ? "/leaderboard?private=1" : "/leaderboard")).body;
-  r.devLive = (live, streamId) => r.call("/dev-live", { method: "POST", body: live ? { live, streamId } : { live } });
-  r.devChat = (id, login, text) =>
-    r.call("/dev-chat", { method: "POST", body: { userId: id, username: login, displayName: login, text } });
-  r.ctx = ctx;
+  reply = async (id: string, login: string, action: string, target = "", options: SeOptions = {}): Promise<string> =>
+    (await this.se(id, login, action, target, options)).body.reply;
+  /** Runs a StreamElements duel: alice challenges bob and bob accepts (quick duels settle it at once). */
+  seDuel = async (options: SeOptions = {}) => {
+    await this.se("u1", "alice", "challenge", "bob", options);
+    await this.se("u2", "bob", "accept", "", options);
+  };
+  logs = async (source?: string): Promise<LogRow[]> =>
+    (await this.call(source ? "/dev/logs?source=" + source : "/dev/logs")).body;
+  board = async (mods?: boolean): Promise<Ranked[]> =>
+    (await this.call(mods ? "/leaderboard?private=1" : "/leaderboard")).body;
+  devLive = (live: boolean, streamId?: string) => this.post("/dev-live", live ? { live, streamId } : { live });
+  devChat = (id: string, login: string, text: string) =>
+    this.post("/dev-chat", { userId: id, username: login, displayName: login, text });
+}
+
+// HP-fight tests run with quick duels off; pass { quick: true } for the one-hit mode.
+function room(env: Extra = {}, { quick = false } = {}) {
+  const r = new TestRoom(fakeCtx(), asEnv({ INTERNAL_SECRET: SECRET, ...env }));
+  if (!quick) r.writeState({ ...createInitialState("nesszerra"), config: { ...defaultConfig(), quickDuel: false } });
   return r;
 }
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 // Loose (Ranked): rows read by property
-const ranks = (rows: Ranked[]) => rows.map((p) => [p.elo, p.wins, p.losses]);
+const ranks = (rows: Ranked[]) => rows.flatMap((p) => [p.elo, p.wins, p.losses]);
 
 test("export: every table a copy needs, BLOBs as base64; a wrong internal secret is refused anywhere", async () => {
   const r = room();
   await r.save("u1", "alice");
-  r.sql(
-    "INSERT INTO custom_characters (id, meta, atlas, bytes, created_by, created_at) VALUES ('c-1', '{}', ?, 3, 'u1', 1)",
-    new Uint8Array([1, 2, 255]),
-  );
+  const insert =
+    "INSERT INTO custom_characters (id, meta, atlas, bytes, created_by, created_at) VALUES ('c-1', '{}', ?, 3, 'u1', 1)";
+  r.sql(insert, new Uint8Array([1, 2, 255]));
   const { status, body } = await r.call("/export");
-  assert.equal(status, 200);
-  assert.equal(body.game_state[0].channel, "nesszerra");
   // Loose (Ranked): profile rows from the JSON reply
   const usernames = body.profiles.map((p: Ranked) => p.username);
-  assert.deepEqual(usernames, ["alice"]);
+  assert.deepEqual([status, body.game_state[0].channel, usernames], [200, "nesszerra", ["alice"]]);
   assert.deepEqual(body.custom_characters[0].atlas, { $b64: "AQL/" });
   const tables = ["config_history", "se_settings", "builds", "streams", "custom_pets", "owned_items", "viewer_sprites"];
   for (const t of tables) assert.ok(Array.isArray(body[t]), t);
   for (const path of ["/export", "/state"]) assert.equal((await r.call(path, { secret: "wrong" })).status, 403, path);
 });
 
-test("profiles are saved server-side and identity must match the session user", async () => {
+test("profiles are saved server-side, identity must match the session user, and a renamed login can be reused", async () => {
   const r = room();
   const body = { userId: "u2", username: "x", avatar: "player", color: "#123456", defaultAbility: "heal" };
-  assert.equal((await r.call("/profile", { method: "POST", userId: "u1", body })).status, 403);
+  assert.equal((await r.post("/profile", body, "u1")).status, 403);
   const saved = await r.save("u1", "alice", { defaultAbility: "heavy" });
-  assert.equal(saved.status, 200);
-  assert.equal(saved.body.profile.defaultAbility, "heavy");
+  assert.deepEqual([saved.status, saved.body.profile.defaultAbility], [200, "heavy"]);
   const got = await r.profile("u1");
-  assert.equal(got.username, "alice");
-  assert.equal(got.elo, 1000);
+  assert.deepEqual([got.username, got.elo], ["alice", 1000]);
   assert.equal(await r.profile("nobody"), null);
-});
-
-test("a renamed Twitch login can be reused by another account", async () => {
-  const r = room();
-  await r.save("u1", "alice");
+  // Another account may take over a login its old owner renamed away from.
   assert.equal((await r.save("u2", "alice")).status, 200);
   assert.equal((await r.profile("u2")).username, "alice");
 });
@@ -294,27 +249,21 @@ test("chat commands run a full duel; Elo persists to the leaderboard; overlays g
     r.writeState(s);
   }
   const state = (await r.call("/state")).body;
-  assert.equal(state.duels[0].status, "completed");
-  assert.equal(state.duels[0].winnerId, "u1");
-  assert.equal(state.round, 1);
-  assert.equal(state.chat.connected, true);
+  const [duel] = state.duels;
+  assert.deepEqual([duel.status, duel.winnerId, state.round, state.chat.connected], ["completed", "u1", 1, true]);
   assert.ok(state.chat.lastSeen > 0, "last notification time is recorded");
   const board = await r.board();
-  assert.deepEqual(
-    board.map((p) => [p.username, p.elo, p.wins, p.losses]),
-    [
-      ["alice", 1012, 1, 0],
-      ["bob", 988, 0, 1],
-    ],
-  );
+  const names = board.map((p) => p.username);
+  assert.deepEqual(names, ["alice", "bob"]);
+  assert.deepEqual(ranks(board), [1012, 1, 0, 988, 0, 1]);
   assert.ok(!board.some((p) => "dollars" in p), "dollars stay off the public leaderboard");
   const modsSee = (await r.board(true)).every((p) => Number.isInteger(p.dollars));
   assert.ok(modsSee, "mods see them");
   assert.ok(live.sent.length > 3);
-  assert.equal(live.sent.at(-1).type, "snapshot");
-  assert.equal(live.sent.at(-1).revision, state.revision);
-  assert.equal("appliedMessageIds" in live.sent.at(-1), false, "internal bookkeeping is not broadcast");
-  assert.equal("relay" in live.sent.at(-1), false);
+  const last = live.sent.at(-1);
+  assert.deepEqual([last.type, last.revision], ["snapshot", state.revision]);
+  assert.equal("appliedMessageIds" in last, false, "internal bookkeeping is not broadcast");
+  assert.equal("relay" in last, false);
 });
 
 test("chat bots like StreamElements never join the arena", async () => {
@@ -331,22 +280,16 @@ test("unregistered chatters appear in their Twitch color but cannot duel; reject
   await r.save("u1", "alice");
   await r.connectChat();
   assert.equal((await r.chat("g1", "guest", "hello chat", { color: "#1e90ff" })).body.reason, "presence_updated");
-  let state = r.state();
-  assert.equal(must(state.players.find((p) => p.userId === "g1")).color, "#1E90FF");
+  assert.equal(r.player("g1").color, "#1E90FF");
   const rejected = await r.chat("g1", "guest", "!challenge @alice");
   assert.deepEqual([rejected.body.ok, rejected.body.reason], [false, "ranked_sign_in_required"]);
-  state = r.state();
-  assert.deepEqual(state.events.at(-1), {
-    id: String(state.revision),
-    type: "command_rejected",
-    at: must(state.events.at(-1)).at,
-    userId: "g1",
-    command: "duel",
-    reason: "ranked_sign_in_required",
-  });
+  const state = r.state();
+  const last = must(state.events.at(-1));
+  const event = { type: "command_rejected", userId: "g1", command: "duel", reason: "ranked_sign_in_required" };
+  assert.deepEqual(last, { id: String(state.revision), ...event, at: last.at });
   // registered players keep their saved color, whatever Twitch says
   await r.chat("u1", "alice", "hi", { color: "#00FF00" });
-  assert.equal(must(r.state().players.find((p) => p.userId === "u1")).color, "#123456");
+  assert.equal(r.player("u1").color, "#123456");
 });
 
 test("plain chat refreshes presence at most every 30 s", async () => {
@@ -361,33 +304,15 @@ test("plain chat refreshes presence at most every 30 s", async () => {
 test("replayed EventSub messages are ignored; other subscriptions and offline chat are refused", async () => {
   const r = room();
   await r.saveAll("alice", "bob");
-  const body = (messageId: string, subscriptionId = "sub-1") => ({
-    method: "POST",
-    body: {
-      messageId,
-      messageType: "notification",
-      subscriptionType: "channel.chat.message",
-      timestamp: Date.now(),
-      subscription: { id: subscriptionId, status: "enabled" },
-      event: {
-        broadcaster_user_login: "nesszerra",
-        chatter_user_id: "u1",
-        chatter_user_login: "alice",
-        chatter_user_name: "alice",
-        message_id: "chat-" + messageId,
-        message: { text: "!challenge @bob" },
-      },
-    },
-  });
-  const before = (await r.call("/eventsub", body("x0"))).body.reason;
-  assert.equal(before, "unknown_subscription", "nothing is processed before Connect chat");
+  const send = async (messageId: string, id = "sub-1") =>
+    (await r.chat("u1", "alice", "!challenge @bob", { messageId, subscription: { id, status: "enabled" } })).body;
+  assert.equal((await send("x0")).reason, "unknown_subscription", "nothing is processed before Connect chat");
   await r.connectChat();
-  assert.equal((await r.call("/eventsub", body("x1"))).body.ok, true);
+  assert.equal((await send("x1")).ok, true);
   const rev = r.state().revision;
-  assert.deepEqual((await r.call("/eventsub", body("x1"))).body, { ok: true, duplicate: true });
-  assert.equal(r.state().revision, rev);
-  assert.equal(r.state().duels.length, 1);
-  assert.equal((await r.call("/eventsub", body("x2", "sub-stale"))).body.reason, "unknown_subscription");
+  assert.deepEqual(await send("x1"), { ok: true, duplicate: true });
+  assert.deepEqual([r.state().revision, r.state().duels.length], [rev, 1]);
+  assert.equal((await send("x2", "sub-stale")).reason, "unknown_subscription");
 });
 
 test("webhook verification connects chat in either order; revocation records the reason", async () => {
@@ -404,11 +329,9 @@ test("webhook verification connects chat in either order; revocation records the
   await r.chat("u2", "bob", "!accept");
   await r.notify("revocation", { subscription: { id: "sub-1", status: "authorization_revoked" } });
   const state = (await r.call("/state")).body;
-  assert.equal(state.paused, true);
-  assert.equal(state.duels[0].cancelReason, "chat_disconnected");
-  const admin = (await r.call("/admin")).body;
-  assert.equal(admin.chatStatus.connected, false);
-  assert.equal(admin.chatStatus.lastRevocationReason, "authorization_revoked");
+  assert.deepEqual([state.paused, state.duels[0].cancelReason], [true, "chat_disconnected"]);
+  const { chatStatus } = await r.adminView();
+  assert.deepEqual([chatStatus.connected, chatStatus.lastRevocationReason], [false, "authorization_revoked"]);
   // create response first, then verification
   await r.connectChat("sub-2", pending);
   assert.equal((await r.call("/chat")).body.connected, false);
@@ -423,13 +346,10 @@ test("chat disconnect cancels open duels without scoring", async () => {
   await r.chat("u1", "alice", "!challenge @bob");
   await r.chat("u2", "bob", "!accept");
   await r.chat("u1", "alice", "!strike");
-  const off = await r.call("/chat", { method: "POST", body: { action: "disconnected", reason: "disconnected" } });
-  assert.equal(off.body.reason, "chat_disconnected");
+  assert.equal((await r.disconnect()).body.reason, "chat_disconnected");
   const state = (await r.call("/state")).body;
-  assert.equal(state.duels[0].status, "cancelled");
-  assert.equal(state.duels[0].cancelReason, "chat_disconnected");
-  assert.equal(state.paused, true);
-  assert.equal(state.events.at(-1).type, "chat_disconnected");
+  assert.deepEqual([state.duels[0].status, state.duels[0].cancelReason], ["cancelled", "chat_disconnected"]);
+  assert.deepEqual([state.paused, state.events.at(-1).type], [true, "chat_disconnected"]);
   assert.ok((await r.board()).every((p) => p.elo === 1000 && p.wins === 0 && p.losses === 0));
   assert.equal((await r.chat("u1", "alice", "!challenge @bob")).body.reason, "unknown_subscription");
 });
@@ -437,16 +357,9 @@ test("chat disconnect cancels open duels without scoring", async () => {
 /** A room wired to a real AuthStore, with Twitch's token and Helix endpoints faked; `helix` sets the Helix answer. */
 function helixRoom(t: TestContext) {
   const store = new AuthStore(fakeCtx(), asEnv({ INTERNAL_SECRET: SECRET }));
-  const AUTH = {
-    idFromName: () => "auth",
-    get: () => ({ fetch: (url: string, init?: RequestInit) => store.fetch(new Request(url, init)) }),
-  };
-  const r = room({
-    AUTH,
-    AUTH_SECRET: "a".repeat(64),
-    TWITCH_CLIENT_ID: "client-id",
-    TWITCH_CLIENT_SECRET: "client-secret",
-  });
+  const fetch = (url: string, init?: RequestInit) => store.fetch(new Request(url, init));
+  const app = { AUTH_SECRET: "a".repeat(64), TWITCH_CLIENT_ID: "client-id", TWITCH_CLIENT_SECRET: "client-secret" };
+  const r = room({ AUTH: { idFromName: () => "auth", get: () => ({ fetch }) }, ...app });
   const calls: string[] = [];
   const fake = { r, calls, helix: (): Response => Response.json({ data: [], pagination: {} }) };
   t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
@@ -537,9 +450,8 @@ test("the room log says why each alarm ran, and keeps duel events and chat count
   assert.ok(log("duel").includes("challenge_created"));
   assert.ok(log("chat").includes("chat_connected"));
   const today = (await r.call("/dev/stats")).body.days[0].counts;
-  assert.equal(today.eventsub_notification, 1);
-  assert.equal(today.event_challenge_created, 1);
-  assert.equal(today.alarms, 1);
+  const counts = [today.eventsub_notification, today.event_challenge_created, today.alarms];
+  assert.deepEqual(counts, [1, 1, 1]);
   assert.ok(today.requests >= 5);
 });
 
@@ -547,27 +459,20 @@ test("versioned config editor: history, optimistic version check, rollback", asy
   const r = room();
   const patch = { abilities: { heavy: { damage: 30 } } };
   const a = await r.admin("config", { baseVersion: 1, patch, note: "buff heavy" }, { actorName: "ModOne" });
-  assert.equal(a.status, 200);
-  assert.equal(a.body.configVersion, 2);
+  assert.deepEqual([a.status, a.body.configVersion], [200, 2]);
   assert.equal((await r.admin("config", { baseVersion: 1, patch: { maxHp: 150 } })).status, 409);
   assert.equal((await r.cfg({ maxHp: -1 })).status, 400);
-  const view = (await r.call("/admin")).body;
-  assert.deepEqual(
-    view.history.map((h: { version: number; actorId: string; note: string }) => [h.version, h.actorId, h.note]),
-    [
-      [2, "mod1", "buff heavy"],
-      [1, "system", "initial"],
-    ],
-  );
+  const view = await r.adminView();
+  // Loose (Ranked): config history rows from the JSON reply
+  const history = view.history.flatMap((h: Ranked) => [h.version, h.actorId, h.note]);
+  assert.deepEqual(history, [2, "mod1", "buff heavy", 1, "system", "initial"]);
   assert.equal(view.history[0].config.abilities.heavy.damage, 30);
   assert.equal(view.history[0].actorName, "ModOne", "history keeps the actor display name");
   assert.deepEqual(view.customUsage, { count: 0, limit: 24, bytes: 0 });
   const rb = await r.admin("rollbackConfig", { version: 1 });
-  assert.equal(rb.status, 200);
-  assert.equal(rb.body.configVersion, 3);
-  const after = (await r.call("/admin")).body;
-  assert.equal(after.config.abilities.heavy.damage, 35);
-  assert.equal(after.history[0].note, "rollback to v1");
+  assert.deepEqual([rb.status, rb.body.configVersion], [200, 3]);
+  const after = await r.adminView();
+  assert.deepEqual([after.config.abilities.heavy.damage, after.history[0].note], [35, "rollback to v1"]);
   assert.equal((await r.admin("rollbackConfig", { version: 99 })).status, 404);
   // A version saved before a setting existed (here: the Stage 4 prices) restores that setting's default.
   const old = JSON.parse(must(r.sql("SELECT config FROM config_history WHERE version = 1")[0]).config);
@@ -577,9 +482,9 @@ test("versioned config editor: history, optimistic version check, rollback", asy
   const cheap = await r.admin("config", { baseVersion: 3, patch: { trailPrice: 7, buildSlotPrice: 11 } });
   assert.equal(cheap.status, 200);
   assert.equal((await r.admin("rollbackConfig", { version: 1 })).status, 200);
-  const restored = (await r.call("/admin")).body.config;
-  assert.equal(restored.trailPrice, 40, "a setting missing from the old version goes back to its default");
-  assert.equal(restored.buildSlotPrice, 60);
+  const { config } = await r.adminView();
+  const prices = [config.trailPrice, config.buildSlotPrice];
+  assert.deepEqual(prices, [40, 60], "a setting missing from the old version goes back to its default");
 });
 
 test("rank reset reaches stored profiles; removePlayer deletes the profile", async () => {
@@ -591,7 +496,7 @@ test("rank reset reaches stored profiles; removePlayer deletes the profile", asy
   assert.equal((await r.profile("u1")).elo, 1000);
   assert.equal((await r.admin("removePlayer", { userId: "u2" })).status, 200);
   assert.equal(await r.profile("u2"), null);
-  assert.equal((await r.call("/admin", { method: "POST", body: { action: "resetAll" } })).status, 403);
+  assert.equal((await r.post("/admin", { action: "resetAll" })).status, 403);
 });
 
 test("restoreRank sets a fighter's stored rank, offline or active, and logs who did it", async () => {
@@ -601,19 +506,13 @@ test("restoreRank sets a fighter's stored rank, offline or active, and logs who 
   const restore = (payload: Extra) => r.admin("restoreRank", payload, { actorId: "1", actorName: "owner" });
   assert.equal((await restore({ userId: "u1", elo: 1016, wins: 3, losses: 3 })).status, 200);
   assert.equal((await restore({ userId: "u2", elo: 1042, wins: 5, losses: 1 })).status, 200);
-  assert.deepEqual(ranks([await r.profile("u1"), await r.profile("u2")]), [
-    [1016, 3, 3],
-    [1042, 5, 1],
-  ]);
-  assert.deepEqual(ranks([must(r.state().players.find((p) => p.userId === "u2"))]), [[1042, 5, 1]]);
+  assert.deepEqual(ranks([await r.profile("u1"), await r.profile("u2")]), [1016, 3, 3, 1042, 5, 1]);
+  assert.deepEqual(ranks([r.player("u2")]), [1042, 5, 1]);
   const bad = await restore({ userId: "u1", elo: 1016.5, wins: 3, losses: 3 });
   assert.deepEqual([bad.status, bad.body.reason], [400, "invalid_rank"]);
   assert.equal((await restore({ userId: "nobody", elo: 1000, wins: 0, losses: 0 })).body.reason, "profile_not_found");
-  const logs = (await r.logs("command")).filter((x) => x.context?.action === "restoreRank");
-  assert.deepEqual(
-    logs.map((x) => x.message),
-    ["owner restored rank 1042/5/1 -> u2", "owner restored rank 1016/3/3 -> u1"],
-  );
+  const logs = (await r.logs("command")).filter((x) => x.context?.action === "restoreRank").map((x) => x.message);
+  assert.deepEqual(logs, ["owner restored rank 1042/5/1 -> u2", "owner restored rank 1016/3/3 -> u1"]);
 });
 
 test("rank history records every rank change, and restoreRank can go back to before a time", async () => {
@@ -626,11 +525,7 @@ test("rank history records every rank change, and restoreRank can go back to bef
   await r.save("u1", "alice", { color: "#654321" });
   await r.admin("resetRank", { userId: "u1" });
   const history = async (user: string) => ranks((await r.call("/dev/ranks?user=" + user)).body);
-  assert.deepEqual(await history("Alice"), [
-    [1000, 0, 0],
-    [1106, 14, 9],
-    [1000, 0, 0],
-  ]);
+  assert.deepEqual(await history("Alice"), [1000, 0, 0, 1106, 14, 9, 1000, 0, 0]);
   assert.deepEqual(await history("u1"), await history("alice"), "by login or by id");
   const restore = (payload: Extra) => r.admin("restoreRank", payload, { actorId: "1", actorName: "owner" });
   assert.equal((await restore({ userId: "u1", before: mark })).status, 200);
@@ -648,9 +543,8 @@ test("rank history starts from the current ranks in a room that had fighters bef
   for (const name of ["rank_log_insert", "rank_log_update"]) r.sql("DROP TRIGGER " + name);
   r.sql("DROP TABLE rank_log");
   const again = new ChannelRoom(r.ctx, asEnv({ INTERNAL_SECRET: SECRET }));
-  assert.deepEqual(again.ctx.storage.sql.exec("SELECT user_id, elo, wins, losses FROM rank_log").toArray(), [
-    { user_id: "u1", elo: 1042, wins: 5, losses: 1 },
-  ]);
+  const rows = again.ctx.storage.sql.exec("SELECT user_id, elo, wins, losses FROM rank_log").toArray();
+  assert.deepEqual(rows, [{ user_id: "u1", elo: 1042, wins: 5, losses: 1 }]);
 });
 
 test("looks push: profile writes for viewers off the active list reach open overlays", async () => {
@@ -662,10 +556,8 @@ test("looks push: profile writes for viewers off the active list reach open over
   const looks = () => live.sent.filter((m) => m.type === "looks");
   await r.admin("resetRank", { userId: "u1" });
   await sleep(5);
-  assert.deepEqual(
-    looks().map((m) => [Object.keys(m.looks), m.looks.alice.elo, m.looks.alice.color]),
-    [[["alice"], 1000, "#123456"]],
-  );
+  const pushed = looks().flatMap((m) => [Object.keys(m.looks), m.looks.alice.elo, m.looks.alice.color]);
+  assert.deepEqual(pushed, [["alice"], 1000, "#123456"]);
   await r.admin("resetRank", { userId: "u2" });
   await sleep(5);
   assert.equal(looks().length, 1, "bob is on the active list, so the snapshot carries him");
@@ -684,38 +576,23 @@ test("catalog, assets and dev routes answer inside the room; uploads validate", 
   assert.deepEqual((await r.call("/catalog")).body, []);
   assert.equal((await r.call("/asset/c-missing")).status, 404);
   assert.equal((await r.call("/asset")).body.usage.limit, 24);
-  const bad = await r.call("/asset", { method: "POST", body: {} });
+  const bad = await r.post("/asset", {});
   assert.deepEqual([bad.status, bad.body.reason], [400, "invalid_label"]);
   const diag = (await r.call("/dev/diagnostics")).body;
-  assert.equal(diag.channel, "nesszerra");
-  assert.deepEqual(diag.chatStatus, {
-    connected: false,
-    source: "",
-    status: "disconnected",
-    subscriptionId: "",
-    createdAt: 0,
-    lastNotificationAt: 0,
-    lastRevocationReason: "",
-    checkedAt: 0,
-  });
-  assert.deepEqual(diag.sockets, { live: 0 });
+  assert.deepEqual([diag.channel, diag.sockets], ["nesszerra", { live: 0 }]);
+  const idle = { connected: false, source: "", status: "disconnected", subscriptionId: "", createdAt: 0 };
+  assert.deepEqual(diag.chatStatus, { ...idle, lastNotificationAt: 0, lastRevocationReason: "", checkedAt: 0 });
   logRoomError(r, new Error("boom"), { path: "/x" });
   assert.equal((await r.logs())[0].message, "boom");
 });
 
 test("AuthStore consume returns a value exactly once", async () => {
-  const ctx = fakeCtx();
-  const store = new AuthStore(ctx, asEnv({ INTERNAL_SECRET: SECRET }));
-  const call = (path: string, method: string, body?: unknown) =>
-    store
-      .fetch(
-        new Request("https://auth" + path, {
-          method,
-          headers: { "X-Mini-Internal": SECRET, "Content-Type": "application/json" },
-          ...(body ? { body: JSON.stringify(body) } : {}),
-        }),
-      )
-      .then((x) => x.json());
+  const store = new AuthStore(fakeCtx(), asEnv({ INTERNAL_SECRET: SECRET }));
+  const call = async (path: string, method: string, body?: unknown) => {
+    const headers = { "X-Mini-Internal": SECRET, "Content-Type": "application/json" };
+    const init = { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) };
+    return (await store.fetch(new Request("https://auth" + path, init))).json();
+  };
   await call("/entry?key=pair:abc", "POST", { value: { channel: "nesszerra" }, expires: Date.now() + 60_000 });
   const results = await Promise.all([call("/consume?key=pair:abc", "POST"), call("/consume?key=pair:abc", "POST")]);
   assert.deepEqual(results.filter(Boolean), [{ channel: "nesszerra" }]);
@@ -727,35 +604,31 @@ test("AuthStore consume returns a value exactly once", async () => {
 
 test("StreamElements commands run a duel with chat replies; the key and command names are enforced", async () => {
   const r = room();
-  const admin = async () => (await r.call("/admin")).body;
-  const se = (await admin()).streamelements;
+  const se = (await r.adminView()).streamelements;
   assert.match(se.secret, /^[0-9a-f]{48}$/);
   assert.equal(se.names.accept, "!fight");
   const alice = (action: string, target = "") => r.reply("u1", "alice", action, target);
   assert.deepEqual([se.lastCommandAt, se.rejectedAt], [0, 0], "no command has reached the room yet");
   assert.equal((await r.se("u1", "alice", "challenge", "bob", { key: "wrong" })).status, 403);
-  const rejected = (await admin()).streamelements;
+  const rejected = (await r.adminView()).streamelements;
   assert.deepEqual([rejected.lastCommandAt, rejected.rejectedAt > 0], [0, true], "a wrong key is recorded");
   assert.equal(se.duelModuleOff, false);
   assert.deepEqual(se.seen, {});
   // The first command with the right key makes StreamElements the chat source. A sign-in refusal names who is missing a fighter.
   const first = (await r.se("u1", "alice", "challenge", "bob")).body;
   assert.deepEqual(first, { reply: noFighter("alice") }, "no Twitch subscription to drop");
-  assert.equal((await admin()).chatStatus.source, "streamelements");
-  assert.ok((await admin()).streamelements.lastCommandAt > 0, "a command with the right key is recorded");
-  assert.deepEqual(Object.keys((await admin()).streamelements.seen), ["challenge"], "each command is marked as seen");
+  assert.equal((await r.adminView()).chatStatus.source, "streamelements");
+  assert.ok((await r.adminView()).streamelements.lastCommandAt > 0, "a command with the right key is recorded");
+  const seen = Object.keys((await r.adminView()).streamelements.seen);
+  assert.deepEqual(seen, ["challenge"], "each command is marked as seen");
   await r.save("u1", "alice");
   assert.equal(await alice("challenge", "bob"), noRival("bob"));
   await r.save("u2", "bob");
   assert.equal(await alice("challenge"), "Challenge who? Name your rival: !challenge @name");
-  assert.equal(
-    await alice("challenge", "alice"),
-    "alice, you can't fight your own shadow! Name a rival: !challenge @name",
-  );
-  assert.equal(
-    await alice("challenge", "bob"),
-    "alice challenges @bob! @bob, type !fight to fight or !decline to back out within 30 s.",
-  );
+  const shadow = "alice, you can't fight your own shadow! Name a rival: !challenge @name";
+  assert.equal(await alice("challenge", "alice"), shadow);
+  const challenged = "alice challenges @bob! @bob, type !fight to fight or !decline to back out within 30 s.";
+  assert.equal(await alice("challenge", "bob"), challenged);
   // Quick duels are off in this room, but StreamElements has no attack commands, so !fight settles the duel at once.
   assert.equal(await r.reply("u2", "bob", "accept"), "Fight on: alice vs bob! Watch the stream for the winner.");
   assert.equal(r.state().duels.filter((d) => d.status === "active").length, 0);
@@ -770,31 +643,30 @@ test("StreamElements commands run a duel with chat replies; the key and command 
   assert.deepEqual([rotated.lastCommandAt, rotated.rejectedAt, rotated.seen], [0, 0, {}], "a new key starts unheard");
   assert.equal((await r.se("u1", "alice", "decline", "", { key: se.secret })).status, 403);
   // Disconnecting the StreamElements source never calls Twitch and pauses duels.
-  await r.call("/chat", { method: "POST", body: { action: "disconnected", reason: "disconnected" } });
+  await r.disconnect();
   assert.match(await alice("decline"), /arena is closed/);
 });
 
 test("the first StreamElements command moves a Twitch-chat channel over, but not one a mod turned off; seen times are throttled", async () => {
   const r = room({}, { quick: true });
-  const admin = async () => (await r.call("/admin")).body;
   const cmd = (action: string) => r.se("u1", "alice", action);
   await r.connectChat("sub-1");
   await r.save("u1", "alice");
   const first = (await cmd("decline")).body;
   assert.equal(first.switchedFrom, "sub-1", "the Worker deletes the old EventSub subscription");
   assert.match(first.reply, /nobody has challenged you/);
-  assert.equal((await admin()).chatStatus.source, "streamelements");
+  assert.equal((await r.adminView()).chatStatus.source, "streamelements");
   assert.equal((await cmd("decline")).body.switchedFrom, undefined, "only the switch reports it");
-  const seenAt = (await admin()).streamelements.seen.decline;
+  const seenAt = (await r.adminView()).streamelements.seen.decline;
   await sleep(5);
   await cmd("decline");
-  assert.equal((await admin()).streamelements.seen.decline, seenAt, "written at most once a minute per command");
+  assert.equal((await r.adminView()).streamelements.seen.decline, seenAt, "written at most once a minute per command");
   await cmd("help");
-  assert.deepEqual(Object.keys((await admin()).streamelements.seen).sort(), ["decline", "help"]);
+  assert.deepEqual(Object.keys((await r.adminView()).streamelements.seen).sort(), ["decline", "help"]);
   // Disconnect chat on purpose: commands don't turn it back on; Use StreamElements does.
-  await r.call("/chat", { method: "POST", body: { action: "disconnected", reason: "disconnected" } });
+  await r.disconnect();
   assert.match((await cmd("decline")).body.reply, /arena is closed/);
-  assert.equal((await admin()).chatStatus.connected, false);
+  assert.equal((await r.adminView()).chatStatus.connected, false);
   // The Duel-module tick is saved and survives a new key.
   for (const [body, off] of [
     [{ action: "setDuelModuleOff", value: true }, true],
@@ -808,9 +680,9 @@ test("SE_ONLY: a StreamElements command with the right key makes StreamElements 
   const r = room({ SE_ONLY: "1" }, { quick: true });
   await r.connectChat("sub-1"); // a Twitch subscription from before the switch
   assert.equal((await r.se("u1", "alice", "decline", "", { key: "wrong" })).status, 403);
-  assert.equal((await r.call("/admin")).body.chatStatus.source, "twitch", "a wrong key changes nothing");
+  assert.equal((await r.adminView()).chatStatus.source, "twitch", "a wrong key changes nothing");
   assert.doesNotMatch(await r.reply("u1", "alice", "decline"), /closed/);
-  assert.equal((await r.call("/admin")).body.chatStatus.source, "streamelements");
+  assert.equal((await r.adminView()).chatStatus.source, "streamelements");
 });
 
 test("StreamElements quick duel: !fight settles it at once, but chat sees the result only after the stream shows it", async (t) => {
@@ -821,19 +693,11 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
   assert.equal(await r.reply("u2", "bob", "accept"), "Fight on: alice vs bob! Watch the stream for the winner.");
   assert.equal(await r.reply("u2", "bob", "accept"), "bob, nobody has challenged you yet. Start one: !challenge @name");
   // Until the overlay has played the duel (plus stream delay), every read shows the pre-fight numbers.
-  // as: a completed duel always carries its reveal time
-  const duel = must(r.state().duels.find((d) => d.status === "completed")) as Revealed;
+  const duel = r.completed();
   const wait = duel.revealAt - Date.now();
   assert.ok(wait > 6000 && wait < 40_000, "revealed after the replay and the stream delay");
   const before = await r.board();
-  assert.deepEqual(
-    ranks(before),
-    [
-      [1000, 0, 0],
-      [1000, 0, 0],
-    ],
-    "leaderboard holds the result back",
-  );
+  assert.deepEqual(ranks(before), [1000, 0, 0, 1000, 0, 0], "leaderboard holds the result back");
   assert.equal(await r.reply("u1", "alice", "elo"), "alice: 1000 Elo, rank 1 of 2, 0 wins and 0 losses.");
   assert.match(await r.reply("u2", "bob", "top"), /^Top 2: 1\. alice 1000 · 2\. bob 1000\./);
   assert.equal((await r.profile("u2")).wins, 0);
@@ -846,38 +710,26 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
     assert.ok(p.hp !== 0 && !(p.respawnAt > Date.now()), id);
   }
   const shown = ranks([(await r.save("u1", "alice")).body.profile]);
-  assert.deepEqual(shown, [[1000, 0, 0]], "a save answers with the shown numbers");
+  assert.deepEqual(shown, [1000, 0, 0], "a save answers with the shown numbers");
   // A third viewer challenging either fighter hears the same thing, so the reply can't tell the winner from the loser.
   await r.save("u3", "cara");
-  for (const target of ["alice", "bob"])
-    assert.equal(
-      await r.reply("u3", "cara", "challenge", target),
-      "That fight is still playing on stream. Give it a few seconds!",
-    );
+  const busy = "That fight is still playing on stream. Give it a few seconds!";
+  for (const target of ["alice", "bob"]) assert.equal(await r.reply("u3", "cara", "challenge", target), busy, target);
   const clock = t.mock.method(Date, "now", () => duel.revealAt + 1);
   const after = await r.board();
-  assert.deepEqual(
-    [after[0].wins, after.at(-1).losses, after[0].elo > 1000, after.at(-1).elo < 1000],
-    [1, 1, true, true],
-    "shown once the stream has shown it",
-  );
+  const tally = [after[0].wins, after.at(-1).losses, after[0].elo > 1000, after.at(-1).elo < 1000];
+  assert.deepEqual(tally, [1, 1, true, true], "shown once the stream has shown it");
   const rank = after.findIndex((p) => p.username === "alice");
-  assert.match(
-    await r.reply("u1", "alice", "elo"),
-    new RegExp(`^alice: ${after[rank].elo} Elo, rank ${rank + 1} of 3`),
-  );
+  const elo = await r.reply("u1", "alice", "elo");
+  assert.match(elo, new RegExp(`^alice: ${after[rank].elo} Elo, rank ${rank + 1} of 3`));
   clock.mock.restore();
-  // The result is saved, so the next command (which reloads the stored profile) keeps it.
-  const saved = Object.fromEntries(r.sql("SELECT user_id, elo, wins, losses FROM profiles").map((x) => [x.user_id, x]));
-  const sum = saved.u1.elo + saved.u2.elo; // +3 if flawless
-  assert.deepEqual(
-    [saved.u1.wins + saved.u2.wins, saved.u1.losses + saved.u2.losses, [2000, 2003].includes(sum)],
-    [1, 1, true],
-  );
-  assert.notEqual(saved.u1.elo, 1000);
+  // The result is saved, so the next command (which reloads the stored profile) keeps it. A flawless win adds 3 Elo.
+  const [a, b] = r.sql("SELECT elo, wins, losses FROM profiles WHERE user_id IN ('u1', 'u2') ORDER BY user_id");
+  assert.deepEqual([a.wins + b.wins, a.losses + b.losses, [2000, 2003].includes(a.elo + b.elo)], [1, 1, true]);
+  assert.notEqual(a.elo, 1000);
   // Every command lands in the dev log with what came in, the game's decision and the reply.
   const log = (await r.logs("command")).filter((x) => x.context.action !== "save");
-  assert.deepEqual(log.map((x) => x.context.reason).reverse(), [
+  const trail = [
     "challenge",
     "quick_duel",
     "challenge_not_found",
@@ -886,7 +738,8 @@ test("StreamElements quick duel: !fight settles it at once, but chat sees the re
     "result_hidden",
     "result_hidden",
     "elo",
-  ]);
+  ];
+  assert.deepEqual(log.map((x) => x.context.reason).reverse(), trail);
   const quick = log.find((x) => x.context.reason === "quick_duel");
   assert.match(quick.context.swings, /^([1-6][hxcm] ?)+$/);
   assert.equal((await r.logs("warn")).length, 0);
@@ -901,24 +754,15 @@ test("StreamElements !rematch challenges the last opponent, saved with the profi
   const r = room({}, { quick: true });
   await r.connectChat("se-streamelements");
   await r.saveAll("alice", "bob", "cara");
-  assert.equal(
-    await r.reply("u1", "alice", "rematch"),
-    "alice, you have nobody to rematch yet. Start one: !challenge @name",
-  );
+  const nobody = "alice, you have nobody to rematch yet. Start one: !challenge @name";
+  assert.equal(await r.reply("u1", "alice", "rematch"), nobody);
   await r.se("u1", "alice", "challenge", "bob");
   assert.match(await r.reply("u2", "bob", "accept"), /^Fight on: alice vs bob!/);
-  assert.deepEqual(
-    r.sql("SELECT user_id, last_opponent FROM profiles ORDER BY user_id").map((x) => [x.user_id, x.last_opponent]),
-    [
-      ["u1", "u2"],
-      ["u2", "u1"],
-      ["u3", ""],
-    ],
-  );
-  assert.match(
-    await r.reply("u2", "bob", "rematch"),
-    /^Rematch in \d+ s! Catch your breath first\.$|^That fight is still playing on stream/,
-  );
+  const rows = r.sql("SELECT user_id, last_opponent FROM profiles ORDER BY user_id");
+  const opponents = rows.flatMap((x) => [x.user_id, x.last_opponent]);
+  assert.deepEqual(opponents, ["u1", "u2", "u2", "u1", "u3", ""]);
+  const cooling = /^Rematch in \d+ s! Catch your breath first\.$|^That fight is still playing on stream/;
+  assert.match(await r.reply("u2", "bob", "rematch"), cooling);
   // A website save carries no opponent and must not clear it; the game state forgetting the players must not either.
   await r.save("u2", "bob", { color: "#445566" });
   r.edit((s) => {
@@ -927,41 +771,29 @@ test("StreamElements !rematch challenges the last opponent, saved with the profi
   });
   const realNow = Date.now;
   const clock = t.mock.method(Date, "now", () => realNow() + 60_000); // past the respawn and the stream reveal
-  assert.equal(
-    await r.reply("u2", "bob", "rematch", "cara"),
-    "bob wants a rematch with @alice! @alice, type !rematch or !fight to fight, or !decline to back out within 30 s.",
-    "a name after !rematch is ignored",
-  );
-  assert.equal(
-    await r.reply("u3", "cara", "challenge", "alice"),
-    "One of you is already fighting! Wait for the bell, then try again.",
-  );
-  assert.equal(
-    await r.reply("u1", "alice", "rematch"),
-    "Fight on: bob vs alice! Watch the stream for the winner.",
-    "answering !rematch with !rematch starts it",
-  );
+  const named =
+    "bob wants a rematch with @alice! @alice, type !rematch or !fight to fight, or !decline to back out within 30 s.";
+  assert.equal(await r.reply("u2", "bob", "rematch", "cara"), named, "a name after !rematch is ignored");
+  const fighting = "One of you is already fighting! Wait for the bell, then try again.";
+  assert.equal(await r.reply("u3", "cara", "challenge", "alice"), fighting);
+  const started = "Fight on: bob vs alice! Watch the stream for the winner.";
+  assert.equal(await r.reply("u1", "alice", "rematch"), started, "answering !rematch with !rematch starts it");
   clock.mock.restore();
-  const logs = await r.logs("command");
-  const reasons = logs.filter((x) => x.context.action !== "save").map((x) => x.context.reason);
-  reasons.reverse();
-  assert.deepEqual(
-    [...reasons.slice(0, 3), ...reasons.slice(4)],
-    ["no_previous_opponent", "challenge", "quick_duel", "rematch", "player_busy", "quick_duel"],
-  );
+  const logs = (await r.logs("command")).filter((x) => x.context.action !== "save");
+  const reasons = logs.map((x) => x.context.reason).reverse();
+  const want = ["no_previous_opponent", "challenge", "quick_duel", "rematch", "player_busy", "quick_duel"];
+  assert.deepEqual(reasons.toSpliced(3, 1), want);
   assert.match(reasons[3], /^(rematch_cooldown|respawning)$/);
 });
 
 test("StreamElements !ranks, !elo, !fray and !look work even while duels are paused", async () => {
   const r = room();
-  const names = async () => (await r.call("/admin")).body.streamelements.names;
+  const names = async () => (await r.adminView()).streamelements.names;
   const se = await names();
   assert.deepEqual([se.top, se.elo, se.help, se.look], ["!ranks", "!elo", "!fray", "!look"]);
   const alice = (action: string, target = "") => r.reply("u1", "alice", action, target);
-  assert.equal(
-    await alice("help"),
-    `PixFray duels: name your rival with !challenge @name. They answer !fight. Again? !rematch. More: !checkin !wallet !ranks !look. Gear up at ${SITE}`,
-  );
+  const helpLine = `PixFray duels: name your rival with !challenge @name. They answer !fight. Again? !rematch. More: !checkin !wallet !ranks !look. Gear up at ${SITE}`;
+  assert.equal(await alice("help"), helpLine);
   assert.equal(await alice("top"), `The arena has no champions yet! Gear up at ${SITE} and win a duel.`);
   assert.equal(await alice("elo"), noFighter("alice"));
   assert.equal(await alice("look"), `@alice, pick your fighter here: ${SITE}#fighter`);
@@ -990,22 +822,18 @@ test("StreamElements !ranks, !elo, !fray and !look work even while duels are pau
 });
 
 test("!checkin: once per stream while live, streaks with one free miss a week, milestone bonus; points survive a rank reset", async () => {
-  const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40) }, { quick: true });
-  assert.equal((await r.call("/admin")).body.streamelements.names.checkin, "!checkin");
+  const r = room(DEV, { quick: true });
+  assert.equal((await r.adminView()).streamelements.names.checkin, "!checkin");
   const say = (id: string, login: string) => r.reply(id, login, "checkin");
   assert.equal(await say("u1", "alice"), noFighter("alice"));
   await r.saveAll("alice", "bob");
   assert.deepEqual((await r.devLive(false)).body, { ok: true, live: false, streamId: "" });
   assert.equal(await say("u1", "alice"), "Check-ins open while nesszerra is live. See you next stream!");
   await r.devLive(true, "s1");
-  assert.equal(
-    await say("u1", "alice"),
-    `@alice checked in: +1 point (1-stream streak). 1 point, 1 unspent. Spend them at ${SITE}#upgrades`,
-  );
-  assert.equal(
-    await say("u1", "alice"),
-    "@alice, you already checked in this stream (1-stream streak). Come back next stream!",
-  );
+  const first = `@alice checked in: +1 point (1-stream streak). 1 point, 1 unspent. Spend them at ${SITE}#upgrades`;
+  assert.equal(await say("u1", "alice"), first);
+  const again = "@alice, you already checked in this stream (1-stream streak). Come back next stream!";
+  assert.equal(await say("u1", "alice"), again);
   // Alice misses s4: the free miss keeps her streak. Missing s6 too, within the week, starts it over.
   for (const [stream, who, want] of [
     ["s2", ["u1", "alice"], "+1 point (2-stream streak). 2 points, 2 unspent."],
@@ -1021,8 +849,7 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
   }
   let p = await r.profile("u1");
   assert.deepEqual([p.bonus, p.checkins, p.streak, p.upgrades.points, p.upgrades.fromCheckins], [6, 5, 1, 6, 6]);
-  const player = (await r.call("/state")).body.players.find((x: { userId: string }) => x.userId === "u1");
-  assert.equal(player.bonus, 6, "the next duel counts the new points");
+  assert.equal(r.player("u1").bonus, 6, "the next duel counts the new points");
   assert.equal((await r.logs("command"))[0].context.reason, "checked_in");
   // The points are spendable, and a rank reset keeps them.
   r.sql("UPDATE profiles SET wins = 3 WHERE user_id = 'u1'");
@@ -1044,26 +871,21 @@ test("!checkin: once per stream while live, streaks with one free miss a week, m
   assert.equal((await r.cfg({ streakBonus: true })).status, 200);
   r.sql("UPDATE profiles SET streak = 59 WHERE user_id = 'u1'");
   await r.devLive(true, "s9");
-  assert.equal(
-    await say("u1", "alice"),
-    "@alice checked in: +2 points (60-stream streak, streak bonus). 8 points, all spent.",
-  );
+  const sixty = "@alice checked in: +2 points (60-stream streak, streak bonus). 8 points, all spent.";
+  assert.equal(await say("u1", "alice"), sixty);
   r.sql("UPDATE profiles SET streak = 99 WHERE user_id = 'u1'");
   await r.devLive(true, "s10");
-  assert.equal(
-    await say("u1", "alice"),
-    `@alice checked in: +3 points (100-stream streak, streak bonus). 11 points, 2 unspent. Spend them at ${SITE}#upgrades`,
-  );
+  const hundred = "@alice checked in: +3 points (100-stream streak, streak bonus). 11 points, 2 unspent.";
+  assert.equal(await say("u1", "alice"), `${hundred} Spend them at ${SITE}#upgrades`);
   assert.equal((await r.cfg({ maxStatLevel: 24 })).status, 200);
   assert.equal((await r.profile("u1")).upgrades.maxLevel, 24);
   // A wrong key never reaches the check-in.
-  const bare: SeOptions = { key: "f".repeat(48), origin: false, messageId: false, displayName: false };
-  assert.equal((await r.se("u1", "alice", "checkin", "", bare)).status, 403);
+  assert.equal((await r.se("u1", "alice", "checkin", "", { ...BARE, key: "f".repeat(48) })).status, 403);
 });
 
 test("dollars: paid once per finished duel and hidden until the stream shows it; mod gifts; !wallet; !give and its limits", async (t) => {
-  const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40) }, { quick: true });
-  const se = (await r.call("/admin")).body.streamelements;
+  const r = room(DEV, { quick: true });
+  const se = (await r.adminView()).streamelements;
   assert.deepEqual([se.names.wallet, se.names.give], ["!wallet", "!pay"]);
   await r.connectChat("se-streamelements");
   await r.saveAll("alice", "bob", "cara");
@@ -1071,22 +893,15 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
     r.reply(id, login, "give", target, amount === undefined ? {} : { amount });
   const dollars = () =>
     Object.fromEntries(r.sql("SELECT username, dollars FROM profiles").map((x) => [x.username, x.dollars]));
-  await r.se("u1", "alice", "challenge", "bob");
-  await r.se("u2", "bob", "accept");
-  // as: a completed duel carries its reveal time; paid is the room's own field on top of Duel
-  const duel = must(r.state().duels.find((d) => d.status === "completed")) as Revealed & { paid?: boolean };
+  await r.seDuel();
+  const duel = r.completed();
   const [win, lose] = duel.winnerId === "u1" ? ["alice", "bob"] : ["bob", "alice"];
   const winId = win === "alice" ? "u1" : "u2";
-  assert.deepEqual(
-    [dollars()[win], dollars()[lose], duel.paid],
-    [5, 3, true],
-    "paid in the same transaction as the result",
-  );
+  const paid = dollars();
+  assert.deepEqual([paid[win], paid[lose], duel.paid], [5, 3, true], "paid in the same transaction as the result");
   // Until the stream has shown the fight, !wallet and the website show the old balance.
-  assert.equal(
-    await r.reply("u1", "alice", "wallet"),
-    "@alice: $0 PixFray dollars, 0 upgrade points, 0-stream streak.",
-  );
+  const wallet = await r.reply("u1", "alice", "wallet");
+  assert.equal(wallet, "@alice: $0 PixFray dollars, 0 upgrade points, 0-stream streak.");
   assert.equal((await r.profile("u1")).dollars, 0);
   const point = { stats: { power: 1, guard: 0, luck: 0 } };
   const early = (await r.save(winId, win, point)).body.error;
@@ -1100,12 +915,9 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
   // A website save and a rank reset keep dollars.
   assert.equal((await r.save("u3", "cara")).body.profile.dollars, 0);
   const gift = (username: string, amount: number) => r.admin("giftDollars", { username, amount }, { actorName: "Mod" });
-  assert.deepEqual(
-    (({ ok, username, amount, dollars }) => [ok, username, amount, dollars])((await gift("@Cara", 50)).body),
-    [true, "cara", 50, 50],
-  );
-  assert.equal((await gift("cara", 0)).body.error, "invalid_amount");
-  assert.equal((await gift("cara", 10_001)).body.error, "invalid_amount");
+  const g = (await gift("@Cara", 50)).body;
+  assert.deepEqual([g.ok, g.username, g.amount, g.dollars], [true, "cara", 50, 50]);
+  for (const n of [0, 10_001]) assert.equal((await gift("cara", n)).body.error, "invalid_amount", `${n}`);
   assert.equal((await gift("nobody", 5)).status, 404);
   assert.equal((await gift("cara", -80)).body.dollars, 0, "taking back never goes below 0");
   await gift("cara", 50);
@@ -1154,11 +966,8 @@ test("dollars: paid once per finished duel and hidden until the stream shows it;
   await r.save("u4", "dan"); // alice and bob's duel is still hidden from chat
   await r.se("u3", "cara", "challenge", "dan");
   await r.se("u4", "dan", "accept");
-  const second = r
-    .state()
-    .duels.filter((d) => d.status === "completed")
-    .at(-1);
-  assert.deepEqual(Object.values(must(must(second).payout)), [1], "no win payout at 0; the loser gets 1");
+  const second = must(r.state().duels.findLast((d) => d.status === "completed"));
+  assert.deepEqual(Object.values(must(second.payout)), [1], "no win payout at 0; the loser gets 1");
 });
 
 test("!checkin asks Twitch whether the channel is live, keeps the answer a minute, and says try again when Twitch fails", async (t) => {
@@ -1183,16 +992,8 @@ test("/looks returns saved looks by login for the overlay: saved profiles only, 
   await r.save("u1", "Alice", { avatar: "toon-ghoul", color: "#112233" });
   const looks = (await r.call("/looks?u=alice,nobody,bad%20name,ALICE")).body;
   const blank = { hat: "", pet: "", petTier: "", recolor: "", petColor: "", accessory: "", trail: "", winEffect: "" };
-  const alice = {
-    avatar: "toon-ghoul",
-    color: "#112233",
-    ...blank,
-    taunt: "",
-    title: "",
-    displayName: "Alice",
-    elo: 1000,
-  };
-  assert.deepEqual(looks, { alice });
+  const alice = { avatar: "toon-ghoul", color: "#112233", ...blank, taunt: "", title: "", displayName: "Alice" };
+  assert.deepEqual(looks, { alice: { ...alice, elo: 1000 } });
   assert.deepEqual((await r.call("/looks")).body, {});
   for (let i = 0; i < 25; i++) await r.save("x" + i, "v" + i);
   const many = (await r.call("/looks?u=" + Array.from({ length: 25 }, (_, i) => "v" + i).join(","))).body;
@@ -1203,7 +1004,7 @@ test("dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   const off = room({}, { quick: true });
   await off.connectChat();
   assert.equal((await off.devChat("b1", "testbot_a", "hi")).status, 404);
-  const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40) }, { quick: true });
+  const r = room(DEV, { quick: true });
   await r.connectChat();
   await r.save("b1", "testbot_a");
   await r.save("b2", "testbot_b");
@@ -1211,18 +1012,17 @@ test("dev-chat (test site only): refused without DEV_TOOLS_TOKEN; with it, a lin
   const ch = await r.devChat("b1", "testbot_a", "!challenge @testbot_b");
   assert.deepEqual([ch.status, ch.body.ok], [200, true]);
   const fight = (await r.devChat("b2", "testbot_b", "!fight")).body;
-  assert.equal(fight.reason, "quick_duel");
-  assert.equal(fight.reply, "Fight on: testbot_a vs testbot_b! Watch the stream for the winner.");
+  const fightOn = "Fight on: testbot_a vs testbot_b! Watch the stream for the winner.";
+  assert.deepEqual([fight.reason, fight.reply], ["quick_duel", fightOn]);
   const fought = r.sql("SELECT wins, losses FROM profiles").filter((p) => p.wins + p.losses === 1);
   assert.equal(fought.length, 2, "Elo and records are saved");
   await r.devLive(true, "s1");
   const checked = (await r.devChat("b1", "testbot_a", "!checkin")).body;
-  assert.equal(checked.reason, "checked_in");
-  assert.ok(checked.reply.startsWith("@testbot_a checked in: +1 point"), checked.reply);
+  assert.deepEqual([checked.reason, checked.reply.startsWith("@testbot_a checked in: +1 point")], ["checked_in", true]);
 });
 
 test("account age: looked up once per fighter; a duel with an account under 7 days old is just for fun", async () => {
-  const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40), TWITCH_CLIENT_ID: "cid" }, { quick: true });
+  const r = room({ ...DEV, TWITCH_CLIENT_ID: "cid" }, { quick: true });
   const age: Record<string, number> = { b1: Date.now() - 400 * 86_400_000, b2: Date.now() - 2 * 86_400_000 };
   const looked: string[] = [];
   r.lookupAccount = async (id) => {
@@ -1264,12 +1064,10 @@ async function withFakePair(open: () => Promise<unknown>) {
 }
 
 test("overlay sockets: one network is capped; a full room drops the oldest viewer socket, never an overlay", async () => {
-  const upgrade = (target: TestRoom, ip: string) =>
-    target.upgrade(
-      new Request("https://room/live", { headers: { Upgrade: "websocket", "X-Mini-Client-Ip": ip } }),
-      "live",
-      "nesszerra",
-    );
+  const upgrade = (target: TestRoom, ip: string) => {
+    const headers = { Upgrade: "websocket", "X-Mini-Client-Ip": ip };
+    return target.upgrade(new Request("https://room/live", { headers }), "live", "nesszerra");
+  };
   const r = room();
   r.ctx.acceptWebSocket(fakeSocket(null, "live"), ["live", "ip:198.51.100.7", "overlay"]); // the streamer's OBS, first in
   for (let i = 1; i < 16; i++) r.ctx.acceptWebSocket(fakeSocket(null, "live"), ["live", "ip:198.51.100.7"]);
@@ -1278,8 +1076,7 @@ test("overlay sockets: one network is capped; a full room drops the oldest viewe
   // as: every socket this room accepted is a fakeSocket, which records how it was closed
   const [obs, oldestViewer] = r.ctx.sockets as FakeSocket[];
   await withFakePair(() => upgrade(r, "192.0.2.1")); // the eviction happens before the 101
-  assert.equal(must(obs).closed, null, "the overlay stays");
-  assert.deepEqual(must(oldestViewer).closed, [1013, "room full"]);
+  assert.deepEqual([must(obs).closed, must(oldestViewer).closed], [null, [1013, "room full"]], "the overlay stays");
   assert.ok(must(r.ctx.sockets.at(-1)).tags.includes("ip:192.0.2.1"), "the new socket is tagged with its network");
   // A room holding only overlays refuses the newcomer rather than dropping one.
   const full = room();
@@ -1292,13 +1089,13 @@ test("overlay sockets: one network is capped; a full room drops the oldest viewe
 
 test("overlay sockets opened with role=overlay are counted for the admin setup checklist", async () => {
   const r = room();
-  assert.equal((await r.call("/admin")).body.overlays, 0);
+  assert.equal((await r.adminView()).overlays, 0);
   const headers = { Upgrade: "websocket", "X-Mini-Internal": SECRET, "X-Mini-Channel": "nesszerra" };
   for (const path of ["/live?role=overlay", "/live"])
     await withFakePair(() => r.fetch(new Request("https://room" + path, { headers })));
   const overlayTags = r.ctx.sockets.map((s) => s.tags.includes("overlay"));
   assert.deepEqual(overlayTags, [true, false]);
-  assert.equal((await r.call("/admin")).body.overlays, 1);
+  assert.equal((await r.adminView()).overlays, 1);
 });
 
 test("profiles save upgrades and hats within the points and unlocks the saved wins allow", async () => {
@@ -1315,12 +1112,9 @@ test("profiles save upgrades and hats within the points and unlocks the saved wi
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
   assert.deepEqual(saved.body.profile.stats, fullStats(build));
   const got = await r.profile("u1");
-  assert.equal(got.hat, "tophat");
-  assert.deepEqual(got.stats, fullStats(build));
-  assert.deepEqual(r.sql("SELECT crit, dodge, counter FROM profiles WHERE user_id = 'u1'"), [
-    { crit: 1, dodge: 1, counter: 1 },
-  ]);
-  assert.equal(got.upgrades.points, 6);
+  assert.deepEqual([got.hat, got.stats, got.upgrades.points], ["tophat", fullStats(build), 6]);
+  const stored = r.sql("SELECT crit, dodge, counter FROM profiles WHERE user_id = 'u1'");
+  assert.deepEqual(stored, [{ crit: 1, dodge: 1, counter: 1 }]);
   assert.equal(got.upgrades.hats.find((h: { id: string }) => h.id === "tophat").unlocked, true);
   // Leaving stats and hat out keeps them.
   assert.equal((await r.save("u1", "alice", { color: "#654321" })).body.profile.hat, "tophat");
@@ -1333,8 +1127,7 @@ test("profiles save upgrades and hats within the points and unlocks the saved wi
 test("snapshots carry the deploy build id and the announce setting so open overlays follow them", () => {
   const r = room({ CF_VERSION_METADATA: { id: "build-42" } });
   const snap = r.publicState(r.state());
-  assert.equal(snap.build, "build-42");
-  assert.equal(snap.config.announce, "off");
+  assert.deepEqual([snap.build, snap.config.announce], ["build-42", "off"]);
   assert.equal(room().publicState(createInitialState("nesszerra")).build, "");
 });
 
@@ -1349,28 +1142,22 @@ test("pets: tier boosts, added after the upgrade cap", () => {
     ["mythic", "power", undefined, none],
   ] satisfies [string, string | undefined, string | undefined, Parameters<typeof fullStats>[0]][])
     assert.deepEqual(tierBoost(tier, stat, stat2), fullStats(want), `${tier} ${stat} ${stat2}`);
-  assert.deepEqual(
-    tierBoost("legendary", undefined, undefined, ["crit", "dodge", "luck", "vitality"]),
-    fullStats({ luck: 1, crit: 1, dodge: 1, vitality: 1 }),
-  );
+  const rolled = tierBoost("legendary", undefined, undefined, ["crit", "dodge", "luck", "vitality"]);
+  assert.deepEqual(rolled, fullStats({ luck: 1, crit: 1, dodge: 1, vitality: 1 }));
   assert.equal(PETS.length, 14);
   assert.equal(petOf("p-gone", ""), null, "a deleted upload is no pet");
   assert.deepEqual(must(petOf("p-blob-1a2b3c", "rare:power:")).boost, fullStats({ power: 2, guard: 0, luck: 0 }));
   // 8 power at 8 points stays 8 before the pet, then the fox's +2 goes past the per-stat cap.
-  assert.deepEqual(
-    effectiveStats({ power: 8 }, { wins: 8 }, tierBoost("rare", "power")),
-    fullStats({ power: 10, guard: 0, luck: 0 }),
-  );
+  const boosted = effectiveStats({ power: 8 }, { wins: 8 }, tierBoost("rare", "power"));
+  assert.deepEqual(boosted, fullStats({ power: 10, guard: 0, luck: 0 }));
   assert.deepEqual(effectiveStats({ power: 8 }, { wins: 3 }, null), fullStats({ power: 3, guard: 0, luck: 0 }));
 });
 
 test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pet uploads and deletes", async () => {
-  const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40) }, { quick: true });
-  assert.equal((await r.call("/admin")).body.streamelements.names.pet, "!pet");
+  const r = room(DEV, { quick: true });
+  assert.equal((await r.adminView()).streamelements.names.pet, "!pet");
   await r.saveAll("alice", "bob");
   const gift = (username: string, amount: number) => r.admin("giftDollars", { username, amount });
-  const buy = (userId: string, kind: string, id: string) =>
-    r.call("/shop", { method: "POST", userId, body: { userId, kind, id } });
   const pet = (id: string, login: string, target = "") => r.reply(id, login, "pet", target, { messageId: false });
   // The catalog: built-ins with the config prices, and the hat price per win.
   const catalog = (await r.call("/pets")).body;
@@ -1380,30 +1167,24 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.deepEqual(listed, { ...fox, custom: false });
   assert.equal(catalog.hatPricePerWin, 3);
   // Buying: identity, unknown items, money.
-  const other = { method: "POST", userId: "u1", body: { userId: "u2", kind: "pet", id: "fox" } };
-  assert.equal((await r.call("/shop", other)).status, 403);
-  assert.equal((await buy("u9", "pet", "fox")).body.error, "no_fighter");
-  assert.equal((await buy("u1", "pet", "unicorn")).body.error, "unknown_item");
-  assert.deepEqual(
-    (({ status, body }) => [status, body.error, body.price, body.dollars])(await buy("u1", "pet", "fox")),
-    [409, "not_enough", 60, 0],
-  );
+  assert.equal((await r.post("/shop", { userId: "u2", kind: "pet", id: "fox" }, "u1")).status, 403);
+  assert.equal((await r.shop("u9", "pet", "fox")).body.error, "no_fighter");
+  assert.equal((await r.shop("u1", "pet", "unicorn")).body.error, "unknown_item");
+  const poor = await r.shop("u1", "pet", "fox");
+  assert.deepEqual([poor.status, poor.body.error, poor.body.price, poor.body.dollars], [409, "not_enough", 60, 0]);
   await gift("alice", 250);
-  const bought = (await buy("u1", "pet", "fox")).body;
-  assert.deepEqual(
-    [bought.ok, bought.price, bought.dollars, bought.owned.pets, bought.owned.hats, bought.owned.slots],
-    [true, 60, 190, ["fox"], [], 1],
-  );
-  assert.equal((await buy("u1", "pet", "fox")).body.error, "owned");
+  const { ok, price, dollars, owned } = (await r.shop("u1", "pet", "fox")).body;
+  assert.deepEqual([ok, price, dollars, owned.pets, owned.hats, owned.slots], [true, 60, 190, ["fox"], [], 1]);
+  assert.equal((await r.shop("u1", "pet", "fox")).body.error, "owned");
   // Hats: free ones are already unlocked; locked ones cost wins x hatPricePerWin; 0 turns hat sales off.
-  assert.equal((await buy("u1", "hat", "cap")).body.error, "already_unlocked");
-  assert.equal((await buy("u1", "hat", "wizard")).body.price, 9);
+  assert.equal((await r.shop("u1", "hat", "cap")).body.error, "already_unlocked");
+  assert.equal((await r.shop("u1", "hat", "wizard")).body.price, 9);
   assert.equal((await r.save("u1", "alice", { hat: "tophat" })).body.error, "hat_locked");
   const hat = (await r.save("u1", "alice", { hat: "wizard" })).body.profile.hat;
   assert.equal(hat, "wizard", "a bought hat saves before its wins");
   assert.equal((await r.cfg({ petPriceRare: 0 })).body.error, "invalid_config_petPriceRare");
   assert.equal((await r.cfg({ hatPricePerWin: 0 })).status, 200);
-  assert.equal((await buy("u1", "hat", "crown")).body.error, "hats_not_for_sale");
+  assert.equal((await r.shop("u1", "hat", "crown")).body.error, "hats_not_for_sale");
   // Equip: only owned pets; the profile, the game state and /looks carry it.
   assert.equal(await pet("u1", "alice"), `@alice, you have no pet yet. Buy one with PixFray dollars at ${SITE}#pets`);
   assert.equal((await r.save("u1", "alice", { pet: "wolf" })).body.error, "pet_locked");
@@ -1412,8 +1193,7 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.deepEqual([saved.pet, saved.petTier, saved.petBoost, saved.dollars], ["fox", "rare", fox.boost, 181]);
   const { pets, hats } = (await r.profile("u1")).owned;
   assert.deepEqual({ pets, hats }, { pets: ["fox"], hats: ["wizard"] });
-  const boost = must(r.state().players.find((p) => p.userId === "u1")).petBoost.power;
-  assert.equal(boost, 2, "duels count the boost");
+  assert.equal(r.player("u1").petBoost.power, 2, "duels count the boost");
   const looks = (await r.call("/looks?u=alice")).body.alice;
   assert.deepEqual([looks.pet, looks.petTier], ["fox", "rare"]);
   const kept = (await r.save("u1", "alice", { avatar: "toon-ghoul" })).body.profile.pet;
@@ -1426,21 +1206,12 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
   assert.equal((await r.devChat("u2", "bob", "!pet @alice")).body.reply, foxLine);
   // A duel's result write keeps the pet (upsertProfile from the game state).
   await r.connectChat("se-streamelements");
-  const raw: SeOptions = { origin: false, messageId: false };
-  await r.se("u1", "alice", "challenge", "bob", raw);
-  await r.se("u2", "bob", "accept", "", raw);
+  await r.seDuel({ origin: false, messageId: false });
   assert.ok(r.state().duels.some((d) => d.status === "completed"));
   assert.equal(must(r.sql("SELECT pet FROM profiles WHERE user_id = 'u1'")[0]).pet, "fox");
   // Custom pets: checked uploads, priced by tier; deleting one takes it off fighters and owners.
-  const blob = {
-    label: "Blob",
-    tier: "epic",
-    stat: "luck",
-    stat2: "guard",
-    image: b64(makePng(32, 32)),
-    createdBy: "mod1",
-  };
-  const upload = (body: Extra) => r.call("/pets", { method: "POST", body: { ...blob, ...body } });
+  const blob = { label: "Blob", tier: "epic", stat: "luck", stat2: "guard", createdBy: "mod1" };
+  const upload = (body: Extra) => r.post("/pets", { ...blob, image: b64(makePng(32, 32)), ...body });
   const text = b64(Buffer.from("not a png at all, just some text that is long enough to read"));
   for (const [body, reason] of [
     [{ stat2: "luck" }, "invalid_stat"],
@@ -1451,21 +1222,19 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
     assert.equal((await upload(body)).body.reason, reason, reason);
   const item = (await upload({})).body.item;
   assert.match(item.id, /^p-blob-[0-9a-f]{6}$/);
-  assert.deepEqual(
-    [item.tier, item.boost, item.price, item.url],
-    ["epic", fullStats({ power: 0, guard: 1, luck: 2 }), 140, "/api/pets/nesszerra/" + item.id],
-  );
+  const [boost, url] = [fullStats({ power: 0, guard: 1, luck: 2 }), "/api/pets/nesszerra/" + item.id];
+  assert.deepEqual([item.tier, item.boost, item.price, item.url], ["epic", boost, 140, url]);
   const headers = { "X-Mini-Internal": SECRET, "X-Mini-Channel": "nesszerra" };
   const png = await r.fetch(new Request("https://room/pets/" + item.id, { headers }));
   assert.equal(png.headers.get("content-type"), "image/png");
   await gift("bob", 500);
-  assert.equal((await buy("u2", "pet", item.id)).body.price, 140);
+  assert.equal((await r.shop("u2", "pet", item.id)).body.price, 140);
   assert.equal((await r.save("u2", "bob", { pet: item.id })).body.profile.petTier, "epic");
   assert.equal(await pet("u2", "bob"), "@bob's pet: Blob (epic), +1 guard, +2 luck.");
   assert.equal((await r.call("/pets/" + item.id, { method: "DELETE" })).body.ok, true);
   const bob = await r.profile("u2");
   assert.deepEqual([bob.pet, bob.owned.pets], ["", []]);
-  assert.equal(must(r.state().players.find((p) => p.userId === "u2")).pet, "");
+  assert.equal(r.player("u2").pet, "");
   assert.equal((await r.call("/pets/" + item.id, { method: "DELETE" })).status, 404);
   // A deleted profile takes its purchases with it.
   await r.admin("removePlayer", { userId: "u1" });
@@ -1475,8 +1244,7 @@ test("shop: buy pets and hats with shown dollars, equip on save, !pet, custom pe
 test("cosmetics and builds: the shop list, buying, wearing, build slots with their own loadout, duels keep them", async () => {
   const r = room({}, { quick: true });
   await r.saveAll("alice", "bob");
-  const buy = (kind: string, id: string, price?: number) =>
-    r.call("/shop", { method: "POST", userId: "u1", body: { userId: "u1", kind, id, price } });
+  const buy = (kind: string, id: string, price?: number) => r.shop("u1", kind, id, { price });
   // The public list: every kind with the config price, and the build slot prices.
   const shop = (await r.call("/shop")).body;
   assert.equal(shop.pets.length, 14);
@@ -1493,27 +1261,14 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
   assert.deepEqual([stale.status, stale.body.error, stale.body.price], [409, "price_changed", 40]);
   assert.deepEqual((({ price, dollars }) => [price, dollars])((await buy("trail", "flames", 40)).body), [40, 1960]);
   assert.equal((await buy("trail", "flames")).status, 409);
-  for (const [kind, id] of [
-    ["recolor", "crimson"],
-    ["petcolor", "gold"],
-    ["accessory", "cape"],
-    ["effect", "fireworks"],
-    ["taunt", "gg"],
-    ["title", "legend"],
-  ] satisfies [string, string][])
+  const items = { recolor: "crimson", petcolor: "gold", accessory: "cape", effect: "fireworks", taunt: "gg" };
+  for (const [kind, id] of Object.entries({ ...items, title: "legend" }))
     assert.equal((await buy(kind, id)).body.ok, true, kind);
   // Wearing: only bought ones; "" takes one off; left out keeps it.
   assert.equal((await r.save("u1", "alice", { accessory: "glasses" })).body.error, "item_locked");
   assert.equal((await r.save("u1", "alice", { title: "Supreme Leader" })).body.error, "invalid_profile");
-  const worn = {
-    recolor: "crimson",
-    petColor: "gold",
-    accessory: "cape",
-    trail: "flames",
-    winEffect: "fireworks",
-    taunt: "gg",
-    title: "legend",
-  };
+  const gear = { recolor: "crimson", petColor: "gold", accessory: "cape", trail: "flames" };
+  const worn = { ...gear, winEffect: "fireworks", taunt: "gg", title: "legend" };
   let p = (await r.save("u1", "alice", worn)).body.profile;
   assert.deepEqual(Object.fromEntries(Object.keys(worn).map((k) => [k, p[k]])), worn);
   const kept = (await r.save("u1", "alice", { avatar: "toon-ghoul" })).body.profile.trail;
@@ -1521,12 +1276,9 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
   assert.equal((await r.save("u1", "alice", { title: "" })).body.profile.title, "");
   await r.save("u1", "alice", { title: "legend" });
   const looks = (await r.call("/looks?u=alice")).body.alice;
-  assert.deepEqual(
-    [looks.recolor, looks.accessory, looks.trail, looks.winEffect, looks.taunt, looks.title],
-    ["crimson", "cape", "flames", "fireworks", "gg", "legend"],
-  );
-  const trail = must(r.state().players.find((x) => x.userId === "u1")).trail;
-  assert.equal(trail, "flames", "the overlay state carries them");
+  const shown = ["crimson", "cape", "flames", "fireworks", "gg", "legend"];
+  assert.deepEqual([looks.recolor, looks.accessory, looks.trail, looks.winEffect, looks.taunt, looks.title], shown);
+  assert.equal(r.player("u1").trail, "flames", "the overlay state carries them");
   // Build slots: 1 free, the 2nd costs 60, then 120 each, up to 5.
   assert.equal((await r.save("u1", "alice", { build: 1 })).body.error, "invalid_build");
   const slot = (await buy("slot", "")).body;
@@ -1537,10 +1289,8 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
   assert.deepEqual([p.build, p.avatar, p.recolor, p.trail], [1, "soldier", "", ""]);
   let prof = await r.profile("u1");
   const [b0, b1] = prof.builds;
-  assert.deepEqual(
-    [prof.build, prof.builds.length, b0.avatar, b0.trail, b1.avatar, b1.trail],
-    [1, 2, "player", "flames", "soldier", ""],
-  );
+  const slots = [1, 2, "player", "flames", "soldier", ""];
+  assert.deepEqual([prof.build, prof.builds.length, b0.avatar, b0.trail, b1.avatar, b1.trail], slots);
   // Switching back = saving slot 0's loadout to slot 0.
   p = (await r.save("u1", "alice", { ...b0, build: 0 })).body.profile;
   assert.deepEqual([p.build, p.avatar, p.trail], [0, "player", "flames"]);
@@ -1555,15 +1305,10 @@ test("cosmetics and builds: the shop list, buying, wearing, build slots with the
   assert.deepEqual([prof.builds[2].pet, prof.builds[2].trail], ["", "flames"]);
   // A duel's result write keeps the cosmetics; a removed fighter loses builds and purchases.
   await r.connectChat("se-streamelements");
-  const raw: SeOptions = { origin: false, messageId: false };
-  await r.se("u1", "alice", "challenge", "bob", raw);
-  await r.se("u2", "bob", "accept", "", raw);
+  await r.seDuel({ origin: false, messageId: false });
   assert.ok(r.state().duels.some((d) => d.status === "completed"));
-  assert.deepEqual(r.sql("SELECT trail, title, build FROM profiles WHERE user_id = 'u1'")[0], {
-    trail: "flames",
-    title: "legend",
-    build: 0,
-  });
+  const [row] = r.sql("SELECT trail, title, build FROM profiles WHERE user_id = 'u1'");
+  assert.deepEqual(row, { trail: "flames", title: "legend", build: 0 });
   await r.admin("removePlayer", { userId: "u1" });
   assert.equal(must(r.sql("SELECT COUNT(*) AS n FROM builds WHERE user_id = 'u1'")[0]).n, 0);
 });
@@ -1574,9 +1319,9 @@ test("a save after the fighter left the arena keeps its stored rank and record",
   r.sql("UPDATE profiles SET elo = 1106, wins = 14, losses = 9 WHERE user_id = 'u1'");
   r.edit((s) => (s.players = s.players.filter((p) => p.userId !== "u1")));
   assert.equal((await r.save("u1", "alice", { color: "#654321" })).status, 200);
-  const row = r.sql("SELECT elo, wins, losses, color FROM profiles WHERE user_id = 'u1'")[0];
-  assert.deepEqual({ ...row }, { elo: 1106, wins: 14, losses: 9, color: "#654321" });
-  const fighter = must(r.state().players.find((p) => p.userId === "u1"));
+  const [row] = r.sql("SELECT elo, wins, losses, color FROM profiles WHERE user_id = 'u1'");
+  assert.deepEqual(row, { elo: 1106, wins: 14, losses: 9, color: "#654321" });
+  const fighter = r.player("u1");
   assert.deepEqual([fighter.elo, fighter.wins, fighter.losses], [1106, 14, 9]);
 });
 
@@ -1588,26 +1333,19 @@ test("owner log: a save lands as a command row; a refusal, from the room or from
   assert.equal((await r.save("u1", "alice", { accessory: "glasses" })).body.error, "item_locked");
   const refused = (await r.logs("warn"))[0];
   assert.equal(refused.message, "alice profile not saved: item_locked");
-  assert.deepEqual(refused.context, {
-    channel: "nesszerra",
-    action: "save",
-    userId: "u1",
-    user: "alice",
-    reason: "item_locked",
-  });
+  const who = { channel: "nesszerra", action: "save", userId: "u1", user: "alice" };
+  assert.deepEqual(refused.context, { ...who, reason: "item_locked" });
   const message = "bob profile not saved: unknown_character";
   const context = { reason: "unknown_character" };
-  await r.call("/dev/log", { method: "POST", body: { source: "warn", message, context } });
+  await r.post("/dev/log", { source: "warn", message, context });
   const row = (await r.logs("warn"))[0];
   assert.deepEqual([row.source, row.message, row.context], ["warn", message, context]);
 });
 
 test('pet boost text: a rolled legendary reads "+1 luck, crit, dodge and vitality", like the viewer page', () => {
+  const rolled = tierBoost("legendary", undefined, undefined, ["vitality", "crit", "dodge", "luck"]);
   for (const [stats, want] of [
-    [
-      tierBoost("legendary", undefined, undefined, ["vitality", "crit", "dodge", "luck"]),
-      "+1 luck, crit, dodge and vitality",
-    ],
+    [rolled, "+1 luck, crit, dodge and vitality"],
     [fullStats({ power: 1, guard: 1, luck: 1 }), "+1 power, guard and luck"],
     [fullStats({ power: 2, guard: 1, luck: 0 }), "+2 power, +1 guard"],
     [fullStats({ power: 0, guard: 0, luck: 1 }), "+1 luck"],
@@ -1616,35 +1354,27 @@ test('pet boost text: a rolled legendary reads "+1 luck, crit, dodge and vitalit
 });
 
 // BOT_DEBUG: the bot account (u9 pixbot) plays back. The Worker forwards the subscription's bot id and a mod flag.
-// botRoom saves the given fighters, then connects the bot's chat subscription.
-async function botRoom(env: Extra, ...logins: string[]): Promise<BotRoom> {
-  // BotRoom: say is attached just below, before r is returned
-  const r = room({ CHAT_BOT: "1", DEV_TOOLS_TOKEN: "x".repeat(40), ...env }, { quick: true }) as BotRoom;
-  let n = 0;
-  r.say = async (id, login, text, { mod = false, sub = "sub-bot" } = {}) =>
-    (
-      await r.call("/eventsub?origin=" + encodeURIComponent("https://staging.example"), {
-        method: "POST",
-        body: {
-          messageId: "d" + ++n,
-          messageType: "notification",
-          bot: true,
-          botId: "u9",
-          timestamp: Date.now(),
-          subscription: { id: sub, status: "enabled" },
-          event: {
-            broadcaster_user_id: "owner1",
-            broadcaster_user_login: "nesszerra",
-            chatter_user_id: id,
-            chatter_user_login: login,
-            chatter_user_name: login,
-            message_id: "dm" + n,
-            message: { text },
-            mod,
-          },
-        },
-      })
-    ).body;
+class BotRoom extends TestRoom {
+  #lines = 0;
+  /** Posts a chat line as the bot's EventSub delivery; resolves to the room's JSON reply (reply, replies, reason). */
+  say = async (id: string, login: string, text: string, { mod = false, sub = "sub-bot" } = {}) => {
+    const n = ++this.#lines;
+    const delivery = { messageId: "d" + n, messageType: "notification", bot: true, botId: "u9", timestamp: Date.now() };
+    const event = { broadcaster_user_id: "owner1", broadcaster_user_login: "nesszerra", ...chatter(id, login), mod };
+    const subscription = { id: sub, status: "enabled" };
+    const body = { ...delivery, subscription, event: { ...event, message_id: "dm" + n, message: { text } } };
+    return (await this.post("/eventsub?origin=" + encodeURIComponent("https://staging.example"), body)).body;
+  };
+  /** The bot's reply text to one chat line. */
+  line = async (id: string, login: string, text: string, opts: { mod?: boolean; sub?: string } = {}): Promise<string> =>
+    (await this.say(id, login, text, opts)).reply;
+}
+
+const newBotRoom = (env: Extra = {}) =>
+  new BotRoom(fakeCtx(), asEnv({ INTERNAL_SECRET: SECRET, CHAT_BOT: "1", ...env }));
+/** A bot room with the dev tools on: saves the given fighters, then connects the bot's chat subscription. */
+async function botRoom(env: Extra, ...logins: string[]) {
+  const r = newBotRoom({ ...DEV, ...env });
   await r.saveAll(...logins);
   await r.connectChat("sub-bot");
   return r;
@@ -1652,64 +1382,46 @@ async function botRoom(env: Extra, ...logins: string[]): Promise<BotRoom> {
 
 test("chat bot: commands by the channel names get a reply; chat, other commands and other subscriptions get none", async () => {
   const r = await botRoom({}, "alice", "bob");
-  const say = async (id: string, login: string, text: string, sub = "sub-bot") =>
-    (await r.say(id, login, text, { sub })).reply;
-  assert.match(await say("u1", "alice", "!fray"), /staging\.example\/\?channel=nesszerra/);
-  assert.equal(await say("u1", "alice", "!discord"), "", "another bot's command");
-  assert.equal(await say("u1", "alice", "!fray", "sub-old"), "", "a subscription the room no longer uses");
-  assert.match(await say("u1", "alice", "!challenge @bob"), /bob/);
-  await say("u2", "bob", "!FIGHT");
+  assert.match(await r.line("u1", "alice", "!fray"), /staging\.example\/\?channel=nesszerra/);
+  assert.equal(await r.line("u1", "alice", "!discord"), "", "another bot's command");
+  const old = await r.line("u1", "alice", "!fray", { sub: "sub-old" });
+  assert.equal(old, "", "a subscription the room no longer uses");
+  assert.match(await r.line("u1", "alice", "!challenge @bob"), /bob/);
+  await r.say("u2", "bob", "!FIGHT");
   const settled = r.state().duels.some((d) => d.status === "completed");
   assert.ok(settled, "a quick duel through the bot");
   // StreamElements posts nothing while the bot is connected, and doesn't take the chat source back.
-  const bare: SeOptions = { origin: false, messageId: false, displayName: false };
-  assert.equal(await r.reply("u1", "alice", "help", "", bare), "");
+  assert.equal(await r.reply("u1", "alice", "help", "", BARE), "");
   assert.equal(r.state().chat.subscriptionId, "sub-bot");
   // At most 18 lines per 30 s (Twitch allows 20 for a bot that isn't a mod), and command replies stop 4 short of that
   // so the bot's own result lines still fit; 3 were sent above.
   const replies = [];
-  for (let i = 0; i < 20; i++) replies.push(await say("u1", "alice", "!elo"));
+  for (let i = 0; i < 20; i++) replies.push(await r.line("u1", "alice", "!elo"));
   assert.equal(replies.filter(Boolean).length, 11);
 });
 
 test("chat bot: a notification confirms a pending subscription; without CHAT_BOT, StreamElements takes over as before", async () => {
   const r = room({ CHAT_BOT: "1" }, { quick: true });
   await r.connectChat("sub-bot", "webhook_callback_verification_pending");
-  const reply = (
-    await r.call("/eventsub", {
-      method: "POST",
-      body: {
-        messageId: "p1",
-        messageType: "notification",
-        bot: true,
-        timestamp: Date.now(),
-        subscription: { id: "sub-bot" },
-        event: {
-          chatter_user_id: "u1",
-          chatter_user_login: "alice",
-          chatter_user_name: "alice",
-          message_id: "x1",
-          message: { text: "!ranks" },
-        },
-      },
-    })
-  ).body.reply;
+  // A delivery without a bot id, subscription status or origin.
+  const event = { ...chatter("u1", "alice"), message_id: "x1", message: { text: "!ranks" } };
+  const delivery = { messageId: "p1", messageType: "notification", bot: true, timestamp: Date.now() };
+  const reply = (await r.post("/eventsub", { ...delivery, subscription: { id: "sub-bot" }, event })).body.reply;
   assert.ok(reply);
   assert.equal(r.state().chat.connected, true);
   const plain = room({}, { quick: true });
   await plain.connectChat("sub-bot");
-  const bare: SeOptions = { origin: false, messageId: false, displayName: false };
-  assert.notEqual(await plain.reply("u1", "alice", "help", "", bare), "");
+  assert.notEqual(await plain.reply("u1", "alice", "help", "", BARE), "");
   assert.equal(plain.state().chat.subscriptionId, "se-streamelements");
 });
 
 test("style dollars: buy hats, cosmetics and build slots before dollars, never pets; !give can't move them; private like dollars", async () => {
-  const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40) }, { quick: true });
+  const r = room(DEV, { quick: true });
   await r.connectChat("se-streamelements");
   await r.saveAll("alice", "bob");
-  const style = (userId: string, amount: number) => r.call("/dev-style", { method: "POST", body: { userId, amount } });
+  const style = (userId: string, amount: number) => r.post("/dev-style", { userId, amount });
   const buy = async (kind: string, id = "") => {
-    const { status, body } = await r.call("/shop", { method: "POST", userId: "u1", body: { userId: "u1", kind, id } });
+    const { status, body } = await r.shop("u1", kind, id);
     return [status, body.error || body.reason, body.price, body.dollars, body.styleDollars];
   };
   assert.equal((await style("u9", 100)).status, 404, "no fighter, no style dollars");
@@ -1724,10 +1436,8 @@ test("style dollars: buy hats, cosmetics and build slots before dollars, never p
   assert.equal((await style("u1", 30)).body.styleDollars, 30);
   const profile = await r.profile("u1");
   assert.deepEqual([profile.dollars, profile.styleDollars], [11, 30]);
-  assert.equal(
-    await r.reply("u1", "alice", "wallet"),
-    "@alice: $11 PixFray dollars, $30 style dollars, 0 upgrade points, 0-stream streak.",
-  );
+  const wallet = await r.reply("u1", "alice", "wallet");
+  assert.equal(wallet, "@alice: $11 PixFray dollars, $30 style dollars, 0 upgrade points, 0-stream streak.");
   assert.equal(await r.reply("u2", "bob", "wallet"), "@bob: $0 PixFray dollars, 0 upgrade points, 0-stream streak.");
   const balances = (await r.board()).map((p) => ["dollars", "styleDollars"].filter((k) => k in p));
   assert.deepEqual(balances, [[], []], "the public board shows neither balance");
@@ -1739,40 +1449,34 @@ test("style dollars: buy hats, cosmetics and build slots before dollars, never p
   const given = await r.reply("u1", "alice", "give", "bob", { amount: "11" });
   assert.equal(given, "@alice gave $11 to @bob. You have $0 left.");
   const rows = r.sql("SELECT username, dollars, style_dollars FROM profiles ORDER BY username");
-  assert.deepEqual(
-    rows.map((x) => [x.username, x.dollars, x.style_dollars]),
-    [
-      ["alice", 0, 30],
-      ["bob", 11, 0],
-    ],
-  );
+  const settled = rows.flatMap((x) => [x.username, x.dollars, x.style_dollars]);
+  assert.deepEqual(settled, ["alice", 0, 30, "bob", 11, 0]);
   assert.equal((await style("u1", -1000)).body.styleDollars, 0, "taking style dollars back stops at 0");
 });
 
 test("chat bot: !give gives dollars (and !pay still does); replies name !give", async () => {
   const r = await botRoom({}, "alice", "bob");
-  assert.match((await r.say("u1", "alice", "!give")).reply, /!give @name/);
-  assert.match((await r.say("u1", "alice", "!pay")).reply, /!give @name/, "!pay is an alias");
-  assert.equal((await r.say("u1", "alice", "!givepoints")).reply, "", "StreamElements' name isn't ours");
+  assert.match(await r.line("u1", "alice", "!give"), /!give @name/);
+  assert.match(await r.line("u1", "alice", "!pay"), /!give @name/, "!pay is an alias");
+  assert.equal(await r.line("u1", "alice", "!givepoints"), "", "StreamElements' name isn't ours");
 });
 
 test("chat bot: text commands from the admin page answer in chat, with counters, cooldowns and protected names", async () => {
   const r = await botRoom({});
-  const admin = (action: string, payload: Extra) =>
-    r.admin(action, payload, { actorId: "owner1", actorName: "nesszerra" });
+  const admin = (action: string, payload: Extra) => r.admin(action, payload, OWNER);
   const save = (name: string, reply: string) => admin("saveCommand", { name, reply });
   assert.equal((await save("sens", "0.14 3600dpi")).body.ok, true);
   const saved = await save("!NT", "Nesszerra has tried $(count nt) times!");
   assert.deepEqual(saved.body.botCommands.counters, [{ name: "nt", value: 0 }], "a new counter starts at 0");
   assert.equal((await admin("setCounter", { name: "nt", value: 1 })).body.ok, true);
-  assert.equal((await r.say("u1", "alice", "!sens")).reply, "0.14 3600dpi");
-  assert.equal((await r.say("u1", "alice", "!nt")).reply, "Nesszerra has tried 2 times!");
-  assert.equal((await r.say("u2", "bob", "!nt")).reply, "", "global cooldown");
-  assert.equal((await r.say("u1", "alice", "sens")).reply, "", "needs the !");
+  assert.equal(await r.line("u1", "alice", "!sens"), "0.14 3600dpi");
+  assert.equal(await r.line("u1", "alice", "!nt"), "Nesszerra has tried 2 times!");
+  assert.equal(await r.line("u2", "bob", "!nt"), "", "global cooldown");
+  assert.equal(await r.line("u1", "alice", "sens"), "", "needs the !");
   must(r.commandCooldowns).clear();
-  assert.equal((await r.say("u2", "bob", "!NT now")).reply, "Nesszerra has tried 3 times!");
+  assert.equal(await r.line("u2", "bob", "!NT now"), "Nesszerra has tried 3 times!");
   await save("hug", "${user} hugs ${touser} (${getcount nt})");
-  assert.equal((await r.say("u1", "alice", "!hug @bob")).reply, "alice hugs bob (3)");
+  assert.equal(await r.line("u1", "alice", "!hug @bob"), "alice hugs bob (3)");
   assert.equal((await r.say("u1", "alice", "!unknown")).reason, "not_command");
   // Names PixFray uses, and bad input, are refused.
   const taken = ["fray", "!give", "pay", "fight", "challenge"];
@@ -1786,66 +1490,48 @@ test("chat bot: text commands from the admin page answer in chat, with counters,
   assert.equal((await admin("setCounter", { name: "nt", value: -1 })).body.error, "invalid_counter_value");
   // Edit with a rename, then delete; the admin page sees the list.
   assert.equal((await admin("saveCommand", { name: "sensitivity", reply: "0.15", oldName: "!sens" })).body.ok, true);
-  const names = (await r.call("/admin")).body.botCommands.commands.map((c: { name: string }) => c.name);
+  const names = (await r.adminView()).botCommands.commands.map((c: { name: string }) => c.name);
   assert.deepEqual(names, ["!hug", "!nt", "!sensitivity"]);
   must(r.commandCooldowns).clear();
-  assert.equal((await r.say("u1", "alice", "!sens")).reply, "");
+  assert.equal(await r.line("u1", "alice", "!sens"), "");
   assert.equal((await admin("deleteCommand", { name: "hug" })).body.botCommands.commands.length, 2);
   // A reply the cap would drop doesn't count or start the cooldown.
   must(r.commandCooldowns).clear();
   r.botReplies = Array(14).fill(Date.now());
   assert.equal((await r.say("u1", "alice", "!nt")).reason, "reply_limit");
   r.botReplies = [];
-  assert.equal((await r.say("u1", "alice", "!nt")).reply, "Nesszerra has tried 4 times!");
+  assert.equal(await r.line("u1", "alice", "!nt"), "Nesszerra has tried 4 times!");
   // A reply that can outgrow a chat line saves with a warning and is cut at a word break.
   assert.equal(saved.body.warning, undefined);
-  const long = await save("long", "${user} ".repeat(10) + "x".repeat(300));
-  assert.deepEqual(
-    [long.body.ok, long.body.warning, long.body.longest, long.body.max],
-    [true, "reply_may_be_cut", 560, 480],
-  );
-  const cut = (await r.say("u3", "abcdefghijklmnopqrstuvwxy", "!long")).reply;
+  const long = (await save("long", "${user} ".repeat(10) + "x".repeat(300))).body;
+  assert.deepEqual([long.ok, long.warning, long.longest, long.max], [true, "reply_may_be_cut", 560, 480]);
+  const cut = await r.line("u3", "abcdefghijklmnopqrstuvwxy", "!long");
   assert.ok(cut.length <= 480 && cut.endsWith("abcdefghijklmnopqrstuvwxy…"), cut);
 });
 
 test("chat bot status: heard, sent and dropped replies, held-back replies and !fray debug for mods", async () => {
   const r = await botRoom({}, "alice");
-  const status = async () => (await r.call("/admin")).body.botStatus;
+  const status = async () => (await r.adminView()).botStatus;
   assert.deepEqual((({ heardAt, sent, failed }) => [heardAt, sent, failed])(await status()), [0, 0, 0]);
   await r.say("u1", "alice", "!elo");
-  for (const result of [
-    { sent: true, reason: "" },
-    { sent: false, reason: "msg_duplicate" },
-  ])
-    await r.call("/bot-sent", { method: "POST", body: { results: [result] } });
+  await r.post("/bot-sent", { results: [{ sent: true, reason: "" }] });
+  await r.post("/bot-sent", { results: [{ sent: false, reason: "msg_duplicate" }] });
   const s = await status();
   assert.equal(s.heard, "alice !elo");
   assert.ok(s.heardAt > 0 && s.sentAt > 0 && s.failedAt >= s.sentAt);
-  assert.deepEqual(
-    [s.sent, s.failed, s.failedReason, s.failedText],
-    [1, 1, "msg_duplicate", "the same line twice within 30 s (msg_duplicate)"],
-  );
+  const dup = "the same line twice within 30 s (msg_duplicate)";
+  assert.deepEqual([s.sent, s.failed, s.failedReason, s.failedText], [1, 1, "msg_duplicate", dup]);
   assert.match((await r.logs("warn"))[0].message, /^bot reply dropped: the same line twice/);
   // !fray debug: broadcaster, mods and the bot get the status line; viewers get a no
-  const line = (await r.say("u2", "modmia", "!fray debug", { mod: true })).reply;
-  assert.match(
-    line,
-    /^PixFray debug: chat connected · last command alice !elo \d+ s · replies 1 sent, 1 dropped \(last drop \d+ s: the same line twice within 30 s \(msg_duplicate\)\) · \d+\/18 replies in 30 s · reminder off$/,
-  );
-  assert.match((await r.say("u1", "alice", "!fray debug")).reply, /only the broadcaster or a mod/);
+  const line = await r.line("u2", "modmia", "!fray debug", { mod: true });
+  const debug =
+    /^PixFray debug: chat connected · last command alice !elo \d+ s · replies 1 sent, 1 dropped \(last drop \d+ s: the same line twice within 30 s \(msg_duplicate\)\) · \d+\/18 replies in 30 s · reminder off$/;
+  assert.match(line, debug);
+  assert.match(await r.line("u1", "alice", "!fray debug"), /only the broadcaster or a mod/);
   // An old subscription's line, and the reply cap, are held back, noted and logged.
-  await r.call("/eventsub", {
-    method: "POST",
-    body: {
-      messageId: "old1",
-      messageType: "notification",
-      bot: true,
-      botId: "u9",
-      timestamp: Date.now(),
-      subscription: { id: "sub-old" },
-      event: { chatter_user_id: "u1", chatter_user_login: "alice", message_id: "o1", message: { text: "!elo" } },
-    },
-  });
+  const event = { chatter_user_id: "u1", chatter_user_login: "alice", message_id: "o1", message: { text: "!elo" } };
+  const old = { messageId: "old1", messageType: "notification", bot: true, botId: "u9", timestamp: Date.now() };
+  await r.post("/eventsub", { ...old, subscription: { id: "sub-old" }, event });
   assert.equal((await status()).heldReason, "unknown_subscription");
   for (let i = 0; i < 20; i++) await r.say("u1", "alice", "!elo");
   assert.equal((await status()).heldReason, "reply_limit");
@@ -1857,31 +1543,28 @@ test("chat bot status: heard, sent and dropped replies, held-back replies and !f
 
 test("chat bot: !fray off / !fray on (broadcaster or mod) silences the whole bot; the admin page toggles it too", async () => {
   const r = await botRoom({}, "alice", "bob");
-  assert.match((await r.say("u1", "alice", "!fray off")).reply, /^PixFray duels/, "a viewer gets the help line");
+  assert.match(await r.line("u1", "alice", "!fray off"), /^PixFray duels/, "a viewer gets the help line");
   assert.equal(r.state().config.botEnabled, true);
-  assert.match((await r.say("u2", "modmia", "!fray off", { mod: true })).reply, /^PixFray bot is off: .*!fray on\.$/);
+  assert.match(await r.line("u2", "modmia", "!fray off", { mod: true }), /^PixFray bot is off: .*!fray on\.$/);
   const s = r.state();
   assert.equal(s.config.botEnabled, false);
   assert.deepEqual(r.dueResults(s, Date.now()), [], "no result lines while off");
   for (const text of ["!fray", "!challenge @bob", "!elo", "!fray debug", "!fray on"])
-    assert.equal((await r.say("u1", "alice", text)).reply, "", "silent for " + text);
+    assert.equal(await r.line("u1", "alice", text), "", "silent for " + text);
   assert.equal(r.state().duels.length, s.duels.length, "no duel started");
   const now = r.state();
   assert.equal(r.reminderDue({ ...now, config: { ...now.config, reminderMin: 30 } }), 0, "no reminder while off");
-  assert.match((await r.say("u2", "modmia", "!fray off", { mod: true })).reply, /is off/, "off again just says so");
-  assert.match(
-    (await r.say("owner1", "nesszerra", "!fray on")).reply,
-    /^PixFray bot is on\. Type !fray to play\.$/,
-    "the broadcaster turns it back on",
-  );
-  assert.match((await r.say("u1", "alice", "!challenge @bob")).reply, /bob/);
+  assert.match(await r.line("u2", "modmia", "!fray off", { mod: true }), /is off/, "off again just says so");
+  const on = await r.line("owner1", "nesszerra", "!fray on");
+  assert.match(on, /^PixFray bot is on\. Type !fray to play\.$/, "the broadcaster turns it back on");
+  assert.match(await r.line("u1", "alice", "!challenge @bob"), /bob/);
   // the admin page's Rules switch is the same setting
-  const cfg = (patch: Extra) => r.admin("config", { patch }, { actorId: "owner1", actorName: "nesszerra" });
+  const cfg = (patch: Extra) => r.admin("config", { patch }, OWNER);
   assert.equal((await cfg({ botEnabled: false })).body.ok, true);
-  assert.equal((await r.say("u2", "bob", "!fight")).reply, "");
+  assert.equal(await r.line("u2", "bob", "!fight"), "");
   assert.equal((await cfg({ botEnabled: "no" })).body.reason, "invalid_config_botEnabled");
   assert.equal((await cfg({ botEnabled: true })).body.ok, true);
-  assert.notEqual((await r.say("u2", "bob", "!elo")).reply, "");
+  assert.notEqual(await r.line("u2", "bob", "!elo"), "");
 });
 
 // The bot posts through Helix. Twitch is faked: an app token, then every chat line is recorded.
@@ -1925,10 +1608,9 @@ test("chat bot reminder: off by default; on, it posts the !fray line as the bot 
   await r.postReminder("nesszerra", due + 30 * 60000);
   assert.equal(tw.sent.length, 1);
   assert.deepEqual([tw.sent[0].broadcaster_id, tw.sent[0].sender_id], ["owner1", "u9"]);
-  assert.match(
-    tw.sent[0].message,
-    /^PixFray duels: name your rival.*Again\? !rematch\. More: !checkin !wallet !ranks !look\. Gear up at https:\/\/staging\.example\/\?channel=nesszerra$/,
-  );
+  const reminder =
+    /^PixFray duels: name your rival.*Again\? !rematch\. More: !checkin !wallet !ranks !look\. Gear up at https:\/\/staging\.example\/\?channel=nesszerra$/;
+  assert.match(tw.sent[0].message, reminder);
   await r.postReminder("nesszerra", due + 30 * 60000 + 1000);
   assert.equal(tw.sent.length, 1, "not again until the next interval");
   // Turned off, or the bot disconnected: nothing due.
@@ -1944,14 +1626,13 @@ test('chat bot: an unanswered challenge gets a "challenge expired" line, from th
       for (const d of s.duels) if (d.status === "pending") d.expiresAt = Date.now() - 1;
     });
   // The alarm notices it: the bot posts the line itself, and it counts as a sent reply.
-  assert.match((await r.say("u1", "alice", "!challenge @bob")).reply, /alice challenges @bob/);
+  assert.match(await r.line("u1", "alice", "!challenge @bob"), /alice challenges @bob/);
   expire();
   await r.alarm();
-  assert.deepEqual(
-    tw.sent.map((m) => [m.sender_id, m.message]),
-    [["u9", "Challenge expired: @bob didn't answer alice within 30 s. alice, try again with !challenge @bob"]],
-  );
-  assert.equal((await r.call("/admin")).body.botStatus.sent, 1);
+  const expired = "Challenge expired: @bob didn't answer alice within 30 s. alice, try again with !challenge @bob";
+  const posted = tw.sent.map((m) => [m.sender_id, m.message]);
+  assert.deepEqual(posted, [["u9", expired]]);
+  assert.equal((await r.adminView()).botStatus.sent, 1);
   await r.alarm();
   assert.equal(tw.sent.length, 1, "said once");
   // A later command notices it first: the line comes before that command's reply, and the alarm doesn't repeat it.
@@ -1969,8 +1650,7 @@ test("chat bot: after the stream has played a duel, the bot says who won and the
   const r = await botRoom(tw.env, "alice", "bob");
   await r.say("u1", "alice", "!challenge @bob");
   assert.match((await r.say("u2", "bob", "!fight")).replies.join(" "), /Watch the stream for the winner/);
-  // as: a completed duel always carries its reveal time
-  const duel = must(r.state().duels.find((d) => d.status === "completed")) as Revealed;
+  const duel = r.completed();
   assert.ok(duel.revealAt > Date.now());
   await r.scheduleAlarm(r.state());
   assert.ok(must(r.ctx.storage.alarm) <= duel.revealAt + 1, "the alarm wakes for the reveal");
@@ -1997,10 +1677,7 @@ test("chat bot: a result line survives a full reply cap, a Twitch outage, a miss
   const duel = async ({ shown = true } = {}) => {
     await r.say("u1", "alice", "!challenge @bob");
     await r.say("u2", "bob", "!fight");
-    r.edit((s) => {
-      s.rematchLocks = [];
-      for (const p of s.players) p.respawnAt = 0;
-    });
+    r.rested();
     if (shown) reveal();
   };
   const results = () => tw.sent.filter((m) => / beat /.test(m.message)).length;
@@ -2045,31 +1722,26 @@ test("chat bot: a result line survives a full reply cap, a Twitch outage, a miss
 
 test("chat bot: !accept, !duel and !top are hidden aliases, unless the channel uses those names", async () => {
   const r = await botRoom({}, "alice", "bob");
-  assert.match((await r.say("u1", "alice", "!duel @bob")).reply, /^alice challenges @bob!/);
-  assert.match((await r.say("u2", "bob", "!ACCEPT")).reply, /^Fight on: alice vs bob!/);
-  assert.match((await r.say("u1", "alice", "!top")).reply, /^Top \d: /);
+  assert.match(await r.line("u1", "alice", "!duel @bob"), /^alice challenges @bob!/);
+  assert.match(await r.line("u2", "bob", "!ACCEPT"), /^Fight on: alice vs bob!/);
+  assert.match(await r.line("u1", "alice", "!top"), /^Top \d: /);
   // Trailing punctuation still names the viewer.
-  assert.match((await r.say("u1", "alice", "!elo @bob,")).reply, /^bob: /);
+  assert.match(await r.line("u1", "alice", "!elo @bob,"), /^bob: /);
   // A custom !top command wins over the alias.
-  const saved = await r.admin(
-    "saveCommand",
-    { name: "!top", reply: "custom top" },
-    { actorId: "owner1", actorName: "nesszerra" },
-  );
+  const saved = await r.admin("saveCommand", { name: "!top", reply: "custom top" }, OWNER);
   assert.equal(saved.body.ok, true);
-  assert.equal((await r.say("u1", "alice", "!top")).reply, "custom top");
+  assert.equal(await r.line("u1", "alice", "!top"), "custom top");
 });
 
 test("!checkin does not count a win the stream has not shown yet", async () => {
-  const r = await botRoom({ DEV_TOOLS_TOKEN: "x".repeat(40) }, "alice", "bob");
+  const r = await botRoom(DEV, "alice", "bob");
   await r.devLive(true, "s1");
   await r.say("u1", "alice", "!challenge @bob");
   await r.say("u2", "bob", "!fight");
-  // as: a completed duel always carries its reveal time
-  const d = must(r.state().duels.find((x) => x.status === "completed")) as Revealed;
+  const d = r.completed();
   assert.ok(d.revealAt > Date.now());
   const [id, login] = d.winnerId === "u1" ? ["u1", "alice"] : ["u2", "bob"];
-  assert.match((await r.say(id, login, "!checkin")).reply, / 1 point, 1 unspent\./, "the hidden win is not counted");
+  assert.match(await r.line(id, login, "!checkin"), / 1 point, 1 unspent\./, "the hidden win is not counted");
 });
 
 test("debug bot: a challenge aimed at the bot is fought back, !fray spar challenges you; off without BOT_DEBUG", async () => {
@@ -2081,27 +1753,22 @@ test("debug bot: a challenge aimed at the bot is fought back, !fray spar challen
   assert.match(fought.replies[1], /Fight on: alice vs pixbot/);
   assert.ok(r.state().duels.some((d) => d.status === "completed" && d.a === "u1" && d.b === "u9"));
   await sleep(10);
-  r.edit((s) => {
-    s.rematchLocks = [];
-    for (const p of s.players) p.respawnAt = 0;
-    for (const d of s.duels) d.revealAt = 0;
-  });
+  r.rested();
+  r.edit((s) => s.duels.forEach((d) => (d.revealAt = 0)));
   const spar = await r.say("u1", "alice", "!fray spar");
   assert.deepEqual(spar.replies.length, 1);
   assert.match(spar.reply, /pixbot challenges @alice/);
   assert.ok(r.state().duels.some((d) => d.status === "pending" && d.a === "u9" && d.b === "u1"));
-  assert.match((await r.say("u9", "pixbot", "!fray spar")).reply, /can't spar with itself/);
+  assert.match(await r.line("u9", "pixbot", "!fray spar"), /can't spar with itself/);
 
   const plain = await botRoom({}, "alice", "pixbot");
   // Without BOT_DEBUG the bot account is refused as a rival or a wallet.
   const once = await plain.say("u1", "alice", "!challenge @pixbot");
   assert.deepEqual(once.replies, ["The bot doesn't fight (yet)! Name a rival: !challenge @name"]);
   assert.ok(!plain.state().duels.length, "no challenge opened");
-  assert.equal(
-    (await plain.say("u1", "alice", "!give @pixbot 5")).reply,
-    "The bot doesn't take dollars. Give them to a rival!",
-  );
-  assert.match((await plain.say("u1", "alice", "!fray spar")).reply, /gear up/i, "spar is just the help reply");
+  const give = await plain.line("u1", "alice", "!give @pixbot 5");
+  assert.equal(give, "The bot doesn't take dollars. Give them to a rival!");
+  assert.match(await plain.line("u1", "alice", "!fray spar"), /gear up/i, "spar is just the help reply");
 });
 
 test("debug bot: the real bot login (pixfray, a known chat bot) still plays every e2e step on the test site", async (t) => {
@@ -2121,7 +1788,7 @@ test("debug bot: the real bot login (pixfray, a known chat bot) still plays ever
 test("debug bot: !fray e2e plays every command once against the asker and posts which steps passed", async () => {
   const r = await botRoom({ BOT_DEBUG: "1" }, "alice", "pixbot");
   await r.devLive(false);
-  assert.match((await r.say("u1", "alice", "!fray e2e")).reply, /only the broadcaster or a mod/);
+  assert.match(await r.line("u1", "alice", "!fray e2e"), /only the broadcaster or a mod/);
   const run = await r.say("u1", "alice", "!fray e2e", { mod: true });
   assert.match(run.replies[0], /^PixFray e2e, pixbot vs alice: 19 of 19 steps passed\.$/);
   const detail = run.replies.slice(1).join(" · ");
@@ -2141,14 +1808,14 @@ test("debug bot: !fray e2e plays every command once against the asker and posts 
     ["u9", "pixbot", "!fray e2e @nobody", /@nobody has no saved fighter/],
     ["owner1", "nesszerra", "!fray e2e", /@nesszerra has no saved fighter/],
   ] satisfies [string, string, string, RegExp][])
-    assert.match((await r.say(id, login, text)).reply, reply, login + " " + text);
+    assert.match(await r.line(id, login, text), reply, login + " " + text);
 });
 
 test("!checkin test mode: answers while offline with what a check-in would give, saves nothing, ends by itself, and steps aside when live", async (t) => {
-  const r = room({ DEV_TOOLS_TOKEN: "x".repeat(40) }, { quick: true });
+  const r = room(DEV, { quick: true });
   const say = (id: string, login: string) => r.reply(id, login, "checkin");
-  const test = (on: boolean) => r.call("/checkin-test", { method: "POST", body: { on, by: "ModMia" } });
-  const checkinTest = async () => (await r.call("/admin")).body.checkinTest;
+  const test = (on: boolean) => r.post("/checkin-test", { on, by: "ModMia" });
+  const checkinTest = async () => (await r.adminView()).checkinTest;
   await r.save("u1", "alice");
   await r.devLive(true, "s1");
   assert.match(await say("u1", "alice"), /^@alice checked in: \+1 point \(1-stream streak\)/);
@@ -2184,34 +1851,20 @@ test("!checkin test mode: answers while offline with what a check-in would give,
 test("viewer sprites: send, mod approves, worn and in the catalog with its owner; reject, replace, remove, limits", async () => {
   const r = room();
   await r.save("u1", "alice");
-  const send = (userId: string, label: string, extra: Extra = {}) =>
-    r.call("/sprites", {
-      method: "POST",
-      body: {
-        userId,
-        username: userId === "u1" ? "alice" : "bob",
-        displayName: userId === "u1" ? "Alice" : "Bob",
-        label,
-        image: b64(makePng(64, 96)),
-        ...extra,
-      },
-    });
+  const send = (userId: string, label: string, extra: Extra = {}) => {
+    const [username, displayName] = userId === "u1" ? ["alice", "Alice"] : ["bob", "Bob"];
+    return r.post("/sprites", { userId, username, displayName, label, image: b64(makePng(64, 96)), ...extra });
+  };
   const review = (id: string, action: string) =>
-    r.call("/sprites/review", { method: "POST", body: { id, action, actorId: "mod1", actorName: "Mod" } });
-  const raw = (path: string) =>
-    r.fetch(
-      new Request("https://room" + path, { headers: { "X-Mini-Internal": SECRET, "X-Mini-Channel": "nesszerra" } }),
-    );
+    r.post("/sprites/review", { id, action, actorId: "mod1", actorName: "Mod" });
+  const headers = { "X-Mini-Internal": SECRET, "X-Mini-Channel": "nesszerra" };
+  const raw = (path: string) => r.fetch(new Request("https://room" + path, { headers }));
   const catalog = async () => (await r.call("/catalog")).body;
   const mine = async () => (await r.call("/sprites/mine?userId=u1")).body;
   // What alice wears: on her stored profile, on stage, and in build slot 1 (null until that slot exists).
   const worn = async () => {
     const build = r.sql("SELECT data FROM builds WHERE user_id = 'u1' AND slot = 1")[0];
-    return [
-      (await r.profile("u1")).avatar,
-      must(r.state().players.find((p) => p.userId === "u1")).avatar,
-      build ? JSON.parse(build.data).avatar : null,
-    ];
+    return [(await r.profile("u1")).avatar, r.player("u1").avatar, build ? JSON.parse(build.data).avatar : null];
   };
 
   const first = await send("u1", "My Cat!", { ai: true });
@@ -2235,23 +1888,20 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
   assert.deepEqual(await worn(), [id1, id1, null]);
   assert.ok(ws.sent.length > 0);
   const entry = (await catalog())[0];
-  assert.deepEqual(
-    [entry.id, entry.owner, entry.mode, entry.url, entry.frames, entry.license],
-    [id1, "u1", "single", "/api/assets/nesszerra/" + id1, [{ x: 0, y: 0, w: 64, h: 96 }], "Uploaded by Alice"],
-  );
+  const frames = [{ x: 0, y: 0, w: 64, h: 96 }];
+  const listing = [id1, "u1", "single", "/api/assets/nesszerra/" + id1, frames, "Uploaded by Alice"];
+  assert.deepEqual([entry.id, entry.owner, entry.mode, entry.url, entry.frames, entry.license], listing);
   const asset = await raw("/asset/" + id1);
   assert.deepEqual([asset.status, asset.headers.get("content-type")], [200, "image/png"]);
   assert.equal((await review(id1, "approve")).status, 409);
 
   // A second approved sprite replaces the first everywhere, build slots included.
-  r.sql(
-    "INSERT INTO builds (user_id, slot, data) VALUES ('u1', 1, ?)",
-    JSON.stringify({ avatar: id1, color: "#123456" }),
-  );
+  const slot1 = JSON.stringify({ avatar: id1, color: "#123456" });
+  r.sql("INSERT INTO builds (user_id, slot, data) VALUES ('u1', 1, ?)", slot1);
   const id2 = (await send("u1", "Dog")).body.pending.id;
   await review(id2, "approve");
-  const listedIds = (await catalog()).map((e: { id: string }) => e.id);
-  assert.deepEqual(listedIds, [id2]);
+  const listed = (await catalog()).map((e: { id: string }) => e.id);
+  assert.deepEqual(listed, [id2]);
   assert.equal((await raw("/asset/" + id1)).status, 404);
   assert.deepEqual(await worn(), [id2, id2, id2]);
 
@@ -2260,21 +1910,14 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
   assert.equal((await review(id3, "reject")).body.status, "rejected");
   assert.equal((await raw("/sprites/png/" + id3)).status, 404);
   const after = await mine();
-  assert.deepEqual(
-    [after.rejected.id, after.pending, after.live.id, after.live.url],
-    [id3, null, id2, "/api/assets/nesszerra/" + id2],
-  );
+  const liveUrl = "/api/assets/nesszerra/" + id2;
+  assert.deepEqual([after.rejected.id, after.pending, after.live.id, after.live.url], [id3, null, id2, liveUrl]);
   // A viewer with no fighter yet: approval only adds it to the catalog.
   const idb = (await send("u2", "Bob Sprite")).body.pending.id;
   await review(idb, "approve");
   assert.equal(await r.profile("u2"), null);
-  assert.deepEqual(
-    (await catalog()).map((e: { id: string; owner: string }) => [e.id, e.owner]),
-    [
-      [id2, "u1"],
-      [idb, "u2"],
-    ],
-  );
+  const owners = (await catalog()).flatMap((e: { id: string; owner: string }) => [e.id, e.owner]);
+  assert.deepEqual(owners, [id2, "u1", idb, "u2"]);
 
   // Remove: fighters wearing it go back to the default character.
   assert.equal((await review(id2, "remove")).body.status, "removed");
@@ -2299,13 +1942,13 @@ test("viewer sprites: send, mod approves, worn and in the catalog with its owner
 
 test("viewer sprites: AI redraws per viewer and per channel each day, refunded when the model fails", async () => {
   const r = room();
-  const take = (userId: string) => r.call("/sprites/ai", { method: "POST", body: { userId, op: "take" } });
+  const take = (userId: string) => r.post("/sprites/ai", { userId, op: "take" });
   assert.deepEqual((await take("u1")).body, { ok: true, left: 2 });
   await take("u1");
   await take("u1");
   const over = await take("u1");
   assert.deepEqual([over.status, over.body.reason], [429, "ai_daily_limit"]);
-  await r.call("/sprites/ai", { method: "POST", body: { userId: "u1", op: "refund" } });
+  await r.post("/sprites/ai", { userId: "u1", op: "refund" });
   assert.equal((await take("u1")).body.left, 0);
   // The channel cap: other viewers' redraws count toward it.
   r.sql("INSERT INTO sprite_usage (user_id, day, ai) VALUES ('many', ?, 57)", new Date().toISOString().slice(0, 10));
@@ -2316,13 +1959,8 @@ test("viewer sprites: AI redraws per viewer and per channel each day, refunded w
 test('rooms answer the overlay "ping" with "pong" through the WebSocket auto-response, without waking', () => {
   const had = "WebSocketRequestResponsePair" in globalThis,
     original = workerGlobals.WebSocketRequestResponsePair;
-  workerGlobals.WebSocketRequestResponsePair = function (
-    this: { request: string; response: string },
-    request: string,
-    response: string,
-  ) {
-    this.request = request;
-    this.response = response;
+  workerGlobals.WebSocketRequestResponsePair = function (this: object, request: string, response: string) {
+    Object.assign(this, { request, response });
   };
   try {
     const ctx = fakeCtx(),
@@ -2330,8 +1968,8 @@ test('rooms answer the overlay "ping" with "pong" through the WebSocket auto-res
       pairs: Loose[] = [];
     ctx.setWebSocketAutoResponse = (pair) => pairs.push(pair);
     new ChannelRoom(ctx, asEnv({}));
-    const autoReplies = pairs.map((p) => [p.request, p.response]);
-    assert.deepEqual(autoReplies, [["ping", "pong"]]);
+    const registered = pairs.map((p) => [p.request, p.response]);
+    assert.deepEqual(registered, [["ping", "pong"]]);
   } finally {
     if (had) workerGlobals.WebSocketRequestResponsePair = original;
     else delete workerGlobals.WebSocketRequestResponsePair;
@@ -2343,11 +1981,9 @@ test("legendary pets: 4 stats rolled at purchase, one free reroll to a new set, 
   await r.connectChat("se-streamelements");
   await r.saveAll("alice", "bob");
   await r.admin("giftDollars", { username: "alice", amount: 2000 });
-  const shop = (userId: string, kind: string, id: string) =>
-    r.call("/shop", { method: "POST", userId, body: { userId, kind, id } });
   const refused = async (userId: string, id: string) =>
-    (({ status, body }) => [status, body.error])(await shop(userId, "reroll", id));
-  const bought = (await shop("u1", "pet", "dragon")).body;
+    (({ status, body }) => [status, body.error])(await r.shop(userId, "reroll", id));
+  const bought = (await r.shop("u1", "pet", "dragon")).body;
   const roll: string[] = bought.owned.rolls.dragon;
   assert.equal(roll.length, 4);
   assert.equal(new Set(roll).size, 4, "4 different stats");
@@ -2358,35 +1994,28 @@ test("legendary pets: 4 stats rolled at purchase, one free reroll to a new set, 
   assert.deepEqual(saved.petBoost, fullStats(Object.fromEntries(roll.map((s) => [s, 1]))));
   // Not a legendary, or not owned: nothing to reroll.
   assert.deepEqual(await refused("u2", "dragon"), [400, "unknown_item"]);
-  await shop("u1", "pet", "fox");
+  await r.shop("u1", "pet", "fox");
   assert.deepEqual(await refused("u1", "fox"), [400, "unknown_item"]);
   // An open challenge with the dragon out blocks the reroll.
-  const challenge = await r.se("u1", "alice", "challenge", "bob", {
-    origin: false,
-    displayName: false,
-    messageId: "c1",
-  });
+  const challenge = await r.se("u1", "alice", "challenge", "bob", { ...BARE, messageId: "c1" });
   assert.equal(challenge.status, 200);
   assert.deepEqual(await refused("u1", "dragon"), [409, "in_duel"]);
   await r.admin("cancelDuel", { duelId: must(r.state().duels[0]).id });
-  const again = (await shop("u1", "reroll", "dragon")).body;
+  const again = (await r.shop("u1", "reroll", "dragon")).body;
   assert.equal(again.ok, true, again.error);
   assert.notDeepEqual(again.owned.rolls.dragon, roll, "a reroll never gives the same set");
   assert.deepEqual(again.owned.rerolled, ["dragon"]);
-  const player = must(r.state().players.find((p) => p.userId === "u1"));
   const rerolled = fullStats(Object.fromEntries(again.owned.rolls.dragon.map((s: string) => [s, 1])));
-  assert.deepEqual(player.petBoost, rerolled, "the fighter on stage takes the new roll");
+  assert.deepEqual(r.player("u1").petBoost, rerolled, "the fighter on stage takes the new roll");
   assert.deepEqual(await refused("u1", "dragon"), [409, "rerolled"]);
 });
 
 test("legendary pets bought before rolls get one when the room starts", async () => {
   const r = room();
   await r.save("u1", "alice");
-  r.sql(
-    "INSERT INTO owned_items (user_id, kind, item_id, price, bought_at) VALUES ('u1', 'pet', 'phoenix', 900, 1), ('u1', 'pet', 'fox', 60, 2)",
-  );
-  // Env: a partial Env on purpose
-  new ChannelRoom(r.ctx, { INTERNAL_SECRET: SECRET } as Env);
+  const pets = "('u1', 'pet', 'phoenix', 900, 1), ('u1', 'pet', 'fox', 60, 2)";
+  r.sql("INSERT INTO owned_items (user_id, kind, item_id, price, bought_at) VALUES " + pets);
+  new ChannelRoom(r.ctx, asEnv({ INTERNAL_SECRET: SECRET }));
   const rows = Object.fromEntries(r.sql("SELECT item_id, roll FROM owned_items").map((x) => [x.item_id, x.roll]));
   assert.equal(rows.fox, "", "only legendaries roll");
   assert.equal(String(rows.phoenix).split(",").length, 4);
@@ -2394,7 +2023,7 @@ test("legendary pets bought before rolls get one when the room starts", async ()
 
 test("!stats: own levels that count, unspent points and the pet; @name for someone else", async () => {
   const r = room({}, { quick: true });
-  assert.equal((await r.call("/admin")).body.streamelements.names.stats, "!stats");
+  assert.equal((await r.adminView()).streamelements.names.stats, "!stats");
   await r.saveAll("alice", "bob");
   // Ten wins, in the database and in the live game state (duels keep the two in step).
   r.sql("UPDATE profiles SET wins = 10 WHERE user_id = 'u1'");
@@ -2406,10 +2035,8 @@ test("!stats: own levels that count, unspent points and the pet; @name for someo
   assert.equal(await stats(), "@alice: Power 2, Vitality 3. 5 points unspent.");
   assert.equal(await stats("bob"), "@bob: no upgrades yet. 0 points unspent.", "no limit by default");
   r.edit((s) => (s.config.pairRankedPerStream = 5));
-  assert.equal(
-    await stats("bob"),
-    "@bob: no upgrades yet. 0 points unspent. 5 ranked duels left between you this stream.",
-  );
+  const capped = "@bob: no upgrades yet. 0 points unspent. 5 ranked duels left between you this stream.";
+  assert.equal(await stats("bob"), capped);
   assert.match(await stats("nobody"), /nobody/);
 });
 
@@ -2417,15 +2044,12 @@ test("!changelog: the newest release and the changelog link, from the bot and St
   const line = (origin: string) =>
     `PixFray ${LATEST_RELEASE.version}: ${LATEST_RELEASE.name}. Every change: ${origin}/changelog/`;
   const bot = await botRoom({});
-  assert.equal((await bot.say("u1", "alice", "!changelog")).reply, line("https://staging.example"));
+  assert.equal(await bot.line("u1", "alice", "!changelog"), line("https://staging.example"));
   const r = room({}, { quick: true });
-  assert.equal((await r.call("/admin")).body.streamelements.names.changelog, "!changelog");
+  assert.equal((await r.adminView()).streamelements.names.changelog, "!changelog");
   r.edit((s) => (s.config.enabled = false));
-  assert.equal(
-    await r.reply("u9", "nofighter", "changelog"),
-    line("https://test.example"),
-    "no fighter needed, and it works while duels are paused",
-  );
+  const paused = "no fighter needed, and it works while duels are paused";
+  assert.equal(await r.reply("u9", "nofighter", "changelog"), line("https://test.example"), paused);
 });
 
 test("!resetpair @a @b: mods start a pair's ranked count for this stream over; the mod page does the same", async () => {
@@ -2436,9 +2060,9 @@ test("!resetpair @a @b: mods start a pair's ranked count for this stream over; t
       s.config.pairRankedPerStream = 5;
       s.pairPlays = [...plays("u1:u2", 5), ...plays("u1:u3", 2)];
     });
-  const mod = async (text: string) => (await r.say("u9", "modmia", text, { mod: true })).reply;
+  const mod = (text: string) => r.line("u9", "modmia", text, { mod: true });
   seed();
-  assert.match((await r.say("u1", "alice", "!resetpair @alice @bob")).reply, /only the broadcaster or a mod/i);
+  assert.match(await r.line("u1", "alice", "!resetpair @alice @bob"), /only the broadcaster or a mod/i);
   assert.equal(r.state().pairPlays.length, 7, "a viewer changes nothing");
   assert.equal(await mod("!resetpair @Alice @bob"), "Ranked duels reset for alice and bob: 5 left this stream.");
   const pairsLeft = r.state().pairPlays.map((p) => p.pair);
@@ -2461,12 +2085,8 @@ test("legendary rolls: 4 different stats in STATS order, never the set it replac
   assert.deepEqual(rollLegendary(seq([0])), ["power", "guard", "luck", "crit"]);
   i = 0;
   // the same draw again is refused; the next draw (last stat each time) wins
-  assert.deepEqual(rollLegendary(seq([0, 0, 0, 0, 0.99, 0.99, 0.99, 0.99]), ["power", "guard", "luck", "crit"]), [
-    "crit",
-    "dodge",
-    "counter",
-    "vitality",
-  ]);
+  const last = rollLegendary(seq([0, 0, 0, 0, 0.99, 0.99, 0.99, 0.99]), ["power", "guard", "luck", "crit"]);
+  assert.deepEqual(last, ["crit", "dodge", "counter", "vitality"]);
   for (let n = 0; n < 50; n++) {
     const roll = rollLegendary();
     assert.equal(new Set(roll).size, 4);
@@ -2479,10 +2099,8 @@ test("legendary rolls: 4 different stats in STATS order, never the set it replac
     ["", [], "empty"],
   ] satisfies [string, string[], string][])
     assert.deepEqual(parseRoll(text), roll, why);
-  assert.deepEqual(
-    petOf("dragon", "", "crit,dodge,luck,vitality")?.boost,
-    fullStats({ luck: 1, crit: 1, dodge: 1, vitality: 1 }),
-  );
+  const rolled = petOf("dragon", "", "crit,dodge,luck,vitality")?.boost;
+  assert.deepEqual(rolled, fullStats({ luck: 1, crit: 1, dodge: 1, vitality: 1 }));
   assert.deepEqual(petOf("dragon")?.boost, fullStats({}), "an unrolled legendary boosts nothing");
   assert.deepEqual(cleanBoost({ vitality: 1, counter: 5, crit: "x" }), fullStats({ vitality: 1, counter: 2 }));
 });
