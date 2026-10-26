@@ -33,7 +33,7 @@ export type PointReward = {
 type RedeemOutcome = "granted" | "refunded" | "no_fighter" | "ignored";
 /** The fields of a redemption event PixFray reads (Twitch EventSub reference, redemption add). */
 export type Redemption = NonNullable<ReturnType<typeof parseRedemption>>;
-type Mark = "FULFILLED" | "CANCELED";
+export type Mark = "FULFILLED" | "CANCELED";
 
 const str = (v: unknown, n: number): string => (typeof v === "string" ? v.slice(0, n) : "");
 

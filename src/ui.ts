@@ -1,6 +1,8 @@
 // Shared helpers for the pages. ?channel=<login> picks the channel, else the configured default.
 import site from "../site.config.js";
 import { channelParam } from "./channel-param.ts";
+import { opaqueBox } from "./served/pixels.ts";
+import type { Frame } from "./served/pixels.ts";
 // The pages' HTML names the default channel (%SITE_CHANNEL%, vite.config.ts); applyChannel swaps it for the current one.
 const TEMPLATE_CHANNEL = site.defaultChannel;
 const raw = new URLSearchParams(location.search).get("channel");
@@ -239,7 +241,6 @@ export async function signOut() {
 // ---------- sprite previews ----------
 // One requestAnimationFrame loop drives every animated canvas. Thumbnails stay on a still frame and animate only
 // while hovered, focused or selected; the main preview loops the walk cycle. prefers-reduced-motion keeps all still.
-type Frame = { x: number; y: number; w: number; h: number };
 // A catalog character as the API sends it (the fields drawn here).
 type Entry = {
   id: string;
@@ -564,28 +565,8 @@ const fits = new Map<string, number>();
 // The overlay's bulkFit: big, square sprites are drawn a little smaller.
 function fitOf(entry: Entry, img: HTMLImageElement, frame: Frame) {
   if (fits.has(entry.id)) return fits.get(entry.id)!; // has() just found it
-  let fit = 1;
-  try {
-    const c = document.createElement("canvas");
-    c.width = frame.w;
-    c.height = frame.h;
-    const g = c.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D; // a new canvas always has a 2D context
-    g.drawImage(img, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
-    const data = g.getImageData(0, 0, frame.w, frame.h).data;
-    let left = frame.w,
-      right = -1,
-      top = frame.h,
-      bottom = -1;
-    for (let y = 0; y < frame.h; y++)
-      for (let x = 0; x < frame.w; x++) {
-        if (data[(y * frame.w + x) * 4 + 3]! <= 40) continue; // in range: x and y stay inside the frame's pixels
-        if (x < left) left = x;
-        if (x > right) right = x;
-        if (y < top) top = y;
-        if (y > bottom) bottom = y;
-      }
-    if (right >= left) fit = Math.min(1, 0.78 / (Math.sqrt((right - left + 1) * (bottom - top + 1)) / frame.h));
-  } catch {}
+  const b = opaqueBox(img, frame);
+  const fit = b ? Math.min(1, 0.78 / (Math.sqrt((b.right - b.left + 1) * (b.bottom - b.top + 1)) / frame.h)) : 1;
   fits.set(entry.id, fit);
   return fit;
 }

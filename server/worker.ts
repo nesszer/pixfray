@@ -628,7 +628,7 @@ const ROUTES = {
   admin,
   assets: (a) => handleUploads(a.request, a.env, a),
   // Pets (server/pets.ts): the public catalog and images; mods upload and delete their own.
-  pets: (a) => handlePets(a.request, a.env, a),
+  pets: (a) => handlePets(a.request, a),
   shop,
   // Viewer sprites (server/sprites.ts): a viewer sends one made from their own image (optionally redrawn by Workers
   // AI), mods approve or reject it.

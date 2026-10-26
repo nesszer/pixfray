@@ -5,7 +5,6 @@ import { cleanStats, emptyStats, STATS } from "./upgrades.ts";
 import { readPng } from "./uploads.ts";
 import type { Stat, Stats } from "./upgrades.ts";
 import type { Config } from "./model.ts";
-import type { Env } from "./env.ts";
 import { bodyOr, fromBase64, json, png, postJson, refuse } from "./http.ts";
 
 type BuiltinPet = { id: string; label: string; tier: string; stat: Stat; stat2?: Stat };
@@ -238,7 +237,7 @@ function validatePetUpload(body: { [field: string]: unknown } | null | undefined
 }
 
 // Worker side of /api/pets.
-export async function handlePets(request: Request, env: Env, c: PetsContext): Promise<Response> {
+export async function handlePets(request: Request, c: PetsContext): Promise<Response> {
   if (request.method === "GET") return c.roomFetch(c.id ? "/pets/" + c.id : "/pets");
   const roles = await c.access();
   if (!roles.canManage) return json({ error: roles.reason || "Moderator role required" }, c.user ? 403 : 401);

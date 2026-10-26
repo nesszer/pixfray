@@ -9,7 +9,7 @@ import { isObject, parseEventsubEnvelope } from "./parse.ts";
 import type { JsonObject } from "./parse.ts";
 import type { ChatEvent, SendResult } from "./model.ts";
 import { parseRedemption, REDEMPTION_TYPE } from "./points.ts";
-import type { Redemption } from "./points.ts";
+import type { Mark, Redemption } from "./points.ts";
 
 /** The bot's reply lines for one command, handed to deps.sendChat after the 204. */
 export type BotChat = { channel: string; broadcasterId: string; senderId: string; messages: string[]; replyTo: string };
@@ -23,7 +23,7 @@ export type EventsubDeps = {
   isEnabled?: (login: string) => Promise<boolean>;
   botUserId?: () => Promise<string>;
   // after the 204: marks the redemption on Twitch and posts the bot line (server/points.ts)
-  onRedeemed?: (done: { redemption: Redemption; mark: "FULFILLED" | "CANCELED" | null; reply: string }) => void;
+  onRedeemed?: (done: { redemption: Redemption; mark: Mark | null; reply: string }) => void;
   now?: number;
 };
 /** A Helix EventSub subscription (the fields read here). */
