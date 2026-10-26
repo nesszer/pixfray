@@ -1,7 +1,5 @@
-// Cosmetics and builds (docs/PROGRESSION_PLAN.md, Stage 4). Everything here is looks only: no stat changes.
-// Bought with PixFray dollars in the website shop (channel.ts buy), owned forever (owned_items, kind = the kind
-// below), and worn per build. Taunts and titles are preset lines, so no viewer-typed text ever reaches the stream.
-// The overlay and the dashboard preview draw them with src/served/cosmetics.ts; its ids must match these.
+// Cosmetics: looks only, bought in the shop (room-economy.ts buy), owned forever (owned_items) and worn per build.
+// Taunts and titles are preset lines so no viewer-typed text reaches the stream; ids match src/served/cosmetics.ts.
 
 import type { Cosmetics } from "./model.ts";
 
@@ -32,15 +30,6 @@ export const COSMETIC_PRICE_KEYS = {
   taunt: "tauntPrice",
   title: "titlePrice",
 } as const; // const: each key a literal, so CosmeticPriceConfig names them
-export const COSMETIC_LABELS: Record<CosmeticKind, string> = {
-  recolor: "Recolor",
-  petcolor: "Pet color",
-  accessory: "Accessory",
-  trail: "Trail",
-  effect: "Win effect",
-  taunt: "Win taunt",
-  title: "Title",
-};
 
 // A recolor tints the whole character (or pet, for petcolor); the same palette serves both.
 const COLORS: CosmeticItem[] = [
@@ -106,9 +95,6 @@ export const cosmeticItem = (kind: string, id: string): CosmeticItem | null => B
 export const knownCosmetic = (kind: string, id: string): boolean => id === "" || Boolean(cosmeticItem(kind, id));
 export const cosmeticPrice = (kind: CosmeticKind, config: CosmeticPriceConfig | null | undefined): number | null =>
   config?.[COSMETIC_PRICE_KEYS[kind]] ?? null;
-// The text a taunt or title shows: only from the lists above.
-export const tauntText = (id: string): string => cosmeticItem("taunt", id)?.label || "";
-export const titleText = (id: string): string => cosmeticItem("title", id)?.label || "";
 
 // The worn cosmetics of a profile, unknown ids as "" (none).
 type LooseCosmetics = Partial<Record<keyof Cosmetics, unknown>> | null | undefined;

@@ -1,7 +1,5 @@
-// Rank history: one rank_log row each time a stored profile's elo, wins or losses changes, written by SQLite triggers
-// on profiles, so every path that changes a rank (duels, resets, restores, a buggy save) is recorded without remembering
-// to call anything. Rows older than RANK_LOG_DAYS are pruned when the room starts. Owner reads: GET /api/dev/ranks;
-// restoreRank {userId, before} puts a fighter back to its last row before a time (docs/CONTRACTS.md).
+// Rank history: SQLite triggers on profiles write a rank_log row whenever elo, wins or losses change, so every path is
+// recorded without remembering to call anything. Pruned past RANK_LOG_DAYS on start; owner routes in docs/CONTRACTS.md.
 
 export const RANK_LOG_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;

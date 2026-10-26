@@ -1,13 +1,7 @@
-// Pets (docs/PROGRESSION_PLAN.md, Stage 3): bought with PixFray dollars, one active per fighter, each with a small
-// stat boost by tier. Built-in pets are drawn in code (src/served/pets.ts, same ids); streamers can upload their own as
-// PNGs (custom_pets, ids "p-..."), picking the tier and the boosted stat. A legendary pet boosts LEGENDARY_ROLL stats
-// rolled for each owner when they buy it (owned_items.roll), with one free reroll (owned_items.rerolled).
-//
-// GET    /api/pets/:channel        public: { pets:[{id,label,tier,boost,price,custom,url?}], hatPricePerWin }
-// GET    /api/pets/:channel/:id    public: an uploaded pet's PNG
-// POST   /api/pets/:channel        canManage: { label, tier, stat, stat2?, image:"<base64 PNG>" } -> 201 {ok, item}
-// DELETE /api/pets/:channel/:id    canManage -> {ok, id}; owners lose it and fighters using it go back to no pet
-import { emptyStats, STATS } from "./upgrades.ts";
+// Pets: bought with PixFray dollars, one active per fighter, a small stat boost by tier. Built-in ones are drawn in
+// src/served/pets.ts (same ids); uploads are custom_pets ("p-..."). A legendary boosts LEGENDARY_ROLL stats rolled per
+// owner on purchase (owned_items.roll), with one free reroll. Routes /api/pets: docs/CONTRACTS.md §2.
+import { cleanStats, emptyStats, STATS } from "./upgrades.ts";
 import { readPng } from "./uploads.ts";
 import type { Stat, Stats } from "./upgrades.ts";
 import type { Config } from "./model.ts";
@@ -91,13 +85,6 @@ export type PetsContext = {
 type HttpError = Error & { status?: number };
 
 export const TIERS: readonly string[] = ["common", "uncommon", "rare", "epic", "legendary"];
-export const TIER_LABELS: Record<string, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
 export const PRICE_KEYS: Record<string, keyof PetPriceConfig> = {
   common: "petPriceCommon",
   uncommon: "petPriceUncommon",
@@ -132,9 +119,8 @@ export const PETS: BuiltinPet[] = [
 ];
 const BUILTIN = new Map(PETS.map((p) => [p.id, p]));
 
-// common/uncommon +1 to one stat, rare +2, epic +2 and +1 to a second stat, legendary +1 to each rolled stat (none
-// before an owner rolls it, as in the catalog). Uncommon is cheaper than rare and looks better than common; its boost
-// matches common on purpose (the plan keeps boosts small so a pet never decides a duel on its own).
+// common/uncommon +1 to one stat, rare +2, epic +2 and +1 to a second, legendary +1 to each rolled stat. Uncommon
+// matches common on purpose: boosts stay small so a pet never decides a duel on its own.
 export function tierBoost(tier: string, stat: string | undefined, stat2?: string, roll: readonly Stat[] = []): Stats {
   const out = emptyStats();
   if (tier === "legendary") {
@@ -150,15 +136,7 @@ export function tierBoost(tier: string, stat: string | undefined, stat2?: string
   return out;
 }
 
-export function cleanBoost(input?: unknown): Stats {
-  const out = emptyStats();
-  for (const key of STATS) {
-    // Any value: ?. reads undefined from null or undefined, and Number() turns whatever it reads into a number
-    const v = Number((input as Partial<Record<Stat, unknown>> | null | undefined)?.[key]);
-    out[key] = Number.isInteger(v) ? Math.max(0, Math.min(MAX_BOOST, v)) : 0;
-  }
-  return out;
-}
+export const cleanBoost = (input?: unknown): Stats => cleanStats(input, MAX_BOOST);
 
 export const builtinPet = (id: string): BuiltinPet | null => BUILTIN.get(id) || null;
 
@@ -246,29 +224,19 @@ export function ensurePetSchema(sql: SqlStorage): string[] {
 
 // The channel's pet catalog with prices from its config: built-ins first, then uploads in upload order.
 export function petCatalog(sql: SqlStorage, channel: string, config: PetPriceConfig | null | undefined): PetEntry[] {
-  const builtins = PETS.map((p): PetEntry => ({
+  const entry = (p: BuiltinPet | CustomPetRow, custom: boolean): PetEntry => ({
     id: p.id,
     label: p.label,
     tier: p.tier,
     boost: tierBoost(p.tier, p.stat, p.stat2),
     price: petPrice(p.tier, config),
-    custom: false,
-  }));
+    custom,
+  });
   const custom = sql
     .exec<CustomPetRow>("SELECT id, label, tier, stat, stat2, width, height FROM custom_pets ORDER BY created_at, id")
     .toArray()
-    .map((r): PetEntry => ({
-      id: r.id,
-      label: r.label,
-      tier: r.tier,
-      boost: tierBoost(r.tier, r.stat, r.stat2),
-      price: petPrice(r.tier, config),
-      custom: true,
-      url: `/api/pets/${channel}/${r.id}`,
-      width: r.width,
-      height: r.height,
-    }));
-  return [...builtins, ...custom];
+    .map((r) => ({ ...entry(r, true), url: `/api/pets/${channel}/${r.id}`, width: r.width, height: r.height }));
+  return [...PETS.map((p) => entry(p, false)), ...custom];
 }
 
 const json = (data: unknown, status = 200): Response =>

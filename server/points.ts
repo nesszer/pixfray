@@ -1,9 +1,6 @@
-// Twitch channel point rewards that add style dollars (docs/CONTRACTS.md §2, §4, §7). The broadcaster allows it once
-// at /auth/login?channel=<login>&connect=points (channel:manage:redemptions). PixFray creates each reward with the
-// broadcaster's token, so only PixFray can fulfil, refund or delete it, and subscribes to that reward's redemptions.
-// A redemption adds the reward's dollars to the viewer's style balance (profiles.style_dollars: looks and build slots,
-// never pets, never moved by !give) and is marked FULFILLED; with no fighter it is CANCELED, which gives the viewer
-// their points back.
+// Twitch channel point rewards that add style dollars (docs/CONTRACTS.md §2, §4, §7). PixFray creates each reward with
+// the broadcaster's token, so only PixFray can fulfil, refund or delete it. A redemption is marked FULFILLED, or with
+// no fighter CANCELED, which gives the viewer their points back.
 import { openBroadcaster, POINTS_SCOPE, randomToken } from "./auth.ts";
 import { appHelix, deleteSubscription, eventsubSecret, localTestMode, EVENTSUB_PATH } from "./eventsub.ts";
 import { logRoomEvent } from "./developer.ts";
@@ -78,19 +75,22 @@ export function rewardProblem(title: unknown, cost: unknown, dollars: unknown): 
 
 // ---------- Worker side: Helix with the broadcaster's token, EventSub with the app token ----------
 
+// The refusal that sends the streamer to the points sign-in link.
+const notConnected = (channel: string) =>
+  fail(channel + " must allow channel point rewards at " + pointsLoginUrl(channel), 409, {
+    reason: "points_not_connected",
+    reconnect: pointsLoginUrl(channel),
+  });
+const rewardPath = (broadcasterId: string, rewardId: string) =>
+  "/channel_points/custom_rewards?broadcaster_id=" + broadcasterId + "&id=" + encodeURIComponent(rewardId);
+
 // The broadcaster's token, refused with the points sign-in link when it is missing or lacks channel:manage:redemptions.
 async function pointsToken(env: Env, channel: string) {
-  const reconnect = pointsLoginUrl(channel);
-  const refuse = () =>
-    fail(channel + " must allow channel point rewards at " + reconnect, 409, {
-      reason: "points_not_connected",
-      reconnect,
-    });
   // an expired or revoked token throws from the renewal or the validation; both mean sign in again
   const b = await openBroadcaster(env, channel).catch(() => null);
-  if (!b) throw refuse();
+  if (!b) throw notConnected(channel);
   const { scopes } = await b.validate().catch(() => ({ scopes: [] as string[] }));
-  if (!scopes.includes(POINTS_SCOPE)) throw refuse();
+  if (!scopes.includes(POINTS_SCOPE)) throw notConnected(channel);
   return b;
 }
 
@@ -133,11 +133,7 @@ export async function createReward(
         reason: "points_not_affiliate",
       },
     );
-  if (r.status === 401)
-    throw fail(channel + " must allow channel point rewards at " + pointsLoginUrl(channel), 409, {
-      reason: "points_not_connected",
-      reconnect: pointsLoginUrl(channel),
-    });
+  if (r.status === 401) throw notConnected(channel);
   if (r.status === 400) {
     const d = await r.json<{ message?: unknown }>().catch(() => ({}) as { message?: unknown });
     throw fail("Twitch refused the reward: " + String(d.message || "check the title and cost"), 400, {
@@ -157,11 +153,7 @@ export async function createReward(
   });
   const sub = s.ok ? (await s.json<{ data?: { id?: string; status?: string }[] }>()).data?.[0] : null;
   if (!sub?.id) {
-    await b
-      .helix("/channel_points/custom_rewards?broadcaster_id=" + b.userId + "&id=" + encodeURIComponent(rewardId), {
-        method: "DELETE",
-      })
-      .catch(() => null);
+    await b.helix(rewardPath(b.userId, rewardId), { method: "DELETE" }).catch(() => null);
     throw fail("Twitch refused the redemption subscription (" + s.status + "), so the reward was removed again", 502);
   }
   return {
@@ -182,10 +174,7 @@ export async function deleteReward(
 ): Promise<void> {
   if (localTestMode(env, url) || rewardId.startsWith("local-")) return;
   const b = await pointsToken(env, channel);
-  const r = await b.helix(
-    "/channel_points/custom_rewards?broadcaster_id=" + b.userId + "&id=" + encodeURIComponent(rewardId),
-    { method: "DELETE" },
-  );
+  const r = await b.helix(rewardPath(b.userId, rewardId), { method: "DELETE" });
   if (!r.ok && r.status !== 404) throw fail("Twitch reward delete failed (" + r.status + ")", 502);
   if (subscriptionId) await deleteSubscription(env, subscriptionId);
 }
@@ -293,11 +282,8 @@ export type RedeemReply = {
   dollars: number;
 };
 
-/**
- * Adds a reward's dollars to the redeeming viewer's style balance, once per redemption id. A reward PixFray doesn't own is
- * ignored (Twitch lets only the app that made it change it). With no fighter the redemption is refunded when it is still
- * UNFULFILLED, which it always is for PixFray's rewards unless the streamer turned on skipping the request queue.
- */
+// Adds a reward's dollars to the viewer's style balance, once per redemption id; ignores rewards PixFray doesn't own.
+// With no fighter it refunds the redemption while UNFULFILLED (always, unless the streamer skips the request queue).
 export function redeem(
   room: Room,
   r: Redemption,
@@ -451,10 +437,8 @@ function parseReward(v: unknown): PointReward | null {
   };
 }
 
-/**
- * The room's Worker-only points routes: GET /points (the admin view); POST /points/rewards {op: add|remove|revoked};
- * POST /points/redeem {redemption, origin}; POST /points/marked {redemptionId, status}.
- */
+// The room's Worker-only points routes: GET /points; POST /points/rewards {op: add|remove|revoked},
+// /points/redeem {redemption, origin} and /points/marked {redemptionId, status}.
 export async function handleRoomPoints(
   room: Room,
   request: Request,

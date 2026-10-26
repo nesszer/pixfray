@@ -12,6 +12,7 @@ import {
   pairRankedLeft,
 } from "../server/game.ts";
 import type {
+  AdminPayload,
   CommandEvent,
   Config,
   Duel,
@@ -23,6 +24,17 @@ import type {
   ReduceOutput,
   Swing,
 } from "../server/model.ts";
+import {
+  handleStreamElements,
+  seAmount,
+  seCommandLines,
+  seHelpText,
+  seLookText,
+  seReplyText,
+  seResultText,
+  seTarget,
+} from "../server/streamelements.ts";
+import * as u from "../server/upgrades.ts";
 import type { Stats } from "../server/upgrades.ts";
 import { asEnv, fullStats, must } from "./fakes.ts";
 import type { Loose } from "./fakes.ts";
@@ -37,7 +49,7 @@ type QuickResult = GameResult & { swings: Swing[] };
 /** A config as stored before relayLeaseMs was dropped. */
 type LegacyConfig = Config & { relayLeaseMs?: unknown };
 /** seReplyText's options; some tests leave out origin. */
-type SeReplyArgs = Parameters<typeof import("../server/streamelements.ts").seReplyText>[0];
+type SeReplyArgs = Parameters<typeof seReplyText>[0];
 type Arena = {
   state: GameState;
   now: number;
@@ -46,7 +58,11 @@ type Arena = {
   apply(event: GameEvent): GameResult;
   tick(ms: number): GameResult;
   advance(ms: number): void;
-  say(login: string, text: string): GameResult;
+  /** A chat command from login; extra fields (rolls, profile, quick...) go on the event. */
+  say(login: string, text: string, extra?: Partial<CommandEvent>): GameResult;
+  /** An admin action by a mod. */
+  admin(action: string, payload?: AdminPayload): GameResult;
+  config(patch: AdminPayload["patch"], baseVersion?: number): GameResult;
   register(login: string, extra?: ProfileExtra): GameResult;
   player(login: string): Player;
   duel(id: string | undefined): Duel;
@@ -79,7 +95,7 @@ function arena({ chat = true, viewers = ["alice", "bob", "cara", "dan"], quick =
       w.apply({ type: "tick" });
     }
   };
-  w.say = (login, text) =>
+  w.say = (login, text, extra = {}) =>
     w.apply({
       type: "command",
       messageId: "m" + ++seq,
@@ -89,7 +105,10 @@ function arena({ chat = true, viewers = ["alice", "bob", "cara", "dan"], quick =
       text,
       timestamp: w.now,
       ...(w.stream !== undefined ? { stream: w.stream } : {}),
+      ...extra,
     });
+  w.admin = (action, payload) => w.apply({ type: "admin", actorId: "mod", action, ...(payload ? { payload } : {}) });
+  w.config = (patch, baseVersion) => w.admin("config", { patch, ...(baseVersion ? { baseVersion } : {}) });
   w.register = (login, extra = {}) =>
     w.apply({
       type: "profile_saved",
@@ -292,9 +311,13 @@ test("each accepted duel counts as one round", () => {
   assert.equal(w.state.round, 2);
   w.say("alice", "!challenge @cara");
   assert.equal(w.state.round, 2, "pending challenges are not rounds");
-  w.apply({ type: "admin", actorId: "mod", action: "resetRound" });
+  w.admin("resetRound");
   assert.equal(w.state.round, 0);
 });
+
+/** A chat subscription Twitch hasn't verified yet. */
+const verifying = (w: Arena, subscriptionId: string) =>
+  w.apply({ type: "chat_subscription", subscriptionId, status: "webhook_callback_verification_pending" });
 
 function knockOut(w: Arena, attacker: string) {
   for (let i = 0; i < 10; i++) {
@@ -332,12 +355,8 @@ test("a chat message from a knocked-out viewer does not skip their respawn", () 
   w.fight("alice", "bob");
   knockOut(w, "alice");
   // The channel passes the stored profile (hp=max, respawnAt=0) with every chat message.
-  w.apply({
-    type: "presence",
-    userId: "id-bob",
-    username: "bob",
-    profile: { userId: "id-bob", username: "bob", registered: true, hp: 100, respawnAt: 0, elo: 988 },
-  });
+  const stored = { userId: "id-bob", username: "bob", registered: true, hp: 100, respawnAt: 0, elo: 988 };
+  w.apply({ type: "presence", userId: "id-bob", username: "bob", profile: stored });
   assert.equal(w.player("bob").hp, 0);
   assert.ok(w.player("bob").respawnAt > w.now);
 });
@@ -432,18 +451,11 @@ test("chat disconnect pauses combat and cancels unfinished duels unscored", () =
   assert.equal(w.duel(pending).status, "cancelled");
   assert.equal(w.player("alice").elo, 1000);
   assert.equal(w.player("bob").hp, 100);
-  assert.deepEqual(
-    [w.state.chat.connected, w.state.chat.status, w.state.chat.subscriptionId],
-    [false, "disconnected", ""],
-  );
+  const { connected, status, subscriptionId } = w.state.chat;
+  assert.deepEqual([connected, status, subscriptionId], [false, "disconnected", ""]);
   assert.equal(must(w.state.events.at(-1)).type, "chat_disconnected");
   assert.equal(w.say("alice", "!challenge @bob").reason, "chat_offline", "commands are rejected while paused");
-  w.apply({
-    type: "chat_subscription",
-    subscriptionId: "sub-2",
-    status: "webhook_callback_verification_pending",
-    createdAt: w.now,
-  });
+  verifying(w, "sub-2");
   assert.equal(w.say("alice", "!challenge @bob").reason, "chat_offline", "paused until Twitch verifies the webhook");
   assert.equal(w.apply({ type: "chat_verified", subscriptionId: "sub-2" }).reason, "chat_connected");
   assert.equal(must(w.state.events.at(-1)).type, "chat_connected");
@@ -463,19 +475,11 @@ test("webhook verification may arrive before the subscription is recorded", () =
   const w = arena({ chat: false });
   assert.equal(w.apply({ type: "chat_verified", subscriptionId: "sub-9" }).reason, "chat_verified_early");
   assert.equal(w.state.chat.connected, false);
-  assert.equal(
-    w.apply({
-      type: "chat_subscription",
-      subscriptionId: "sub-9",
-      status: "webhook_callback_verification_pending",
-      createdAt: w.now,
-    }).reason,
-    "chat_connected",
-  );
+  assert.equal(verifying(w, "sub-9").reason, "chat_connected");
   assert.deepEqual([w.state.chat.connected, w.state.chat.status, w.state.chat.verifiedId], [true, "enabled", ""]);
   // a verification for some other subscription never connects the current one
   const v = arena({ chat: false });
-  v.apply({ type: "chat_subscription", subscriptionId: "sub-1", status: "webhook_callback_verification_pending" });
+  verifying(v, "sub-1");
   v.apply({ type: "chat_verified", subscriptionId: "sub-other" });
   assert.equal(v.state.chat.connected, false);
 });
@@ -485,10 +489,8 @@ test("a revocation records the reason and keeps duels paused", () => {
   const id = w.fight("alice", "bob");
   w.apply({ type: "chat_disconnected", reason: "authorization_revoked" });
   assert.equal(w.duel(id).cancelReason, "chat_disconnected");
-  assert.deepEqual(
-    [w.state.chat.connected, w.state.chat.status, w.state.chat.revokedReason],
-    [false, "authorization_revoked", "authorization_revoked"],
-  );
+  const { connected, status, revokedReason } = w.state.chat;
+  assert.deepEqual([connected, status, revokedReason], [false, "authorization_revoked", "authorization_revoked"]);
   assert.equal(must(w.state.events.at(-1)).reason, "authorization_revoked");
 });
 
@@ -507,54 +509,38 @@ test("rejected chat commands can be logged to the event list", () => {
 });
 
 test("stored relay state and relayLeaseMs are dropped; old configs still roll back", () => {
+  const w = arena({ chat: false, viewers: [] });
   const legacy = {
     ...createInitialState("nesszerra"),
     relay: { connected: true, lastSeen: T0 },
     config: { ...defaultConfig(), relayLeaseMs: 30000 },
   };
-  const r = reduceGame(legacy, { type: "tick" }, T0);
-  assert.equal(r.state.relay, undefined);
-  assert.equal((r.state.config as LegacyConfig).relayLeaseMs, undefined); // the test checks the legacy field is gone
-  assert.equal(r.state.chat.connected, false);
-  const rolled = reduceGame(
-    r.state,
-    {
-      type: "admin",
-      actorId: "mod",
-      action: "config",
-      payload: { patch: { ...defaultConfig(), relayLeaseMs: 30000, maxHp: 120 } },
-    },
-    T0,
-  );
-  assert.equal(rolled.result.ok, true, rolled.result.reason);
-  assert.equal(rolled.state.config.maxHp, 120);
-  assert.equal((rolled.state.config as LegacyConfig).relayLeaseMs, undefined); // as above
+  w.state = legacy;
+  w.tick(0);
+  assert.equal(w.state.relay, undefined);
+  assert.equal((w.state.config as LegacyConfig).relayLeaseMs, undefined); // the test checks the legacy field is gone
+  assert.equal(w.state.chat.connected, false);
+  const rolled = w.config({ ...defaultConfig(), relayLeaseMs: 30000, maxHp: 120 });
+  assert.equal(rolled.ok, true, rolled.reason);
+  assert.equal(w.state.config.maxHp, 120);
+  assert.equal((w.state.config as LegacyConfig).relayLeaseMs, undefined); // as above
 });
 
 test("duplicate and stale chat commands are ignored", () => {
   const w = arena();
   w.say("alice", "!challenge @bob");
-  const msg: CommandEvent = {
-    type: "command",
-    messageId: "dup-1",
-    userId: "id-bob",
-    username: "bob",
-    text: "!accept",
-    timestamp: w.now,
-  };
-  assert.equal(w.apply(msg).ok, true);
-  assert.equal(w.apply(msg).reason, "duplicate");
-  assert.equal(w.apply({ ...msg, messageId: "old", timestamp: w.now - 61_000 }).reason, "stale_command");
+  assert.equal(w.say("bob", "!accept", { messageId: "dup-1" }).ok, true);
+  assert.equal(w.say("bob", "!accept", { messageId: "dup-1" }).reason, "duplicate");
+  assert.equal(w.say("bob", "!accept", { messageId: "old", timestamp: w.now - 61_000 }).reason, "stale_command");
 });
 
 test("mods can cancel duels (unscored) and disabling duels cancels all of them", () => {
   const w = arena();
   const id = w.fight("alice", "bob");
   const id2 = w.fight("cara", "dan");
-  assert.equal(w.apply({ type: "admin", actorId: "mod", action: "cancelDuel", payload: { duelId: id } }).ok, true);
+  assert.equal(w.admin("cancelDuel", { duelId: id }).ok, true);
   assert.equal(w.duel(id).cancelReason, "moderator_cancelled");
-  const r = w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { enabled: false } } });
-  assert.equal(r.ok, true);
+  assert.equal(w.config({ enabled: false }).ok, true);
   assert.equal(w.duel(id2).cancelReason, "duels_disabled");
   assert.equal(w.say("alice", "!challenge @bob").reason, "duels_disabled");
 });
@@ -563,61 +549,42 @@ test("config edits are validated, versioned, and only affect new duels", () => {
   const w = arena();
   const id = w.fight("alice", "bob");
   assert.equal(w.state.configVersion, 1);
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { maxDuels: 9 } } }).reason,
-    "invalid_config_maxDuels",
-  );
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { pairRankedPerStream: 51 } } })
-      .reason,
-    "invalid_config_pairRankedPerStream",
-    "the ranked limit per pair is 0 (none) to 50",
-  );
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { reminderMin: 5 } } }).reason,
-    "invalid_config_reminderMin",
-    "the bot reminder is off (0) or 10 to 240 minutes",
-  );
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { bogus: 1 } } }).reason,
-    "unknown_config_field",
-  );
-  assert.equal(
-    w.apply({
-      type: "admin",
-      actorId: "mod",
-      action: "config",
-      payload: { patch: { abilities: { strike: { amount: 5 } } } },
-    }).reason,
-    "invalid_config_ability_field",
-  );
-  const ok = w.apply({
-    type: "admin",
-    actorId: "mod",
-    action: "config",
-    payload: { baseVersion: 1, patch: { abilities: { strike: { damage: 40 } } } },
-  });
+  assert.equal(w.config({ maxDuels: 9 }).reason, "invalid_config_maxDuels");
+  const ok = w.config({ abilities: { strike: { damage: 40 } } }, 1);
   assert.equal(ok.ok, true);
-  assert.equal(ok.configVersion, 2);
+  assert.equal(ok.configVersion, 2, "the refused patch did not bump the version");
   assert.equal(w.state.config.abilities.strike.damage, 40);
   assert.equal(w.state.config.abilities.strike.cooldownMs, 2000, "partial ability patch keeps other fields");
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { baseVersion: 1, patch: { maxHp: 120 } } })
-      .reason,
-    "config_version_conflict",
-  );
+  assert.equal(w.config({ maxHp: 120 }, 1).reason, "config_version_conflict");
   assert.equal(w.say("alice", "!strike").amount, 20, "running duel keeps the rules it started with");
-  w.apply({ type: "admin", actorId: "mod", action: "cancelDuel", payload: { duelId: id } });
+  w.admin("cancelDuel", { duelId: id });
   w.fight("alice", "bob");
   assert.equal(w.say("alice", "!strike").amount, 40);
+});
+
+test("config patches out of range are refused without bumping the version", () => {
+  const w = arena();
+  type Row = [AdminPayload["patch"], string];
+  const cases: Row[] = [
+    [{ maxDuels: 9 }, "invalid_config_maxDuels"],
+    [{ pairRankedPerStream: 51 }, "invalid_config_pairRankedPerStream"], // the ranked limit per pair is 0 (none) to 50
+    [{ reminderMin: 5 }, "invalid_config_reminderMin"], // the bot reminder is off (0) or 10 to 240 minutes
+    [{ bogus: 1 }, "unknown_config_field"],
+    [{ abilities: { strike: { amount: 5 } } }, "invalid_config_ability_field"],
+    [{ quickDuel: "yes" }, "invalid_config_quickDuel"],
+    [{ announce: "left" }, "invalid_config_announce"],
+    ...[14, 101, 30.5, "30"].map((v): Row => [{ maxOnStream: v }, "invalid_config_maxOnStream"]),
+    ...[-1, 60_001, 1.5, "9000"].map((v): Row => [{ streamDelayMs: v }, "invalid_config_streamDelayMs"]),
+  ];
+  for (const [patch, reason] of cases) assert.equal(w.config(patch).reason, reason, JSON.stringify(patch));
+  assert.equal(w.state.configVersion, 1);
 });
 
 test("rank resets reach offline profiles and report ids to persist", () => {
   const w = arena();
   w.fight("alice", "bob");
   knockOut(w, "alice");
-  const r = w.apply({ type: "admin", actorId: "mod", action: "resetRank", payload: { userId: "id-alice" } });
-  assert.equal(r.ok, true);
+  assert.equal(w.admin("resetRank", { userId: "id-alice" }).ok, true);
   assert.deepEqual(w.last.rankResetIds, ["id-alice"]);
   assert.equal(w.player("alice").elo, 1000);
   const off = w.apply({
@@ -628,12 +595,8 @@ test("rank resets reach offline profiles and report ids to persist", () => {
     targetProfile: { userId: "id-zed", registered: true },
   });
   assert.equal(off.ok, true);
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "resetRank", payload: { userId: "id-none" } }).reason,
-    "profile_not_found",
-  );
-  const rm = w.apply({ type: "admin", actorId: "mod", action: "removePlayer", payload: { userId: "id-bob" } });
-  assert.equal(rm.ok, true);
+  assert.equal(w.admin("resetRank", { userId: "id-none" }).reason, "profile_not_found");
+  assert.equal(w.admin("removePlayer", { userId: "id-bob" }).ok, true);
   assert.deepEqual(w.last.deletedProfileIds, ["id-bob"]);
 });
 
@@ -707,8 +670,7 @@ test("resetAll clears arena players, open duels and rematch locks but keeps prof
   w.register("bob");
   const id = w.fight("alice", "bob");
   w.state.rematchLocks.push({ pair: "id-alice:id-bob", until: w.now + 30_000 });
-  const r = w.apply({ type: "admin", actorId: "mod", action: "resetAll" });
-  assert.equal(r.ok, true);
+  assert.equal(w.admin("resetAll").ok, true);
   assert.equal(w.state.players.length, 0);
   assert.equal(w.state.rematchLocks.length, 0);
   assert.equal(w.duel(id).status, "cancelled");
@@ -754,158 +716,99 @@ test("challenging your challenger accepts the duel", () => {
   assert.equal(w.state.duels.length, 1);
 });
 
-test("StreamElements: a bare command sends t=- and reaches the room with no target", async () => {
-  const { handleStreamElements, seCommandLines } = await import("../server/streamelements.ts");
-  assert.match(must(seCommandLines("https://x", "nesszerra", "k1")[1]).response, /t=\$\(queryescape \$\(1\|-\)\)/);
+/** One StreamElements command from bob through handleStreamElements; the room answers with `reply`. */
+async function seCall(
+  action: string,
+  query: string,
+  reply: unknown,
+  extra: Partial<Parameters<typeof handleStreamElements>[2]> = {},
+) {
   let sent: Loose; // the JSON body the handler sent; the test reads fields off it
-  const url = new URL("https://x/api/se/nesszerra/accept?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
-  await handleStreamElements(new Request(url), asEnv({}), {
+  const url = new URL(`https://x/api/se/nesszerra/${action}?k=${"b2".repeat(24)}&id=2&u=bob&d=bob&${query}&m=1`);
+  const res = await handleStreamElements(new Request(url), asEnv({}), {
     url,
     origin: "https://x",
     channels: ["nesszerra"],
     roomFetch: async (c, p, init) => {
       sent = JSON.parse(init.body as string); // the handler posts a JSON string body
-      return Response.json({ reply: "ok" });
+      return Response.json(reply);
     },
+    ...extra,
   });
-  assert.equal(sent.target, "");
+  return { text: await res.text(), sent };
+}
+
+test("StreamElements: a bare command sends t=- and reaches the room with no target", async () => {
+  assert.match(must(seCommandLines("https://x", "nesszerra", "k1")[1]).response, /t=\$\(queryescape \$\(1\|-\)\)/);
+  assert.equal((await seCall("accept", "t=-", { reply: "ok" })).sent.target, "");
 });
 
 test("StreamElements !give sends its amount as a=; seAmount takes 20 or $20 only", async () => {
-  const { handleStreamElements, seCommandLines, seAmount } = await import("../server/streamelements.ts");
   const lines = seCommandLines("https://x", "nesszerra", "k1");
   assert.match(must(lines.find((l) => l.action === "give")).response, /&a=\$\(queryescape \$\(2\|-\)\)\)$/);
   assert.ok(!must(lines.find((l) => l.action === "wallet")).response.includes("&a="));
-  assert.deepEqual(["20", "$20", " 7 ", "-", "", "2.5", "-3", "12345678", "ten"].map(seAmount), [
-    20,
-    20,
-    7,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-  ]);
-  let sent: Loose; // the JSON body the handler sent; the test reads fields off it
-  const url = new URL(
-    "https://x/api/se/nesszerra/give?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=%40cara&a=%2415&m=1",
-  );
-  await handleStreamElements(new Request(url), asEnv({}), {
-    url,
-    origin: "https://x",
-    channels: ["nesszerra"],
-    roomFetch: async (c, p, init) => {
-      sent = JSON.parse(init.body as string); // the handler posts a JSON string body
-      return Response.json({ reply: "ok" });
-    },
-  });
+  const amounts = ["20", "$20", " 7 ", "-", "", "2.5", "-3", "12345678", "ten"];
+  assert.deepEqual(amounts.map(seAmount), [20, 20, 7, null, null, null, null, null, null]);
+  const { sent } = await seCall("give", "t=%40cara&a=%2415", { reply: "ok" });
   assert.deepEqual([sent.action, sent.target, sent.amount], ["give", "cara", "$15"]);
 });
 
 test("StreamElements: an empty room reply (repeated message id) posts nothing; a missing one says something went wrong", async () => {
-  const { handleStreamElements } = await import("../server/streamelements.ts");
-  const url = new URL("https://x/api/se/nesszerra/accept?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
-  const call = (body: unknown) =>
-    handleStreamElements(new Request(url), asEnv({}), {
-      url,
-      origin: "https://x",
-      channels: ["nesszerra"],
-      roomFetch: async () => Response.json(body),
-    }).then((r) => r.text());
-  assert.equal(await call({ reply: "" }), "");
-  assert.equal(await call({}), "That move didn't land. Try again in a moment!");
+  assert.equal((await seCall("accept", "t=-", { reply: "" })).text, "");
+  assert.equal((await seCall("accept", "t=-", {})).text, "That move didn't land. Try again in a moment!");
 });
 
 test("StreamElements: when the room switches over from a Twitch subscription, the Worker is asked to delete it", async () => {
-  const { handleStreamElements } = await import("../server/streamelements.ts");
-  const url = new URL("https://x/api/se/nesszerra/decline?k=" + "b2".repeat(24) + "&id=2&u=bob&d=bob&t=-&m=1");
   const dropped: string[] = [];
-  const call = (body: unknown) =>
-    handleStreamElements(new Request(url), asEnv({}), {
-      url,
-      origin: "https://x",
-      channels: ["nesszerra"],
-      roomFetch: async () => Response.json(body),
-      dropSubscription: (id) => dropped.push(id),
-    }).then((r) => r.text());
-  assert.equal(await call({ reply: "hi", switchedFrom: "sub-1" }), "hi");
-  await call({ reply: "hi" });
+  const dropSubscription = (id: string) => void dropped.push(id);
+  const { text } = await seCall("decline", "t=-", { reply: "hi", switchedFrom: "sub-1" }, { dropSubscription });
+  assert.equal(text, "hi");
+  await seCall("decline", "t=-", { reply: "hi" }, { dropSubscription });
   assert.deepEqual(dropped, ["sub-1"]);
 });
 
+function quickWith(w: Arena, rolls: number[]): QuickResult {
+  w.say("alice", "!challenge @bob");
+  return w.say("bob", "!accept", { rolls }) as QuickResult; // an accepted quick duel always returns its swings
+}
 // roll r gives die 1 + floor(r * 6): 0.9 -> 6 (crit 50), 0.75 -> 5 (hit 34), 0.5 -> 4 (miss), 0.1 -> 1 (counter 34)
 function quick(rolls: number[]) {
   const w = arena({ quick: true });
-  const ch = w.say("alice", "!challenge @bob");
-  const r = w.apply({
-    type: "command",
-    messageId: "q" + rolls.join(),
-    userId: "id-bob",
-    username: "bob",
-    displayName: "bob",
-    text: "!accept",
-    timestamp: w.now,
-    rolls,
-  }) as QuickResult; // an accepted quick duel always returns its swings
-  return { w, r, duel: w.duel(ch.duelId), actions: w.state.events.filter((e) => e.type === "duel_action") };
+  const r = quickWith(w, rolls);
+  return { w, r, duel: must(w.state.duels.at(-1)), actions: w.state.events.filter((e) => e.type === "duel_action") };
 }
+const pluck = <K extends keyof Swing>(r: QuickResult, key: K) => r.swings.map((s) => s[key]);
 
 test("quick duels: turns alternate, 6 crits for 50, 5 hits for 34, 1-2 counter for 34, 3-4 miss", () => {
   const cases = [
-    {
-      rolls: [0.9, 0.5, 0.9],
-      winner: "alice",
-      dice: [6, 4, 6],
-      outcomes: ["crit", "miss", "crit"],
-      hp: 100,
-      flawless: true,
-    },
-    {
-      rolls: [0.75, 0.75, 0.75, 0.75, 0.75],
-      winner: "alice",
-      dice: [5, 5, 5, 5, 5],
-      outcomes: ["hit", "hit", "hit", "hit", "hit"],
-      hp: 32,
-      flawless: false,
-    },
-    {
-      rolls: [0.1, 0.1, 0.1, 0.1, 0.1],
-      winner: "bob",
-      dice: [1, 1, 1, 1, 1],
-      outcomes: ["counter", "counter", "counter", "counter", "counter"],
-      hp: 32,
-      flawless: false,
-    },
+    { rolls: [0.9, 0.5, 0.9], winner: "alice", dice: [6, 4, 6], outcomes: ["crit", "miss", "crit"], hp: 100 },
+    { rolls: Array(5).fill(0.75), winner: "alice", dice: Array(5).fill(5), outcomes: Array(5).fill("hit"), hp: 32 },
+    { rolls: Array(5).fill(0.1), winner: "bob", dice: Array(5).fill(1), outcomes: Array(5).fill("counter"), hp: 32 },
   ];
   for (const c of cases) {
     const { w, r, duel, actions } = quick(c.rolls);
+    const name = String(c.rolls);
     const loser = c.winner === "alice" ? "bob" : "alice";
-    assert.equal(r.reason, "quick_duel");
-    assert.equal(r.winnerId, "id-" + c.winner, JSON.stringify(c));
-    assert.deepEqual(
-      r.swings.map((x) => x.die),
-      c.dice,
-    );
-    assert.deepEqual(
-      r.swings.map((x) => x.outcome),
-      c.outcomes,
-    );
-    assert.equal(r.winnerHp, c.hp);
-    assert.equal(r.flawless, c.flawless);
-    assert.equal(r.decision, "ko");
-    assert.equal(duel.status, "completed");
-    assert.equal(duel.hp["id-" + loser], 0);
-    assert.equal(w.player(c.winner).wins, 1);
-    assert.equal(w.player(loser).losses, 1);
-    assert.ok(w.player(loser).respawnAt > w.now);
-    assert.equal(actions.length, c.dice.length);
-    assert.equal(actions.filter((e) => e.miss).length, c.outcomes.filter((o) => o === "miss").length);
-    assert.equal(actions.filter((e) => e.crit).length, c.outcomes.filter((o) => o === "crit").length);
-    assert.equal(must(actions.at(-1)).finisher, true);
-    assert.equal(actions.filter((e) => e.finisher).length, 1);
-    assert.equal(w.player(c.winner).elo, c.flawless ? 1015 : 1012, "flawless wins add 3 Elo");
-    assert.equal(w.player(loser).elo, 988);
+    const flawless = c.hp === 100;
+    assert.equal(r.reason, "quick_duel", name);
+    assert.equal(r.winnerId, "id-" + c.winner, name);
+    assert.deepEqual(pluck(r, "die"), c.dice, name);
+    assert.deepEqual(pluck(r, "outcome"), c.outcomes, name);
+    assert.equal(r.winnerHp, c.hp, name);
+    assert.equal(r.flawless, flawless, name);
+    assert.equal(r.decision, "ko", name);
+    assert.equal(duel.status, "completed", name);
+    assert.equal(duel.hp["id-" + loser], 0, name);
+    assert.equal(w.player(c.winner).wins, 1, name);
+    assert.equal(w.player(loser).losses, 1, name);
+    assert.ok(w.player(loser).respawnAt > w.now, name);
+    assert.equal(actions.length, c.dice.length, name);
+    assert.equal(actions.filter((e) => e.miss).length, c.outcomes.filter((o) => o === "miss").length, name);
+    assert.equal(actions.filter((e) => e.crit).length, c.outcomes.filter((o) => o === "crit").length, name);
+    assert.equal(must(actions.at(-1)).finisher, true, name);
+    assert.equal(actions.filter((e) => e.finisher).length, 1, name);
+    assert.equal(w.player(c.winner).elo, flawless ? 1015 : 1012, "flawless wins add 3 Elo: " + name);
+    assert.equal(w.player(loser).elo, 988, name);
   }
 });
 
@@ -929,35 +832,13 @@ test("quick duels are the default and work through a mutual challenge too", () =
   const w = arena({ quick: true });
   w.say("alice", "!challenge @bob");
   assert.equal(w.say("bob", "!challenge @alice").reason, "quick_duel");
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { quickDuel: "yes" } } }).reason,
-    "invalid_config_quickDuel",
-  );
   assert.equal(w.state.config.announce, "off", "the duel banner is hidden until a mod turns it on");
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { announce: "left" } } }).reason,
-    "invalid_config_announce",
-  );
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { announce: "top" } } }).ok,
-    true,
-  );
+  assert.equal(w.config({ announce: "top" }).ok, true);
   assert.equal(w.state.config.announce, "top");
   assert.equal(w.state.config.maxOnStream, 50, "up to 50 characters on stream by default");
-  for (const bad of [14, 101, 30.5, "30"])
-    assert.equal(
-      w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { maxOnStream: bad } } }).reason,
-      "invalid_config_maxOnStream",
-    );
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { maxOnStream: 15 } } }).ok,
-    true,
-  );
+  assert.equal(w.config({ maxOnStream: 15 }).ok, true);
   assert.equal(w.state.config.maxOnStream, 15);
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { quickDuel: false } } }).ok,
-    true,
-  );
+  assert.equal(w.config({ quickDuel: false }).ok, true);
 });
 
 test("quick duels hide the result until the stream has played it out (revealAt)", () => {
@@ -1001,20 +882,12 @@ test("quick duels hide the result until the stream has played it out (revealAt)"
 test("the stream delay is a channel setting (0 to 60 s) that moves revealAt", () => {
   const w = arena({ quick: true });
   assert.equal(w.state.config.streamDelayMs, 6000);
-  for (const bad of [-1, 60_001, 1.5, "9000"])
-    assert.equal(
-      w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { streamDelayMs: bad } } }).reason,
-      "invalid_config_streamDelayMs",
-    );
-  assert.equal(
-    w.apply({ type: "admin", actorId: "mod", action: "config", payload: { patch: { streamDelayMs: 20_000 } } }).ok,
-    true,
-  );
+  assert.equal(w.config({ streamDelayMs: 20_000 }).ok, true);
   const duel = w.duel(w.fight("alice", "bob"));
   assert.equal(duel.revealAt, w.now + replayMs(must(w.last.result.swings).length) + 20_000);
 });
 
-test("!rematch challenges the last finished duel's opponent, with the rematch lock; a name after it is ignored", async () => {
+test("!rematch challenges the last finished duel's opponent, with the rematch lock; a name after it is ignored", () => {
   assert.deepEqual(parseGameCommand("!rematch"), { action: "rematch", target: "" });
   assert.deepEqual(parseGameCommand("!REMATCH @cara"), { action: "rematch", target: "" });
   const w = arena({ quick: true });
@@ -1046,32 +919,20 @@ test("!rematch challenges the last finished duel's opponent, with the rematch lo
   assert.equal(w.player("alice").lastOpponentId, "id-bob");
   // A fighter who left the arena still has the saved opponent; the room passes it as targetProfile.
   const v = arena({ quick: true, viewers: ["alice"] });
-  const r = v.apply({
-    type: "command",
-    messageId: "m" + ++seq,
-    userId: "id-alice",
-    username: "alice",
-    displayName: "alice",
-    text: "!rematch",
-    timestamp: v.now,
+  const r = v.say("alice", "!rematch", {
     profile: { userId: "id-alice", username: "alice", registered: true, lastOpponentId: "id-dan" },
     targetProfile: { userId: "id-dan", username: "dan", displayName: "dan", registered: true },
   });
   assert.equal(r.ok, true, r.reason);
-  const { seReplyText, seHelpText, seLookText } = await import("../server/streamelements.ts");
+  // No origin on purpose in both replies: they have no link (the type requires origin, the code treats it as optional).
+  const reply = (result: GameResult) =>
+    seReplyText({ result, state: v.state, actorId: "id-alice", action: "rematch", target: "" } as SeReplyArgs);
   assert.equal(
-    // no origin on purpose: the reply has no link (seReplyText's origin type is required, its code treats it as optional)
-    seReplyText({ result: r, state: v.state, actorId: "id-alice", action: "rematch", target: "" } as SeReplyArgs),
+    reply(r),
     "alice wants a rematch with @dan! @dan, type !rematch or !fight to fight, or !decline to back out within 30 s.",
   );
   assert.equal(
-    seReplyText({
-      result: { ok: false, reason: "no_previous_opponent" },
-      state: v.state,
-      actorId: "id-alice",
-      action: "rematch",
-      target: "",
-    } as SeReplyArgs), // no origin on purpose, as above
+    reply({ ok: false, reason: "no_previous_opponent" }),
     "alice, you have nobody to rematch yet. Start one: !challenge @name",
   );
   assert.match(
@@ -1102,21 +963,14 @@ test("!rematch works in the HP fight too", () => {
 
 test("a command marked quick (StreamElements, no attack commands) settles at once even with quick duels off", () => {
   const w = arena({ viewers: ["alice", "bob", "cara", "dan", "eve", "fin"] });
-  const quickSay = (login: string, text: string) =>
-    w.apply({
-      type: "command",
-      messageId: "m" + ++seq,
-      userId: "id-" + login,
-      username: login,
-      displayName: login,
-      text,
-      timestamp: w.now,
-      quick: true,
-    });
-  quickSay("alice", "!challenge @bob");
-  assert.equal(quickSay("bob", "!fight").reason, "quick_duel");
-  quickSay("cara", "!challenge @dan");
-  assert.equal(quickSay("dan", "!challenge @cara").reason, "quick_duel", "a mutual challenge settles too");
+  w.say("alice", "!challenge @bob", { quick: true });
+  assert.equal(w.say("bob", "!fight", { quick: true }).reason, "quick_duel");
+  w.say("cara", "!challenge @dan", { quick: true });
+  assert.equal(
+    w.say("dan", "!challenge @cara", { quick: true }).reason,
+    "quick_duel",
+    "a mutual challenge settles too",
+  );
   assert.equal(w.state.duels.filter((d) => d.status === "active").length, 0);
   // Plain chat still gets the HP fight.
   const hp = w.say("eve", "!challenge @fin");
@@ -1124,41 +978,31 @@ test("a command marked quick (StreamElements, no attack commands) settles at onc
   assert.equal(w.duel(hp.duelId).status, "active");
 });
 
-test("invisible characters that chat clients append to repeated messages are ignored", async () => {
+test("invisible characters that chat clients append to repeated messages are ignored", () => {
   assert.deepEqual(parseGameCommand("!fight \u{E0000}"), { action: "accept", target: "" });
   assert.deepEqual(parseGameCommand("!challenge @bob \u034F"), { action: "duel", target: "bob" });
-  const { seTarget } = await import("../server/streamelements.ts");
-  assert.equal(seTarget("\u{E0000}"), "");
-  assert.equal(seTarget("-"), "");
-  assert.equal(seTarget("@Bob\u{E0000}"), "bob");
-  assert.equal(seTarget("bad-name"), "");
+  for (const raw of ["\u{E0000}", "-", "bad-name"]) assert.equal(seTarget(raw), "", raw);
   // Extra @ and trailing punctuation still name the viewer.
-  for (const raw of ["@bob,", "@@bob", "bob!", "@Bob?", "bob."]) assert.equal(seTarget(raw), "bob", raw);
+  for (const raw of ["@Bob\u{E0000}", "@bob,", "@@bob", "bob!", "@Bob?", "bob."])
+    assert.equal(seTarget(raw), "bob", raw);
 });
 
-test("StreamElements sign-up link always names the channel", async () => {
-  const { seReplyText } = await import("../server/streamelements.ts");
-  const reply = (channel: string) =>
-    seReplyText({
-      result: { ok: false, reason: "target_not_found" },
-      state: createInitialState(channel),
-      actorId: "u1",
-      action: "challenge",
-      target: "bob",
-      origin: "https://chat.example",
-    });
-  assert.equal(
-    reply("miolafff"),
-    "@bob has no fighter in the arena yet! Send them to https://chat.example/?channel=miolafff",
-  );
-  assert.equal(
-    reply("nesszerra"),
-    "@bob has no fighter in the arena yet! Send them to https://chat.example/?channel=nesszerra",
-  );
+test("StreamElements sign-up link always names the channel", () => {
+  for (const channel of ["miolafff", "nesszerra"])
+    assert.equal(
+      seReplyText({
+        result: { ok: false, reason: "target_not_found" },
+        state: createInitialState(channel),
+        actorId: "u1",
+        action: "challenge",
+        target: "bob",
+        origin: "https://chat.example",
+      }),
+      `@bob has no fighter in the arena yet! Send them to https://chat.example/?channel=${channel}`,
+    );
 });
 
-test('StreamElements "seeing stars" names the knocked-out fighter, not the one who asked', async () => {
-  const { seReplyText } = await import("../server/streamelements.ts");
+test('StreamElements "seeing stars" names the knocked-out fighter, not the one who asked', () => {
   const state = createInitialState("nesszerra");
   state.players.push(
     // partial players on purpose: the reply reads only the names
@@ -1188,91 +1032,51 @@ test('StreamElements "seeing stars" names the knocked-out fighter, not the one w
   assert.equal(reply({ userId: "u2" }), "That fight is still playing on stream. Give it a few seconds!");
 });
 
-test("the bot result line says how the duel was won", async () => {
-  const { seResultText } = await import("../server/streamelements.ts");
-  const w = { after: 1014, delta: 14 },
-    l = { after: 989, delta: -11 };
-  assert.equal(
-    seResultText({ winner: "Bean", loser: "Aria", w, l }),
-    "Bean beat Aria! Bean 1014 Elo (+14), Aria 989 Elo (-11).",
-  );
-  assert.equal(
-    seResultText({ winner: "Bean", loser: "Aria", w, l, flawless: true }),
-    "Bean beat Aria, flawless! Bean 1014 Elo (+14), Aria 989 Elo (-11).",
-  );
-  assert.equal(
-    seResultText({ winner: "Bean", loser: "Aria", w, l, decision: "hp" }),
-    "Bean beat Aria on HP! Bean 1014 Elo (+14), Aria 989 Elo (-11).",
-  );
-  assert.equal(
-    seResultText({ winner: "Bean", loser: "Aria", w, l, decision: "sudden_death" }),
-    "Bean beat Aria in sudden death! Bean 1014 Elo (+14), Aria 989 Elo (-11).",
-  );
-  assert.equal(
-    seResultText({ winner: "Bean", loser: "Aria", w, l, unrated: "pair_cap" }),
-    "Bean beat Aria! Just for fun (ranked limit for this pair reached): no Elo, pays half, ranked again next stream.",
-  );
-  assert.equal(
-    seResultText({ winner: "Bean", loser: "Aria", w, l, unrated: "offline" }),
-    "Bean beat Aria! Just for fun (stream offline): no rank or dollars.",
-  );
-  assert.equal(
-    seResultText({ winner: "Bean", loser: "Aria", w, l, lastRanked: true }),
-    "Bean beat Aria! Bean 1014 Elo (+14), Aria 989 Elo (-11). Last ranked duel between them this stream.",
-  );
-  assert.equal(
-    seResultText({ winner: "Bean", loser: "Aria", w, l, unrated: "new_account" }),
-    "Bean beat Aria! Just for fun (a Twitch account under 7 days old): no Elo or dollars.",
-  );
+test("the bot result line says how the duel was won", () => {
+  const base = { winner: "Bean", loser: "Aria", w: { after: 1014, delta: 14 }, l: { after: 989, delta: -11 } };
+  const elo = "Bean 1014 Elo (+14), Aria 989 Elo (-11).";
+  const cases: [Partial<Parameters<typeof seResultText>[0]>, string][] = [
+    [{}, `Bean beat Aria! ${elo}`],
+    [{ flawless: true }, `Bean beat Aria, flawless! ${elo}`],
+    [{ decision: "hp" }, `Bean beat Aria on HP! ${elo}`],
+    [{ decision: "sudden_death" }, `Bean beat Aria in sudden death! ${elo}`],
+    [
+      { unrated: "pair_cap" },
+      "Bean beat Aria! Just for fun (ranked limit for this pair reached): no Elo, pays half, ranked again next stream.",
+    ],
+    [{ unrated: "offline" }, "Bean beat Aria! Just for fun (stream offline): no rank or dollars."],
+    [{ lastRanked: true }, `Bean beat Aria! ${elo} Last ranked duel between them this stream.`],
+    [
+      { unrated: "new_account" },
+      "Bean beat Aria! Just for fun (a Twitch account under 7 days old): no Elo or dollars.",
+    ],
+  ];
+  for (const [extra, text] of cases) assert.equal(seResultText({ ...base, ...extra }), text);
 });
 
 // ---------- upgrades (server/upgrades.ts) ----------
-test("upgrade points: one per win plus check-in points with no cap; a rank reset trims the last stats first", async () => {
-  const u = await import("../server/upgrades.ts");
-  assert.deepEqual(
-    u.effectiveStats({ power: 1, dodge: 1, counter: 2 }, { wins: 2 }),
-    fullStats({ power: 1, dodge: 1 }),
-  );
-  assert.deepEqual(
-    [0, 3, 20, 400].map((w) => u.pointsFor({ wins: w })),
-    [0, 3, 20, 400],
-  );
-  assert.deepEqual(
-    [
-      [3, 2],
-      [15, 9],
-      [0, 25],
-      [-1, 4],
-      [2, 1.5],
-    ].map(([w, b]) => u.pointsFor({ wins: w, bonus: b })),
-    [5, 24, 25, 4, 2],
-  );
-  assert.deepEqual(u.validStats({ power: 2, guard: 1 }, { wins: 3 }), fullStats({ power: 2, guard: 1, luck: 0 }));
+const pts = (wins: number, bonus = 0) => u.pointsFor({ wins, bonus });
+
+test("upgrade points: one per win plus check-in points with no cap; a rank reset trims the last stats first", () => {
+  assert.deepEqual([pts(0), pts(3), pts(20), pts(400)], [0, 3, 20, 400]);
+  assert.deepEqual([pts(3, 2), pts(15, 9), pts(0, 25), pts(-1, 4), pts(2, 1.5)], [5, 24, 25, 4, 2]);
+  assert.deepEqual(u.validStats({ power: 2, guard: 1 }, { wins: 3 }), fullStats({ power: 2, guard: 1 }));
   assert.equal(u.validStats({ power: 2, guard: 2 }, { wins: 3 }), null, "more points than wins");
-  assert.deepEqual(
-    u.validStats({ power: 2, guard: 2 }, { wins: 3, bonus: 1 }),
-    fullStats({ power: 2, guard: 2, luck: 0 }),
-    "a check-in point covers the fourth",
-  );
-  assert.deepEqual(u.validStats({ power: 8 }, { wins: 8 }), fullStats({ power: 8, guard: 0, luck: 0 }));
+  const fourth = u.validStats({ power: 2, guard: 2 }, { wins: 3, bonus: 1 });
+  assert.deepEqual(fourth, fullStats({ power: 2, guard: 2 }), "a check-in point covers the fourth");
+  assert.deepEqual(u.validStats({ power: 8 }, { wins: 8 }), fullStats({ power: 8 }));
   assert.equal(u.validStats({ power: 9 }, { wins: 9 }), null, "level 9 costs 2 points");
-  assert.deepEqual(u.validStats({ power: 9 }, { wins: 10 }), fullStats({ power: 9, guard: 0, luck: 0 }));
+  assert.deepEqual(u.validStats({ power: 9 }, { wins: 10 }), fullStats({ power: 9 }));
   assert.equal(u.validStats({ power: 201 }, { wins: 1e12 }), null, "past the level limit");
   assert.equal(u.validStats({ power: 1.5 }, { wins: 10 }), null);
-  assert.deepEqual(
-    u.effectiveStats(fullStats({ power: 3, guard: 3, luck: 3 }), { wins: 5 }),
-    fullStats({ power: 3, guard: 2, luck: 0 }),
-  );
-  assert.deepEqual(
-    u.effectiveStats({ power: 3, guard: 3, luck: 3 }, { wins: 0, bonus: 7 }),
-    fullStats({ power: 3, guard: 3, luck: 1 }),
-    "check-in points survive a rank reset",
-  );
-  assert.deepEqual(
-    u.effectiveStats({ power: 10, guard: 0, luck: 0 }, { wins: 11 }),
-    fullStats({ power: 9, guard: 0, luck: 0 }),
-    "trimming refunds level 10 at 2 points",
-  );
+  const trims: [Partial<Stats>, u.Earned, Partial<Stats>, string][] = [
+    [{ power: 1, dodge: 1, counter: 2 }, { wins: 2 }, { power: 1, dodge: 1 }, "counter comes off before dodge"],
+    [{ power: 3, guard: 3, luck: 3 }, { wins: 5 }, { power: 3, guard: 2 }, "luck comes off before guard"],
+    [{ power: 3, guard: 3, luck: 3 }, { wins: 0, bonus: 7 }, { power: 3, guard: 3, luck: 1 }, "check-ins survive"],
+    [{ power: 10 }, { wins: 11 }, { power: 9 }, "trimming refunds level 10 at 2 points"],
+  ];
+  for (const [stats, earned, want, msg] of trims)
+    assert.deepEqual(u.effectiveStats(stats, earned), fullStats(want), msg);
   const r = u.upgradeRules({ wins: 4, bonus: 3 }, 16);
   assert.deepEqual([r.points, r.fromWins, r.fromCheckins, r.maxLevel], [7, 4, 3, 16]);
   assert.equal(u.hatUnlocked("crown", 19), false);
@@ -1281,26 +1085,20 @@ test("upgrade points: one per win plus check-in points with no cap; a rank reset
   assert.equal(u.hatUnlocked("sombrero", 99), false);
 });
 
-test("upgrade points: every third loss gives a point", async () => {
-  const u = await import("../server/upgrades.ts");
-  assert.deepEqual(
-    [0, 1, 2, 3, 4, 5, 6, 7].map((losses) => u.pointsFor({ wins: 2, losses })),
-    [2, 2, 2, 3, 3, 3, 4, 4],
-  );
+test("upgrade points: every third loss gives a point", () => {
+  const withLosses = (losses: number) => u.pointsFor({ wins: 2, losses });
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7].map(withLosses), [2, 2, 2, 3, 3, 3, 4, 4]);
   const r = u.upgradeRules({ wins: 4, bonus: 3, losses: 7 }, 16);
   assert.deepEqual([r.points, r.fromWins, r.fromCheckins, r.fromLosses, r.lossesPerPoint], [9, 4, 3, 2, 3]);
-  assert.deepEqual(u.validStats({ power: 3 }, { wins: 0, losses: 9 }), fullStats({ power: 3, guard: 0, luck: 0 }));
+  assert.deepEqual(u.validStats({ power: 3 }, { wins: 0, losses: 9 }), fullStats({ power: 3 }));
   assert.equal(u.validStats({ power: 3 }, { wins: 0, losses: 8 }), null, "8 losses are 2 points");
 });
 
-test("level sync: the stronger build drops levels from its highest stat until it costs at most 10 points more", async () => {
-  const u = await import("../server/upgrades.ts");
+test("level sync: the stronger build drops levels from its highest stat until it costs at most 10 points more", () => {
   const strong = fullStats({ power: 8, guard: 8, luck: 4 });
   assert.deepEqual(u.syncPair(strong, u.emptyStats()), [fullStats({ power: 4, guard: 3, luck: 3 }), u.emptyStats()]);
-  assert.deepEqual(u.syncPair(fullStats({ luck: 2 }), strong), [
-    fullStats({ power: 0, guard: 0, luck: 2 }),
-    fullStats({ power: 4, guard: 4, luck: 4 }),
-  ]);
+  const weakFirst = u.syncPair(fullStats({ luck: 2 }), strong);
+  assert.deepEqual(weakFirst, [fullStats({ luck: 2 }), fullStats({ power: 4, guard: 4, luck: 4 })]);
   // Levels past 8 cost 2: 6 points against power 16 (24 points) leaves power 12 (16 points).
   assert.deepEqual(u.syncPair(fullStats({ power: 6 }), fullStats({ power: 16 }))[1], fullStats({ power: 12 }));
   const near = fullStats({ power: 6, guard: 4 });
@@ -1308,57 +1106,36 @@ test("level sync: the stronger build drops levels from its highest stat until it
   assert.deepEqual(strong, fullStats({ power: 8, guard: 8, luck: 4 }), "syncPair copies, never changes its input");
 });
 
-test("upgrade levels: cost doubles every 8 levels and the effect closes in on each stat's ceiling", async () => {
-  const u = await import("../server/upgrades.ts");
-  assert.deepEqual(
-    [1, 8, 9, 16, 17, 24, 25].map((l) => u.levelCost(l)),
-    [1, 1, 2, 2, 4, 4, 8],
-  );
-  assert.deepEqual(
-    [0, 5, 8, 9, 16, 24, 32].map((l) => u.levelSpend(l)),
-    [0, 5, 8, 10, 24, 56, 120],
-  );
+test("upgrade levels: cost doubles every 8 levels and the effect closes in on each stat's ceiling", () => {
+  assert.deepEqual([1, 8, 9, 16, 17, 24, 25].map(u.levelCost), [1, 1, 2, 2, 4, 4, 8]);
+  assert.deepEqual([0, 5, 8, 9, 16, 24, 32].map(u.levelSpend), [0, 5, 8, 10, 24, 56, 120]);
   assert.equal(u.spentOn(fullStats({ power: 16, guard: 8, luck: 1 })), 33);
-  assert.deepEqual(
-    [0, 1, 8].map((l) => u.statValue("power", l)),
-    [0, 0.04, 0.32],
-    "levels 1 to 8 keep 4% each",
-  );
-  const p9 = u.statValue("power", 9),
-    p16 = u.statValue("power", 16),
-    p200 = u.statValue("power", 200);
+  const power = (level: number) => u.statValue("power", level);
+  assert.deepEqual([0, 1, 8].map(power), [0, 0.04, 0.32], "levels 1 to 8 keep 4% each");
+  const p9 = power(9),
+    p200 = power(200);
   assert.ok(p9 > 0.32 && p9 < 0.34, "level 9 adds about half a step: " + p9);
-  assert.equal(Math.round(p16 * 1000) / 10, 44.2);
-  assert.equal(Math.round(u.statValue("power", 10) * 1000) / 10, 35.7, "a pet taking power 8 to 10");
+  assert.equal(Math.round(power(16) * 1000) / 10, 44.2);
+  assert.equal(Math.round(power(10) * 1000) / 10, 35.7, "a pet taking power 8 to 10");
   assert.ok(p200 < 0.6 && p200 > 0.59, "power stays under its 60% ceiling: " + p200);
   assert.ok(u.statValue("luck", 200) < 0.5, "luck stays under 50%");
   assert.equal(u.scaledDamage(100, { power: 8 }, { guard: 8 }), 90, "1.32 * 0.68 of 100");
 });
 
-test("upgrade levels: a channel's maxStatLevel caps what counts, and a pet's boost goes on top", async () => {
-  const u = await import("../server/upgrades.ts");
-  assert.deepEqual(
-    u.effectiveStats({ power: 20, guard: 2 }, { wins: 1000 }, null, 16),
-    fullStats({ power: 16, guard: 2, luck: 0 }),
-  );
-  assert.deepEqual(
-    u.effectiveStats({ power: 20 }, { wins: 1000 }, { power: 2, luck: 1 }, 16),
-    fullStats({ power: 18, guard: 0, luck: 1 }),
-    "the boost lands after the cap",
-  );
-  assert.deepEqual(
-    u.effectiveStats({ power: 20 }, { wins: 1000 }),
-    fullStats({ power: 20, guard: 0, luck: 0 }),
-    "no cap given",
-  );
+test("upgrade levels: a channel's maxStatLevel caps what counts, and a pet's boost goes on top", () => {
+  const capped = u.effectiveStats({ power: 20, guard: 2 }, { wins: 1000 }, null, 16);
+  assert.deepEqual(capped, fullStats({ power: 16, guard: 2 }));
+  const boosted = u.effectiveStats({ power: 20 }, { wins: 1000 }, { power: 2, luck: 1 }, 16);
+  assert.deepEqual(boosted, fullStats({ power: 18, luck: 1 }), "the boost lands after the cap");
+  assert.deepEqual(u.effectiveStats({ power: 20 }, { wins: 1000 }), fullStats({ power: 20 }), "no cap given");
 });
 
-test("upgrade presets spread the points by weight within the channel's level cap", async () => {
-  const u = await import("../server/upgrades.ts");
+test("upgrade presets spread the points by weight within the channel's level cap", () => {
   const preset = (id: string) => u.PRESETS.find((p) => p.id === id)!; // each id is in PRESETS
   assert.equal(u.PRESETS.length, 12);
+  const ready = u.PRESETS.filter(u.presetReady).map((p) => p.id);
   assert.deepEqual(
-    u.PRESETS.filter(u.presetReady).map((p) => p.id),
+    ready,
     [
       "balanced",
       "brawler",
@@ -1378,13 +1155,9 @@ test("upgrade presets spread the points by weight within the channel's level cap
   assert.deepEqual(u.presetStats(preset("glass-cannon"), 6), fullStats({ power: 3, crit: 2, luck: 1 }));
   assert.deepEqual(u.presetStats(preset("balanced"), 6), fullStats({ power: 2, guard: 2, luck: 2 }));
   assert.deepEqual(u.presetStats(preset("balanced"), 7), fullStats({ power: 3, guard: 2, luck: 2 }));
-  assert.deepEqual(u.presetStats(preset("iron-wall"), 8), fullStats({ power: 2, guard: 6, luck: 0 }));
-  assert.deepEqual(
-    u.presetStats(preset("brawler"), 1000, 16),
-    fullStats({ power: 16, guard: 16, luck: 0 }),
-    "stops at the cap",
-  );
-  assert.deepEqual(u.presetStats(preset("brawler"), 0), fullStats({ power: 0, guard: 0, luck: 0 }));
+  assert.deepEqual(u.presetStats(preset("iron-wall"), 8), fullStats({ power: 2, guard: 6 }));
+  assert.deepEqual(u.presetStats(preset("brawler"), 1000, 16), fullStats({ power: 16, guard: 16 }), "stops at the cap");
+  assert.deepEqual(u.presetStats(preset("brawler"), 0), u.emptyStats());
   const built = u.presetStats(preset("balanced"), 100, 32);
   assert.ok(u.spentOn(built) <= 100 && u.validStats(built, { wins: 100 }) !== null);
 });
@@ -1393,34 +1166,15 @@ function upgraded(stats: Record<string, Partial<Stats>>) {
   const w = arena({ quick: true });
   for (const [login, s] of Object.entries(stats)) {
     w.register(login, { stats: s });
-    must(w.state.players.find((p) => p.username === login)).wins = 10;
+    w.player(login).wins = 10;
   }
   return w;
-}
-function quickWith(w: Arena, rolls: number[]): QuickResult {
-  w.say("alice", "!challenge @bob");
-  return w.apply({
-    type: "command",
-    messageId: "q" + ++seq,
-    userId: "id-bob",
-    username: "bob",
-    displayName: "bob",
-    text: "!accept",
-    timestamp: w.now,
-    rolls,
-  }) as QuickResult; // an accepted quick duel always returns its swings
 }
 
 test("quick duels: power adds 4% damage per point and guard takes 4% off per point", () => {
   const hit = [0.75, 0.5, 0.75, 0.5, 0.75, 0.5, 0.75];
-  assert.deepEqual(
-    quickWith(upgraded({ alice: { power: 5 } }), hit).swings.map((s) => s.damage),
-    [41, 0, 41, 0, 18],
-  );
-  assert.deepEqual(
-    quickWith(upgraded({ bob: { guard: 5 } }), hit).swings.map((s) => s.damage),
-    [27, 0, 27, 0, 27, 0, 19],
-  );
+  assert.deepEqual(pluck(quickWith(upgraded({ alice: { power: 5 } }), hit), "damage"), [41, 0, 41, 0, 18]);
+  assert.deepEqual(pluck(quickWith(upgraded({ bob: { guard: 5 } }), hit), "damage"), [27, 0, 27, 0, 27, 0, 19]);
   // Points the wins no longer cover don't count: 5 power with 0 wins hits for the base 34.
   const w = arena({ quick: true });
   w.register("alice", { stats: { power: 5 } });
@@ -1429,72 +1183,53 @@ test("quick duels: power adds 4% damage per point and guard takes 4% off per poi
 
 test("quick duels: level sync plays the stronger build at most 10 points above the weaker one, and saves nothing", () => {
   const w = upgraded({ alice: { power: 8, guard: 8, luck: 4 } });
-  const alice = must(w.state.players.find((p) => p.username === "alice"));
-  alice.wins = 20;
+  w.player("alice").wins = 20;
   // 20 points against 0: alice fights as power 4, guard 3, luck 3, so her hit is 34 x 1.16 and bob's is 34 x 0.88.
-  const r = quickWith(w, [0.75, 0.75]);
-  assert.deepEqual(
-    r.swings.slice(0, 2).map((s) => s.damage),
-    [39, 30],
-  );
-  assert.deepEqual(alice.stats, fullStats({ power: 8, guard: 8, luck: 4 }), "the saved build is untouched");
+  assert.deepEqual(pluck(quickWith(w, [0.75, 0.75]), "damage").slice(0, 2), [39, 30]);
+  assert.deepEqual(w.player("alice").stats, fullStats({ power: 8, guard: 8, luck: 4 }), "the saved build is untouched");
   // Within 10 points nothing changes: 5 power against 0 still hits for 41.
   assert.equal(must(quickWith(upgraded({ alice: { power: 5 } }), [0.75]).swings[0]).damage, 41);
-});
-
-test("quick duels: luck turns a miss into a hit with 4% per point, from a second roll", () => {
-  const rolls = Array(48).fill(0.9);
-  rolls[0] = 0.5; // alice rolls a 4: a miss
-  rolls[24] = 0.1; // her luck roll: 0.1 < 5 x 4% -> the miss lands as a hit
-  const r = quickWith(upgraded({ alice: { luck: 5 } }), rolls);
-  assert.equal(must(r.swings[0]).outcome, "hit");
-  assert.equal(must(r.swings[0]).lucky, true);
-  assert.equal(must(r.swings[0]).damage, 34);
-  rolls[24] = 0.25; // above 20%: stays a miss
-  assert.equal(must(quickWith(upgraded({ alice: { luck: 5 } }), rolls).swings[0]).outcome, "miss");
 });
 
 // Each check reads its own slot of 24 rolls: die 0, luck 24, crit 48, dodge 72, counter 96 (plus the swing index).
 const slots = (set: Record<number, number>) => Object.assign(Array<number>(120).fill(0.9), set);
 
-test("quick duels: crit turns a hit into a crit with 4% per level, from the third roll slot", () => {
-  const rolls = slots({ 0: 0.75, 48: 0.1 }); // alice rolls a 5 (a hit); 0.1 < 5 x 4%
-  const r = must(quickWith(upgraded({ alice: { crit: 5 } }), rolls).swings[0]);
-  assert.deepEqual([r.outcome, r.luckyCrit, r.damage], ["crit", true, 50]);
-  rolls[48] = 0.25;
-  const plain = must(quickWith(upgraded({ alice: { crit: 5 } }), rolls).swings[0]);
-  assert.deepEqual([plain.outcome, plain.luckyCrit, plain.damage], ["hit", undefined, 34]);
-});
-
-test("quick duels: luck then crit can turn a miss into a crit", () => {
-  const r = must(quickWith(upgraded({ alice: { luck: 5, crit: 5 } }), slots({ 0: 0.5, 24: 0.1, 48: 0.1 })).swings[0]);
-  assert.deepEqual([r.outcome, r.lucky, r.luckyCrit, r.damage], ["crit", true, true, 50]);
-});
-
-test("quick duels: dodge turns a hit or crit on you into a miss with 4% per level", () => {
-  const hit = must(quickWith(upgraded({ bob: { dodge: 5 } }), slots({ 0: 0.75, 72: 0.1 })).swings[0]);
-  assert.deepEqual([hit.outcome, hit.dodged, hit.damage], ["miss", true, 0]);
-  const crit = must(quickWith(upgraded({ bob: { dodge: 5 } }), slots({ 72: 0.1 })).swings[0]); // 0.9 rolls a 6
-  assert.deepEqual([crit.outcome, crit.dodged], ["miss", true]);
-  const missed = must(quickWith(upgraded({ bob: { dodge: 5 } }), slots({ 0: 0.75, 72: 0.25 })).swings[0]);
-  assert.deepEqual([missed.outcome, missed.dodged, missed.damage], ["hit", undefined, 34]);
-});
-
-test("quick duels: counter adds 2% counter damage per level and turns a foe's miss into a counter at 2% per level", () => {
-  // bob counters on alice's 1: 34 base, +10% from 5 levels
-  assert.equal(must(quickWith(upgraded({ bob: { counter: 5 } }), slots({ 0: 0.1 })).swings[0]).damage, 37);
-  assert.equal(must(quickWith(upgraded({}), slots({ 0: 0.1 })).swings[0]).damage, 34);
-  const turned = must(quickWith(upgraded({ bob: { counter: 5 } }), slots({ 0: 0.5, 96: 0.05 })).swings[0]);
-  assert.deepEqual([turned.outcome, turned.attackerId, turned.damage], ["counter", "id-alice", 37]);
-  const kept = must(quickWith(upgraded({ bob: { counter: 5 } }), slots({ 0: 0.5, 96: 0.15 })).swings[0]);
-  assert.equal(kept.outcome, "miss");
-});
-
-test("quick duels: a dodged hit can then become the defender's counter", () => {
-  const r = must(
-    quickWith(upgraded({ bob: { dodge: 5, counter: 5 } }), slots({ 0: 0.75, 72: 0.1, 96: 0.05 })).swings[0],
-  );
-  assert.deepEqual([r.outcome, r.dodged, r.damage], ["counter", true, 37]);
+test("quick duels: luck, crit and dodge work at 4% per level and counter at 2%, each from its own roll slot", () => {
+  type Want = { [K in keyof Swing]?: Swing[K] | undefined }; // undefined rows check a flag stayed unset
+  const cases: [Record<string, Partial<Stats>>, Record<number, number>, Want][] = [
+    // luck turns alice's 4 (a miss) into a hit when its roll is under 5 x 4%
+    [{ alice: { luck: 5 } }, { 0: 0.5, 24: 0.1 }, { outcome: "hit", lucky: true, damage: 34 }],
+    [{ alice: { luck: 5 } }, { 0: 0.5, 24: 0.25 }, { outcome: "miss", lucky: undefined }],
+    // crit turns alice's 5 (a hit) into a crit
+    [{ alice: { crit: 5 } }, { 0: 0.75, 48: 0.1 }, { outcome: "crit", luckyCrit: true, damage: 50 }],
+    [{ alice: { crit: 5 } }, { 0: 0.75, 48: 0.25 }, { outcome: "hit", luckyCrit: undefined, damage: 34 }],
+    // luck then crit turn a miss into a crit
+    [
+      { alice: { luck: 5, crit: 5 } },
+      { 0: 0.5, 24: 0.1, 48: 0.1 },
+      { outcome: "crit", lucky: true, luckyCrit: true, damage: 50 },
+    ],
+    // dodge turns a hit or a crit (0.9 rolls a 6) on bob into a miss
+    [{ bob: { dodge: 5 } }, { 0: 0.75, 72: 0.1 }, { outcome: "miss", dodged: true, damage: 0 }],
+    [{ bob: { dodge: 5 } }, { 72: 0.1 }, { outcome: "miss", dodged: true }],
+    [{ bob: { dodge: 5 } }, { 0: 0.75, 72: 0.25 }, { outcome: "hit", dodged: undefined, damage: 34 }],
+    // counter adds 2% per level to bob's counter on alice's 1, and turns her miss into a counter at 2% per level
+    [{ bob: { counter: 5 } }, { 0: 0.1 }, { damage: 37 }],
+    [{}, { 0: 0.1 }, { damage: 34 }],
+    [{ bob: { counter: 5 } }, { 0: 0.5, 96: 0.05 }, { outcome: "counter", attackerId: "id-alice", damage: 37 }],
+    [{ bob: { counter: 5 } }, { 0: 0.5, 96: 0.15 }, { outcome: "miss" }],
+    // a dodged hit can then become bob's counter
+    [
+      { bob: { dodge: 5, counter: 5 } },
+      { 0: 0.75, 72: 0.1, 96: 0.05 },
+      { outcome: "counter", dodged: true, damage: 37 },
+    ],
+  ];
+  for (const [stats, set, want] of cases) {
+    const swing = must(quickWith(upgraded(stats), slots(set)).swings[0]);
+    const got = Object.fromEntries(Object.keys(want).map((k) => [k, swing[k as keyof Swing]])); // want's keys are Swing keys
+    assert.deepEqual(got, want, JSON.stringify([stats, set]));
+  }
 });
 
 test("quick duels with the new stats stay pure: the same rolls give the same swings", () => {
@@ -1508,37 +1243,19 @@ test("HP fights: crit makes a strike or heavy deal 50% more, from the command's 
   w.register("alice", { stats: { crit: 5 } });
   w.player("alice").wins = 10;
   w.fight("alice", "bob");
-  const strike = (roll: number) =>
-    w.apply({
-      type: "command",
-      messageId: "c" + ++seq,
-      userId: "id-alice",
-      username: "alice",
-      displayName: "alice",
-      text: "!strike",
-      timestamp: w.now,
-      rolls: [roll],
-    });
-  assert.equal(strike(0.1).amount, 30);
   const lastHit = () => w.state.events.findLast((e) => e.type === "duel_action");
+  assert.equal(w.say("alice", "!strike", { rolls: [0.1] }).amount, 30);
   assert.equal(lastHit()?.crit, true);
   w.now += 2000;
-  assert.equal(strike(0.5).amount, 20);
+  assert.equal(w.say("alice", "!strike", { rolls: [0.5] }).amount, 20);
   assert.equal(lastHit()?.crit, undefined);
 });
 
 test("upgrades and hat come from the saved profile; no respec while a challenge is open", () => {
   const w = upgraded({ alice: { power: 2 } });
-  assert.deepEqual(w.player("alice").stats, fullStats({ power: 2, guard: 0, luck: 0 }));
+  assert.deepEqual(w.player("alice").stats, fullStats({ power: 2 }));
   // A chat command carrying the stored profile keeps them.
-  w.apply({
-    type: "command",
-    messageId: "p1",
-    userId: "id-alice",
-    username: "alice",
-    displayName: "alice",
-    text: "hi",
-    timestamp: w.now,
+  w.say("alice", "hi", {
     profile: {
       userId: "id-alice",
       username: "alice",
@@ -1576,85 +1293,74 @@ test("the 2026-10-06 price cut moves prices still at the old defaults and keeps 
   assert.equal(later.config.petPriceCommon, 30);
 });
 
-test("live duels have no pair limit by default", () => {
+/** A finished quick duel between a and b, with the clock moved past the rematch wait. */
+function settle(w: Arena, a = "alice", b = "bob") {
+  const d = w.duel(w.fight(a, b));
+  w.advance(120_000);
+  return d;
+}
+
+test("pairs have no ranked limit by default (pairRankedPerStream 0)", () => {
   const w = arena({ quick: true });
   w.stream = { id: "s1", startedAt: T0 };
   assert.equal(w.state.config.pairRankedPerStream, 0);
   for (let i = 0; i < 7; i += 1) {
-    const d = w.duel(w.fight("alice", "bob"));
-    w.advance(120_000);
+    const d = settle(w);
     assert.deepEqual([d.unrated, d.lastRanked], [undefined, undefined], `duel ${i + 1} is ranked`);
   }
+  assert.equal(w.state.pairPlays.length, 0, "nothing to count");
+  assert.equal(pairRankedLeft(w.state, "id-alice", "id-bob"), null);
 });
 
 test("with a limit of 5 a pair gets 5 ranked duels per stream; later ones are unrated, pay half, and count again next stream", () => {
   const w = arena({ quick: true });
   w.state.config.pairRankedPerStream = 5;
   w.stream = { id: "s1", startedAt: T0 };
-  const fight = () => {
-    const d = w.duel(w.fight("alice", "bob"));
-    w.advance(120_000);
-    return d;
-  };
   const paid = (d: Duel, win: number, loss: number) => ({
     [must(d.winnerId)]: win,
     [d.winnerId === "id-alice" ? "id-bob" : "id-alice"]: loss,
   });
   for (let i = 0; i < 4; i += 1) {
-    const d = fight();
+    const d = settle(w);
     assert.deepEqual([d.unrated, d.lastRanked], [undefined, undefined], `duel ${i + 1} is ranked`);
     assert.deepEqual(d.payout, paid(d, 5, 3));
   }
   assert.equal(pairRankedLeft(w.state, "id-bob", "id-alice"), 1);
-  const fifth = fight();
+  const fifth = settle(w);
   assert.deepEqual([fifth.unrated, fifth.lastRanked], [undefined, true], "the fifth is the last ranked one");
-  const before = { a: { ...w.player("alice") }, b: { ...w.player("bob") } };
-  const sixth = fight();
+  const before = ["alice", "bob"].map((login) => ({ ...w.player(login) }));
+  const sixth = settle(w);
   assert.equal(sixth.unrated, "pair_cap");
   assert.deepEqual(sixth.payout, paid(sixth, 2, 1), "half of $5 and $3, rounded down");
-  for (const [login, was] of [
-    ["alice", before.a],
-    ["bob", before.b],
-  ] satisfies [string, Player][]) {
-    const p = w.player(login);
-    assert.deepEqual([p.elo, p.wins, p.losses], [was.elo, was.wins, was.losses], `${login} unchanged`);
+  for (const was of before) {
+    const p = w.player(was.username);
+    assert.deepEqual([p.elo, p.wins, p.losses], [was.elo, was.wins, was.losses], `${was.username} unchanged`);
   }
   const done = w.state.events.filter((e) => e.type === "duel_completed").at(-1);
   assert.equal(must(done).unrated, "pair_cap");
   assert.equal(w.state.pairPlays.length, 5, "unrated duels are not counted");
   assert.equal(pairRankedLeft(w.state, "id-alice", "id-bob"), 0);
-  const reset = structuredClone(w.state);
-  assert.equal(
-    reduceGame(reset, { type: "admin", actorId: "mod", action: "resetAllRanks" }, w.now).state.pairPlays.length,
-    0,
-    "reset all ranks starts the pair counts over",
-  );
+  const reset = reduceGame(structuredClone(w.state), { type: "admin", actorId: "mod", action: "resetAllRanks" }, w.now);
+  assert.equal(reset.state.pairPlays.length, 0, "reset all ranks starts the pair counts over");
   w.register("cara");
-  assert.equal(w.duel(w.fight("alice", "cara")).unrated, undefined, "other pairs are still ranked");
-  w.advance(120_000);
+  assert.equal(settle(w, "alice", "cara").unrated, undefined, "other pairs are still ranked");
   w.now += 86_400_000;
   w.apply({ type: "tick" });
   assert.equal(w.state.pairPlays.length, 6, "a day passing doesn't reset the count");
   w.register("alice");
   w.register("bob");
-  assert.equal(w.duel(w.fight("alice", "bob")).unrated, "pair_cap", "still the same stream");
-  w.advance(120_000);
+  assert.equal(settle(w).unrated, "pair_cap", "still the same stream");
   w.stream = { id: "s2", startedAt: w.now };
-  assert.equal(w.duel(w.fight("alice", "bob")).unrated, undefined, "ranked again next stream");
-  w.advance(120_000);
-  assert.deepEqual(
-    w.state.pairPlays.map((p) => p.stream),
-    ["s2"],
-    "the old stream's plays are dropped",
-  );
+  assert.equal(settle(w).unrated, undefined, "ranked again next stream");
+  const streams = w.state.pairPlays.map((p) => p.stream);
+  assert.deepEqual(streams, ["s2"], "the old stream's plays are dropped");
 });
 
 test("offline duels are unrated and pay nothing; a failed live check keeps the last answer", () => {
   const w = arena({ quick: true });
   w.state.config.pairRankedPerStream = 5;
   w.stream = null;
-  const d = w.duel(w.fight("alice", "bob"));
-  w.advance(120_000);
+  const d = settle(w);
   assert.equal(d.unrated, "offline");
   assert.equal(d.payout, undefined, "no dollars offline");
   assert.deepEqual([w.player("alice").wins + w.player("bob").wins, w.state.pairPlays.length], [0, 0]);
@@ -1665,8 +1371,7 @@ test("offline duels are unrated and pay nothing; a failed live check keeps the l
 test("before any live answer duels are ranked; plays from before stream ids count toward the stream they fall in", () => {
   const w = arena({ quick: true });
   w.state.config.pairRankedPerStream = 5;
-  assert.equal(w.duel(w.fight("alice", "bob")).unrated, undefined, "never checked counts as live");
-  w.advance(120_000);
+  assert.equal(settle(w).unrated, undefined, "never checked counts as live");
   w.state.pairPlays = [
     { pair: "id-alice:id-bob", at: T0 - 60_000 },
     { pair: "id-alice:id-bob", at: T0 + 1_000 },
@@ -1678,19 +1383,6 @@ test("before any live answer duels are ranked; plays from before stream ids coun
   assert.equal(w.state.pairPlays.length, 2, "the play from before the stream is dropped");
 });
 
-test("pairRankedPerStream 0 means no limit", () => {
-  const w = arena({ quick: true });
-  w.state.config.pairRankedPerStream = 0;
-  w.stream = { id: "s1", startedAt: T0 };
-  for (let i = 0; i < 7; i += 1) {
-    const d = w.duel(w.fight("alice", "bob"));
-    w.advance(120_000);
-    assert.deepEqual([d.unrated, d.lastRanked], [undefined, undefined], `duel ${i + 1} is ranked`);
-  }
-  assert.equal(w.state.pairPlays.length, 0, "nothing to count");
-  assert.equal(pairRankedLeft(w.state, "id-alice", "id-bob"), null);
-});
-
 test("mods reset one pair's ranked count", () => {
   const w = arena({ quick: true });
   w.state.config.pairRankedPerStream = 5;
@@ -1699,30 +1391,17 @@ test("mods reset one pair's ranked count", () => {
     { pair: "id-alice:id-bob", at: T0, stream: "" },
     { pair: "id-alice:id-cara", at: T0, stream: "" },
   ];
-  const admin = (payload: { a?: unknown; b?: unknown }) =>
-    w.apply({ type: "admin", actorId: "mod", action: "resetPair", payload });
-  assert.deepEqual(admin({ a: "id-bob", b: "id-alice" }), { ok: true, reason: "pair_reset", amount: 2 });
-  assert.deepEqual(
-    w.state.pairPlays.map((p) => p.pair),
-    ["id-alice:id-cara"],
-  );
-  assert.equal(admin({ a: "id-bob", b: "id-bob" }).reason, "invalid_pair");
-  assert.equal(admin({ a: "id-bob" }).reason, "invalid_pair");
+  assert.deepEqual(w.admin("resetPair", { a: "id-bob", b: "id-alice" }), { ok: true, reason: "pair_reset", amount: 2 });
+  const pairs = w.state.pairPlays.map((p) => p.pair);
+  assert.deepEqual(pairs, ["id-alice:id-cara"]);
+  assert.equal(w.admin("resetPair", { a: "id-bob", b: "id-bob" }).reason, "invalid_pair");
+  assert.equal(w.admin("resetPair", { a: "id-bob" }).reason, "invalid_pair");
 });
 
 test("duels with an account younger than 7 days are unrated", () => {
   const w = arena({ quick: true });
   w.say("alice", "!challenge @bob");
-  w.apply({
-    type: "command",
-    messageId: "m" + ++seq,
-    userId: "id-bob",
-    username: "bob",
-    displayName: "bob",
-    text: "!accept",
-    timestamp: w.now,
-    newAccounts: ["id-bob"],
-  });
+  w.say("bob", "!accept", { newAccounts: ["id-bob"] });
   const duel = must(w.state.duels.at(-1));
   assert.equal(duel.status, "completed");
   assert.equal(duel.unrated, "new_account");
@@ -1759,17 +1438,14 @@ test("vitality: heal stops at the fighter's own max HP, and a mod's health reset
   w.now += 1000;
   w.say("bob", "!strike");
   assert.equal(w.duel(id).hp["id-alice"], 100);
-  assert.equal(w.apply({ type: "admin", actorId: "mod", action: "resetHealth" }).ok, true);
+  assert.equal(w.admin("resetHealth").ok, true);
   assert.deepEqual(w.duel(id).hp, { "id-alice": 120, "id-bob": 100 });
   assert.equal(w.player("alice").hp, 120);
 });
 
 test("vitality: a quick-duel winner at their own full HP is flawless; base blows stay the same size", () => {
   const r = quickWith(upgraded({ alice: { vitality: 5 } }), [0.9, 0.5, 0.9]);
-  assert.deepEqual(
-    r.swings.map((s) => s.damage),
-    [50, 0, 50],
-  );
+  assert.deepEqual(pluck(r, "damage"), [50, 0, 50]);
   assert.equal(r.winnerHp, 120);
   assert.equal(r.flawless, true);
   // bob with 120 HP survives two crits and loses the flawless to one hit

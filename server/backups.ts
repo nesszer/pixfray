@@ -1,8 +1,6 @@
-// Daily backups. Once a day (the cron trigger in cloudflare.config.ts) every channel room writes its export, the same
-// JSON as the owner page's download, gzipped into the BACKUPS D1 database: one row per channel per day, kept
-// BACKUP_DAYS. That outlives the rooms' 30-day point-in-time restore, and one fighter can be read back from any day
-// without rolling a whole channel back. Each room writes its own row, so the cron run itself only makes one call per
-// channel and stays inside the Free plan's per-invocation limits. Owner routes: /api/dev/backups (docs/CONTRACTS.md).
+// Daily backups (cron in cloudflare.config.ts): every room writes its export gzipped into the BACKUPS D1 database, one
+// row per channel per day for BACKUP_DAYS, outliving the 30-day point-in-time restore. Each room writes its own row so
+// the cron run makes one call per channel (Free plan limits). Owner routes: /api/dev/backups (docs/CONTRACTS.md).
 
 import { CHANNELS } from "./auth.ts";
 import { listRecords } from "./channels.ts";
@@ -41,10 +39,8 @@ export async function writeBackup(db: D1Database, channel: string, at: number, d
   return packed.byteLength;
 }
 
-/**
- * Backs up every channel (built-in and signed up, paused ones too), or only `only`, then drops rows older than
- * BACKUP_DAYS. A room that fails is reported and the rest still run. Callers check env.BACKUPS first.
- */
+// Backs up every channel (paused ones too), or only `only`, then drops rows older than BACKUP_DAYS. A room that fails
+// is reported and the rest still run. Callers check env.BACKUPS first.
 export async function backupChannels(
   env: Env,
   at: number,
