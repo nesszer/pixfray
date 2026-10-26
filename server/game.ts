@@ -254,8 +254,7 @@ function addPlayer(state: GameState, p: Player): boolean {
   return true;
 }
 
-// Cancelled duels are unscored: no Elo, no wins/losses, no KO. Fighters are restored to full health.
-// Every caller passes an open duel.
+// Cancelled duels are unscored (no Elo, wins, losses or KO) and both fighters heal. Every caller passes an open duel.
 function cancelDuel(state: GameState, duel: Duel, now: number, reason: string): void {
   const wasActive = duel.status === "active";
   setDuel(duel, { status: "cancelled", endedAt: now, cancelReason: reason, winnerId: null });
@@ -263,7 +262,6 @@ function cancelDuel(state: GameState, duel: Duel, now: number, reason: string): 
   addEvent(state, "duel_cancelled", now, { duelId: duel.id, a: duel.a, b: duel.b, reason, wasActive });
 }
 
-// Back at full health (hp) and not knocked out.
 function revive(p: Player | undefined, hp: number): void {
   if (p) Object.assign(p, { hp, respawnAt: 0 });
 }
@@ -464,7 +462,6 @@ function settleQuickDuel(state: GameState, duel: Duel, rolls: unknown, now: numb
       target = outcome === "counter" ? attacker : defender;
     let amount = 0;
     if (outcome !== "miss") {
-      // a counter adds the dealer's counter bonus on top of power and guard
       const bonus = outcome === "counter" ? 1 + statValue("counter", stats(dealer).counter) : 1;
       // beginDuel gave both fighters an hp entry
       const left = duel.hp[target]!;
@@ -797,7 +794,7 @@ function validateConfigPatch(patch: Untrusted): { ok: true; patch: ConfigPatch }
   if (!isObject(patch)) return { ok: false, reason: "invalid_config" };
   const out: ConfigPatch = {};
   for (const [key, value] of Object.entries(patch)) {
-    if (key === "relayLeaseMs") continue; // removed with the relay; old history versions may carry it, so rollbacks skip it
+    if (key === "relayLeaseMs") continue; // the relay's old field: old history versions may carry it, so rollbacks skip it
     if (key === "abilities") {
       if (!isObject(value)) return { ok: false, reason: "invalid_config_abilities" };
       const abilities: { [name: string]: { [field: string]: number } } = {};

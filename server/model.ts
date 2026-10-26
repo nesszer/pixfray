@@ -54,8 +54,7 @@ export const DEFAULT_CONFIG = {
   // Minutes between the bot's !fray lines while live (0 = off, else 10 to 240).
   reminderMin: 0,
   botEnabled: true,
-  // A duel pays about $4, so a common pet is ~3 duels, a recolor ~5 and a legendary pet ~75 (cut to a third on
-  // 2026-10-06; OLD_PRICES below).
+  // A duel pays about $4, so a common pet is ~3 duels, a recolor ~5 and a legendary pet ~75.
   petPriceCommon: 10,
   petPriceUncommon: 25,
   petPriceRare: 60,
@@ -195,7 +194,7 @@ export type GameState = {
   nextDuelId: number;
   /** 2 once the 2026-10-06 price cut has been applied. */
   priceSchema?: number;
-  /** Removed with the relay; normalizeState deletes it from old stored states. */
+  /** Removed with the relay; normalizeGameState deletes it from old stored states. */
   relay?: unknown;
 };
 

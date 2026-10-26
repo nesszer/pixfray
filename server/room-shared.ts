@@ -120,7 +120,7 @@ export const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 export const PROFILE_COLUMNS =
   "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, bonus_points, checkins, streak, dollars, style_dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom, (SELECT roll FROM owned_items o WHERE o.user_id = profiles.user_id AND o.kind = 'pet' AND o.item_id = profiles.pet) AS pet_roll";
 
-// What was thrown, as text: anything can be thrown.
+// What was thrown, as text.
 export function errorText(error: unknown, max?: number): string {
   return String((error as Thrown)?.message || error).slice(0, max);
 }
@@ -141,7 +141,7 @@ export function normalizeUsername(value: unknown): string {
     .slice(0, 25);
 }
 
-// Stage 4 cosmetics: profile field -> profiles column (server/cosmetics.ts).
+// Cosmetics: profile field -> profiles column (server/cosmetics.ts).
 const COSMETIC_COLUMNS: { [field in keyof Cosmetics]: keyof ProfileTable } = {
   recolor: "recolor",
   petColor: "pet_color",
@@ -196,7 +196,7 @@ export function normalizeProfileRow(row: ProfileRow | null | undefined, config: 
     respawnAt: 0,
     stats: cleanStats(row),
     hat: knownHat(row.hat) ? row.hat : "",
-    bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0, // check-in points (checkin below)
+    bonus: Number.isInteger(row.bonus_points) ? row.bonus_points : 0, // check-in points (room-economy.ts checkin)
     checkins: Number.isInteger(row.checkins) ? row.checkins : 0,
     streak: Number.isInteger(row.streak) ? row.streak : 0,
     dollars: Number.isInteger(row.dollars) ? row.dollars : 0, // PixFray dollars (payDuels, give, giftDollars)

@@ -136,7 +136,6 @@ export async function handleStreamElements(
     known.set(channel, { hash: sent, at: Date.now(), passedAt: known.get(channel)?.passedAt || 0 });
   }
   if (r.status === 403 && typeof data.reply === "string") {
-    // the room refused the key: remember the pair
     if (refused.size >= REFUSED_MAX) refused.clear();
     refused.set(pair, Date.now());
   }

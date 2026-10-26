@@ -166,7 +166,6 @@ test("command parser accepts the spec commands, ignores invisible trailing chara
   assert.deepEqual(parseGameCommand("!HEAVY @Bob"), { action: "heavy", target: "bob" });
   assert.deepEqual(parseGameCommand("!rematch"), { action: "rematch", target: "" });
   assert.deepEqual(parseGameCommand("!REMATCH @cara"), { action: "rematch", target: "" }, "a name after it is ignored");
-  // chat clients append invisible characters to repeated messages
   assert.deepEqual(parseGameCommand("!fight \u{E0000}"), { action: "accept", target: "" });
   assert.deepEqual(parseGameCommand("!challenge @bob \u034F"), { action: "duel", target: "bob" });
   for (const junk of ["!challenge", "hello !strike", "!strike @bob extra", "!nuke", 42])
@@ -322,7 +321,6 @@ test("KO completes the duel; the loser respawns at full health after respawnMs, 
   assert.ok(w.player("bob").respawnAt > w.now);
   assert.equal(w.player("alice").hp, 100);
   assert.equal(w.say("bob", "!challenge @cara").reason, "respawning");
-  // the winner re-challenging hears that the loser is down
   like(w.say("alice", "!challenge @bob"), { reason: "respawning", userId: "id-bob" });
   w.tick(defaultConfig().respawnMs);
   assert.deepEqual(w.state.events.at(-1), {
@@ -646,7 +644,6 @@ test("StreamElements command lines: a bare command sends t=-, !give sends a=; se
   const amounts = ["20", "$20", " 7 ", "-", "", "2.5", "-3", "12345678", "ten"];
   assert.deepEqual(amounts.map(seAmount), [20, 20, 7, null, null, null, null, null, null], "20 or $20 only");
   for (const raw of ["\u{E0000}", "-", "bad-name"]) assert.equal(seTarget(raw), "", raw);
-  // Extra @, trailing punctuation and invisible characters still name the viewer.
   for (const raw of ["@Bob\u{E0000}", "@bob,", "@@bob", "bob!", "@Bob?", "bob."])
     assert.equal(seTarget(raw), "bob", raw);
 });

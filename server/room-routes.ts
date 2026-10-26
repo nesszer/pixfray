@@ -334,7 +334,6 @@ const ROUTES: { [route: string]: Handler } = {
   // StreamElements custom commands, forwarded by the Worker from GET /api/se/<channel>/<action>.
   "POST /se": withBody(async (room, { url, channel }, body) => {
     const res = await streamElements(room, channel, body, url.searchParams.get("origin") || "");
-    // The Worker keeps the current key's hash for a minute, so random keys are refused there without waking this room.
     const secret = room.seSettings()?.secret;
     if (secret) res.headers.set("X-Se-Key", await seKeyHash(secret));
     return res;

@@ -356,7 +356,6 @@ export async function botCommand(
     );
   }
   if (off) return json({ ok: true, reason: "bot_off", reply: "" });
-  // The alarm posts each result at its reveal time; any result it missed goes out now, before this reply.
   await postResults(room, channel, Date.now());
   if (custom) {
     // A reply the cap would drop doesn't start the cooldown or add to its counters.
@@ -1008,7 +1007,6 @@ export function processChatMessage(
       )
         upsertProfile(room, updated);
       if (main?.result?.reason === "duel_completed" || main?.result?.reason === "quick_duel") {
-        // save Elo, wins and losses
         const duel = state.duels.find((item) => item.id === main!.result.duelId); // checked in the condition above
         for (const id of duel ? [duel.a, duel.b] : []) {
           const participant = state.players.find((item) => item.userId === id);
@@ -1093,8 +1091,7 @@ async function postResultsOnce(room: ChannelRoom, channel: string, now: number):
     });
     const { replies } = sendBotLines(room, [line], channel, 1);
     if (!replies.length) return;
-    // A failed call (network, Twitch 5xx or 429 after its retries) is tried again; a line Twitch read and dropped
-    // (AutoMod, chat settings) would be dropped again, so it counts as done.
+    // A failed call is retried; a line Twitch dropped (AutoMod, chat settings) would drop again, so it counts as done.
     const { out, failed } = await sendAsBot(room, sender, replies[0]!); // checked non-empty above
     noteBotSent(room, channel, [out]);
     if (failed) return;

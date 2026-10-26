@@ -158,7 +158,7 @@ export function ensurePetSchema(sql: SqlStorage): string[] {
   sql.exec(
     "CREATE TABLE IF NOT EXISTS owned_items (user_id TEXT NOT NULL, kind TEXT NOT NULL, item_id TEXT NOT NULL, price INTEGER NOT NULL, bought_at INTEGER NOT NULL, PRIMARY KEY (user_id, kind, item_id))",
   );
-  // v2.11: a legendary pet's rolled stats and whether its free reroll is used. Legendaries bought before roll here.
+  // A legendary pet's rolled stats and whether its free reroll is used. Legendaries bought before roll here.
   const columns = sql
     .exec<{ name: string }>("PRAGMA table_info(owned_items)")
     .toArray()

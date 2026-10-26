@@ -577,7 +577,7 @@ export class ChannelRoom extends DurableObject<Env> {
       if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept; // StreamElements' Duel module owns !accept
       if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top; // and its built-in !top can't be replaced
       if (names.give === "!give") names.give = DEFAULT_SE_NAMES.give; // nor its !givepoints alias !give
-      if (names.help === "!minichat") names.help = DEFAULT_SE_NAMES.help; // the old name, from before the rename to PixFray
+      if (names.help === "!minichat") names.help = DEFAULT_SE_NAMES.help; // its name before PixFray
       const stored = safeJsonParse<{ [action: string]: unknown }>(row.seen_json, {}),
         seen: { [action: string]: number } = {};
       for (const action of SE_ACTIONS) if (Number(stored?.[action]) > 0) seen[action] = Number(stored[action]);

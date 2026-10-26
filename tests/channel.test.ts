@@ -817,7 +817,6 @@ test("StreamElements !ranks, !elo, !fray and !look work even while duels are pau
     await r.seAdmin({ action: "setSeNames", names: { [key]: stored } });
     assert.equal((await names())[key], now, stored);
   }
-  // Renamed commands show up in !fray.
   await r.seAdmin({ action: "setSeNames", names: { challenge: "!duel", accept: "!yes" } });
   assert.match(await alice("help"), /!duel @name\. They answer !yes\. Again\? !rematch\. More: /);
 });
@@ -1394,8 +1393,7 @@ test("chat bot: commands by the channel names get a reply; chat, other commands 
   // StreamElements posts nothing while the bot is connected, and doesn't take the chat source back.
   assert.equal(await r.reply("u1", "alice", "help", "", BARE), "");
   assert.equal(r.state().chat.subscriptionId, "sub-bot");
-  // At most 18 lines per 30 s (Twitch allows 20 for a bot that isn't a mod), and command replies stop 4 short of that
-  // so the bot's own result lines still fit; 3 were sent above.
+  // Command replies stop BOT_RESERVED_LINES (4) short of the 18-line cap; 3 were sent above.
   const replies = [];
   for (let i = 0; i < 20; i++) replies.push(await r.line("u1", "alice", "!elo"));
   assert.equal(replies.filter(Boolean).length, 11);
@@ -1568,8 +1566,7 @@ test("chat bot: !fray off / !fray on (broadcaster or mod) silences the whole bot
   assert.notEqual(await r.line("u2", "bob", "!elo"), "");
 });
 
-// The bot posts through Helix. Twitch is faked: an app token, then every chat line is recorded.
-// down: true makes every chat send fail (Twitch 503).
+// Twitch for the bot's Helix posts: an app token, then each chat line recorded; down: true fails every send (503).
 function fakeTwitch(t: TestContext) {
   // Loose: the Helix chat bodies the room sent; tests read message and reply fields
   const sent: Loose[] = [];
@@ -1726,7 +1723,6 @@ test("chat bot: !accept, !duel and !top are hidden aliases, unless the channel u
   assert.match(await r.line("u1", "alice", "!duel @bob"), /^alice challenges @bob!/);
   assert.match(await r.line("u2", "bob", "!ACCEPT"), /^Fight on: alice vs bob!/);
   assert.match(await r.line("u1", "alice", "!top"), /^Top \d: /);
-  // Trailing punctuation still names the viewer.
   assert.match(await r.line("u1", "alice", "!elo @bob,"), /^bob: /);
   // A custom !top command wins over the alias.
   const saved = await r.admin("saveCommand", { name: "!top", reply: "custom top" }, OWNER);
