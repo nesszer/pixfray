@@ -1,19 +1,6 @@
 // The Characters tab: custom character slots, viewer sprites to review, custom pets, and the upload tool.
-import {
-  api,
-  errorText,
-  h,
-  $,
-  setStatus,
-  dateTime,
-  formatBytes,
-  on,
-  onSubmit,
-  busy,
-  button,
-  dataTable,
-  CHANNEL,
-} from "../ui.ts";
+import { api, errorText, h, $, setStatus, dateTime, on, onSubmit, busy, button, dataTable, CHANNEL } from "../ui.ts";
+import { formatBytes, LIMITS } from "../served/atlas.ts";
 import { admin, load } from "./state.ts";
 // Shapes of the /api/assets, /api/pets and /api/sprites bodies; each place that keeps one casts it once.
 type CustomItem = {
@@ -43,7 +30,6 @@ type Sprite = {
   reviewedBy?: string;
   reviewedAt?: number;
 };
-const LIMITS = { maxCharacters: 24, maxFrames: 24, frameSize: 128, maxAtlasBytes: 1572864 };
 
 // ---------- custom characters ----------
 let customItems: CustomItem[] | null = null,

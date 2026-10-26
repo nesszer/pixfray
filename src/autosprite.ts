@@ -137,9 +137,7 @@ class Flow {
   to: number[] = [];
   next: number[] = [];
   cap: number[] = [];
-  readonly n: number;
   constructor(n: number) {
-    this.n = n;
     this.head = new Int32Array(n).fill(-1);
   }
   add(u: number, v: number, c: number, rc = 0) {
@@ -150,7 +148,8 @@ class Flow {
     this.head[v] = this.to.length - 1;
   }
   run(s: number, t: number) {
-    const { n, to, next, cap, head } = this,
+    const { to, next, cap, head } = this,
+      n = head.length,
       level = new Int32Array(n),
       it = new Int32Array(n),
       q = new Int32Array(n);
@@ -419,9 +418,7 @@ export function rim(w: number, h: number) {
 }
 
 /** The subject at the image's own size (1 = subject, 0 = background). whole: no clear subject, so all of it. */
-type Subject = { mask: Uint8Array; whole: boolean };
-
-export function subjectMask(img: Img): Subject {
+export function subjectMask(img: Img): { mask: Uint8Array; whole: boolean } {
   const k0 = Math.min(1, SEG_MAX / Math.max(img.width, img.height)),
     w = Math.max(8, Math.round(img.width * k0)),
     h = Math.max(8, Math.round(img.height * k0)),
@@ -429,6 +426,7 @@ export function subjectMask(img: Img): Subject {
     n = w * h,
     lab = labOf(small);
   const { border, side } = rim(w, h);
+  const filled = (v: 0 | 1) => ({ mask: new Uint8Array(img.width * img.height).fill(v), whole: v === 1 });
 
   // background colors: border clusters on the top edge that also reach a side, fill half the top or stay off the
   // bottom edge, or on both side edges without filling the bottom edge (a bust's body fills the bottom and its
@@ -498,19 +496,18 @@ export function subjectMask(img: Img): Subject {
   // nothing differs from the background in color: a blank picture has no subject at all, and a scene whose every
   // color is background (sky over a field) keeps the whole picture
   if (Math.max(...con) < 0.03) {
-    let spread = 0;
-    for (let p = 0; p < n; p++) spread = Math.max(spread, d3(lab, p * 3, bc, bg[0]! * 3));
-    const blank = spread < 0.03;
-    return { mask: new Uint8Array(img.width * img.height).fill(blank ? 0 : 1), whole: !blank };
+    const spread = Math.max(...Array.from({ length: n }, (_, p) => d3(lab, p * 3, bc, bg[0]! * 3)));
+    return filled(spread < 0.03 ? 0 : 1);
   }
   const mean = sal0.reduce((s, v) => s + v / n, 0),
     tv = sal0.reduce((s, v) => s + (v - mean) ** 2, 0);
-  if (tv < 1e-9) return { mask: new Uint8Array(img.width * img.height).fill(1), whole: true };
+  if (tv < 1e-9) return filled(1);
 
   // body prior: when the first guess reaches the bottom edge near its middle (a bust), the body widens below the
   // head and runs to the bottom even where it matches the background's color
   {
-    const g0 = Uint8Array.from(sal, (v) => (v > t ? 1 : 0));
+    const g0 = Uint8Array.from(sal, (v) => (v > t ? 1 : 0)),
+      rowW = new Float32Array(h);
     keepMain(g0, w, h);
     let x0 = w,
       x1 = -1,
@@ -524,6 +521,7 @@ export function subjectMask(img: Img): Subject {
         x0 = Math.min(x0, x);
         x1 = Math.max(x1, x);
         y0 = Math.min(y0, y);
+        rowW[y]!++;
         if (y === h - 1) {
           bottom++;
           bx += x;
@@ -533,8 +531,6 @@ export function subjectMask(img: Img): Subject {
     const span = x1 - x0;
     if (bottom >= 0.04 * w && span > 0 && bx > x0 + 0.25 * span && bx < x1 - 0.25 * span) {
       // the head row: where the first guess is widest
-      const rowW = new Float32Array(h);
-      for (let p = 0; p < n; p++) if (g0[p]) rowW[(p / w) | 0]!++;
       let headY = y0,
         best = 0;
       for (let y = y0; y < h * 0.85; y++)
@@ -556,20 +552,16 @@ export function subjectMask(img: Img): Subject {
 
   // graph cut, refitting the color models a few times
   let fg = Uint8Array.from(sal, (v) => (v > t ? 1 : 0));
-  const right = (p: number) => d3(lab, p * 3, lab, p * 3 + 3) ** 2,
-    below = (p: number) => d3(lab, p * 3, lab, (p + w) * 3) ** 2;
+  // the right and lower neighbors, so each pair counts once
+  const pairsOf = (p: number) => [p % w < w - 1 ? p + 1 : -1, p + w].filter((q) => q >= 0 && q < n),
+    diff = (p: number, q: number) => d3(lab, p * 3, lab, q * 3) ** 2;
   let beta = 0,
     pairs = 0;
-  for (let p = 0; p < n; p++) {
-    if (p % w < w - 1) {
-      beta += right(p);
+  for (let p = 0; p < n; p++)
+    for (const q of pairsOf(p)) {
+      beta += diff(p, q);
       pairs++;
     }
-    if (p + w < n) {
-      beta += below(p);
-      pairs++;
-    }
-  }
   beta = 1 / (2 * Math.max(1e-6, beta / pairs));
   const gamma = 6;
   for (let round = 0; round < 3; round++) {
@@ -588,13 +580,9 @@ export function subjectMask(img: Img): Subject {
       if (seed[p]) g.add(p, T, 1e9);
       else if (cb > cf) g.add(S, p, cb - cf);
       else g.add(p, T, cf - cb);
-      if (p % w < w - 1) {
-        const v = gamma * Math.exp(-beta * right(p));
-        g.add(p, p + 1, v, v);
-      }
-      if (p + w < n) {
-        const v = gamma * Math.exp(-beta * below(p));
-        g.add(p, p + w, v, v);
+      for (const q of pairsOf(p)) {
+        const v = gamma * Math.exp(-beta * diff(p, q));
+        g.add(p, q, v, v);
       }
     }
     const level = g.run(S, T);
@@ -633,10 +621,9 @@ export function subjectMask(img: Img): Subject {
   const sep = (c1 * (n - c1) * (m1 - m0) ** 2) / n / tv;
   for (let y = 0; y < 0.6 * h; y++) if (fg[y * w] && fg[y * w + w - 1]) wide++;
   cover /= n;
-  const whole = cover < 0.04 || cover > 0.65 || top > 0.25 * w || wide > 0.09 * h || sep < 0.68;
-  if (whole) return { mask: new Uint8Array(img.width * img.height).fill(1), whole };
+  if (cover < 0.04 || cover > 0.65 || top > 0.25 * w || wide > 0.09 * h || sep < 0.68) return filled(1);
   dropEdgeLeak(fg, lab, w, h);
-  return { mask: upsample(fg, w, h, img.width, img.height), whole };
+  return { mask: upsample(fg, w, h, img.width, img.height), whole: false };
 }
 
 // Background the cut kept stuck to the subject (a cloud touching the head). Foreground running along the top edge
