@@ -792,6 +792,7 @@ test("StreamElements !ranks, !elo, !fray and !look work even while duels are pau
   const se = await names();
   assert.deepEqual([se.top, se.elo, se.help, se.look], ["!ranks", "!elo", "!fray", "!look"]);
   const alice = (action: string, target = "") => r.reply("u1", "alice", action, target);
+  // Nothing follows the link: Twitch would take it into the link.
   const helpLine = `PixFray duels: name your rival with !challenge @name. They answer !fight. Again? !rematch. More: !checkin !wallet !ranks !look. Gear up at ${SITE}`;
   assert.equal(await alice("help"), helpLine);
   assert.equal(await alice("top"), `The arena has no champions yet! Gear up at ${SITE} and win a duel.`);
