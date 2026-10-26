@@ -41,7 +41,6 @@ export function forgetChannel(channel?: string): void {
   else cache.clear();
 }
 
-// 'builtin' | 'on' | 'paused' | null (never set up)
 export async function channelState(env: Env, channel: string): Promise<ChannelState> {
   if (CHANNELS.includes(channel)) return "builtin";
   if (!LOGIN.test(channel || "")) return null;
@@ -55,9 +54,6 @@ export async function channelState(env: Env, channel: string): Promise<ChannelSt
   return state;
 }
 export const isOn = (state: ChannelState): boolean => state === "builtin" || state === "on";
-export async function enabledChannel(env: Env, channel: string): Promise<boolean> {
-  return isOn(await channelState(env, channel));
-}
 // The refusal for a channel that is off: 403 with off = 'paused' | 'not_enabled'.
 export const offError = (state: ChannelState): { error: string; off: "paused" | "not_enabled" } =>
   state === "paused"

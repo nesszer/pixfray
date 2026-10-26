@@ -156,23 +156,21 @@ function submitError(reason: string): string {
 export function validateRedrawImage(value: unknown): OrRefusal<RedrawImage, SpriteRefusal> {
   const image = decodeB64(value, SPRITE_LIMITS.aiMaxBytes);
   if (image.reason) return image;
-  const b = image.bytes;
-  if (JPEG.every((v, i) => b[i] === v)) {
-    const size = jpegSize(b);
-    if (!size) return { status: 415, reason: "invalid_image", error: "The JPEG couldn't be read" };
-    if (size.width > SPRITE_LIMITS.aiMaxSide || size.height > SPRITE_LIMITS.aiMaxSide)
-      return { status: 400, reason: "image_dimensions", error: `Send at most ${SPRITE_LIMITS.aiMaxSide} px a side` };
-    return { bytes: b, type: "image/jpeg" };
-  }
-  let size: PngSize;
+  const b = image.bytes,
+    jpeg = JPEG.every((v, i) => b[i] === v);
+  let size: PngSize | null = null;
   try {
-    size = readPng(b);
-  } catch {
-    return { status: 415, reason: "invalid_image", error: "Send a PNG or JPEG image" };
-  }
+    size = jpeg ? jpegSize(b) : readPng(b);
+  } catch {}
+  if (!size)
+    return {
+      status: 415,
+      reason: "invalid_image",
+      error: jpeg ? "The JPEG couldn't be read" : "Send a PNG or JPEG image",
+    };
   if (size.width > SPRITE_LIMITS.aiMaxSide || size.height > SPRITE_LIMITS.aiMaxSide)
     return { status: 400, reason: "image_dimensions", error: `Send at most ${SPRITE_LIMITS.aiMaxSide} px a side` };
-  return { bytes: b, type: "image/png" };
+  return { bytes: b, type: jpeg ? "image/jpeg" : "image/png" };
 }
 
 // Width and height from the first SOFn marker, or null.
@@ -333,29 +331,24 @@ const catalogEntry = (channel: string) => (r: CatalogRow) => ({
   owner: r.user_id,
 });
 
+const PNG_OF = "SELECT png FROM viewer_sprites WHERE ";
 const ROW =
   "id, user_id AS userId, username, display_name AS displayName, label, status, bytes, width, height, ai, created_at AS createdAt, reviewed_by AS reviewedBy, reviewed_at AS reviewedAt";
 const shape = (r: SpriteDbRow): SpriteRow => r && { ...r, ai: Boolean(r.ai) };
+/** The first row of a query, or undefined. */
+const first = <T extends Record<string, SqlStorageValue>>(sql: SqlStorage, query: string, ...args: SqlStorageValue[]) =>
+  sql.exec<T>(query, ...args).toArray()[0];
+/** A COUNT(*) or COALESCE(SUM) query's n, which always comes back as one row. */
+const count = (sql: SqlStorage, query: string, ...args: SqlStorageValue[]): number =>
+  // COUNT(*) and COALESCE(SUM) always return one row
+  first<{ n: number }>(sql, query, ...args)!.n;
 
 function usage(sql: SqlStorage, userId: string, day: string): { submits: number; ai: number } {
-  return (
-    sql
-      .exec<{ submits: number; ai: number }>(
-        "SELECT submits, ai FROM sprite_usage WHERE user_id = ? AND day = ?",
-        userId,
-        day,
-      )
-      .toArray()[0] || {
-      submits: 0,
-      ai: 0,
-    }
-  );
+  const query = "SELECT submits, ai FROM sprite_usage WHERE user_id = ? AND day = ?";
+  return first<{ submits: number; ai: number }>(sql, query, userId, day) || { submits: 0, ai: 0 };
 }
 function aiLeft(sql: SqlStorage, userId: string, day: string): number {
-  const channel = sql
-    .exec<{ n: number }>("SELECT COALESCE(SUM(ai), 0) AS n FROM sprite_usage WHERE day = ?", day)
-    // COALESCE(SUM) always returns one row
-    .toArray()[0]!.n;
+  const channel = count(sql, "SELECT COALESCE(SUM(ai), 0) AS n FROM sprite_usage WHERE day = ?", day);
   return Math.max(
     0,
     Math.min(SPRITE_LIMITS.aiPerDay - usage(sql, userId, day).ai, SPRITE_LIMITS.aiChannelPerDay - channel),
@@ -401,13 +394,13 @@ export async function handleRoomSprites(
   if (path === "/sprites/mine" && request.method === "DELETE") {
     const userId = url.searchParams.get("userId") || "",
       kind = url.searchParams.get("kind");
-    const row = sql
-      .exec<{ id: string }>(
-        "SELECT id FROM viewer_sprites WHERE user_id = ? AND status = ?",
-        userId,
-        kind === "live" ? "live" : "pending",
-      )
-      .toArray()[0];
+    const status = kind === "live" ? "live" : "pending";
+    const row = first<{ id: string }>(
+      sql,
+      "SELECT id FROM viewer_sprites WHERE user_id = ? AND status = ?",
+      userId,
+      status,
+    );
     if (!row)
       return fail(404, "not_found", kind === "live" ? "You have no approved sprite" : "You have no sprite waiting");
     sql.exec("DELETE FROM viewer_sprites WHERE id = ?", row.id);
@@ -435,11 +428,7 @@ export async function handleRoomSprites(
         );
       // A new sprite replaces the viewer's waiting one and clears an old rejection.
       sql.exec("DELETE FROM viewer_sprites WHERE user_id = ? AND status IN ('pending', 'rejected')", userId);
-      if (
-        // COUNT(*) always returns one row
-        sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM viewer_sprites WHERE status = 'pending'").toArray()[0]!.n >=
-        SPRITE_LIMITS.maxPending
-      )
+      if (count(sql, "SELECT COUNT(*) AS n FROM viewer_sprites WHERE status = 'pending'") >= SPRITE_LIMITS.maxPending)
         return fail(409, "queue_full", "The mods have a full review list right now. Try again later.");
       sql.exec(
         "INSERT INTO viewer_sprites (id, user_id, username, display_name, label, status, png, bytes, width, height, ai, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
@@ -463,14 +452,9 @@ export async function handleRoomSprites(
       return null;
     });
     if (result) return result;
-    return json(
-      // The row was inserted just above (the transaction returned null only after the INSERT)
-      {
-        ok: true,
-        pending: shape(sql.exec<SpriteDbRow>(`SELECT ${ROW} FROM viewer_sprites WHERE id = ?`, id).toArray()[0]!),
-      },
-      201,
-    );
+    // The row was inserted just above (the transaction returned null only after the INSERT)
+    const pending = shape(first<SpriteDbRow>(sql, `SELECT ${ROW} FROM viewer_sprites WHERE id = ?`, id)!);
+    return json({ ok: true, pending }, 201);
   }
   if (path === "/sprites/ai" && request.method === "POST") {
     const body = parseRoomSpriteAi(await read());
@@ -518,19 +502,9 @@ export async function handleRoomSprites(
       userId = url.searchParams.get("userId");
     const row =
       key === "pending"
-        ? sql
-            .exec<{ png: ArrayBuffer }>(
-              "SELECT png FROM viewer_sprites WHERE user_id = ? AND status = 'pending'",
-              userId || "",
-            )
-            .toArray()[0]
+        ? first<{ png: ArrayBuffer }>(sql, PNG_OF + "user_id = ? AND status = 'pending'", userId || "")
         : SPRITE_ID.test(key) &&
-          sql
-            .exec<{ png: ArrayBuffer }>(
-              "SELECT png FROM viewer_sprites WHERE id = ? AND status IN ('pending', 'live')",
-              key,
-            )
-            .toArray()[0];
+          first<{ png: ArrayBuffer }>(sql, PNG_OF + "id = ? AND status IN ('pending', 'live')", key);
     return row ? png(row.png, "private, no-store") : json({ error: "Not found" }, 404);
   }
   if (path === "/sprites/review" && request.method === "POST") {
@@ -538,35 +512,25 @@ export async function handleRoomSprites(
     if (!body.ok) return fail(400, body.error, "Send {id, action}");
     const { id, action } = body.value,
       actor = (body.value.actorName || body.value.actorId || "mod").slice(0, 48);
-    const row =
-      SPRITE_ID.test(id) && sql.exec<SpriteDbRow>(`SELECT ${ROW} FROM viewer_sprites WHERE id = ?`, id).toArray()[0];
+    const row = SPRITE_ID.test(id) && first<SpriteDbRow>(sql, `SELECT ${ROW} FROM viewer_sprites WHERE id = ?`, id);
     if (!row || row.status === "rejected") return fail(404, "not_found", "That sprite is gone; reload the list");
-    if (
-      (action === "approve" && row.status !== "pending") ||
-      (action === "reject" && row.status !== "pending") ||
-      (action === "remove" && row.status !== "live")
-    )
+    if (row.status !== (action === "remove" ? "live" : "pending"))
       return fail(409, "wrong_status", "That sprite was already reviewed; reload the list");
     if (action === "approve") {
       const result = room.ctx.storage.transactionSync(() => {
-        if (
-          sql
-            .exec<{ n: number }>(
-              "SELECT COUNT(*) AS n FROM viewer_sprites WHERE status = 'live' AND user_id <> ?",
-              row.userId,
-            )
-            // COUNT(*) always returns one row
-            .toArray()[0]!.n >= SPRITE_LIMITS.maxLive
-        )
+        const others = count(
+          sql,
+          "SELECT COUNT(*) AS n FROM viewer_sprites WHERE status = 'live' AND user_id <> ?",
+          row.userId,
+        );
+        if (others >= SPRITE_LIMITS.maxLive)
           return fail(
             409,
             "live_limit",
             `This channel has ${SPRITE_LIMITS.maxLive} approved sprites; remove one first`,
           );
-        const previous =
-          sql
-            .exec<{ id: string }>("SELECT id FROM viewer_sprites WHERE user_id = ? AND status = 'live'", row.userId)
-            .toArray()[0]?.id || "";
+        const query = "SELECT id FROM viewer_sprites WHERE user_id = ? AND status = 'live'";
+        const previous = first<{ id: string }>(sql, query, row.userId)?.id || "";
         if (previous) sql.exec("DELETE FROM viewer_sprites WHERE id = ?", previous);
         sql.exec(
           "UPDATE viewer_sprites SET status = 'live', reviewed_by = ?, reviewed_at = ? WHERE id = ?",
@@ -595,11 +559,7 @@ export async function handleRoomSprites(
   // An approved sprite's PNG (public, through /api/assets/:channel/:id). The id changes with every approval.
   if (path.startsWith("/asset/v-") && request.method === "GET") {
     const id = path.slice(7);
-    const row =
-      SPRITE_ID.test(id) &&
-      sql
-        .exec<{ png: ArrayBuffer }>("SELECT png FROM viewer_sprites WHERE id = ? AND status = 'live'", id)
-        .toArray()[0];
+    const row = SPRITE_ID.test(id) && first<{ png: ArrayBuffer }>(sql, PNG_OF + "id = ? AND status = 'live'", id);
     return row ? png(row.png, "public, max-age=86400, immutable") : json({ error: "Not found" }, 404);
   }
   return json({ error: "Method not allowed" }, 405);
