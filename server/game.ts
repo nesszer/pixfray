@@ -18,6 +18,7 @@ import type {
   Abilities,
   AbilityName,
   AdminEvent,
+  AdminPayload,
   CommandEvent,
   Config,
   Cooldowns,
@@ -288,20 +289,13 @@ function recentProfile(
   const base = existing ? { ...existing } : defaultProfile(userId, state.config, now);
   const username = normalizeUsername(profile.username);
   const displayName = safeString(profile.displayName || username || base.displayName, 48);
-  const avatar = safeString(profile.avatar || base.avatar || "player", 64);
-  // profile.color! : the regex matched it, so it is a string
-  const color = /^#[0-9a-f]{6}$/i.test(profile.color || "") ? profile.color!.toUpperCase() : base.color || "#A78BFA";
-  // defaultAbility! : has() was true, so it is one of the three names
-  const defaultAbility = ABILITIES.has(profile.defaultAbility)
-    ? profile.defaultAbility!
-    : base.defaultAbility || "strike";
   const merged: Player = {
     ...base,
     username: username || base.username,
     displayName: displayName || username || base.displayName || userId,
-    avatar,
-    color,
-    defaultAbility,
+    avatar: safeString(profile.avatar || base.avatar || "player", 64),
+    color: cleanColor(profile.color, base.color || "#A78BFA"),
+    defaultAbility: cleanAbility(profile.defaultAbility, base.defaultAbility || "strike"),
     registered: Boolean(base.registered || profile.registered),
     lastSeen: now,
   };
@@ -322,18 +316,26 @@ function recentProfile(
   if (profile.registered && !merged.lastOpponentId && normalizeUserId(profile.lastOpponentId))
     merged.lastOpponentId = normalizeUserId(profile.lastOpponentId);
   if (existing) Object.assign(existing, merged);
-  else {
-    if (state.players.length >= MAX_ACTIVE_PLAYERS) {
-      const candidates = state.players
-        .filter((item) => !hasOpenDuel(state, item.userId))
-        .sort((a, b) => a.lastSeen - b.lastSeen);
-      if (!candidates.length) return null;
-      // candidates is not empty (checked on the line above)
-      state.players.splice(state.players.indexOf(candidates[0]!), 1);
-    }
-    state.players.push(merged);
-  }
+  else if (!addPlayer(state, merged)) return null;
   return player(state, userId);
+}
+
+const cleanColor = (value: unknown, fallback: string): string =>
+  typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : fallback;
+const cleanAbility = (value: unknown, fallback: string): string =>
+  typeof value === "string" && ABILITIES.has(value) ? value : fallback;
+
+// Adds a fighter, dropping the longest-quiet one not in a duel when the stage is full; false when all of them are.
+function addPlayer(state: GameState, p: Player): boolean {
+  if (state.players.length >= MAX_ACTIVE_PLAYERS) {
+    const idle = state.players
+      .filter((item) => !hasOpenDuel(state, item.userId))
+      .sort((a, b) => a.lastSeen - b.lastSeen)[0];
+    if (!idle) return false;
+    state.players.splice(state.players.indexOf(idle), 1);
+  }
+  state.players.push(p);
+  return true;
 }
 
 // Cancelled duels are unscored: no Elo, no wins/losses, no KO. Fighters are restored to full health.
@@ -544,10 +546,7 @@ function beginDuel(state: GameState, duel: Duel, now: number, event: { newAccoun
     sharedCooldownMs: state.config.sharedCooldownMs,
     abilities: clone(state.config.abilities),
   };
-  duel.cooldowns = {
-    [duel.a]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
-    [duel.b]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
-  };
+  duel.cooldowns = freshCooldowns(duel);
   a.hp = fullHp(duel, a.userId);
   b.hp = fullHp(duel, b.userId);
   a.respawnAt = 0;
@@ -576,6 +575,10 @@ function duelStats(state: GameState, duel: Duel): Record<string, Stats> {
 // A fighter's full health in a started duel: their own max HP, or the rules' for a duel started before vitality.
 // rules!: only started duels reach here, and beginDuel sets rules
 const fullHp = (duel: Duel, userId: string): number => duel.maxHp?.[userId] ?? duel.rules!.maxHp;
+const freshCooldowns = (duel: Duel): Record<string, Cooldowns> => ({
+  [duel.a]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
+  [duel.b]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
+});
 
 // Quick duel: a d6 exchange settled at once. Fighters take turns swinging, the challenger first:
 // 6 is a crit (50% of the channel's max HP), 5 a hit (34%), 3-4 a miss, 1-2 the other fighter counters (34%).
@@ -964,98 +967,108 @@ function applyCommand(state: GameState, event: CommandEvent, now: number): GameR
 
 /** A config change as validateConfigPatch passes it on: known keys only, each in range. */
 type ConfigPatch = { [key: string]: unknown; abilities?: { [name: string]: { [field: string]: number } } };
+type Check = (value: unknown) => boolean;
+const int =
+  (min: number, max: number): Check =>
+  (value) =>
+    boundedInt(value, min, max) !== null;
+const flag: Check = (value) => typeof value === "boolean";
+const price = int(1, 100_000);
+// The values a mod may set for each config key but abilities; anything else is refused as invalid_config_<key>.
+const CONFIG_CHECKS: { [key in Exclude<keyof Config, "abilities">]: Check } = {
+  enabled: flag,
+  quickDuel: flag,
+  announce: (value) => ANNOUNCE.includes(value),
+  maxOnStream: int(...ON_STREAM),
+  maxHp: int(1, 1_000),
+  maxDuels: int(1, 5),
+  challengeTimeoutMs: int(5_000, 300_000),
+  inactivityMs: int(10_000, 600_000),
+  respawnMs: int(0, 60_000),
+  rematchDelayMs: int(0, 600_000),
+  streamDelayMs: int(0, 60_000),
+  sharedCooldownMs: int(250, 60_000),
+  initialElo: int(0, 10_000),
+  eloK: int(1, 100),
+  checkinPoints: int(0, 3),
+  streakBonus: flag,
+  maxStatLevel: int(1, 200),
+  winDollars: int(0, 100),
+  lossDollars: int(0, 100),
+  pairRankedPerStream: int(0, 50),
+  giveEnabled: flag,
+  giveMaxPerStream: int(0, 10_000),
+  giveMinDuels: int(0, 1_000),
+  reminderMin: (value) => value === 0 || int(10, 240)(value),
+  botEnabled: flag,
+  petPriceCommon: price,
+  petPriceUncommon: price,
+  petPriceRare: price,
+  petPriceEpic: price,
+  petPriceLegendary: price,
+  hatPricePerWin: int(0, 1_000),
+  recolorPrice: price,
+  petColorPrice: price,
+  accessoryPrice: price,
+  trailPrice: price,
+  effectPrice: price,
+  tauntPrice: price,
+  titlePrice: price,
+  buildSlotPrice: price,
+  buildSlotPriceMore: price,
+};
+const isRecord = (value: unknown): value is { [key: string]: unknown } =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 function validateConfigPatch(patch: Untrusted): { ok: true; patch: ConfigPatch } | { ok: false; reason: string } {
-  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { ok: false, reason: "invalid_config" };
+  if (!isRecord(patch)) return { ok: false, reason: "invalid_config" };
   const out: ConfigPatch = {};
-  const ranges: Record<string, [number, number]> = {
-    maxHp: [1, 1_000],
-    maxDuels: [1, 5],
-    challengeTimeoutMs: [5_000, 300_000],
-    inactivityMs: [10_000, 600_000],
-    respawnMs: [0, 60_000],
-    rematchDelayMs: [0, 600_000],
-    streamDelayMs: [0, 60_000],
-    sharedCooldownMs: [250, 60_000],
-    initialElo: [0, 10_000],
-    eloK: [1, 100],
-    maxOnStream: ON_STREAM,
-    checkinPoints: [0, 3],
-    maxStatLevel: [1, 200],
-    winDollars: [0, 100],
-    lossDollars: [0, 100],
-    pairRankedPerStream: [0, 50],
-    giveMaxPerStream: [0, 10_000],
-    giveMinDuels: [0, 1_000],
-    reminderMin: [0, 240],
-    petPriceCommon: [1, 100_000],
-    petPriceUncommon: [1, 100_000],
-    petPriceRare: [1, 100_000],
-    petPriceEpic: [1, 100_000],
-    petPriceLegendary: [1, 100_000],
-    hatPricePerWin: [0, 1_000],
-    recolorPrice: [1, 100_000],
-    petColorPrice: [1, 100_000],
-    accessoryPrice: [1, 100_000],
-    trailPrice: [1, 100_000],
-    effectPrice: [1, 100_000],
-    tauntPrice: [1, 100_000],
-    titlePrice: [1, 100_000],
-    buildSlotPrice: [1, 100_000],
-    buildSlotPriceMore: [1, 100_000],
-  };
-  for (const key of Object.keys(patch)) {
-    if (
-      key === "enabled" ||
-      key === "quickDuel" ||
-      key === "streakBonus" ||
-      key === "giveEnabled" ||
-      key === "botEnabled"
-    ) {
-      if (typeof patch[key] !== "boolean") return { ok: false, reason: "invalid_config_" + key };
-      out[key] = patch[key];
-    } else if (key === "announce") {
-      if (!ANNOUNCE.includes(patch[key])) return { ok: false, reason: "invalid_config_announce" };
-      out[key] = patch[key];
-    } else if (key === "relayLeaseMs") {
-      continue; // removed with the relay; old history versions may still carry it, so rollbacks skip it
-    } else if (ranges[key]) {
-      const value = boundedInt(patch[key], ranges[key][0], ranges[key][1]);
-      if (value === null || (key === "reminderMin" && value > 0 && value < 10))
-        return { ok: false, reason: "invalid_config_" + key };
-      out[key] = value;
-    } else if (key === "abilities") {
-      if (!patch.abilities || typeof patch.abilities !== "object" || Array.isArray(patch.abilities))
-        return { ok: false, reason: "invalid_config_abilities" };
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === "relayLeaseMs") continue; // removed with the relay; old history versions may carry it, so rollbacks skip it
+    if (key === "abilities") {
+      if (!isRecord(value)) return { ok: false, reason: "invalid_config_abilities" };
       const abilities: { [name: string]: { [field: string]: number } } = {};
-      for (const [name, spec] of Object.entries(patch.abilities)) {
-        if (!ABILITIES.has(name) || !spec || typeof spec !== "object" || Array.isArray(spec))
-          return { ok: false, reason: "invalid_config_ability" };
+      for (const [name, spec] of Object.entries(value)) {
+        if (!ABILITIES.has(name) || !isRecord(spec)) return { ok: false, reason: "invalid_config_ability" };
         const allowed = name === "heal" ? ["amount", "cooldownMs"] : ["damage", "cooldownMs"];
-        abilities[name] = {};
-        for (const [field, value] of Object.entries(spec)) {
+        const fields: { [field: string]: number } = {};
+        for (const [field, amount] of Object.entries(spec)) {
           if (!allowed.includes(field)) return { ok: false, reason: "invalid_config_ability_field" };
-          const [min, max] = field === "cooldownMs" ? [250, 600_000] : [1, 1_000];
-          const valid = boundedInt(value, min, max);
+          const valid = field === "cooldownMs" ? boundedInt(amount, 250, 600_000) : boundedInt(amount, 1, 1_000);
           if (valid === null) return { ok: false, reason: "invalid_config_ability_value" };
-          // set to {} above this loop
-          abilities[name]![field] = valid;
+          fields[field] = valid;
         }
+        abilities[name] = fields;
       }
       out.abilities = abilities;
+    } else if (Object.hasOwn(CONFIG_CHECKS, key)) {
+      // hasOwn: key is one of CONFIG_CHECKS' own keys
+      if (!CONFIG_CHECKS[key as keyof typeof CONFIG_CHECKS](value))
+        return { ok: false, reason: "invalid_config_" + key };
+      out[key] = value;
     } else return { ok: false, reason: "unknown_config_field" };
   }
   return { ok: true, patch: out };
 }
 
-function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResult {
-  const actorId = normalizeUserId(event.actorId);
-  if (!actorId) return { ok: false, reason: "unauthorized" };
-  const action = safeString(event.action, 32);
-  const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
-  const dirtyProfileIds: string[] = [];
-  const deletedProfileIds: string[] = [];
-
-  if (action === "config") {
+/** What every admin action gets: the acting mod, the payload and the profile id lists its result carries. */
+type AdminCtx = {
+  state: GameState;
+  event: AdminEvent;
+  payload: AdminPayload;
+  actorId: string;
+  now: number;
+  ids: { dirtyProfileIds: string[]; deletedProfileIds: string[] };
+};
+// The fighter an action names, when they are on stage or have a saved profile (the room passes it as targetProfile).
+function adminTarget({ state, event, payload }: AdminCtx): { userId: string; p: Player | undefined } | null {
+  const userId = normalizeUserId(payload.userId);
+  const p = player(state, userId);
+  const stored = event.targetProfile?.userId === userId && event.targetProfile?.registered;
+  return userId && (p?.registered || stored) ? { userId, p } : null;
+}
+const fits = (value: unknown, max: number): boolean => Number.isInteger(value) && value >= 0 && value <= max;
+const ADMIN_ACTIONS: { [action: string]: (ctx: AdminCtx) => GameResult } = {
+  config({ state, payload, actorId, now, ids }) {
     if (payload.baseVersion !== undefined && payload.baseVersion !== state.configVersion) {
       return { ok: false, reason: "config_version_conflict", configVersion: state.configVersion };
     }
@@ -1064,13 +1077,12 @@ function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResul
     const config: { [key: string]: unknown; abilities: { [name: string]: { [field: string]: number } } } = {
       ...state.config,
     };
-    for (const [key, value] of Object.entries(patchResult.patch)) {
-      if (key === "abilities") {
-        config.abilities = { ...config.abilities };
-        // validateConfigPatch built abilities as name -> { field: number }
-        for (const [name, spec] of Object.entries(value as { [name: string]: { [field: string]: number } }))
-          config.abilities[name] = { ...config.abilities[name], ...spec };
-      } else config[key] = value;
+    const { abilities, ...rest } = patchResult.patch;
+    Object.assign(config, rest);
+    if (abilities) {
+      config.abilities = { ...config.abilities };
+      for (const [name, spec] of Object.entries(abilities))
+        config.abilities[name] = { ...config.abilities[name], ...spec };
     }
     state.config = normalizeConfig(config);
     state.configVersion += 1;
@@ -1087,22 +1099,17 @@ function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResul
       reason: "config_updated",
       config: clone(state.config),
       configVersion: state.configVersion,
-      dirtyProfileIds,
-      deletedProfileIds,
+      ...ids,
     };
-  }
-
-  if (action === "cancelDuel") {
+  },
+  cancelDuel({ state, payload, now, ids }) {
     const duelId = safeString(payload.duelId, 64);
-    const duel = state.duels.find(
-      (item) => item.id === duelId && (item.status === "pending" || item.status === "active"),
-    );
+    const duel = openDuels(state).find((item) => item.id === duelId);
     if (!duel) return { ok: false, reason: "duel_not_found" };
     cancelDuel(state, duel, now, "moderator_cancelled");
-    return { ok: true, reason: "duel_cancelled", duelId, dirtyProfileIds, deletedProfileIds };
-  }
-
-  if (action === "resetHealth") {
+    return { ok: true, reason: "duel_cancelled", duelId, ...ids };
+  },
+  resetHealth({ state, actorId, now, ids }) {
     for (const duel of state.duels) {
       if (duel.status !== "active") continue;
       for (const userId of [duel.a, duel.b]) {
@@ -1114,10 +1121,7 @@ function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResul
         }
       }
       duel.lastActionAt = now;
-      duel.cooldowns = {
-        [duel.a]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
-        [duel.b]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
-      };
+      duel.cooldowns = freshCooldowns(duel);
     }
     for (const p of state.players)
       if (!hasOpenDuel(state, p.userId)) {
@@ -1125,60 +1129,39 @@ function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResul
         p.respawnAt = 0;
       }
     addEvent(state, "health_reset", now, { actorId });
-    return { ok: true, reason: "health_reset", dirtyProfileIds, deletedProfileIds };
-  }
-
-  if (action === "resetRank") {
-    const userId = normalizeUserId(payload.userId);
-    const p = player(state, userId);
-    const stored = event.targetProfile?.userId === userId && event.targetProfile?.registered;
-    if (!userId || (!p?.registered && !stored)) return { ok: false, reason: "profile_not_found" };
-    if (p) {
-      p.elo = state.config.initialElo;
-      p.wins = 0;
-      p.losses = 0;
-    }
-    addEvent(state, "rank_reset", now, { actorId, userId });
-    return { ok: true, reason: "rank_reset", dirtyProfileIds, deletedProfileIds, rankResetIds: [userId] };
-  }
-
-  if (action === "restoreRank") {
-    const userId = normalizeUserId(payload.userId);
-    const p = player(state, userId);
-    const stored = event.targetProfile?.userId === userId && event.targetProfile?.registered;
-    if (!userId || (!p?.registered && !stored)) return { ok: false, reason: "profile_not_found" };
-    const rank = { elo: payload.elo, wins: payload.wins, losses: payload.losses };
-    const fits = (value: unknown, max: number): boolean => Number.isInteger(value) && value >= 0 && value <= max;
-    if (!fits(rank.elo, 10_000) || !fits(rank.wins, 1_000_000) || !fits(rank.losses, 1_000_000))
+    return { ok: true, reason: "health_reset", ...ids };
+  },
+  resetRank(ctx) {
+    const target = adminTarget(ctx);
+    if (!target) return { ok: false, reason: "profile_not_found" };
+    if (target.p) Object.assign(target.p, { elo: ctx.state.config.initialElo, wins: 0, losses: 0 });
+    addEvent(ctx.state, "rank_reset", ctx.now, { actorId: ctx.actorId, userId: target.userId });
+    return { ok: true, reason: "rank_reset", ...ctx.ids, rankResetIds: [target.userId] };
+  },
+  restoreRank(ctx) {
+    const target = adminTarget(ctx);
+    if (!target) return { ok: false, reason: "profile_not_found" };
+    const { elo, wins, losses } = ctx.payload;
+    if (!fits(elo, 10_000) || !fits(wins, 1_000_000) || !fits(losses, 1_000_000))
       return { ok: false, reason: "invalid_rank" };
-    if (p) Object.assign(p, rank);
-    addEvent(state, "rank_restored", now, { actorId, userId, ...rank });
-    return {
-      ok: true,
-      reason: "rank_restored",
-      dirtyProfileIds,
-      deletedProfileIds,
-      // as RankSet: fits() checked elo, wins and losses above
-      rankSet: { userId, ...rank } as RankSet,
-    };
-  }
-
-  if (action === "resetAllRanks") {
+    // as: fits() checked elo, wins and losses above
+    const rank = { elo, wins, losses } as Omit<RankSet, "userId">;
+    if (target.p) Object.assign(target.p, rank);
+    addEvent(ctx.state, "rank_restored", ctx.now, { actorId: ctx.actorId, userId: target.userId, ...rank });
+    return { ok: true, reason: "rank_restored", ...ctx.ids, rankSet: { userId: target.userId, ...rank } };
+  },
+  resetAllRanks({ state, actorId, now, ids }) {
     for (const p of state.players) {
       if (!p.registered) continue;
-      p.elo = state.config.initialElo;
-      p.wins = 0;
-      p.losses = 0;
-      dirtyProfileIds.push(p.userId);
+      Object.assign(p, { elo: state.config.initialElo, wins: 0, losses: 0 });
+      ids.dirtyProfileIds.push(p.userId);
     }
-    // a fresh start for everyone, so the pair counts start over too
-    state.pairPlays = [];
+    state.pairPlays = []; // a fresh start for everyone, so the pair counts start over too
     addEvent(state, "all_ranks_reset", now, { actorId });
-    return { ok: true, reason: "all_ranks_reset", dirtyProfileIds, resetAllRanks: true, deletedProfileIds };
-  }
-
+    return { ok: true, reason: "all_ranks_reset", ...ids, resetAllRanks: true };
+  },
   // Mods start one pair's ranked count for this stream over (the room resolves the two names to user ids).
-  if (action === "resetPair") {
+  resetPair({ state, payload, actorId, now }) {
     const a = normalizeUserId(payload.a),
       b = normalizeUserId(payload.b);
     if (!a || !b || a === b) return { ok: false, reason: "invalid_pair" };
@@ -1187,38 +1170,49 @@ function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResul
     state.pairPlays = state.pairPlays.filter((play) => play.pair !== pair);
     addEvent(state, "pair_reset", now, { actorId, a, b });
     return { ok: true, reason: "pair_reset", amount: before - state.pairPlays.length };
-  }
-
-  if (action === "resetAll") {
-    // docs/CONTRACTS.md: clears players, duels and rematch locks; stored profiles and ranks stay.
+  },
+  // Clears players, duels and rematch locks; stored profiles and ranks stay.
+  resetAll({ state, actorId, now, ids }) {
     for (const duel of openDuels(state)) cancelDuel(state, duel, now, "moderator_reset");
     state.players = [];
     state.rematchLocks = [];
     addEvent(state, "game_reset", now, { actorId });
-    return { ok: true, reason: "game_reset", dirtyProfileIds, resetAllRanks: false, deletedProfileIds };
-  }
-
-  if (action === "resetRound") {
+    return { ok: true, reason: "game_reset", ...ids, resetAllRanks: false };
+  },
+  resetRound({ state, actorId, now, ids }) {
     state.round = 0;
     addEvent(state, "round_reset", now, { actorId });
-    return { ok: true, reason: "round_reset", round: 0, dirtyProfileIds, deletedProfileIds };
-  }
-
-  if (action === "removePlayer") {
+    return { ok: true, reason: "round_reset", round: 0, ...ids };
+  },
+  removePlayer({ state, payload, actorId, now, ids }) {
     const userId = normalizeUserId(payload.userId);
     if (!userId) return { ok: false, reason: "profile_not_found" };
     for (const duel of openDuels(state).filter((item) => duelHasUser(item, userId)))
       cancelDuel(state, duel, now, "player_removed");
     state.players = state.players.filter((p) => p.userId !== userId);
-    deletedProfileIds.push(userId);
+    ids.deletedProfileIds.push(userId);
     addEvent(state, "player_removed", now, { actorId, userId });
-    return { ok: true, reason: "player_removed", dirtyProfileIds, deletedProfileIds };
-  }
+    return { ok: true, reason: "player_removed", ...ids };
+  },
+};
 
-  return { ok: false, reason: "unknown_admin_action" };
+function applyAdmin(state: GameState, event: AdminEvent, now: number): GameResult {
+  const actorId = normalizeUserId(event.actorId);
+  if (!actorId) return { ok: false, reason: "unauthorized" };
+  const action = safeString(event.action, 32);
+  if (!Object.hasOwn(ADMIN_ACTIONS, action)) return { ok: false, reason: "unknown_admin_action" };
+  const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
+  // hasOwn: action is one of the table's own keys
+  return ADMIN_ACTIONS[action]!({
+    state,
+    event,
+    payload,
+    actorId,
+    now,
+    ids: { dirtyProfileIds: [], deletedProfileIds: [] },
+  });
 }
 
-// Results the stream hasn't shown yet: userId -> { elo before the first hidden duel, hidden wins, losses and dollars }.
 /** What the stream hasn't shown yet for one fighter. */
 export type HiddenResult = { elo: number | undefined; wins: number; losses: number; dollars: number };
 export function hiddenResults(state: GameState, now: number): Map<string, HiddenResult> {
@@ -1256,13 +1250,15 @@ export function shownProfile<P extends { userId: string; wins: number; losses: n
   return shown;
 }
 
+// Chat clients append invisible characters (U+E0000 tag chars, U+034F, zero-width spaces) to repeated messages.
+export const stripInvisible = (text: string): string =>
+  text.replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF]/gu, "");
+
 export function parseGameCommand(text: unknown): { action: string; target: string } | null {
   if (typeof text !== "string") return null;
-  // Chat clients append invisible characters (U+E0000 tag chars, U+034F, zero-width spaces) to repeated messages.
-  const clean = text.replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF]/gu, "").trim();
   const match =
     /^!(duel|challenge|rematch|accept|fight|decline|attack|strike|heavy|heal)(?:\s+(@?[a-z0-9_]{1,25}))?\s*$/i.exec(
-      clean,
+      stripInvisible(text).trim(),
     );
   if (!match) return null;
   // group 1 is not optional in the regex
@@ -1296,9 +1292,8 @@ export function applyProfile(
     username: normalizeUsername(profile?.username),
     displayName: safeString(profile?.displayName || profile?.username, 48),
     avatar: safeString(profile?.avatar || "player", 64),
-    // profile.color! : the regex matched it, so it is a string
-    color: /^#[0-9a-f]{6}$/i.test(profile?.color || "") ? profile.color!.toUpperCase() : "#A78BFA",
-    defaultAbility: ABILITIES.has(profile?.defaultAbility) ? profile.defaultAbility : "strike",
+    color: cleanColor(profile?.color, "#A78BFA"),
+    defaultAbility: cleanAbility(profile?.defaultAbility, "strike"),
     stats: cleanStats(profile?.stats),
     hat: knownHat(profile?.hat) ? profile.hat : "",
     ...petFields(profile),
@@ -1335,35 +1330,33 @@ export function applyProfile(
     registered: true,
     lastSeen: now,
   });
-  if (existing) return { ok: true, profile: p };
-  if (state.players.length >= MAX_ACTIVE_PLAYERS) {
-    const candidates = state.players
-      .filter((item) => !hasOpenDuel(state, item.userId))
-      .sort((a, b) => a.lastSeen - b.lastSeen);
-    if (!candidates.length) return { ok: false, reason: "active_player_cap" };
-    // candidates is not empty (checked on the line above)
-    state.players.splice(state.players.indexOf(candidates[0]!), 1);
-  }
-  state.players.push(p);
+  if (!existing && !addPlayer(state, p)) return { ok: false, reason: "active_player_cap" };
   return { ok: true, profile: p };
 }
 
-// R, but compiles only when T is never: reduceGame's last branch uses it so a GameEvent type without a branch fails tsc.
-type Exhaustive<T extends never, R> = [T] extends [never] ? R : never;
-export function reduceGame(inputState: StoredState, event: GameEvent, now: number = Date.now()): ReduceOutput {
-  const state = normalizeState(inputState);
-  const dirtyProfileIds: string[] = [];
-  const deletedProfileIds: string[] = [];
-  const rankResetIds: string[] = [];
-  let resetAllRanks = false;
-  let touched = false;
-  let result: GameResult;
-  const beforeRevision = state.revision;
-  const didExpire = expireState(state, now);
-
-  if (event?.type === "chat_subscription") {
-    // A subscription was created or found. Chat counts as connected once Twitch reports it enabled
-    // (or once its webhook verification has already arrived; the two can race).
+/** What an event handler may note beyond its result: state to persist without a new snapshot, and saved profiles. */
+type Step = { now: number; didExpire: boolean; touched: boolean; dirty: string[] };
+// A chat message's sender as the reducer seeds them: their saved profile under the name chat shows now.
+function chatter(
+  event: { username?: string | undefined; displayName?: string | undefined; profile?: ProfileInput | null | undefined },
+  userId: string,
+): ProfileInput {
+  const { username, displayName, profile } = event;
+  if (!profile) return { userId, username, displayName };
+  return {
+    ...profile,
+    userId,
+    username: username || profile.username,
+    displayName: displayName || profile.displayName,
+  };
+}
+// One handler per GameEvent type; a type without one fails tsc here.
+const EVENTS: {
+  [type in GameEvent["type"]]: (state: GameState, event: Extract<GameEvent, { type: type }>, step: Step) => GameResult;
+} = {
+  // A subscription was created or found. Chat counts as connected once Twitch reports it enabled (or once its webhook
+  // verification has already arrived; the two can race).
+  chat_subscription(state, event, step) {
     const subscriptionId = safeString(event.subscriptionId, 100);
     const wasConnected = state.chat.connected;
     let status = safeString(event.status, 64) || "pending";
@@ -1373,31 +1366,34 @@ export function reduceGame(inputState: StoredState, event: GameEvent, now: numbe
       subscriptionId,
       status,
       connected: status === "enabled",
-      createdAt: Number.isFinite(event.createdAt) ? event.createdAt : now,
+      createdAt: Number.isFinite(event.createdAt) ? event.createdAt : step.now,
       revokedReason: "",
-      checkedAt: now,
+      checkedAt: step.now,
       verifiedId: "",
     };
-    if (state.chat.connected && !wasConnected) addEvent(state, "chat_connected", now);
-    else touched = true;
-    result = { ok: true, reason: state.chat.connected ? "chat_connected" : "chat_pending", status };
-  } else if (event?.type === "chat_verified") {
+    if (state.chat.connected && !wasConnected) addEvent(state, "chat_connected", step.now);
+    else step.touched = true;
+    return { ok: true, reason: state.chat.connected ? "chat_connected" : "chat_pending", status };
+  },
+  chat_verified(state, event, step) {
     const subscriptionId = safeString(event.subscriptionId, 100);
-    if (!subscriptionId) result = { ok: false, reason: "invalid_event" };
-    else if (subscriptionId !== state.chat.subscriptionId) {
+    if (!subscriptionId) return { ok: false, reason: "invalid_event" };
+    if (subscriptionId !== state.chat.subscriptionId) {
       state.chat.verifiedId = subscriptionId; // verification beat the create response
-      touched = true;
-      result = { ok: true, reason: "chat_verified_early" };
-    } else if (!state.chat.connected) {
-      state.chat = { ...state.chat, status: "enabled", connected: true, revokedReason: "" };
-      addEvent(state, "chat_connected", now);
-      result = { ok: true, reason: "chat_connected" };
-    } else result = { ok: true, reason: "no_change" };
-  } else if (event?.type === "chat_checked") {
-    state.chat.checkedAt = now;
-    touched = true;
-    result = { ok: true, reason: "chat_checked" };
-  } else if (event?.type === "chat_disconnected") {
+      step.touched = true;
+      return { ok: true, reason: "chat_verified_early" };
+    }
+    if (state.chat.connected) return { ok: true, reason: "no_change" };
+    state.chat = { ...state.chat, status: "enabled", connected: true, revokedReason: "" };
+    addEvent(state, "chat_connected", step.now);
+    return { ok: true, reason: "chat_connected" };
+  },
+  chat_checked(state, _event, step) {
+    state.chat.checkedAt = step.now;
+    step.touched = true;
+    return { ok: true, reason: "chat_checked" };
+  },
+  chat_disconnected(state, event, { now }) {
     const reason = safeString(event.reason, 64) || "disconnected";
     for (const duel of openDuels(state)) cancelDuel(state, duel, now, "chat_disconnected");
     state.chat = {
@@ -1410,114 +1406,84 @@ export function reduceGame(inputState: StoredState, event: GameEvent, now: numbe
       verifiedId: "",
     };
     addEvent(state, "chat_disconnected", now, { reason });
-    result = { ok: true, reason: "chat_disconnected" };
-  } else if (event?.type === "command_rejected") {
+    return { ok: true, reason: "chat_disconnected" };
+  },
+  command_rejected(state, event, { now }) {
     addEvent(state, "command_rejected", now, {
       userId: normalizeUserId(event.userId),
       command: safeString(event.command, 16) || "other",
       reason: safeString(event.reason, 64),
       ...(Number(event.retryAt) > 0 ? { retryAt: Number(event.retryAt) } : {}),
     });
-    result = { ok: true, reason: "logged" };
-  } else if (event?.type === "presence") {
+    return { ok: true, reason: "logged" };
+  },
+  presence(state, event, { now }) {
     const userId = normalizeUserId(event.userId);
-    const p = recentProfile(
-      state,
-      event.profile
-        ? {
-            ...event.profile,
-            userId,
-            username: event.username || event.profile.username,
-            displayName: event.displayName || event.profile.displayName,
-          }
-        : {
-            userId,
-            username: event.username,
-            displayName: event.displayName,
-          },
-      now,
-    );
-    if (p) {
-      result = { ok: true, reason: "presence_updated", userId };
-      addEvent(state, "player_seen", now, { userId });
-    } else result = { ok: false, reason: "active_player_cap" };
-  } else if (event?.type === "command") {
+    if (!recentProfile(state, chatter(event, userId), now)) return { ok: false, reason: "active_player_cap" };
+    addEvent(state, "player_seen", now, { userId });
+    return { ok: true, reason: "presence_updated", userId };
+  },
+  command(state, event, { now }) {
     const dedupe = addRecent(state, event);
-    if (!dedupe.ok) result = { ok: false, reason: dedupe.reason };
-    else if (!state.chat.connected) result = { ok: false, reason: "chat_offline" };
-    else if (!Number.isFinite(event.timestamp) || now - event.timestamp > 60_000 || event.timestamp - now > 10_000)
-      result = { ok: false, reason: "stale_command" };
-    else {
-      noteStream(state, event.stream);
-      const userId = normalizeUserId(event.userId);
-      const parsed = parseGameCommand(event.text);
-      const actor = recentProfile(
-        state,
-        event.profile
-          ? {
-              ...event.profile,
-              userId,
-              username: event.username || event.profile.username,
-              displayName: event.displayName || event.profile.displayName,
-            }
-          : {
-              userId,
-              username: event.username,
-              displayName: event.displayName,
-            },
-        now,
-      );
-      let targetProfile = event.targetProfile;
-      if (parsed?.target && targetProfile)
-        targetProfile = { ...targetProfile, username: normalizeUsername(targetProfile.username) };
-      result = actor
-        ? applyCommand(state, { ...event, userId, profile: actor, targetProfile }, now)
-        : { ok: false, reason: "active_player_cap" };
-      if (actor) {
-        actor.lastSeen = now;
-        addEvent(state, "command_seen", now, { userId, command: parsed?.action || "other" });
-      }
-    }
-  } else if (event?.type === "profile_saved") {
-    const applied = applyProfile(state, event.profile || {}, now);
-    result = applied;
+    if (!dedupe.ok) return { ok: false, reason: dedupe.reason };
+    if (!state.chat.connected) return { ok: false, reason: "chat_offline" };
+    if (!Number.isFinite(event.timestamp) || now - event.timestamp > 60_000 || event.timestamp - now > 10_000)
+      return { ok: false, reason: "stale_command" };
+    noteStream(state, event.stream);
+    const userId = normalizeUserId(event.userId);
+    const parsed = parseGameCommand(event.text);
+    const actor = recentProfile(state, chatter(event, userId), now);
+    if (!actor) return { ok: false, reason: "active_player_cap" };
+    let targetProfile = event.targetProfile;
+    if (parsed?.target && targetProfile)
+      targetProfile = { ...targetProfile, username: normalizeUsername(targetProfile.username) };
+    const result = applyCommand(state, { ...event, userId, profile: actor, targetProfile }, now);
+    actor.lastSeen = now;
+    addEvent(state, "command_seen", now, { userId, command: parsed?.action || "other" });
+    return result;
+  },
+  profile_saved(state, event, step) {
+    const applied = applyProfile(state, event.profile || {}, step.now);
     if (applied.ok) {
-      dirtyProfileIds.push(applied.profile.userId);
-      addEvent(state, "profile_saved", now, { userId: applied.profile.userId });
+      step.dirty.push(applied.profile.userId);
+      addEvent(state, "profile_saved", step.now, { userId: applied.profile.userId });
     }
-  } else if (event?.type === "admin") {
-    result = applyAdmin(state, event, now);
-    if (result?.dirtyProfileIds) dirtyProfileIds.push(...result.dirtyProfileIds);
-    if (result?.deletedProfileIds) deletedProfileIds.push(...result.deletedProfileIds);
-    if (result?.rankResetIds) rankResetIds.push(...result.rankResetIds);
-    resetAllRanks = Boolean(result?.resetAllRanks);
-  } else if (event?.type === "tick") {
-    result = { ok: true, reason: didExpire ? "state_advanced" : "no_change" };
-  } else {
-    // Untyped callers (tests, old stored events) can still get here; typed ones can't, since event is never here.
-    result = { ok: false, reason: "unknown_event" } satisfies Exhaustive<typeof event, GameResult>;
-  }
+    return applied;
+  },
+  admin: (state, event, { now }) => applyAdmin(state, event, now),
+  tick: (_state, _event, { didExpire }) => ({ ok: true, reason: didExpire ? "state_advanced" : "no_change" }),
+};
 
+export function reduceGame(inputState: StoredState, event: GameEvent, now: number = Date.now()): ReduceOutput {
+  const state = normalizeGameState(inputState);
+  const beforeRevision = state.revision;
+  const step: Step = { now, didExpire: expireState(state, now), touched: false, dirty: [] };
+  // Untyped callers (tests, old stored events) can name a type without a handler.
+  const handler = Object.hasOwn(EVENTS, String(event?.type))
+    ? // each handler takes the event its type names, and event.type picked it
+      (EVENTS[event.type] as (state: GameState, event: GameEvent, step: Step) => GameResult)
+    : null;
+  const result: GameResult = handler ? handler(state, event, step) : { ok: false, reason: "unknown_event" };
   // changed: state must be persisted. visible: overlays should receive a new snapshot.
-  const visible = state.revision !== beforeRevision || didExpire;
-  const changed = visible || touched;
+  const visible = state.revision !== beforeRevision || step.didExpire;
   return {
     state,
     result,
-    changed,
+    changed: visible || step.touched,
     visible,
-    dirtyProfileIds: [...new Set(dirtyProfileIds)],
-    deletedProfileIds: [...new Set(deletedProfileIds)],
-    rankResetIds: [...new Set(rankResetIds)],
-    resetAllRanks,
+    // only admin results carry profile id lists
+    dirtyProfileIds: [...new Set([...step.dirty, ...(result.dirtyProfileIds || [])])],
+    deletedProfileIds: [...new Set(result.deletedProfileIds)],
+    rankResetIds: [...new Set(result.rankResetIds)],
+    resetAllRanks: Boolean(result.resetAllRanks),
   };
 }
 
 /** A stored game state as read back from storage: any field may be missing or out of date. */
 type StoredState = { [key: string]: unknown } | null | undefined;
-function normalizeState(input: StoredState): GameState {
+// Stored state as the reducer sees it: defaults filled in, old presets migrated, never the caller's object.
+export function normalizeGameState(input: StoredState): GameState {
   const initial = createInitialState(input?.channel || site.defaultChannel);
-  // Deep copy so the reducer never mutates its input.
   const state = { ...initial, ...(input && typeof input === "object" ? clone(input) : {}) };
   state.channel = safeString(state.channel, 25).toLowerCase() || site.defaultChannel;
   state.revision = Number.isInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
@@ -1549,16 +1515,10 @@ function normalizeState(input: StoredState): GameState {
   return state;
 }
 
-// Stored state as the reducer sees it (defaults filled in, old presets migrated), for read-only views.
-export function normalizeGameState(input: StoredState): GameState {
-  return normalizeState(input);
-}
-
 export function defaultConfig(): Config {
   return clone(DEFAULT_CONFIG);
 }
 
-// Admin and diagnostics view of the chat source (see docs/CONTRACTS.md, chatStatus).
 /** The admin and diagnostics view of the chat source. */
 export type ChatStatus = {
   connected: boolean;

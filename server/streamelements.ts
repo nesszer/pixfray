@@ -1,7 +1,7 @@
 // StreamElements chat source. Each game action is a StreamElements custom command whose reply is
 // $(customapi <url>): the bot GETs /api/se/<channel>/<action>?k=..&id=..&u=..&d=..&t=..&m=.. and posts our reply.
 // The trigger word lives only in StreamElements, so commands can be renamed there freely.
-import { hiddenResults } from "./game.ts";
+import { hiddenResults, stripInvisible } from "./game.ts";
 import { boostText } from "./pets.ts";
 import { LATEST_RELEASE } from "./release.ts";
 import type { Env } from "./env.ts";
@@ -165,10 +165,9 @@ export async function handleStreamElements(
 // $(1) as sent by StreamElements -> a Twitch login, or '' for none. '-' means no argument; chat clients
 // append invisible characters (U+E0000, U+034F) to repeated messages; those are stripped first. Extra leading @ and
 // trailing punctuation ("@@bob", "@bob," or "bob!") still mean bob.
+const bare = (text: string): string => stripInvisible(text).replace(/\s/g, "");
 export function seTarget(raw: unknown): string {
-  const m = /^@*([a-z0-9_]{1,25})[,.!?;:]*$/i.exec(
-    String(raw || "").replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ""),
-  );
+  const m = /^@*([a-z0-9_]{1,25})[,.!?;:]*$/i.exec(bare(String(raw || "")));
   // m[1]! : group 1 is not optional in the regex
   return m ? m[1]!.toLowerCase() : "";
 }
@@ -198,9 +197,7 @@ export function seCommandLines(
 
 // !give's amount: a whole number of dollars ("20" or "$20"), or null.
 export function seAmount(raw: unknown): number | null {
-  const m = /^\$?(\d{1,7})$/.exec(
-    String(raw ?? "").replace(/[\u{E0000}-\u{E007F}\u034F\u180E\u200B-\u200D\u2060\uFEFF\s]/gu, ""),
-  );
+  const m = /^\$?(\d{1,7})$/.exec(bare(String(raw ?? "")));
   return m ? Number(m[1]) : null;
 }
 
