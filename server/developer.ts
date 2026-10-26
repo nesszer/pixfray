@@ -30,7 +30,7 @@ import {
   parseSettings,
 } from "./parse.ts";
 import { BACKUP_DAYS, backupChannels, backupDay, listBackups, readBackup, writeBackup } from "./backups.ts";
-import { json, postJson } from "./http.ts";
+import { fromBase64, json, postJson, toBase64 } from "./http.ts";
 import type { TwitchUser } from "./auth.ts";
 import type { HttpError } from "./http.ts";
 import type { Env } from "./env.ts";
@@ -719,7 +719,9 @@ async function codeFile({ g, gh, query }: GithubArgs): Promise<Response> {
     return fail(413, "File is too large for the web editor (512 KB max)", "file_too_large");
   let content;
   try {
-    content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(fromBase64(r.data.content));
+    content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
+      fromBase64(String(r.data.content).replace(/\s+/g, "")),
+    );
   } catch {
     return fail(415, "Binary files cannot be edited here", "binary_file");
   }
@@ -994,18 +996,6 @@ function clean(value: unknown, max: number): string {
     .trim()
     .slice(0, max);
 }
-function toBase64(bytes: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-}
-function fromBase64(text: unknown): Uint8Array {
-  const s = atob(String(text).replace(/\s+/g, ""));
-  const out = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-  return out;
-}
-
 // ---------- Durable Object side (ChannelRoom) ----------
 // Reached only with the internal secret (ChannelRoom.authorized), so these routes trust the caller.
 /** An error_log row. */

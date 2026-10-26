@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import site from "../site.config.js";
 import { channelState, signUp, isBroadcaster, reviewReasons } from "./channels.ts";
 import { authOrigin } from "./hosts.ts";
+import { fromBase64, toBase64 } from "./http.ts";
 import { hit } from "./ratelimit.ts";
 import { parseHelixPage, parseHelixUsers, parseModerators, parseTwitchTokens, parseTwitchValidation } from "./parse.ts";
 import type { HelixPage } from "./channels.ts";
@@ -182,22 +183,21 @@ const sealKey = async (env: Env, use: "encrypt" | "decrypt"): Promise<CryptoKey>
     false,
     [use],
   );
-const toB64 = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes));
-const fromB64 = (text: string): Uint8Array<ArrayBuffer> => Uint8Array.from(atob(text), (x) => x.charCodeAt(0));
 export async function seal(env: Env, value: unknown): Promise<Sealed> {
   const iv = crypto.getRandomValues(new Uint8Array(12)),
     data = new TextEncoder().encode(JSON.stringify(value));
   const cipher = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await sealKey(env, "encrypt"), data);
-  return { iv: toB64(iv), data: toB64(new Uint8Array(cipher)) };
+  return { iv: toBase64(iv), data: toBase64(new Uint8Array(cipher)) };
 }
 // OAuth state: the sign-in's pending details, sealed with AUTH_SECRET and carried in the state parameter and the
 // mini_oauth cookie, so /auth/login writes nothing to AuthStore (a sign-in flood can't use up its quota).
-const b64url = (bytes: Uint8Array): string => toB64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const unb64url = (text: string): Uint8Array => fromB64(text.replace(/-/g, "+").replace(/_/g, "/"));
+const b64url = (bytes: Uint8Array): string =>
+  toBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64url = (text: string): Uint8Array => fromBase64(text.replace(/-/g, "+").replace(/_/g, "/"));
 export const OAUTH_STATE = /^[A-Za-z0-9_-]{40,1500}$/;
 export async function sealState(env: Env, pending: OAuthPending): Promise<string> {
   const { iv, data } = await seal(env, { oauth: pending, exp: Date.now() + 600000, n: randomToken().slice(0, 16) });
-  return b64url(new Uint8Array([...fromB64(iv), ...fromB64(data)]));
+  return b64url(new Uint8Array([...fromBase64(iv), ...fromBase64(data)]));
 }
 export async function openState(env: Env, state: string): Promise<OAuthPending | null> {
   if (!OAUTH_STATE.test(state || "")) return null;
@@ -205,8 +205,8 @@ export async function openState(env: Env, state: string): Promise<OAuthPending |
     const raw = unb64url(state);
     if (raw.length < 29) return null;
     const v = await unseal<{ oauth?: OAuthPending; exp?: unknown } | null>(env, {
-      iv: toB64(raw.slice(0, 12)),
-      data: toB64(raw.slice(12)),
+      iv: toBase64(raw.slice(0, 12)),
+      data: toBase64(raw.slice(12)),
     });
     return v && v.oauth && typeof v.exp === "number" && v.exp > Date.now() ? v.oauth : null;
   } catch {
@@ -216,7 +216,7 @@ export async function openState(env: Env, state: string): Promise<OAuthPending |
 // T is what the caller sealed; unseal only decrypts and parses it.
 export async function unseal<T = unknown>(env: Env, value: Sealed): Promise<T> {
   const key = await sealKey(env, "decrypt");
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(value.iv) }, key, fromB64(value.data));
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(value.iv) }, key, fromBase64(value.data));
   return JSON.parse(new TextDecoder().decode(plain));
 }
 // connect=1 (the default channel only): mod checks plus the chat-read scopes the EventSub channel.chat.message webhook needs.

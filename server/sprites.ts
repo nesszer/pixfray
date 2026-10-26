@@ -15,7 +15,7 @@
 //   POST   /api/sprites/:channel/:id     {action:"approve"|"reject"|"remove"} -> {ok, id, status}
 // Approved PNGs are public at /api/assets/:channel/:id (server/uploads.ts forwards v- ids to the room).
 import { readPng, slugId } from "./uploads.ts";
-import { bodyOr, json, png, postJson, refuse as fail } from "./http.ts";
+import { bodyOr, fromBase64, json, png, postJson, refuse as fail } from "./http.ts";
 import {
   isObject,
   parseRedraw,
@@ -109,13 +109,11 @@ function decodeB64(value: unknown, maxBytes: number): OrRefusal<{ bytes: Uint8Ar
       reason: "image_too_large",
       error: `The image is larger than ${Math.round(maxBytes / 1024)} KB`,
     };
-  let binary: string;
   try {
-    binary = atob(b64);
+    return { bytes: fromBase64(b64) };
   } catch {
     return { status: 400, reason: "invalid_image", error: "The image is not valid base64" };
   }
-  return { bytes: Uint8Array.from(binary, (c) => c.charCodeAt(0)) };
 }
 
 // Submit body (label and image already strings, parseSpriteSubmit) -> { label, bytes, width, height, ai } or

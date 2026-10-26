@@ -9,7 +9,7 @@
 //   atlas_dimensions, 413 atlas_too_large, 415 not_png, 409 custom_limit_reached.
 // DELETE /api/assets/:channel/:id (canManage) -> {ok:true, id, usage} or 404 {reason:"not_found"}.
 // The same validation runs in the Worker (cheap rejection) and again in the ChannelRoom before the insert.
-import { bodyOr, json, png, postJson, refuse as fail } from "./http.ts";
+import { bodyOr, fromBase64, json, png, postJson, refuse as fail } from "./http.ts";
 import { parseUploadMeta } from "./parse.ts";
 import type { Env } from "./env.ts";
 import type { PetsContext } from "./pets.ts";
@@ -290,15 +290,13 @@ function decodeAtlas(value: unknown): Uint8Array<ArrayBuffer> {
   const b64 = value.replace(/^data:[^,]*;base64,/, "");
   if (b64.length > Math.ceil(UPLOAD_LIMITS.maxAtlasBytes / 3) * 4)
     reject(413, "atlas_too_large", "Atlas is larger than 1.5 MB");
-  let binary: string;
+  let bytes: Uint8Array<ArrayBuffer>;
   try {
-    binary = atob(b64);
+    bytes = fromBase64(b64);
   } catch {
     reject(400, "invalid_upload", "atlas is not valid base64");
   }
-  if (binary.length > UPLOAD_LIMITS.maxAtlasBytes) reject(413, "atlas_too_large", "Atlas is larger than 1.5 MB");
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  if (bytes.length > UPLOAD_LIMITS.maxAtlasBytes) reject(413, "atlas_too_large", "Atlas is larger than 1.5 MB");
   return bytes;
 }
 

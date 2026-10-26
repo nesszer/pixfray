@@ -18,6 +18,15 @@ export const png = (bytes: ArrayBuffer, cache: string): Response =>
 /** An Error the Worker's catch answers with this status and the extra fields (reason, reconnect, connectedElsewhere). */
 export const httpError = (message: string, status: number, extra: object = {}): HttpError =>
   Object.assign(new Error(message), { status, ...extra });
+/** Bytes as base64, in chunks so a large file never overflows the argument list. */
+export function toBase64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+/** Base64 as bytes; throws (from atob) on text that is not base64. */
+export const fromBase64 = (text: string): Uint8Array<ArrayBuffer> =>
+  Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 /** A POST with a JSON body. */
 export const postJson = (body: unknown): RequestInit => ({
   method: "POST",
