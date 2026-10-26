@@ -68,13 +68,7 @@ async function api(path: string, { cookie, method = "GET", body }: ApiOptions = 
   const headers: Record<string, string> = { Origin: base };
   if (cookie) headers.Cookie = "mini_session=" + cookie;
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  // as RequestInit: body is undefined for a request without one, which fetch reads as no body; the type has no
-  // undefined under exactOptionalPropertyTypes
-  const res = await fetch(base + path, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  } as RequestInit); // as RequestInit: see the comment above
+  const res = await fetch(base + path, { method, headers, body: body === undefined ? null : JSON.stringify(body) });
   const text = await res.text();
   let data;
   try {
@@ -85,6 +79,9 @@ async function api(path: string, { cookie, method = "GET", body }: ApiOptions = 
   return { status: res.status, data };
 }
 const state = async (): Promise<RoomState> => (await api("/api/state/" + ch)).data;
+/** The mod page's answer for `cookie`, or with a body, that admin action. */
+const adminApi = (cookie: string, body?: unknown) =>
+  api("/api/admin/" + ch, body === undefined ? { cookie } : { cookie, method: "POST", body });
 async function until<T>(fn: () => Promise<T>, label: string, ms = 8000) {
   const end = Date.now() + ms;
   let last;
@@ -185,7 +182,7 @@ try {
   assert.equal(sess.data.owner, true, "seeded owner session must be the owner (run " + SEED_LOCAL + " first)");
   for (const action of ["disconnectChat", "resetAll", "resetAllRanks"]) {
     // reruns start offline, from a clean arena and 1000 Elo
-    const r = await api("/api/admin/" + ch, { cookie: cookies.owner, method: "POST", body: { action } });
+    const r = await adminApi(cookies.owner, { action });
     assert.equal(r.status, 200, action + ": " + JSON.stringify(r.data));
   }
   const dave = { id: "900199", login: "dave_e2e", displayName: "Dave_E2E" }; // never signs in
@@ -217,29 +214,21 @@ try {
   log("profiles saved for alice and bob; cross-origin POST refused");
 
   // 2. Admin config with optimistic version: maxHp 60, inactivity 10 s, DUEL_BALANCE. A stale baseVersion gets 409.
-  const admin = await api("/api/admin/" + ch, { cookie: cookies.owner });
+  const admin = await adminApi(cookies.owner);
   assert.equal(admin.status, 200);
   const baseVersion = admin.data.configVersion;
-  const patch = await api("/api/admin/" + ch, {
-    cookie: cookies.owner,
-    method: "POST",
-    body: {
-      action: "config",
-      patch: { maxHp: 60, inactivityMs: 10000, quickDuel: false, abilities: DUEL_BALANCE },
-      baseVersion,
-      note: "e2e: short HP duels",
-    },
+  const patch = await adminApi(cookies.owner, {
+    action: "config",
+    patch: { maxHp: 60, inactivityMs: 10000, quickDuel: false, abilities: DUEL_BALANCE },
+    baseVersion,
+    note: "e2e: short HP duels",
   });
   assert.equal(patch.status, 200, JSON.stringify(patch.data));
-  const stale = await api("/api/admin/" + ch, {
-    cookie: cookies.owner,
-    method: "POST",
-    body: { action: "config", patch: { maxHp: 70 }, baseVersion, note: "stale" },
-  });
+  const stale = await adminApi(cookies.owner, { action: "config", patch: { maxHp: 70 }, baseVersion, note: "stale" });
   assert.equal(stale.status, 409);
-  const viewerAdmin = await api("/api/admin/" + ch, { cookie: cookies.alice });
+  const viewerAdmin = await adminApi(cookies.alice);
   assert.equal(viewerAdmin.status, 403, "a viewer without a mod role cannot open admin");
-  const hist = (await api("/api/admin/" + ch, { cookie: cookies.owner })).data.history;
+  const hist = (await adminApi(cookies.owner)).data.history;
   assert.equal(hist[0].note, "e2e: short HP duels");
   assert.equal(hist[0].actorName, "nesszerra");
   log("config v" + (baseVersion + 1) + " saved (maxHp 60, inactivity 10 s); stale save 409; viewer 403");
@@ -256,6 +245,8 @@ try {
   await overlay.goto(base + "/overlay.html?channel=" + ch + "&arena=1&debug=1&size=64");
   await overlay.waitForFunction(() => window.__arenaDebug?.().revision > 0);
   const dbg = () => overlay.evaluate(() => window.__arenaDebug());
+  // waits until the overlay passes `fn`, which runs in the page and gets `id`
+  const seen = (fn: (id: string) => boolean, id = "") => overlay.waitForFunction(fn, id, { timeout: 8000 });
   assert.equal((await dbg()).paused, true, "chat not connected yet: overlay sees a paused game");
   const plain = await overlayCtx.newPage(); // without debug the overlay shows no status text on stream
   await plain.goto(base + "/overlay.html?channel=" + ch + "&arena=1&size=64");
@@ -264,17 +255,9 @@ try {
   assert.equal(await plain.locator("#status").isHidden(), true, "paused status stays off stream");
 
   // 4. Connect chat (owner or mod), then the webhook checks: challenge, bad signature, stale timestamp.
-  const viewerConnect = await api("/api/admin/" + ch, {
-    cookie: cookies.alice,
-    method: "POST",
-    body: { action: "connectChat" },
-  });
+  const viewerConnect = await adminApi(cookies.alice, { action: "connectChat" });
   assert.equal(viewerConnect.status, 403, "a viewer cannot connect chat");
-  const connected = await api("/api/admin/" + ch, {
-    cookie: cookies.owner,
-    method: "POST",
-    body: { action: "connectChat" },
-  });
+  const connected = await adminApi(cookies.owner, { action: "connectChat" });
   assert.equal(connected.status, 200, JSON.stringify(connected.data));
   subscriptionId = connected.data.chatStatus.subscriptionId;
   assert.match(subscriptionId, /^local-[a-f0-9]{16}$/, "local test mode: no Twitch call");
@@ -307,9 +290,7 @@ try {
   await presence(users.alice);
   await presence(users.bob);
   await until(async () => (await state()).players.length === 2, "two players in state");
-  await overlay.waitForFunction(() => window.__arenaDebug().players.length === 2, null, {
-    timeout: 8000,
-  });
+  await seen(() => window.__arenaDebug().players.length === 2);
   let d = await dbg();
   const pa = d.players.find((p) => p.userId === users.alice.id),
     pb = d.players.find((p) => p.userId === users.bob.id);
@@ -326,7 +307,7 @@ try {
   const first = await eventsubPost("notification", challengeBody);
   assert.equal(first.status, 204);
   let s = await state();
-  let ack: Ack | null = s.events.some((e) => Number(e.id) > r0 && e.type === "challenge_created")
+  let ack: Ack = s.events.some((e) => Number(e.id) > r0 && e.type === "challenge_created")
     ? { ok: true }
     : { ok: false, events: s.events.slice(-3) };
   assert.equal(ack.ok, true, JSON.stringify(ack));
@@ -338,9 +319,7 @@ try {
   assert.equal(s.revision, r0, "replayed message changed nothing");
   assert.equal(s.duels.filter((x) => x.status === "pending").length, 1, "still exactly one challenge");
   log("replayed EventSub message ignored (same Message-Id and same chat message_id)");
-  await overlay.waitForFunction(() => /challenge/i.test(window.__arenaDebug().announcement || ""), null, {
-    timeout: 5000,
-  });
+  await seen(() => /challenge/i.test(window.__arenaDebug().announcement || ""));
   ack = await command(users.bob, "!accept");
   assert.equal(ack.ok, true, JSON.stringify(ack));
   s = await state();
@@ -348,11 +327,7 @@ try {
   assert.ok(duel1);
   assert.equal(duel1.rules.maxHp, 60);
   assert.deepEqual(duel1.rules.abilities, DUEL_BALANCE, "duel 1 runs on the pinned balance");
-  await overlay.waitForFunction(
-    () => window.__arenaDebug().duels.filter((x) => x.status === "active").length === 1,
-    null,
-    { timeout: 5000 },
-  );
+  await seen(() => window.__arenaDebug().duels.filter((x) => x.status === "active").length === 1);
   ack = await command(users.alice, "!heavy");
   assert.equal(ack.ok, true);
   ack = await command(users.alice, "!strike");
@@ -385,9 +360,7 @@ try {
   const done = s.events.find((e) => e.type === "duel_completed" && e.duelId === duel1.id);
   assert.ok(done, "duel_completed event");
   assert.equal(done.winnerId, users.alice.id);
-  await overlay.waitForFunction(() => window.__arenaDebug().results.some((r) => /wins/.test(r.text)), null, {
-    timeout: 5000,
-  });
+  await seen(() => window.__arenaDebug().results.some((r) => /wins/.test(r.text)));
   d = await dbg();
   assert.equal(d.players.find((p) => p.userId === users.bob.id).ko, true, "loser shows KO");
   assert.equal(d.chat?.bot, false, "a local subscription is not the PixFray bot");
@@ -405,11 +378,7 @@ try {
   assert.deepEqual([la.elo, la.wins, la.losses], [1012, 1, 0]);
   assert.deepEqual([lbob.elo, lbob.wins, lbob.losses], [988, 0, 1]);
   assert.equal(rows[0].userId, users.alice.id, "winner tops the leaderboard");
-  await overlay.waitForFunction(
-    (id) => window.__arenaDebug().players.find((p) => p.userId === id)?.elo === 1012,
-    users.alice.id,
-    { timeout: 5000 },
-  );
+  await seen((id) => window.__arenaDebug().players.find((p) => p.userId === id)?.elo === 1012, users.alice.id);
   log("Elo: alice 1012 (1-0), bob 988 (0-1); leaderboard and overlay updated");
 
   // 8. Rules: rematch delay, sign-in requirement, busy players, inactivity cancel.
@@ -450,11 +419,7 @@ try {
   ack = await command(users.alice, "!strike");
   assert.equal(ack.ok, true);
   const duel3 = (await state()).duels.find((x) => x.status === "active");
-  const off = await api("/api/admin/" + ch, {
-    cookie: cookies.owner,
-    method: "POST",
-    body: { action: "disconnectChat" },
-  });
+  const off = await adminApi(cookies.owner, { action: "disconnectChat" });
   assert.equal(off.status, 200, JSON.stringify(off.data));
   const gone = await until(
     async () => (await state()).events.find((e) => e.type === "duel_cancelled" && e.duelId === duel3.id),
@@ -467,49 +432,39 @@ try {
   assert.equal(s.chat.connected, false);
   assert.equal(s.duels.filter((x) => x.status === "active" || x.status === "pending").length, 0);
   assert.deepEqual(await ranks(), before, "ranks unchanged by the cancelled duel");
-  await overlay.waitForFunction(
+  await seen(
     () =>
       window.__arenaDebug().paused === true &&
       !window.__arenaDebug().duels.some((x) => x.status === "active" || x.status === "pending"),
-    null,
-    { timeout: 5000 },
   );
   assert.equal(await plain.locator("#status").isHidden(), true, "chat offline status stays off stream");
-  const status = "hidden";
   const stray = await command(users.alice, "!duel @carol_e2e");
   assert.equal(stray.ok, false, "messages for a disconnected subscription are ignored");
-  log(
-    'chat disconnected: paused, duel cancelled (chat_disconnected), ranks unchanged; overlay status "' +
-      status.trim() +
-      '"',
-  );
+  log("chat disconnected: paused, duel cancelled (chat_disconnected), ranks unchanged; overlay status hidden");
 
   // 9b. Reconnect, then Twitch revokes the subscription: paused again and the reason is shown to admins.
-  subscriptionId = (
-    await api("/api/admin/" + ch, { cookie: cookies.owner, method: "POST", body: { action: "connectChat" } })
-  ).data.chatStatus.subscriptionId;
+  subscriptionId = (await adminApi(cookies.owner, { action: "connectChat" })).data.chatStatus.subscriptionId;
   await until(async () => !(await state()).paused, "chat reconnected");
   assert.equal((await eventsubPost("revocation", { subscription: subscription("authorization_revoked") })).status, 204);
   await until(async () => (await state()).paused, "revocation pauses");
-  const chatStatus = (await api("/api/admin/" + ch, { cookie: cookies.owner })).data.chatStatus;
+  const chatStatus = (await adminApi(cookies.owner)).data.chatStatus;
   assert.deepEqual([chatStatus.connected, chatStatus.lastRevocationReason], [false, "authorization_revoked"]);
   log("revocation: paused, reason authorization_revoked recorded");
-  ack = null;
 
   // 10. Screenshots of every page at 1280 and 390 (real server, seeded sessions).
-  const sizes = [
-    { name: "1280", width: 1280, height: 900 },
-    { name: "390", width: 390, height: 844 },
-  ];
-  for (const size of sizes) {
-    const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height } });
+  for (const [width, height] of [
+    [1280, 900],
+    [390, 844],
+  ] as const) {
+    const size = width + "";
+    const ctx = await browser.newContext({ viewport: { width, height } });
     await enforceCsp(ctx);
     const page = await ctx.newPage();
-    page.on("pageerror", (e) => errors.push(size.name + " page: " + e.message));
+    page.on("pageerror", (e) => errors.push(size + " page: " + e.message));
     await page.goto(base + "/overlay.html?channel=" + ch + "&arena=1&debug=1&size=64");
     await page.waitForFunction(() => window.__arenaDebug?.().revision > 0);
     await page.waitForTimeout(800);
-    await page.screenshot({ path: shots + "/e2e-overlay-" + size.name + ".png" });
+    await page.screenshot({ path: shots + "/e2e-overlay-" + size + ".png" });
     await ctx.addCookies([{ name: "mini_session", value: cookies.alice, url: base }]);
     await page.goto(base + "/?channel=nesszerra");
     // !: an element's textContent is a string, never null
@@ -517,36 +472,25 @@ try {
     await page.waitForTimeout(500);
     // !: #leaderboard is on the page, so its textContent is a string
     assert.match((await page.locator("#leaderboard").textContent())!, /Alice_E2E|alice_e2e/);
-    await page.screenshot({ path: shots + "/e2e-dashboard-" + size.name + ".png", fullPage: true });
+    await page.screenshot({ path: shots + "/e2e-dashboard-" + size + ".png", fullPage: true });
     await ctx.clearCookies();
     await ctx.addCookies([{ name: "mini_session", value: cookies.owner, url: base }]);
-    await page.goto(base + "/admin/");
-    await page.waitForTimeout(1500);
-    await page.screenshot({ path: shots + "/e2e-admin-" + size.name + ".png", fullPage: true });
-    await page.goto(base + "/admin/dev/");
-    await page.waitForTimeout(1500);
-    await page.screenshot({ path: shots + "/e2e-dev-" + size.name + ".png", fullPage: true });
+    for (const name of ["admin", "dev"]) {
+      await page.goto(base + (name === "admin" ? "/admin/" : "/admin/dev/"));
+      await page.waitForTimeout(1500);
+      await page.screenshot({ path: shots + "/e2e-" + name + "-" + size + ".png", fullPage: true });
+    }
     await ctx.close();
   }
   log("screenshots written to " + shots + "/e2e-*.png");
 
   // Restore the default balance so reruns start from the same rules.
-  const v = (await api("/api/admin/" + ch, { cookie: cookies.owner })).data.configVersion;
-  const shipped = defaultConfig();
-  await api("/api/admin/" + ch, {
-    cookie: cookies.owner,
-    method: "POST",
-    body: {
-      action: "config",
-      patch: {
-        maxHp: shipped.maxHp,
-        inactivityMs: shipped.inactivityMs,
-        quickDuel: shipped.quickDuel,
-        abilities: shipped.abilities,
-      },
-      baseVersion: v,
-      note: "e2e: restore defaults",
-    },
+  const { maxHp, inactivityMs, quickDuel, abilities } = defaultConfig();
+  await adminApi(cookies.owner, {
+    action: "config",
+    patch: { maxHp, inactivityMs, quickDuel, abilities },
+    baseVersion: (await adminApi(cookies.owner)).data.configVersion,
+    note: "e2e: restore defaults",
   });
   assert.deepEqual(errors, []);
   console.log("E2E PASS");
