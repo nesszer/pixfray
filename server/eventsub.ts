@@ -4,6 +4,7 @@ import { record, seal, unseal, randomToken } from "./auth.ts";
 import site from "../site.config.js";
 import type { Sealed } from "./auth.ts";
 import type { Env } from "./env.ts";
+import { concat, httpError as fail, postJson, readBody } from "./http.ts";
 import { isObject, parseEventsubEnvelope } from "./parse.ts";
 import type { JsonObject } from "./parse.ts";
 import type { ChatEvent, SendResult } from "./model.ts";
@@ -62,21 +63,14 @@ const HELIX = "https://api.twitch.tv/helix";
 const enc = new TextEncoder();
 const hex = (buf: ArrayBuffer): string =>
   Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, "0")).join("");
-const fail = (message: string, status: number, extra: Record<string, unknown> = {}) =>
-  Object.assign(new Error(message), { status, ...extra });
 const text = (body: string, status: number): Response =>
   new Response(body, { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
 const hmacKey = (secret: string, usage: string): Promise<CryptoKey> =>
   crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [usage]);
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let i = 0;
-  for (const p of parts) {
-    out.set(p, i);
-    i += p.length;
-  }
-  return out;
-}
+// What Twitch signs: the message id, the timestamp and the raw body.
+const signed = (messageId: string, timestamp: string, body: Uint8Array): Uint8Array =>
+  concat([enc.encode(messageId + timestamp), body]);
+const noContent = (): Response => new Response(null, { status: 204 });
 
 // Derived, not a new binding: hex(HMAC-SHA256(AUTH_SECRET, 'mini-chat:eventsub:v1')). Cached per isolate.
 let cached: { from: string; value: Promise<string> } | null = null;
@@ -97,17 +91,8 @@ export async function signEventsub(
   timestamp: string,
   raw: string | Uint8Array,
 ): Promise<string> {
-  const body = typeof raw === "string" ? enc.encode(raw) : raw;
-  return (
-    "sha256=" +
-    hex(
-      await crypto.subtle.sign(
-        "HMAC",
-        await hmacKey(secret, "sign"),
-        concat(enc.encode(messageId), enc.encode(timestamp), body),
-      ),
-    )
-  );
+  const body = signed(messageId, timestamp, typeof raw === "string" ? enc.encode(raw) : raw);
+  return "sha256=" + hex(await crypto.subtle.sign("HMAC", await hmacKey(secret, "sign"), body));
 }
 async function verify(
   env: Env,
@@ -121,35 +106,13 @@ async function verify(
   // !: the pattern matched, so group 1 holds 64 hex digits, which split into 32 pairs
   const mac = Uint8Array.from(m[1]!.match(/../g)!, (x) => parseInt(x, 16));
   // crypto.subtle.verify compares in constant time.
-  return crypto.subtle.verify(
-    "HMAC",
-    await hmacKey(await eventsubSecret(env), "verify"),
-    mac,
-    concat(enc.encode(messageId), enc.encode(timestamp), raw),
-  );
+  const key = await hmacKey(await eventsubSecret(env), "verify");
+  return crypto.subtle.verify("HMAC", key, mac, signed(messageId, timestamp, raw));
 }
 // Twitch sends RFC3339 with up to nanosecond fractions; Date.parse wants at most milliseconds.
 export function parseTwitchTime(value: string): number {
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(value)) return NaN;
   return Date.parse(value.replace(/\.(\d{1,3})\d*/, ".$1"));
-}
-async function readRaw(request: Request, limit: number): Promise<Uint8Array> {
-  if (Number(request.headers.get("Content-Length")) > limit) throw fail("Request too large", 413);
-  const reader = request.body?.getReader();
-  if (!reader) return new Uint8Array(0);
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.length;
-    if (bytes > limit) {
-      await reader.cancel();
-      throw fail("Request too large", 413);
-    }
-    chunks.push(value);
-  }
-  return concat(...chunks);
 }
 
 // A lead moderator wears only lead_moderator (no moderator badge), so it has to count on its own.
@@ -202,7 +165,7 @@ export async function handleEventsub(
     subType = h("Subscription-Type");
   if (!id || !timestamp || !signature || !type || !subType || id.length > 100 || timestamp.length > 40)
     return text("Missing EventSub headers", 400);
-  const raw = await readRaw(request, MAX_EVENTSUB_BYTES); // read once
+  const raw = await readBody(request, MAX_EVENTSUB_BYTES); // read once
   if (!(await verify(env, id, timestamp, raw, signature))) return text("Invalid signature", 403);
   const at = parseTwitchTime(timestamp);
   if (!Number.isFinite(at) || now - at > 600000 || at - now > 60000) return text("Stale message", 403);
@@ -238,15 +201,8 @@ export async function handleEventsub(
     return own && !channels.includes(own) ? [...channels, own] : channels;
   };
   const send = async (channel: string, extra: { bot?: boolean; botId?: string } = {}): Promise<Response> => {
-    const r = await roomFetch(
-      channel,
-      "/eventsub" + (extra.bot ? "?origin=" + encodeURIComponent(origin(channel)) : ""),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...message, ...extra, event: chat }),
-      },
-    );
+    const query = extra.bot ? "?origin=" + encodeURIComponent(origin(channel)) : "";
+    const r = await roomFetch(channel, "/eventsub" + query, postJson({ ...message, ...extra, event: chat }));
     if (r.status >= 500) throw new Error("Room rejected EventSub message (" + r.status + ")");
     return r;
   };
@@ -258,12 +214,7 @@ export async function handleEventsub(
   }
   // Channel point redemptions (server/points.ts). The redemption id keys the room's row, so a retry grants nothing twice.
   if (subType === REDEMPTION_TYPE) {
-    const points = (channel: string, path: string, data: object) =>
-      roomFetch(channel, path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+    const points = (channel: string, path: string, data: object) => roomFetch(channel, path, postJson(data));
     if (type === "revocation") {
       for (const channel of await rooms())
         await points(channel, "/points/rewards", {
@@ -271,34 +222,30 @@ export async function handleEventsub(
           subscriptionId: message.subscription.id,
           status: message.subscription.status,
         });
-      return new Response(null, { status: 204 });
+      return noContent();
     }
     const r = type === "notification" ? parseRedemption(body.event) : null;
     // No isEnabled gate: each subscription is for a reward PixFray made, and the room ignores rewards it doesn't hold.
     // A paused channel still grants, so a viewer's spent points never sit unmarked in the streamer's queue.
-    if (!r) return new Response(null, { status: 204 });
+    if (!r) return noContent();
     const res = await points(r.channel, "/points/redeem", { redemption: body.event, origin: origin(r.channel) });
     if (res.status >= 500) throw new Error("Room rejected redemption (" + res.status + ")");
     const d: { mark?: unknown; reply?: unknown } = res.ok ? await res.json<object>().catch(() => ({})) : {};
     const mark = d.mark === "FULFILLED" || d.mark === "CANCELED" ? d.mark : null,
       reply = typeof d.reply === "string" ? d.reply : "";
     if ((mark || reply) && onRedeemed) onRedeemed({ redemption: r, mark, reply });
-    return new Response(null, { status: 204 });
+    return noContent();
   }
   if (type === "revocation") {
     if (subType === "channel.chat.message") for (const channel of await rooms()) await send(channel); // rooms ignore ids they don't own
-    return new Response(null, { status: 204 });
+    return noContent();
   }
   if (type === "notification" && subType === "channel.chat.message") {
     const channel = (chat?.broadcaster_user_login || "").toLowerCase();
-    if (!channels.includes(channel) && !(await isEnabled(channel).catch(() => false)))
-      return new Response(null, { status: 204 });
+    if (!channels.includes(channel) && !(await isEnabled(channel).catch(() => false))) return noContent();
     if (!botId && reader && reader === (await botUserId().catch(() => ""))) botId = reader;
-    if (!botId) {
-      await send(channel);
-      return new Response(null, { status: 204 });
-    }
-    if (!chat?.message.text.trimStart().startsWith("!")) return new Response(null, { status: 204 }); // chat, not a command: no room request
+    if (!botId) return send(channel).then(noContent);
+    if (!chat?.message.text.trimStart().startsWith("!")) return noContent(); // chat, not a command: no room request
     const r = await send(channel, { bot: true, botId });
     const d: { replies?: unknown; reply?: unknown } = r.ok ? await r.json<object>().catch(() => ({})) : {};
     const messages = (Array.isArray(d.replies) ? d.replies : [d.reply])
@@ -314,7 +261,7 @@ export async function handleEventsub(
         replyTo: chat.message_id,
       });
   }
-  return new Response(null, { status: 204 }); // other channels, subscription types and message types are ignored
+  return noContent(); // other channels, subscription types and message types are ignored
 }
 
 // ---------- Helix subscription lifecycle (app access token) ----------

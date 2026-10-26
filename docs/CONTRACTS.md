@@ -62,6 +62,11 @@ stored one in this browser (`localStorage` `pixfray:channel`, src/intro/back.ts)
 send `X-Robots-Tag: noindex, nofollow`. Hashed bundles under `/assets/build/` are cached for a year (`immutable`);
 everything else is revalidated.
 
+Channel routes `/api/<route>/<channel>[/<id>]` dispatch through one `ROUTES` table in server/worker.ts, whose keys
+also build the path pattern (`CHANNEL_ROUTE`). The gates in `handle()` run first (channel state, the WebSocket
+upgrade, the write limit); read-only routes are wrapped in `getOnly`, which answers 405 to any other method, HEAD
+included. JSON answers, refusals, thrown HTTP errors and body reads come from server/http.ts (§8).
+
 | Method | Path | Auth | Request | Success response | Errors |
 |---|---|---|---|---|---|
 | GET | `/auth/login[?channel=x][&connect=1\|mods\|bot][&next=<page>]` | none | none | 302 to Twitch. The OAuth `state` is the pending sign-in itself, sealed with `AUTH_SECRET` (AES-GCM, 10 minutes) and echoed in the `mini_oauth` cookie, so starting a sign-in writes nothing to AuthStore. `next` is the page to come back to, with its query and `#tab` (the pages send their own address); anything that isn't a path on this site, or is under `/auth/` or `/api/`, becomes `/` (`safeNext` in server/auth.ts). Without `channel` and with `next=/admin/` (the bare mod page) the sign-in names no channel and comes back to `/admin/?signed_in=1`, where the Worker sends a streamer to their own channel. `connect=1` (nesszerra only) asks for the EventSub chat scopes; `connect=mods` asks the channel's broadcaster for `moderation:read` and comes back to `/admin/?channel=x&mods=connected\|denied\|wrong_account#chat` | 403 channel not set up, 403 `connect=1` on a channel other than the default one, 503 when Twitch is not configured |
@@ -571,7 +576,7 @@ subset of fields. Versioning works like this:
 
 | Lane | Owns | Contract |
 |---|---|---|
-| A (backend core) | `server/worker.ts`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
+| A (backend core) | `server/worker.ts`, `server/http.ts`, `server/channel.ts`, `server/auth.ts`, `server/game.ts`, `server/eventsub.ts`, `cloudflare.config.ts`, `tests/` (the core tests) | This file |
 | B (UI) | `index.html`, `admin/index.html`, `src/` (with the overlay modules in `src/served/`), the `vite.config.ts` inputs and served modules step | Sections 2, 3, 5, 7, 9 |
 | D (uploads) | `server/uploads.ts`, `public/assets/characters.json`, assets, `docs/ASSET_LICENSES.md` | Section 5 and the signatures below |
 | E (developer) | `server/developer.ts`, `server/ranklog.ts`, `server/backups.ts`, `admin/dev/index.html`, `src/dev.ts` | The signatures below |
@@ -579,6 +584,15 @@ subset of fields. Versioning works like this:
 Keep these signatures; worker.ts and channel.ts call them.
 
 ```js
+// server/http.ts (Lane A): shared by the Worker routes and the rooms
+export const json(data, status = 200)            // no-store, nosniff
+export const refuse(status, reason, error?)      // -> {ok:false, reason, error}
+export const httpError(message, status, extra?)  // an HttpError the Worker's catch answers with that status
+export async function readBody(request, limit)   // raw bytes; 413 past limit
+export async function bodyJson(request, limit?)  // a JSON object ({} for an empty body); 400 or 413 otherwise
+export async function bodyOr(read, tooLarge, invalid?)  // bodyJson's failure as a refusal
+export const png(bytes, cache), postJson(body), toBase64(bytes), fromBase64(text), concat(parts)
+
 // server/uploads.ts (Lane D)
 export const UPLOAD_LIMITS, CUSTOM_ID;
 export async function handleUploads(request, env, c)
@@ -662,6 +676,9 @@ bun run test:all           # everything below, in order (scripts/test-all.ts)
   real Worker (it needs `MINI_AUTH_SECRET`, which scripts/test-all.ts reads from `.dev.vars`
   without printing it) and drives the overlay, dashboard, admin and dev pages.
 - The overlay draws the arena only with `arena=1` (the OBS URL from the setup page adds it).
+- Worker unit tests share `tests/worker-fakes.ts`: the bound `SECRETS`, `namespace()` room fakes, `realRooms()`
+  (real ChannelRooms on `node:sqlite`) and `roomCall()`, `memoryAuth()` and `sqliteAuth()` stores, `signIn()`,
+  `req()` / `call()` for same-origin requests, and `twitchApi()` / `twitchSignIn()` for mocked Twitch calls.
 - Served modules: `src/served/<name>.js` or `.ts` is served at `/<name>.js` as JavaScript, types stripped by
   oxc and comments kept (`scripts/lib/served.ts`, the `served-modules` steps in `vite.config.ts`); a name with
   both a `.js` and a `.ts` source fails. `bun run dev` serves them as `text/javascript` with `Cache-Control: no-cache`

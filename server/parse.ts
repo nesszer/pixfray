@@ -248,17 +248,13 @@ export function parseRoomEventsub(body: JsonObject): Parsed<RoomEventsub> {
   if (!event.ok) return bad(event.error);
   return ok({ ...body, subscription, event: event.value });
 }
-/** A test-site chat line (/dev-chat). */
+/** A test-site chat line (/dev-chat): parseDevAccount with userId and username required. */
 export function parseDevChat(body: JsonObject): Parsed<DevAccount> {
-  const { userId, username, displayName = "", text = "" } = body;
-  if (typeof userId !== "string" || typeof username !== "string") return bad(INVALID_BODY);
-  if (typeof displayName !== "string" || typeof text !== "string") return bad(INVALID_BODY);
-  return ok({ userId, username, displayName, text });
+  if (typeof body.userId !== "string" || typeof body.username !== "string") return bad(INVALID_BODY);
+  return parseDevAccount(body);
 }
-/** A pretend stream as the room stores it (/dev-live): live a boolean, or null to ask Twitch again. */
-export function parseRoomDevLive(body: JsonObject): Parsed<DevLive> {
-  return parseDevLive(body);
-}
+/** A pretend stream as the room stores it (/dev-live): the Worker's own check. */
+export const parseRoomDevLive = parseDevLive;
 
 // ---------- EventSub (POST /api/eventsub), after the signature check ----------
 

@@ -2,11 +2,12 @@ import { DurableObject } from "cloudflare:workers";
 import site from "../site.config.js";
 import { channelState, signUp, isBroadcaster, reviewReasons } from "./channels.ts";
 import { authOrigin } from "./hosts.ts";
+import { fromBase64, toBase64 } from "./http.ts";
 import { hit } from "./ratelimit.ts";
 import { parseHelixPage, parseHelixUsers, parseModerators, parseTwitchTokens, parseTwitchValidation } from "./parse.ts";
 import type { HelixPage } from "./channels.ts";
 import type { Env } from "./env.ts";
-import type { TwitchTokens } from "./parse.ts";
+import type { Parsed, TwitchTokens } from "./parse.ts";
 
 /** A signed-in Twitch account: the immutable id, the login and the display name Twitch gave at sign-in. */
 export type TwitchUser = { id: string; login: string; displayName: string };
@@ -173,34 +174,30 @@ export async function consume(env: Env, key: string): Promise<unknown> {
   if (!r.ok) throw new Error("Auth storage unavailable");
   return r.json();
 }
-export async function seal(env: Env, value: unknown): Promise<Sealed> {
-  const key = await crypto.subtle.importKey(
+/** The AES-GCM key derived from AUTH_SECRET. */
+const sealKey = async (env: Env, use: "encrypt" | "decrypt"): Promise<CryptoKey> =>
+  crypto.subtle.importKey(
     "raw",
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.AUTH_SECRET)),
     { name: "AES-GCM" },
     false,
-    ["encrypt"],
+    [use],
   );
+export async function seal(env: Env, value: unknown): Promise<Sealed> {
   const iv = crypto.getRandomValues(new Uint8Array(12)),
-    cipher = new Uint8Array(
-      await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(value))),
-    );
-  return { iv: btoa(String.fromCharCode(...iv)), data: btoa(String.fromCharCode(...cipher)) };
+    data = new TextEncoder().encode(JSON.stringify(value));
+  const cipher = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await sealKey(env, "encrypt"), data);
+  return { iv: toBase64(iv), data: toBase64(new Uint8Array(cipher)) };
 }
 // OAuth state: the sign-in's pending details, sealed with AUTH_SECRET and carried in the state parameter and the
 // mini_oauth cookie, so /auth/login writes nothing to AuthStore (a sign-in flood can't use up its quota).
-const b64url = (bytes: number[]): string =>
-  btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-const unb64url = (text: string): Uint8Array =>
-  Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (x) => x.charCodeAt(0));
+const b64url = (bytes: Uint8Array): string =>
+  toBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64url = (text: string): Uint8Array => fromBase64(text.replace(/-/g, "+").replace(/_/g, "/"));
 export const OAUTH_STATE = /^[A-Za-z0-9_-]{40,1500}$/;
 export async function sealState(env: Env, pending: OAuthPending): Promise<string> {
   const { iv, data } = await seal(env, { oauth: pending, exp: Date.now() + 600000, n: randomToken().slice(0, 16) });
-  const bytes = (text: string): number[] => Array.from(atob(text), (x) => x.charCodeAt(0));
-  return b64url([...bytes(iv), ...bytes(data)]);
+  return b64url(new Uint8Array([...fromBase64(iv), ...fromBase64(data)]));
 }
 export async function openState(env: Env, state: string): Promise<OAuthPending | null> {
   if (!OAUTH_STATE.test(state || "")) return null;
@@ -208,8 +205,8 @@ export async function openState(env: Env, state: string): Promise<OAuthPending |
     const raw = unb64url(state);
     if (raw.length < 29) return null;
     const v = await unseal<{ oauth?: OAuthPending; exp?: unknown } | null>(env, {
-      iv: btoa(String.fromCharCode(...raw.slice(0, 12))),
-      data: btoa(String.fromCharCode(...raw.slice(12))),
+      iv: toBase64(raw.slice(0, 12)),
+      data: toBase64(raw.slice(12)),
     });
     return v && v.oauth && typeof v.exp === "number" && v.exp > Date.now() ? v.oauth : null;
   } catch {
@@ -218,22 +215,9 @@ export async function openState(env: Env, state: string): Promise<OAuthPending |
 }
 // T is what the caller sealed; unseal only decrypts and parses it.
 export async function unseal<T = unknown>(env: Env, value: Sealed): Promise<T> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.AUTH_SECRET)),
-    { name: "AES-GCM" },
-    false,
-    ["decrypt"],
-  );
-  return JSON.parse(
-    new TextDecoder().decode(
-      await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: Uint8Array.from(atob(value.iv), (x) => x.charCodeAt(0)) },
-        key,
-        Uint8Array.from(atob(value.data), (x) => x.charCodeAt(0)),
-      ),
-    ),
-  );
+  const key = await sealKey(env, "decrypt");
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(value.iv) }, key, fromBase64(value.data));
+  return JSON.parse(new TextDecoder().decode(plain));
 }
 // connect=1 (the default channel only): mod checks plus the chat-read scopes the EventSub channel.chat.message webhook needs.
 // Built-in channels. Only the default channel can use EventSub; every other channel uses StreamElements.
@@ -255,6 +239,14 @@ export function pointsScopes(env: Env, channel: string): string[] {
         : ["moderation:read"];
   return [...base, POINTS_SCOPE];
 }
+/** A Twitch answer through its parser (server/parse.ts): null for an error status, a non-JSON body or a refusal. */
+async function answer<T>(r: Response | null, parse: (v: unknown) => Parsed<T>): Promise<T | null> {
+  if (!r?.ok) return null;
+  const parsed = parse(await r.json<unknown>().catch(() => undefined));
+  return parsed.ok ? parsed.value : null;
+}
+/** A JSON refusal { error } with this status. */
+const fail = (error: string, status: number): Response => Response.json({ error }, { status });
 export function configured(env: Env): boolean {
   return !!(env.TWITCH_CLIENT_ID && env.TWITCH_CLIENT_SECRET && env.AUTH_SECRET && env.INTERNAL_SECRET);
 }
@@ -294,17 +286,13 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
     return Response.json({ ok: true }, { headers: { "Set-Cookie": cookie("mini_session", "", 0) } });
   }
   if (!configured(env))
-    return Response.json(
-      { error: "Twitch app is not configured yet. Add the app client ID and secret to the Worker." },
-      { status: 503 },
-    );
+    return fail("Twitch app is not configured yet. Add the app client ID and secret to the Worker.", 503);
   const callback = authOrigin(env, url) + "/auth/callback";
   if (path === "/auth/login") {
     let pending: OAuthPending,
       scope = "";
     if (url.searchParams.get("bot") === "1") {
-      if (env.CHAT_BOT !== "1" || !env.BOT_LOGIN)
-        return Response.json({ error: "This site has no PixFray chat bot" }, { status: 403 });
+      if (env.CHAT_BOT !== "1" || !env.BOT_LOGIN) return fail("This site has no PixFray chat bot", 403);
       pending = { bot: true, channel: site.defaultChannel, next: "/admin/" };
       scope = BOT_SCOPES.join(" ");
     } else if (url.searchParams.get("signup") === "1") {
@@ -321,17 +309,13 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
           !url.searchParams.get("channel") && askedUrl.pathname === "/admin/" && !askedUrl.searchParams.get("channel"),
         channel = url.searchParams.get("channel") || site.defaultChannel;
       // A turned-off channel still signs in, so its broadcaster can turn it back on.
-      if (!(await channelState(env, channel)))
-        return Response.json({ error: "PixFray is not enabled for this channel" }, { status: 403 });
+      if (!(await channelState(env, channel))) return fail("PixFray is not enabled for this channel", 403);
       const connect = url.searchParams.get("connect") === "1",
         connectBot = env.CHAT_BOT === "1" && url.searchParams.get("connect") === "bot",
         connectPoints = url.searchParams.get("connect") === "points",
         connectMods = connectBot || connectPoints || url.searchParams.get("connect") === "mods";
       if (connect && channel !== site.defaultChannel)
-        return Response.json(
-          { error: "Chat for this channel comes through StreamElements; no Twitch connection needed" },
-          { status: 403 },
-        );
+        return fail("Chat for this channel comes through StreamElements; no Twitch connection needed", 403);
       const next = connectMods ? "/admin/" : asked;
       pending = {
         ...(bare && !connect && !connectMods ? {} : { channel }),
@@ -370,16 +354,14 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   if (path !== "/auth/callback") return new Response("Not found", { status: 404 });
   const state = url.searchParams.get("state"),
     cookieState = request.headers.get("Cookie")?.match(/(?:^|;\s*)mini_oauth=([A-Za-z0-9_-]+)/)?.[1];
-  if (!state || state !== cookieState)
-    return Response.json({ error: "OAuth state mismatch. Restart sign-in." }, { status: 400 });
+  if (!state || state !== cookieState) return fail("OAuth state mismatch. Restart sign-in.", 400);
   const pending = await openState(env, state);
   if (pending?.signup && !url.searchParams.get("code"))
     return startPage(url.searchParams.get("error") === "access_denied" ? "denied" : "failed");
   // !: a connectMods sign-in always carries its channel (the login branch above)
   if (pending?.connectMods && !url.searchParams.get("code"))
     return adminPage(pending.channel!, pending.connectPoints ? "points=denied" : "mods=denied");
-  if (!pending || !url.searchParams.get("code"))
-    return Response.json({ error: "Authorization expired or denied" }, { status: 400 });
+  if (!pending || !url.searchParams.get("code")) return fail("Authorization expired or denied", 400);
   const tokenRes = await fetch("https://id.twitch.tv/oauth2/token", {
     method: "POST",
     body: new URLSearchParams({
@@ -391,69 +373,57 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
       redirect_uri: callback,
     }),
   });
-  const answer = tokenRes.ok ? parseTwitchTokens(await tokenRes.json<unknown>().catch(() => undefined)) : null;
-  if (!answer?.ok) return Response.json({ error: "Twitch token exchange failed" }, { status: 502 });
-  const tokens = answer.value,
-    headers = { "Client-Id": env.TWITCH_CLIENT_ID, Authorization: "Bearer " + tokens.access_token };
+  const tokens = await answer(tokenRes, parseTwitchTokens);
+  if (!tokens) return fail("Twitch token exchange failed", 502);
+  const headers = { "Client-Id": env.TWITCH_CLIENT_ID, Authorization: "Bearer " + tokens.access_token };
   const [identityRes, validationRes] = await Promise.all([
     fetch("https://api.twitch.tv/helix/users", { headers }),
     fetch("https://id.twitch.tv/oauth2/validate", { headers: { Authorization: "OAuth " + tokens.access_token } }),
   ]);
-  if (!identityRes.ok || !validationRes.ok)
-    return Response.json({ error: "Twitch identity validation failed" }, { status: 502 });
-  const identities = parseHelixUsers(await identityRes.json<unknown>().catch(() => undefined)),
-    validated = parseTwitchValidation(await validationRes.json<unknown>().catch(() => undefined));
-  if (!identities.ok || !validated.ok)
-    return Response.json({ error: "Twitch identity validation failed" }, { status: 502 });
-  const identity = identities.value[0],
-    validation = validated.value;
+  const identities = await answer(identityRes, parseHelixUsers),
+    validation = await answer(validationRes, parseTwitchValidation);
+  if (!identities || !validation) return fail("Twitch identity validation failed", 502);
+  const identity = identities[0];
   if (!identity || validation.client_id !== env.TWITCH_CLIENT_ID || validation.user_id !== identity.id)
-    return Response.json({ error: "Twitch identity mismatch" }, { status: 403 });
+    return fail("Twitch identity mismatch", 403);
   const user = { id: identity.id, login: identity.login, displayName: identity.display_name };
   // Resolve the channel's current immutable ID from Twitch, never from a claimed form field.
   // A failed lookup only blocks connecting chat; viewers still sign in and the last stored owner record stays.
   const ownerRes = await fetch("https://api.twitch.tv/helix/users?login=" + site.owner.login, { headers }).catch(
     (): null => null, // typed: the loose worker program would widen a bare null to any
   );
-  const owners = ownerRes?.ok ? parseHelixUsers(await ownerRes.json<unknown>().catch(() => undefined)) : null;
-  const owner = owners?.ok ? owners.value[0] : null; // an unreadable answer counts as a failed lookup
+  const owner = (await answer(ownerRes, parseHelixUsers))?.[0]; // an unreadable answer counts as a failed lookup
   if (owner) {
-    if (env.OWNER_TWITCH_ID && env.OWNER_TWITCH_ID !== owner.id)
-      return Response.json({ error: "Owner configuration mismatch" }, { status: 403 });
+    if (env.OWNER_TWITCH_ID && env.OWNER_TWITCH_ID !== owner.id) return fail("Owner configuration mismatch", 403);
     await record(env, "owner:" + site.owner.login, { id: owner.id }, Date.now() + 90 * 86400000);
-  } else if (pending.connect) return Response.json({ error: "Cannot resolve channel owner" }, { status: 502 });
-  if (pending.connect) {
-    // !: without an owner, pending.connect returned 502 above
-    if (user.id !== owner!.id)
-      return Response.json(
-        { error: "Only " + site.owner.login + " can connect broadcaster authorization" },
-        { status: 403 },
-      );
-    const missing = CONNECT_SCOPES.filter((x) => !validation.scopes?.includes(x));
-    if (missing.length)
-      return Response.json(
-        { error: "Twitch permissions were not granted: " + missing.join(", ") + ". Restart at /auth/login?connect=1." },
-        { status: 403 },
-      );
+  } else if (pending.connect) return fail("Cannot resolve channel owner", 502);
+  const lacking = (need: string[]) => need.filter((x) => !validation.scopes?.includes(x));
+  const notGranted = (missing: string[], restart: string) =>
+    fail(
+      "Twitch permissions were not granted: " + missing.join(", ") + ". Restart at /auth/login?" + restart + ".",
+      403,
+    );
+  // The broadcaster token, sealed with the account it belongs to, plus the mods-connected marker.
+  const keepToken = async (channel: string, extra: { scopes?: string[] } = {}) => {
     await keepBroadcaster(
       env,
-      site.defaultChannel,
-      await seal(env, { ...tokens, userId: user.id, validatedAt: Date.now() }),
+      channel,
+      await seal(env, { ...tokens, userId: user.id, ...extra, validatedAt: Date.now() }),
     );
-    await markModsConnected(env, site.defaultChannel);
+    await markModsConnected(env, channel);
+  };
+  if (pending.connect) {
+    // !: without an owner, pending.connect returned 502 above
+    if (user.id !== owner!.id) return fail("Only " + site.owner.login + " can connect broadcaster authorization", 403);
+    const missing = lacking(CONNECT_SCOPES);
+    if (missing.length) return notGranted(missing, "connect=1");
+    await keepToken(site.defaultChannel);
   }
   if (pending.bot) {
     if (String(user.login).toLowerCase() !== String(env.BOT_LOGIN).toLowerCase())
-      return Response.json(
-        { error: "Sign in as the bot account " + env.BOT_LOGIN + ", not " + user.login },
-        { status: 403 },
-      );
-    const missing = BOT_SCOPES.filter((x) => !validation.scopes?.includes(x));
-    if (missing.length)
-      return Response.json(
-        { error: "Twitch permissions were not granted: " + missing.join(", ") + ". Restart at /auth/login?bot=1." },
-        { status: 403 },
-      );
+      return fail("Sign in as the bot account " + env.BOT_LOGIN + ", not " + user.login, 403);
+    const missing = lacking(BOT_SCOPES);
+    if (missing.length) return notGranted(missing, "bot=1");
     await record(
       env,
       "bot:twitch",
@@ -477,30 +447,16 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
       if (!e.reason) throw e;
       return startPage(e.reason);
     }
-    if (pending.mods && modScope) {
-      await keepBroadcaster(
-        env,
-        pending.channel,
-        await seal(env, { ...tokens, userId: user.id, validatedAt: Date.now() }),
-      );
-      await markModsConnected(env, pending.channel);
-    }
+    if (pending.mods && modScope) await keepToken(pending.channel);
   }
   if (pending.connectMods) {
-    // !: a connectMods sign-in always carries its channel (the login branch above), here and below
-    if (!(await isBroadcaster(env, user, pending.channel!))) return adminPage(pending.channel!, "mods=wrong_account");
+    const channel = pending.channel!; // !: a connectMods sign-in always carries its channel (the login branch above)
+    if (!(await isBroadcaster(env, user, channel))) return adminPage(channel, "mods=wrong_account");
     if (pending.connectPoints) {
-      // !: as above
-      const missing = pointsScopes(env, pending.channel!).filter((x) => !validation.scopes?.includes(x));
-      if (missing.length) return adminPage(pending.channel!, "points=denied"); // !: as above
+      if (lacking(pointsScopes(env, channel)).length) return adminPage(channel, "points=denied");
     } else if (!modScope || (pending.connectBot && !validation.scopes?.includes("channel:bot")))
-      return adminPage(pending.channel!, "mods=denied"); // !: as above
-    await keepBroadcaster(
-      env,
-      pending.channel!, // !: as above
-      await seal(env, { ...tokens, userId: user.id, scopes: validation.scopes || [], validatedAt: Date.now() }),
-    );
-    await markModsConnected(env, pending.channel!); // !: as above
+      return adminPage(channel, "mods=denied");
+    await keepToken(channel, { scopes: validation.scopes || [] });
   }
   const key = randomToken();
   await record(env, "session:" + (await digest(key)), { user, createdAt: Date.now() }, Date.now() + SESSION_S * 1000);
@@ -521,22 +477,12 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   response.headers.append("Set-Cookie", cookie("mini_oauth", "", 0));
   return response;
 }
+// Back to a page, with the sign-in's state cookie cleared.
+const backTo = (location: string): Response =>
+  new Response(null, { status: 303, headers: { Location: location, "Set-Cookie": cookie("mini_oauth", "", 0) } });
 // Back to /start with the reason sign-up didn't finish (full, denied, failed).
-function startPage(error: string): Response {
-  return new Response(null, {
-    status: 303,
-    headers: { Location: "/start/?error=" + encodeURIComponent(error), "Set-Cookie": cookie("mini_oauth", "", 0) },
-  });
-}
-function adminPage(channel: string, query: string): Response {
-  return new Response(null, {
-    status: 303,
-    headers: {
-      Location: "/admin/?channel=" + channel + "&" + query + "#chat",
-      "Set-Cookie": cookie("mini_oauth", "", 0),
-    },
-  });
-}
+const startPage = (error: string) => backTo("/start/?error=" + encodeURIComponent(error));
+const adminPage = (channel: string, query: string) => backTo("/admin/?channel=" + channel + "&" + query + "#chat");
 /** A channel's stored broadcaster token (broadcaster:<login>), from openBroadcaster. */
 export type Broadcaster = {
   userId: string;
@@ -563,9 +509,9 @@ export async function openBroadcaster(env: Env, channel: string): Promise<Broadc
         client_secret: env.TWITCH_CLIENT_SECRET,
       }),
     });
-    const renewed = r.ok ? parseTwitchTokens(await r.json<unknown>().catch(() => undefined)) : null;
-    if (!renewed?.ok) throw new Error("Broadcaster must reconnect Twitch");
-    token = { ...token, ...renewed.value, validatedAt: 0 };
+    const renewed = await answer(r, parseTwitchTokens);
+    if (!renewed) throw new Error("Broadcaster must reconnect Twitch");
+    token = { ...token, ...renewed, validatedAt: 0 };
   };
   // Twitch's token answer lists its scopes as `scope`; a validation stores them as `scopes`.
   const scopes = (): string[] =>
@@ -582,9 +528,8 @@ export async function openBroadcaster(env: Env, channel: string): Promise<Broadc
         await renew();
         r = await check();
       }
-      const validated = r.ok ? parseTwitchValidation(await r.json<unknown>().catch(() => undefined)) : null;
-      if (!validated?.ok) throw new Error("Twitch authorization unavailable");
-      const v = validated.value;
+      const v = await answer(r, parseTwitchValidation);
+      if (!v) throw new Error("Twitch authorization unavailable");
       if (v.user_id !== token.userId || v.client_id !== env.TWITCH_CLIENT_ID)
         throw new Error("Broadcaster authorization is invalid");
       token = { ...token, scopes: v.scopes || [], validatedAt: Date.now() };
@@ -641,9 +586,9 @@ export async function access(env: Env, user: TwitchUser | null | undefined, chan
   const r = await broadcaster.helix(
     "/moderation/moderators?broadcaster_id=" + broadcaster.userId + "&user_id=" + encodeURIComponent(user.id),
   );
-  const mods = r.ok ? parseModerators(await r.json<unknown>().catch(() => undefined)) : null;
-  if (!mods?.ok) throw new Error("Current moderator role cannot be verified");
-  const moderator = mods.value.includes(user.id);
+  const mods = await answer(r, parseModerators);
+  if (!mods) throw new Error("Current moderator role cannot be verified");
+  const moderator = mods.includes(user.id);
   await record(env, cacheKey, moderator, Date.now() + 60000);
   return verdict(moderator);
 }
