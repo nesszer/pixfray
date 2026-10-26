@@ -66,31 +66,19 @@ const oga = (page: string, name: string, extra: Partial<Pack> = {}): Pack => ({
   url: OGA + name,
   ...extra,
 });
+// A Kenney pack: its page under /assets/<slug>, the archive under that page's media folder `dir` (file name
+// kenney_<slug><version>.zip), and its License.txt copied to KENNEY_<name>_LICENSE.txt.
+const kenney = (slug: string, dir: string, name: string, version = ""): Pack => ({
+  source: "https://kenney.nl/assets/" + slug,
+  file: `kenney_${slug}${version}.zip`,
+  url: `https://kenney.nl/media/pages/assets/${slug}/${dir}/kenney_${slug}${version}.zip`,
+  license: { entry: "License.txt", out: `KENNEY_${name}_LICENSE.txt` },
+});
 const PACK_TABLE = {
-  "kenney-new-platformer": {
-    source: "https://kenney.nl/assets/new-platformer-pack",
-    file: "kenney_new-platformer-pack-1.1.zip",
-    url: "https://kenney.nl/media/pages/assets/new-platformer-pack/1896103897-1764756702/kenney_new-platformer-pack-1.1.zip",
-    license: { entry: "License.txt", out: "KENNEY_NEW_PLATFORMER_LICENSE.txt" },
-  },
-  "kenney-pixel-platformer": {
-    source: "https://kenney.nl/assets/pixel-platformer",
-    file: "kenney_pixel-platformer.zip",
-    url: "https://kenney.nl/media/pages/assets/pixel-platformer/33bb4921eb-1696667883/kenney_pixel-platformer.zip",
-    license: { entry: "License.txt", out: "KENNEY_PIXEL_PLATFORMER_LICENSE.txt" },
-  },
-  "kenney-abstract-platformer": {
-    source: "https://kenney.nl/assets/abstract-platformer",
-    file: "kenney_abstract-platformer.zip",
-    url: "https://kenney.nl/media/pages/assets/abstract-platformer/a8f4badcb5-1677579172/kenney_abstract-platformer.zip",
-    license: { entry: "License.txt", out: "KENNEY_ABSTRACT_PLATFORMER_LICENSE.txt" },
-  },
-  "kenney-jumper": {
-    source: "https://kenney.nl/assets/jumper-pack",
-    file: "kenney_jumper-pack.zip",
-    url: "https://kenney.nl/media/pages/assets/jumper-pack/4654b2d2e5-1677666699/kenney_jumper-pack.zip",
-    license: { entry: "License.txt", out: "KENNEY_JUMPER_LICENSE.txt" },
-  },
+  "kenney-new-platformer": kenney("new-platformer-pack", "1896103897-1764756702", "NEW_PLATFORMER", "-1.1"),
+  "kenney-pixel-platformer": kenney("pixel-platformer", "33bb4921eb-1696667883", "PIXEL_PLATFORMER"),
+  "kenney-abstract-platformer": kenney("abstract-platformer", "a8f4badcb5-1677579172", "ABSTRACT_PLATFORMER"),
+  "kenney-jumper": kenney("jumper-pack", "4654b2d2e5-1677666699", "JUMPER"),
   // OpenGameArt packs by pzUH. The archives carry no license file; the CC0 statement is on each OpenGameArt page and is
   // recorded in public/assets/OGA_PZUH_LICENSE.txt (written by hand, not generated here).
   "oga-knight": oga("the-knight-free-sprite", "FreeKnight.zip"),
@@ -114,12 +102,16 @@ type PackId = keyof typeof PACK_TABLE;
 const PACKS: Record<PackId, Pack> = PACK_TABLE;
 
 // ---------------------------------------------------------------- characters
-// Frame names. `p(dir, name, list)` -> "dir/name (3).png"; `u(dir, name, list)` -> "dir/name__003.png".
-const p = (dir: string, name: string, list: number[]): string[] => list.map((i) => `${dir}${name} (${i}).png`);
-const u = (dir: string, name: string, list: number[]): string[] =>
-  list.map((i) => `${dir}${name}__${String(i).padStart(3, "0")}.png`);
+// Frame names in a folder. `p(dir)(name, list)` -> "dir/name (3).png"; `u(dir)(name, list)` -> "dir/name__003.png".
+type Names = (name: string, list: number[]) => string[];
+function p(dir: string): Names {
+  return (name, list) => list.map((i) => `${dir}${name} (${i}).png`);
+}
+function u(dir: string): Names {
+  return (name, list) => list.map((i) => `${dir}${name}__${String(i).padStart(3, "0")}.png`);
+}
 const range = (a: number, b: number): number[] => Array.from({ length: b - a + 1 }, (_, i) => a + i);
-const every = (list: number[], step: number): number[] => list.filter((_, i) => i % step === 0);
+const odds = (to: number): number[] => range(1, to).filter((i) => i % 2 === 1); // 1, 3, 5 ... up to `to`
 
 // Source file names per animation (zip entries, or "tile <n>" for a sheet).
 type Frames = { walk: string[]; idle: string[]; jump: string[]; cheer: string[]; attack?: string[]; ko?: string[] };
@@ -136,81 +128,77 @@ type Character = Frames & {
 
 // scale: {height: px} fits the walk/idle height to px (area-average downscale), {smooth: n} integer bilinear upscale,
 // {pixel: n} integer nearest-neighbour upscale (pixel art), {} native size. Nothing may end up above 128 x 128.
+function char(pack: PackId, fps: number, scale: Character["scale"], id: string, label: string, o: Frames): Character {
+  return { id, label, pack, fps, scale, ...o };
+}
 const npp = (colour: string, id: string, label: string): Character => {
   const d = `Sprites/Characters/Default/character_${colour}_`;
-  return {
-    id,
-    label,
-    pack: "kenney-new-platformer",
-    fps: 6,
-    scale: {},
+  return char("kenney-new-platformer", 6, {}, id, label, {
     walk: [`${d}walk_a.png`, `${d}walk_b.png`],
     idle: [`${d}idle.png`],
     jump: [`${d}jump.png`],
     cheer: [`${d}front.png`, `${d}jump.png`],
     ko: [`${d}hit.png`],
-  };
+  });
 };
 const ENEMIES = "Sprites/Enemies/Default/";
 const nppBug = (name: string, id: string, label: string, jump: string, extra: Partial<Character> = {}): Character => ({
-  id,
-  label,
-  pack: "kenney-new-platformer",
-  fps: 6,
-  scale: { smooth: 2 },
-  walk: [`${ENEMIES}${name}_walk_a.png`, `${ENEMIES}${name}_walk_b.png`],
-  idle: [`${ENEMIES}${name}_rest.png`],
-  jump: [`${ENEMIES}${jump}.png`],
-  cheer: [`${ENEMIES}${name}_rest.png`, `${ENEMIES}${jump}.png`],
+  ...char("kenney-new-platformer", 6, { smooth: 2 }, id, label, {
+    walk: [`${ENEMIES}${name}_walk_a.png`, `${ENEMIES}${name}_walk_b.png`],
+    idle: [`${ENEMIES}${name}_rest.png`],
+    jump: [`${ENEMIES}${jump}.png`],
+    cheer: [`${ENEMIES}${name}_rest.png`, `${ENEMIES}${jump}.png`],
+  }),
   ...extra,
 });
 const tiles = (list: string[]): string[] => list.map((t) => `Tiles/Characters/tile_${t}.png`);
-const pixel = (a: string, b: string, id: string, label: string): Character => ({
-  id,
-  label,
-  pack: "kenney-pixel-platformer",
-  fps: 6,
-  scale: { pixel: 4 },
-  walk: tiles([a, b]),
-  idle: tiles([a]),
-  jump: tiles([b]),
-  cheer: tiles([a, b]),
-});
+const pixel = (a: string, b: string, id: string, label: string): Character =>
+  char("kenney-pixel-platformer", 6, { pixel: 4 }, id, label, {
+    walk: tiles([a, b]),
+    idle: tiles([a]),
+    jump: tiles([b]),
+    cheer: tiles([a, b]),
+  });
 const blob = (colour: string, id: string, label: string): Character => {
   const d = `PNG/Players/Player ${colour}/player${colour}_`;
-  return {
-    id,
-    label,
-    pack: "kenney-abstract-platformer",
-    fps: 10,
-    scale: { smooth: 2 },
+  return char("kenney-abstract-platformer", 10, { smooth: 2 }, id, label, {
     walk: range(1, 5).map((i) => `${d}walk${i}.png`),
     idle: [`${d}stand.png`],
     jump: [`${d}up2.png`],
     cheer: [`${d}up1.png`, `${d}up2.png`],
     ko: [`${d}hit.png`, `${d}dead.png`],
-  };
+  });
 };
 // pzUH characters are big (400-900 px) side views: scaled down to ~104 px tall. 10 fps over 10 frames = one stride per second.
-const pz = (pack: PackId, id: string, label: string, o: Frames): Character => ({
-  id,
-  label,
-  pack,
-  fps: 10,
-  scale: { height: 104 },
-  ...o,
-});
+// Columns after the label: the frame names, walk [name, frames], Idle frames, the Jump frame, then cheer's distance either
+// side of the jump frame (`spread`, default 2) and the optional attack and ko [name, frames].
+type PzMore = { spread?: number; attack?: [string, number[]]; ko?: [string, number[]] };
+function pz(
+  pack: PackId,
+  id: string,
+  label: string,
+  f: Names,
+  walk: [string, number[]],
+  idle: number[],
+  jump: number,
+  { spread = 2, attack, ko }: PzMore = {},
+): Character {
+  return char(pack, 10, { height: 104 }, id, label, {
+    walk: f(...walk),
+    idle: f("Idle", idle),
+    jump: f("Jump", [jump]),
+    cheer: f("Jump", [jump - spread, jump + spread]),
+    ...(attack ? { attack: f(...attack) } : {}),
+    ...(ko ? { ko: f(...ko) } : {}),
+  });
+}
 
 // Kenney Jumper Pack: big flat-colour sprites, scaled down like the pzUH ones. Frame lists are file names without ".png".
-const jumper = (dir: string, id: string, label: string, o: Frames): Character => ({
-  id,
-  label,
-  pack: "kenney-jumper",
-  fps: 6,
-  scale: { height: 104 },
+const jumper = (dir: string, id: string, label: string, o: Frames): Character => {
   // as: fromEntries returns a string-keyed record; it maps each frame list of o to the same key, so it is Frames again
-  ...(Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.map((n) => `PNG/${dir}/${n}.png`)])) as Frames),
-});
+  const files = Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.map((n) => `PNG/${dir}/${n}.png`)]));
+  return char("kenney-jumper", 6, { height: 104 }, id, label, files as Frames);
+};
 // A Jumper Pack figure with name_walk1/2, name_stand and name_jump frames.
 const walker = (name: string, cheer: string, ko?: string): Frames => ({
   walk: [`${name}_walk1`, `${name}_walk2`],
@@ -221,104 +209,39 @@ const walker = (name: string, cheer: string, ko?: string): Frames => ({
 });
 
 const CHARACTERS: Character[] = [
-  pz("oga-knight", "knight", "Knight", {
-    walk: p("png/", "Walk", range(1, 10)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [5]),
-    cheer: p("png/", "Jump", [3, 7]),
-    attack: p("png/", "Attack", [1, 3, 5, 7, 9]),
-    ko: p("png/", "Dead", [1, 4, 7, 10]),
+  pz("oga-knight", "knight", "Knight", p("png/"), ["Walk", range(1, 10)], range(1, 10), 5, {
+    attack: ["Attack", [1, 3, 5, 7, 9]],
+    ko: ["Dead", [1, 4, 7, 10]],
   }),
-  pz("oga-santa", "santa", "Santa", {
-    walk: p("png/", "Walk", range(1, 13)),
-    idle: p("png/", "Idle", every(range(1, 16), 2)),
-    jump: p("png/", "Jump", [8]),
-    cheer: p("png/", "Jump", [5, 11]),
+  pz("oga-santa", "santa", "Santa", p("png/"), ["Walk", range(1, 13)], odds(15), 8, { spread: 3 }),
+  pz("oga-ninja", "ninja", "Ninja", u("png/"), ["Run", range(0, 9)], range(0, 9), 5, {
+    attack: ["Attack", [0, 2, 4, 6, 8]],
+    ko: ["Dead", [0, 3, 6, 9]],
   }),
-  pz("oga-ninja", "ninja", "Ninja", {
-    walk: u("png/", "Run", range(0, 9)),
-    idle: u("png/", "Idle", range(0, 9)),
-    jump: u("png/", "Jump", [5]),
-    cheer: u("png/", "Jump", [3, 7]),
-    attack: u("png/", "Attack", [0, 2, 4, 6, 8]),
-    ko: u("png/", "Dead", [0, 3, 6, 9]),
+  pz("oga-adventure-girl", "cowgirl", "Cowgirl", p("png/"), ["Run", range(1, 8)], range(1, 10), 5, {
+    attack: ["Melee", range(1, 7)],
+    ko: ["Dead", [1, 4, 7, 10]],
   }),
-  pz("oga-adventure-girl", "cowgirl", "Cowgirl", {
-    walk: p("png/", "Run", range(1, 8)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [5]),
-    cheer: p("png/", "Jump", [3, 7]),
-    attack: p("png/", "Melee", range(1, 7)),
-    ko: p("png/", "Dead", [1, 4, 7, 10]),
+  pz("oga-temple-run", "cowboy", "Cowboy", u(""), ["Run", range(0, 9)], range(0, 9), 5),
+  pz("oga-cat-dog", "cat", "Cat", p("png/cat/"), ["Walk", range(1, 10)], range(1, 10), 4, { ko: ["Hurt", [4]] }),
+  pz("oga-cat-dog", "dog", "Dog", p("png/dog/"), ["Walk", range(1, 10)], range(1, 10), 4, { ko: ["Hurt", [4]] }),
+  pz("oga-dino", "dino", "Dino", p("png/"), ["Walk", range(1, 10)], range(1, 10), 6, { ko: ["Dead", [1, 3, 5, 8]] }),
+  pz("oga-cute-girl", "cute-girl", "Cute Girl", p("png/"), ["Walk", odds(19)], odds(15), 15, {
+    spread: 7,
+    ko: ["Dead", [1, 10, 20, 30]],
   }),
-  pz("oga-temple-run", "cowboy", "Cowboy", {
-    walk: u("", "Run", range(0, 9)),
-    idle: u("", "Idle", range(0, 9)),
-    jump: u("", "Jump", [5]),
-    cheer: u("", "Jump", [3, 7]),
+  pz("oga-jack", "pumpkin", "Pumpkin", p("png/"), ["Walk", range(1, 10)], range(1, 10), 5, {
+    ko: ["Dead", [1, 4, 7, 10]],
   }),
-  pz("oga-cat-dog", "cat", "Cat", {
-    walk: p("png/cat/", "Walk", range(1, 10)),
-    idle: p("png/cat/", "Idle", range(1, 10)),
-    jump: p("png/cat/", "Jump", [4]),
-    cheer: p("png/cat/", "Jump", [2, 6]),
-    ko: p("png/cat/", "Hurt", [4]),
+  pz("oga-ninja-girl", "ninja-girl", "Ninja Girl", u("png/"), ["Run", range(0, 9)], range(0, 9), 5, {
+    attack: ["Attack", [0, 2, 4, 6, 8]],
+    ko: ["Dead", [0, 3, 6, 9]],
   }),
-  pz("oga-cat-dog", "dog", "Dog", {
-    walk: p("png/dog/", "Walk", range(1, 10)),
-    idle: p("png/dog/", "Idle", range(1, 10)),
-    jump: p("png/dog/", "Jump", [4]),
-    cheer: p("png/dog/", "Jump", [2, 6]),
-    ko: p("png/dog/", "Hurt", [4]),
-  }),
-  pz("oga-dino", "dino", "Dino", {
-    walk: p("png/", "Walk", range(1, 10)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [6]),
-    cheer: p("png/", "Jump", [4, 8]),
-    ko: p("png/", "Dead", [1, 3, 5, 8]),
-  }),
-  pz("oga-cute-girl", "cute-girl", "Cute Girl", {
-    walk: p("png/", "Walk", every(range(1, 20), 2)),
-    idle: p("png/", "Idle", every(range(1, 16), 2)),
-    jump: p("png/", "Jump", [15]),
-    cheer: p("png/", "Jump", [8, 22]),
-    ko: p("png/", "Dead", [1, 10, 20, 30]),
-  }),
-  pz("oga-jack", "pumpkin", "Pumpkin", {
-    walk: p("png/", "Walk", range(1, 10)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [5]),
-    cheer: p("png/", "Jump", [3, 7]),
-    ko: p("png/", "Dead", [1, 4, 7, 10]),
-  }),
-  pz("oga-ninja-girl", "ninja-girl", "Ninja Girl", {
-    walk: u("png/", "Run", range(0, 9)),
-    idle: u("png/", "Idle", range(0, 9)),
-    jump: u("png/", "Jump", [5]),
-    cheer: u("png/", "Jump", [3, 7]),
-    attack: u("png/", "Attack", [0, 2, 4, 6, 8]),
-    ko: u("png/", "Dead", [0, 3, 6, 9]),
-  }),
-  pz("oga-red-hat-boy", "red-hat-boy", "Red Hat Boy", {
-    walk: p("png/", "Run", range(1, 8)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [6]),
-    cheer: p("png/", "Jump", [4, 8]),
-  }),
-  pz("oga-flat-boy", "flat-boy", "Kid", {
-    walk: p("png/", "Walk", every(range(1, 15), 2)),
-    idle: p("png/", "Idle", every(range(1, 15), 2)),
-    jump: p("png/", "Jump", [8]),
-    cheer: p("png/", "Jump", [5, 11]),
-  }),
-  pz("oga-robot", "robot", "Gold Robot", {
-    walk: p("png/", "Run", range(1, 8)),
-    idle: p("png/", "Idle", range(1, 10)),
-    jump: p("png/", "Jump", [5]),
-    cheer: p("png/", "Jump", [3, 7]),
-    attack: p("png/", "Melee", range(1, 8)),
-    ko: p("png/", "Dead", [1, 4, 7, 10]),
+  pz("oga-red-hat-boy", "red-hat-boy", "Red Hat Boy", p("png/"), ["Run", range(1, 8)], range(1, 10), 6),
+  pz("oga-flat-boy", "flat-boy", "Kid", p("png/"), ["Walk", odds(15)], odds(15), 8, { spread: 3 }),
+  pz("oga-robot", "robot", "Gold Robot", p("png/"), ["Run", range(1, 8)], range(1, 10), 5, {
+    attack: ["Melee", range(1, 8)],
+    ko: ["Dead", [1, 4, 7, 10]],
   }),
   jumper("Players", "bunny-brown", "Brown Bunny", walker("bunny1", "ready", "hurt")),
   jumper("Players", "bunny-purple", "Purple Bunny", walker("bunny2", "ready", "hurt")),
@@ -363,15 +286,12 @@ const CHARACTERS: Character[] = [
   blob("Green", "blob-green", "Green Blob"),
   blob("Red", "blob-red", "Red Blob"),
   {
-    id: "turtle",
-    label: "Turtle",
-    pack: "oga-turtle",
-    fps: 6,
-    scale: { pixel: 4 },
-    walk: ["tile 0", "tile 1", "tile 2", "tile 3"],
-    idle: ["tile 0"],
-    jump: ["tile 1"],
-    cheer: ["tile 0", "tile 2"],
+    ...char("oga-turtle", 6, { pixel: 4 }, "turtle", "Turtle", {
+      walk: ["tile 0", "tile 1", "tile 2", "tile 3"],
+      idle: ["tile 0"],
+      jump: ["tile 1"],
+      cheer: ["tile 0", "tile 2"],
+    }),
     head: { top: 0, left: 0.73, right: 0.98 }, // the head pokes out on the right; the top of the figure is shell
   },
 ];
