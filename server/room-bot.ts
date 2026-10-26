@@ -21,7 +21,6 @@ import {
   botNames,
   DEFAULT_SE_NAMES,
   SE_ACTIONS,
-  SE_READ_ACTIONS,
   SE_SUBSCRIPTION_ID,
   seAmount,
   seChangelogText,
@@ -151,6 +150,86 @@ function agoText(ms: number): string {
         ? Math.round(s / 3600) + " h"
         : Math.round(s / 86400) + " d";
 }
+
+/** A read or wallet command's asker, as runCommand and the test site's /dev-chat hand it to QUICK_COMMANDS. */
+export type QuickAsk = {
+  channel: string;
+  userId: string;
+  username: string;
+  who: string; // the sender's name as sent
+  target: string;
+  amount: unknown;
+  origin: string;
+  names: SeNames;
+  now: number;
+};
+/** A quick command's bot line, its log reason and the fields /dev-chat answers with. */
+type QuickAnswer = { reply: string; reason: string; extra?: JsonObject; data?: JsonObject };
+// Commands answered without the game reducer, so they work while duels are paused.
+export const QUICK_COMMANDS: {
+  [action: string]: (room: ChannelRoom, ask: QuickAsk) => QuickAnswer | Promise<QuickAnswer>;
+} = {
+  async checkin(room, { channel, userId, who, origin, now }) {
+    const checked = await checkin(room, channel, { userId }, now);
+    return {
+      reply: seCheckinText(checked, { who, origin, channel }),
+      reason: checked.reason,
+      extra: checked.reason === "checked_in" ? { streak: checked.streak, points: checked.points } : {},
+      data: checked,
+    };
+  },
+  wallet(room, { channel, userId, who, origin }) {
+    const w = wallet(room, channel, userId);
+    return {
+      reply: seWalletText(w, { who, origin, channel }),
+      reason: w ? "wallet" : "no_fighter",
+      data: { wallet: w },
+    };
+  },
+  pet(room, { channel, userId, username, who, target, origin }) {
+    const self = !target || target === username,
+      info = petInfo(room, channel, self ? { userId } : { username: target });
+    return {
+      reply: sePetText(info, { who, target: self ? "" : target, origin, channel }),
+      reason: info ? (info.pet ? "pet" : "no_pet") : "no_fighter",
+      data: { pet: info },
+    };
+  },
+  stats(room, { channel, userId, username, who, target, origin }) {
+    const self = !target || target === username,
+      info = statsInfo(room, channel, self ? { userId } : { username: target, asker: userId });
+    return {
+      reply: seStatsText(info, { who, target: self ? "" : target, origin, channel }),
+      reason: info ? "stats" : "no_fighter",
+    };
+  },
+  async give(room, { channel, userId, who, target, amount, origin, names, now }) {
+    const given = await give(room, channel, { userId, target, amount: seAmount(amount) }, now);
+    return {
+      reply: seGiveText(given, { who, target, origin, channel, names }),
+      reason: given.reason,
+      extra: given.reason === "given" ? { amount: given.amount } : {},
+      data: given,
+    };
+  },
+  help: (_room, { names, origin, channel }) => ({ reply: seHelpText({ names, origin, channel }), reason: "help" }),
+  changelog: (_room, { origin }) => ({ reply: seChangelogText({ origin }), reason: "changelog" }),
+  look(room, { channel, userId, who, origin }) {
+    const hasFighter = Boolean(getProfile(room, userId, room.readState(channel).config));
+    return { reply: seLookText({ who, hasFighter, origin, channel }), reason: "look" };
+  },
+  top: (room, { channel, origin }) => ({
+    reply: seTopText(leaderboard(room, channel).slice(0, 5), { origin, channel }),
+    reason: "top",
+  }),
+  elo(room, { channel, userId, who, target, origin }) {
+    const found = eloLookup(room, channel, target ? { username: target } : { userId });
+    return {
+      reply: seEloText(found, { self: !target, askerName: who, target, origin, channel }),
+      reason: found ? "elo" : "elo_not_found",
+    };
+  },
+};
 
 // One saved profile with its leaderboard place (same order as leaderboard()), or null.
 export function eloLookup(
@@ -632,99 +711,12 @@ export async function runCommand(
       "PixFray: this command is missing sender details. Copy it again from the admin page.",
       "missing_sender",
     );
-  if (action === "checkin") {
-    // works while duels are paused: it only needs the stream to be live
-    const checked = await checkin(room, channel, { userId }, now);
-    return done(
-      // the sender's name as sent; short() reads it through String()
-      seCheckinText(checked, {
-        who: (input.displayName as string) || username,
-        origin,
-        channel,
-      }),
-      checked.reason,
-      checked.reason === "checked_in" ? { streak: checked.streak, points: checked.points } : {},
-    );
-  }
-  if (action === "wallet") {
-    // like !elo, it works while duels are paused
-    const w = wallet(room, channel, userId);
-    return done(
-      // the sender's name as sent; short() reads it through String()
-      seWalletText(w, {
-        who: (input.displayName as string) || username,
-        origin,
-        channel,
-      }),
-      w ? "wallet" : "no_fighter",
-    );
-  }
-  if (action === "pet") {
-    // like !wallet, it works while duels are paused
-    const self = !target || target === username,
-      info = petInfo(room, channel, self ? { userId } : { username: target });
-    return done(
-      // the sender's name as sent; short() reads it through String()
-      sePetText(info, {
-        who: (input.displayName as string) || username,
-        target: self ? "" : target,
-        origin,
-        channel,
-      }),
-      info ? (info.pet ? "pet" : "no_pet") : "no_fighter",
-    );
-  }
-  if (action === "stats") {
-    // like !pet, it works while duels are paused
-    const self = !target || target === username,
-      info = statsInfo(room, channel, self ? { userId } : { username: target, asker: userId });
-    return done(
-      // the sender's name as sent; short() reads it through String()
-      seStatsText(info, {
-        who: (input.displayName as string) || username,
-        target: self ? "" : target,
-        origin,
-        channel,
-      }),
-      info ? "stats" : "no_fighter",
-    );
-  }
-  if (action === "give") {
-    const given = await give(room, channel, { userId, target, amount: seAmount(input.amount) }, now);
-    return done(
-      // the sender's name as sent; short() reads it through String()
-      seGiveText(given, { who: (input.displayName as string) || username, target, origin, channel, names }),
-      given.reason,
-      given.reason === "given" ? { amount: given.amount } : {},
-    );
-  }
-  if (SE_READ_ACTIONS.includes(action)) {
-    if (action === "help") return done(seHelpText({ names, origin, channel }), "help");
-    if (action === "changelog") return done(seChangelogText({ origin }), "changelog");
-    if (action === "look")
-      return done(
-        seLookText({
-          // the sender's name as sent; short() reads it through String()
-          who: (input.displayName as string) || username,
-          hasFighter: Boolean(getProfile(room, userId, state0.config)),
-          origin,
-          channel,
-        }),
-        "look",
-      );
-    if (action === "top") return done(seTopText(leaderboard(room, channel).slice(0, 5), { origin, channel }), "top");
-    const found = eloLookup(room, channel, target ? { username: target } : { userId });
-    return done(
-      // the sender's name as sent; short() reads it through String()
-      seEloText(found, {
-        self: !target,
-        askerName: (input.displayName as string) || username,
-        target,
-        origin,
-        channel,
-      }),
-      found ? "elo" : "elo_not_found",
-    );
+  const quick = QUICK_COMMANDS[action];
+  if (quick) {
+    // the sender's name as sent; short() reads it through String()
+    const who = (input.displayName as string) || username;
+    const out = await quick(room, { channel, userId, username, who, target, amount: input.amount, origin, names, now });
+    return done(out.reply, out.reason, out.extra);
   }
   if (!state0.chat.connected || state0.chat.subscriptionId !== source.subscriptionId)
     return done(

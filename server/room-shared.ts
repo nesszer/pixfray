@@ -169,6 +169,10 @@ export const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 export const PROFILE_COLUMNS =
   "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, bonus_points, checkins, streak, dollars, style_dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom, (SELECT roll FROM owned_items o WHERE o.user_id = profiles.user_id AND o.kind = 'pet' AND o.item_id = profiles.pet) AS pet_roll";
 
+// A table's own entry for a name a client sent (never an Object.prototype method).
+export function own<T>(table: { [name: string]: T }, name: string): T | undefined {
+  return Object.hasOwn(table, name) ? table[name] : undefined;
+}
 export function json(data: unknown, status = 200, headers: { [name: string]: string } = {}): Response {
   return new Response(JSON.stringify(data), {
     status,

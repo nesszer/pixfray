@@ -17,17 +17,7 @@ import {
   MAX_BUILDS,
   slotPrice,
 } from "./cosmetics.ts";
-import {
-  DEFAULT_SE_NAMES,
-  SE_ACTIONS,
-  seAmount,
-  seCheckinText,
-  seGiveText,
-  seKeyHash,
-  sePetText,
-  seReplyText,
-  seWalletText,
-} from "./streamelements.ts";
+import { DEFAULT_SE_NAMES, SE_ACTIONS, seKeyHash, seReplyText } from "./streamelements.ts";
 import type { SeNames } from "./streamelements.ts";
 import {
   parseBotSent,
@@ -39,7 +29,7 @@ import {
   parseRoomEventsub,
   parseSeAdmin,
 } from "./parse.ts";
-import type { ProfileInput } from "./parse.ts";
+import type { DevAccount, Parsed, ProfileInput } from "./parse.ts";
 import type { AdminEvent, Cosmetics, GameEvent, GameResult, GameState } from "./model.ts";
 import {
   boardOrder,
@@ -48,6 +38,7 @@ import {
   MAX_DOLLARS,
   normalizeProfileRow,
   normalizeUsername,
+  own,
   PROFILE_COLUMNS,
   randomHex,
   safeJsonParse,
@@ -63,22 +54,19 @@ import {
   editBotCommands,
   noteBotSent,
   processChatMessage,
+  QUICK_COMMANDS,
   streamElements,
 } from "./room-bot.ts";
 import {
   builds,
   buildSlots,
   buy,
-  checkin,
   checkinTest,
   giftDollars,
-  give,
   owned,
-  petInfo,
   reroll,
   resetPair,
   streamNews,
-  wallet,
 } from "./room-economy.ts";
 import type { ChannelRoom } from "./channel.ts";
 
@@ -95,10 +83,58 @@ type ConfigHistoryRow = {
 type SaveResult =
   | { ok: false; reason: string | undefined; status?: number; profile?: undefined; state?: undefined }
   | { ok: true; profile: SavedProfile; state: GameState; reason?: undefined; status?: undefined };
+/** What every room route gets: the request, its URL, the path without trailing slashes and the checked channel. */
+type Ctx = { request: Request; url: URL; path: string; channel: string };
+type Handler = (room: ChannelRoom, ctx: Ctx) => Response | Promise<Response>;
+type BodyHandler<T> = (room: ChannelRoom, ctx: Ctx, body: T) => Response | Promise<Response>;
+/** A POST /admin request after its checks. */
+type AdminAsk = { channel: string; action: string; actorId: string; actorName: string; payload: JsonObject };
 const USER_HEADER = "X-Mini-User-Id";
 const MAX_CONFIG_HISTORY = 50;
 const CHECKIN_TEST_MS = 15 * 60_000; // check-in test mode switches itself off after this
 const MAX_LOOKS = 20; // logins per /looks call
+const EXPORT_TABLES = [
+  "game_state",
+  "profiles",
+  "config_history",
+  "se_settings",
+  "custom_characters",
+  "builds",
+  "streams",
+  "custom_pets",
+  "owned_items",
+  "viewer_sprites",
+];
+const SHOP_STATUS = {
+  no_fighter: 404,
+  ...Object.fromEntries(
+    ["not_enough", "owned", "max_slots", "price_changed", "rerolled", "in_duel"].map((r) => [r, 409]),
+  ),
+};
+const PROFILE_STATUS = { profile_not_found: 404 };
+
+// A route that needs a JSON object body.
+function withBody(handler: BodyHandler<JsonObject>): Handler {
+  return async (room, ctx) => {
+    const body = await room.readJson(ctx.request);
+    return body.ok ? handler(room, ctx, body.value) : json({ error: body.error }, 400);
+  };
+}
+// withBody plus a server/parse.ts check of its fields.
+function parsed<T>(parse: (body: JsonObject) => Parsed<T>, handler: BodyHandler<T>): Handler {
+  return withBody((room, ctx, body) => {
+    const out = parse(body);
+    return out.ok ? handler(room, ctx, out.value) : json({ error: out.error }, 400);
+  });
+}
+// Test site only (worker dev token): elsewhere the route doesn't exist, whatever the body.
+function devOnly(handler: Handler): Handler {
+  return (room, ctx) => (room.env?.DEV_TOOLS_TOKEN ? handler(room, ctx) : text("Not found", 404));
+}
+// A failed result also carries its reason as `error`, with the status mapped for that reason (else 400).
+function answer(out: { ok: boolean; reason?: string }, status: { [reason: string]: number } = {}): Response {
+  return json(out.ok ? out : { ...out, error: out.reason }, out.ok ? 200 : (own(status, out.reason || "") ?? 400));
+}
 
 export async function route(room: ChannelRoom, request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -107,100 +143,43 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
   if (!channel) return json({ error: "invalid or missing channel" }, 400);
   const stored = room.readStoredState();
   if (stored && stored.channel !== channel) return json({ error: "channel binding mismatch" }, 409);
+  // every key holds a space, so no Object.prototype name can match
+  const handler = ROUTES[`${request.method} ${path}`] ?? PREFIXES.find(([prefix]) => prefix.test(path))?.[1];
+  return handler ? handler(room, { request, url, path, channel }) : text("Not found", 404);
+}
 
+const ROUTES: { [route: string]: Handler } = {
   // Owner dev token only (server/worker.ts /api/devtools/:channel/export): every row of the tables a copy needs. BLOBs as {$b64}.
-  if (path === "/export" && request.method === "GET") {
+  "GET /export": (room) => {
     const bytes = (v: ArrayBuffer | ArrayBufferView) =>
       v instanceof ArrayBuffer ? new Uint8Array(v) : new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
     const b64 = (v: unknown) =>
       v instanceof ArrayBuffer || ArrayBuffer.isView(v)
-        ? {
-            $b64: btoa(Array.from(bytes(v), (c) => String.fromCharCode(c)).join("")),
-          }
+        ? { $b64: btoa(Array.from(bytes(v), (c) => String.fromCharCode(c)).join("")) }
         : v;
     const out: { [table: string]: unknown } = {};
-    for (const table of [
-      "game_state",
-      "profiles",
-      "config_history",
-      "se_settings",
-      "custom_characters",
-      "builds",
-      "streams",
-      "custom_pets",
-      "owned_items",
-      "viewer_sprites",
-    ])
+    for (const table of EXPORT_TABLES)
       out[table] = room.ctx.storage.sql
         .exec(`SELECT * FROM ${table}`)
         .toArray()
         .map((row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, b64(v)])));
     return json(out);
-  }
-  if (path === "/state" && request.method === "GET") {
+  },
+  "GET /state": async (room, { channel }) => {
     const changed = room.advance(channel, { type: "tick" }, Date.now());
     if (changed.changed) {
       room.broadcast(changed.state);
       await room.scheduleAlarm(changed.state);
     }
     return json(room.publicState(changed.state));
-  }
-
+  },
   // The catalog is the mods' uploads plus approved viewer sprites (each with the `owner` who alone may wear it).
-  if (path === "/catalog" && request.method === "GET") {
+  "GET /catalog": async (room, { request, path, channel }) => {
     const custom = await (await handleRoomAssets(room, request, { path, channel })).json<CatalogEntry[]>(); // the /catalog list
     return json([...custom, ...spriteCatalog(room.ctx.storage.sql, channel)]);
-  }
-  if (path === "/sprites" || path.startsWith("/sprites/") || path.startsWith("/asset/v-")) {
-    let changed: GameState | null = null;
-    const response = await handleRoomSprites(room, request, {
-      path,
-      url,
-      channel,
-      hooks: {
-        approved: (row, previous) => {
-          changed = wearSprite(room, channel, row, previous) || changed;
-        },
-        removed: (id) => {
-          changed = dropSprite(room, channel, id) || changed;
-        },
-      },
-    });
-    if (changed) room.broadcast(changed);
-    return response;
-  }
-  if (path === "/catalog" || path === "/asset" || path.startsWith("/asset/"))
-    return handleRoomAssets(room, request, { path, channel });
-  if (path.startsWith("/dev/")) return handleRoomDeveloper(room, request, { path, channel, url });
-  if (path === "/points" || path.startsWith("/points/"))
-    return handleRoomPoints(room, request, { path, channel, maxDollars: MAX_DOLLARS });
-  if (path === "/pets" || path.startsWith("/pets/")) {
-    // A deleted upload leaves the fighters using it with no pet; the stored profiles are cleared by handleRoomPets.
-    let cleared: GameState | null = null;
-    const response = await handleRoomPets(room, request, {
-      path,
-      channel,
-      config: room.readState(channel).config,
-      onDelete: (id) => {
-        const state = room.readState(channel);
-        let hit = false;
-        for (const p of state.players)
-          if (p.pet === id) {
-            Object.assign(p, { pet: "", petTier: "", petBoost: emptyStats() });
-            hit = true;
-          }
-        if (hit) {
-          state.revision += 1;
-          room.writeState(state);
-          cleared = state;
-        }
-      },
-    });
-    if (cleared) room.broadcast(cleared);
-    return response;
-  }
+  },
   // The shop list with this channel's prices (public): pets, hat price per win, cosmetics and build slot prices.
-  if (path === "/shop" && request.method === "GET") {
+  "GET /shop": (room, { channel }) => {
     const config = room.readState(channel).config;
     return json({
       pets: petCatalog(room.ctx.storage.sql, channel, config),
@@ -208,32 +187,18 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
       items: cosmeticCatalog(config),
       slots: { max: MAX_BUILDS, prices: Array.from({ length: MAX_BUILDS - 1 }, (_, i) => slotPrice(i + 1, config)) },
     });
-  }
+  },
   // Buy a pet, a hat, a cosmetic or a build slot with PixFray dollars (signed-in viewer; the Worker sets the user header).
-  if (path === "/shop" && request.method === "POST") {
-    const body = await room.readJson(request);
-    if (!body.ok) return json({ error: body.error }, 400);
+  "POST /shop": withBody((room, { request, channel }, body) => {
     const userId = validUserId(request.headers.get(USER_HEADER));
-    if (!userId || userId !== validUserId(body.value.userId)) return json({ error: "profile identity mismatch" }, 403);
+    if (!userId || userId !== validUserId(body.userId)) return json({ error: "profile identity mismatch" }, 403);
     // the Worker's parseShopBuy passed only a string id; a reroll looks it up and finds nothing else
     const bought =
-      body.value.kind === "reroll"
-        ? reroll(room, channel, userId, String(body.value.id))
-        : buy(room, channel, userId, body.value);
+      body.kind === "reroll" ? reroll(room, channel, userId, String(body.id)) : buy(room, channel, userId, body);
     if (bought.ok && "state" in bought && bought.state) room.broadcast(bought.state);
-    return json(
-      bought.ok ? bought : { ...bought, error: bought.reason },
-      bought.ok
-        ? 200
-        : bought.reason === "no_fighter"
-          ? 404
-          : ["not_enough", "owned", "max_slots", "price_changed", "rerolled", "in_duel"].includes(bought.reason)
-            ? 409
-            : 400,
-    );
-  }
-
-  if (path === "/admin" && request.method === "GET") {
+    return answer(bought, SHOP_STATUS);
+  }),
+  "GET /admin": (room, { channel }) => {
     const state = room.readState(channel);
     room.seedConfigHistory(state);
     const history = room.ctx.storage.sql
@@ -262,16 +227,14 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
       botStatus: room.botStatus(),
       points: pointsView(room),
     });
-  }
-
+  },
   // Dollars and style dollars are private: the Worker asks for them (?private=1) only for mods and the owner.
-  if (path === "/leaderboard" && request.method === "GET") {
+  "GET /leaderboard": (room, { url, channel }) => {
     const board = leaderboard(room, channel);
     return json(url.searchParams.get("private") === "1" ? board : board.map(({ dollars, styleDollars, ...p }) => p));
-  }
-
+  },
   // Saved looks by login for the overlay (?u=a,b,c, at most 20): only viewers with a saved fighter are listed.
-  if (path === "/looks" && request.method === "GET") {
+  "GET /looks": (room, { url, channel }) => {
     const logins = [
       ...new Set(
         String(url.searchParams.get("u") || "")
@@ -282,7 +245,6 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
     ].slice(0, MAX_LOOKS);
     if (!logins.length) return json({});
     const state = room.readState(channel),
-      config = state.config,
       hidden = hiddenResults(state, Date.now()),
       out: { [login: string]: Look } = {};
     const rows = room.ctx.storage.sql
@@ -292,13 +254,12 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
       )
       .toArray();
     for (const row of rows) {
-      const p = shownProfile(normalizeProfileRow(row, config), hidden);
+      const p = shownProfile(normalizeProfileRow(row, state.config), hidden);
       out[p.username.toLowerCase()] = savedLook(p);
     }
     return json(out);
-  }
-
-  if (path === "/profile" && request.method === "GET") {
+  },
+  "GET /profile": (room, { url, channel }) => {
     const userId = validUserId(url.searchParams.get("userId"));
     if (!userId) return json({ error: "valid userId required" }, 400);
     const state = room.readState(channel);
@@ -315,32 +276,23 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
       owned: owned(room, userId),
       builds: builds(room, profile),
     });
-  }
-
-  if (path === "/profile" && request.method === "POST") {
-    const body = await room.readJson(request);
-    if (!body.ok) return json({ error: body.error }, 400);
+  },
+  "POST /profile": withBody(async (room, { request, channel }, body) => {
     const actorId = validUserId(request.headers.get(USER_HEADER));
-    const requestedId = validUserId(body.value.userId);
-    const login = normalizeUsername(body.value.username) || actorId || "?";
+    const requestedId = validUserId(body.userId);
+    const login = normalizeUsername(body.username) || actorId || "?";
     const logCtx = { channel, action: "save", userId: actorId, user: login };
-    if (!actorId || !requestedId || actorId !== requestedId) {
-      logRoomEvent(room, "warn", `${login} profile not saved: identity_mismatch`, {
-        ...logCtx,
-        reason: "identity_mismatch",
-      });
-      return json({ error: "profile identity mismatch" }, 403);
-    }
-    const input = parseProfileInput(body.value);
-    const result: SaveResult = input.ok
-      ? saveProfile(room, channel, actorId, input.value)
-      : { ok: false, reason: input.error };
+    const input = parseProfileInput(body);
+    const result: SaveResult =
+      !actorId || !requestedId || actorId !== requestedId
+        ? { ok: false, reason: "identity_mismatch", status: 403 }
+        : input.ok
+          ? saveProfile(room, channel, actorId, input.value)
+          : { ok: false, reason: input.error };
     if (!result.ok) {
-      logRoomEvent(room, "warn", `${login} profile not saved: ${result.reason}`, {
-        ...logCtx,
-        reason: result.reason,
-      });
-      return json({ error: result.reason }, result.status || 400);
+      logRoomEvent(room, "warn", `${login} profile not saved: ${result.reason}`, { ...logCtx, reason: result.reason });
+      const error = result.reason === "identity_mismatch" ? "profile identity mismatch" : result.reason;
+      return json({ error }, result.status || 400);
     }
     logRoomEvent(room, "command", `${login} saved profile`, { ...logCtx, reason: "saved" });
     room.broadcast(result.state);
@@ -355,130 +307,69 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
       },
       revision: result.state.revision,
     });
-  }
-
-  if (path === "/admin" && request.method === "POST") {
-    const body = await room.readJson(request);
-    if (!body.ok) return json({ error: body.error }, 400);
-    const actorId = validUserId(body.value.actorId);
+  }),
+  "POST /admin": withBody(async (room, { channel }, body) => {
+    const actorId = validUserId(body.actorId);
     if (!actorId) return json({ error: "authorized actor required" }, 403);
-    const admin = parseRoomAdminBody(body.value);
+    const admin = parseRoomAdminBody(body);
     if (!admin.ok) return json({ ok: false, reason: admin.error, error: admin.error }, 400);
     const { action } = admin.value,
-      actorName = admin.value.actorName.slice(0, 48);
-    let payload: JsonObject = admin.value.payload;
-    let note = "";
-    if (action === "giftDollars") {
-      const gift = giftDollars(room, channel, payload, actorId, actorName);
-      return json(
-        gift.ok ? gift : { ...gift, error: gift.reason },
-        gift.ok ? 200 : gift.reason === "profile_not_found" ? 404 : 400,
-      );
-    }
-    if (action === "resetPair") {
-      const out = resetPair(room, channel, payload.a, payload.b, actorId, actorName);
-      return json(
-        out.ok ? out : { ...out, error: out.reason },
-        out.ok ? 200 : out.reason === "profile_not_found" ? 404 : 400,
-      );
-    }
-    if (action === "saveCommand" || action === "deleteCommand" || action === "setCounter") {
-      const out = editBotCommands(room, channel, action, payload, actorName || actorId);
-      return json(
-        out.ok ? { ...out, botCommands: botCommands(room) } : { ...out, error: out.reason },
-        out.ok ? 200 : 400,
-      );
-    }
-    if (action === "rollbackConfig") {
-      const version = Number(payload.version);
-      const row = Number.isInteger(version)
-        ? room.ctx.storage.sql
-            .exec<Pick<ConfigHistoryRow, "config">>("SELECT config FROM config_history WHERE version = ?", version)
-            .toArray()[0]
-        : null;
-      if (!row) return json({ ok: false, reason: "config_version_not_found", error: "config_version_not_found" }, 404);
-      // A version saved before a setting existed has no value for it; it goes back to its default, not the current value.
-      payload = { patch: { ...defaultConfig(), ...safeJsonParse(row.config, {}) } };
-      note = "rollback to v" + version;
-    }
-    // restoreRank {userId, before}: the fighter's last recorded rank before that time (server/ranklog.ts).
-    if (action === "restoreRank" && Number.isInteger(payload.before)) {
-      const rank = rankBefore(room.ctx.storage.sql, validUserId(payload.userId) || "", payload.before);
-      if (!rank) return json({ ok: false, reason: "no_rank_history", error: "no_rank_history" }, 404);
-      payload = { userId: payload.userId, ...rank };
-    }
+      ask = { channel, action, actorId, actorName: admin.value.actorName.slice(0, 48), payload: admin.value.payload };
+    const special = own(ADMIN_ACTIONS, action);
+    if (special) return special(room, ask);
+    const rewritten = own(ADMIN_PAYLOADS, action)?.(room, ask.payload) ?? { payload: ask.payload };
+    if (rewritten instanceof Response) return rewritten;
+    const { payload, note } = rewritten;
     const targetId = validUserId(payload.userId);
-    const targetProfile = targetId ? getProfile(room, targetId, room.readState(channel).config) : null;
     const event: AdminEvent = {
       type: "admin",
       actorId,
-      actorName,
+      actorName: ask.actorName,
       action: action === "rollbackConfig" ? "config" : action,
       payload,
-      targetProfile,
+      targetProfile: targetId ? getProfile(room, targetId, room.readState(channel).config) : null,
       // parseAdminBody checked the note is a string when sent; a rolled-back version's patch has none
       note: note || (typeof payload.note === "string" ? payload.note : "").slice(0, 200),
     };
     const result = room.advance(channel, event, Date.now());
-    if (!result.result.ok)
-      return json(
-        { ...result.result, error: result.result.reason },
-        result.result.reason === "unauthorized" ? 403 : result.result.reason === "config_version_conflict" ? 409 : 400,
-      );
+    if (!result.result.ok) return answer(result.result, { unauthorized: 403, config_version_conflict: 409 });
     room.broadcast(result.state);
     await room.scheduleAlarm(result.state);
     return json({ ...result.result, revision: result.state.revision });
-  }
-
-  if (path === "/live" && request.method === "GET")
-    return room.upgrade(request, "live", channel, url.searchParams.get("role") === "overlay");
-
+  }),
+  "GET /live": (room, { request, url, channel }) =>
+    room.upgrade(request, "live", channel, url.searchParams.get("role") === "overlay"),
   // Worker-only routes (never reachable from /api/admin): verified EventSub messages and subscription bookkeeping.
   // What Twitch said about the bot's replies to one command, posted by the Worker after sending them.
-  if (path === "/bot-sent" && request.method === "POST") {
-    const body = await room.readJson(request);
-    if (!body.ok) return json({ error: body.error }, 400);
-    const sent = parseBotSent(body.value);
-    if (!sent.ok) return json({ error: sent.error }, 400);
-    noteBotSent(room, channel, sent.value.results.slice(0, 10));
+  "POST /bot-sent": parsed(parseBotSent, (room, { channel }, sent) => {
+    noteBotSent(room, channel, sent.results.slice(0, 10));
     return json({ ok: true });
-  }
-  if (path === "/eventsub" && request.method === "POST") {
-    const body = await room.readJson(request);
-    if (!body.ok) return json({ error: body.error }, 400);
-    // the Worker forwards a verified EventSub body, its event cut down by slimEvent
-    const msg = parseRoomEventsub(body.value);
-    if (!msg.ok) return json({ error: msg.error }, 400);
-    return room.eventsub(channel, msg.value, url.searchParams.get("origin") || "");
-  }
+  }),
+  // the Worker forwards a verified EventSub body, its event cut down by slimEvent
+  "POST /eventsub": parsed(parseRoomEventsub, (room, { url, channel }, msg) =>
+    room.eventsub(channel, msg, url.searchParams.get("origin") || ""),
+  ),
   // StreamElements custom commands, forwarded by the Worker from GET /api/se/<channel>/<action>.
-  if (path === "/se" && request.method === "POST") {
-    const body = await room.readJson(request);
-    if (!body.ok) return json({ error: body.error }, 400);
-    const res = await streamElements(room, channel, body.value, url.searchParams.get("origin") || "");
+  "POST /se": withBody(async (room, { url, channel }, body) => {
+    const res = await streamElements(room, channel, body, url.searchParams.get("origin") || "");
     // The Worker keeps the current key's hash for a minute, so random keys are refused there without waking this room.
     const secret = room.seSettings()?.secret;
     if (secret) res.headers.set("X-Se-Key", await seKeyHash(secret));
     return res;
-  }
-  if (path === "/se-admin" && request.method === "POST") {
-    const read = await room.readJson(request);
-    if (!read.ok) return json({ error: read.error }, 400);
-    const body = parseSeAdmin(read.value);
-    if (!body.ok) return json({ error: body.error }, 400);
+  }),
+  "POST /se-admin": parsed(parseSeAdmin, (room, _ctx, body) => {
     const current = room.seSettings();
-    if (body.value.action === "rotateSeKey") {
+    if (body.action === "rotateSeKey") {
       room.writeSeSettings(randomHex(), current.names);
       room.ctx.storage.sql.exec(
         "UPDATE se_settings SET last_command_at = 0, rejected_at = 0, seen_json = '{}' WHERE id = 1",
       ); // a new key starts unheard
-    } else if (body.value.action === "setSeNames") {
-      const input = body.value.names;
+    } else if (body.action === "setSeNames") {
       const names: SeNames = {};
       for (const action of SE_ACTIONS) {
         const name = String(
           // SE_ACTIONS are DEFAULT_SE_NAMES's keys
-          input[action] ?? current.names[action] ?? DEFAULT_SE_NAMES[action as keyof typeof DEFAULT_SE_NAMES],
+          body.names[action] ?? current.names[action] ?? DEFAULT_SE_NAMES[action as keyof typeof DEFAULT_SE_NAMES],
         ).trim();
         if (!/^!?[a-z0-9_]{1,24}$/i.test(name)) return json({ error: `Invalid command name for ${action}` }, 400);
         names[action] = (name.startsWith("!") ? name : "!" + name).toLowerCase();
@@ -486,169 +377,244 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
       if (new Set(Object.values(names)).size !== SE_ACTIONS.length)
         return json({ error: "Each action needs its own command name" }, 400);
       room.writeSeSettings(current.secret, names);
-    } else if (body.value.action === "setDuelModuleOff") {
-      room.ctx.storage.sql.exec("UPDATE se_settings SET duel_module_off = ? WHERE id = 1", body.value.value ? 1 : 0);
+    } else if (body.action === "setDuelModuleOff") {
+      room.ctx.storage.sql.exec("UPDATE se_settings SET duel_module_off = ? WHERE id = 1", body.value ? 1 : 0);
     } else return json({ error: "unknown StreamElements action" }, 400);
     return json({ ok: true, streamelements: room.seSettings() });
-  }
+  }),
   // Check-in test mode (mods, via /api/admin action checkinTest): {on:true} for CHECKIN_TEST_MS, {on:false} ends it.
-  if (path === "/checkin-test" && request.method === "POST") {
-    const read = await room.readJson(request);
-    if (!read.ok) return json({ error: read.error }, 400);
-    const body = parseCheckinTest(read.value);
-    if (!body.ok) return json({ error: body.error }, 400);
-    if (body.value.on)
+  "POST /checkin-test": parsed(parseCheckinTest, (room, _ctx, body) => {
+    if (body.on)
       room.ctx.storage.sql.exec(
         "INSERT OR REPLACE INTO checkin_test (id, until, by_name) VALUES (1, ?, ?)",
         Date.now() + CHECKIN_TEST_MS,
-        body.value.by.slice(0, 48),
+        body.by.slice(0, 48),
       );
     else room.ctx.storage.sql.exec("DELETE FROM checkin_test");
     return json({ ok: true, checkinTest: checkinTest(room) });
-  }
-  // Test site only (worker dev token): one chat line as if Twitch had delivered it on the current subscription.
-  if (path === "/dev-chat" && request.method === "POST") {
-    if (!room.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
-    const read = await room.readJson(request);
-    if (!read.ok) return json({ error: read.error }, 400);
-    const body = parseDevChat(read.value);
-    if (!body.ok) return json({ error: body.error }, 400);
-    const { userId, username, displayName, text: line } = body.value;
-    const now = Date.now(),
-      messageId = "dev:" + randomHex().slice(0, 24);
-    const msg: BotMessage = {
-      messageId,
-      timestamp: now,
-      subscription: { id: room.readState(channel).chat.subscriptionId || "" },
-      event: {
-        chatter_user_id: userId,
-        chatter_user_login: username,
-        chatter_user_name: displayName,
-        message_id: messageId,
-        message: { text: line },
-      },
-    };
-    await checkAccountAge(room, userId);
-    const result = processChatMessage(room, channel, msg, now, await streamNews(room, channel, line, now));
-    if (result.visible) room.broadcast(result.state);
-    if (result.changed) await room.scheduleAlarm(result.state);
-    const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
-    if (r.reason === "quick_duel" || r.reason === "duel_completed") room.checkSavedProfiles(result.state, r.duelId);
-    const devGive = /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(line.trim()) as
-      | (RegExpExecArray & [string, string])
-      | null; // group 1 is required, so a match has it
-    if (devGive) {
-      // the reply is the line a StreamElements bot would post
-      const who = displayName || username,
-        uid = validUserId(userId),
-        devTarget = normalizeUsername(String(devGive[2] || "").replace(/^@/, ""));
-      if (devGive[1].toLowerCase() === "pet") {
-        const self = !devTarget || devTarget === normalizeUsername(username),
-          info = petInfo(room, channel, self ? { userId: uid } : { username: devTarget });
-        return json({
-          pet: info,
-          reply: sePetText(info, { who, target: self ? "" : devTarget, origin: "", channel }),
-        });
-      }
-      if (devGive[1].toLowerCase() === "wallet") {
-        const w = wallet(room, channel, uid);
-        return json({ wallet: w, reply: seWalletText(w, { who, origin: "", channel }) });
-      }
-      const given = await give(room, channel, { userId: uid, target: devTarget, amount: seAmount(devGive[3]) }, now);
-      return json({
-        ...given,
-        reply: seGiveText(given, { who, target: devTarget, origin: "", channel, names: room.seSettings().names }),
-      });
-    }
-    if (/^!checkin(?:\s|$)/i.test(line.trim())) {
-      const checked = await checkin(room, channel, { userId: validUserId(userId) }, now);
-      return json({
-        ...checked,
-        reply: seCheckinText(checked, { who: displayName || username, origin: "", channel }),
-      });
-    }
-    const parsed = parseGameCommand(line); // the reply is the line a StreamElements bot would post
-    // other actions keep their own name
-    const action = parsed
-      ? ({ duel: "challenge" } as { [action: string]: string | undefined })[parsed.action] || parsed.action
-      : "";
-    return json({
-      ...r,
-      revision: result.state.revision,
-      reply: parsed
-        ? seReplyText({
-            result: r,
-            state: result.state,
-            actorId: userId,
-            action,
-            target: parsed.target,
-            names: room.seSettings().names,
-            origin: "",
-            now,
-          })
-        : "",
-    });
-  }
-  // Test site only: add style dollars to a saved fighter (or take them back), as a channel point redemption would.
-  if (path === "/dev-style" && request.method === "POST") {
-    if (!room.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
-    const read = await room.readJson(request);
-    if (!read.ok) return json({ error: read.error }, 400);
-    const { userId, amount } = read.value,
-      sql = room.ctx.storage.sql;
-    if (typeof userId !== "string" || typeof amount !== "number" || !Number.isInteger(amount))
-      return json({ error: "userId and amount required" }, 400);
-    const row = sql
-      .exec<{ style_dollars: number }>("SELECT style_dollars FROM profiles WHERE user_id = ?", userId)
-      .toArray()[0];
-    if (!row) return json({ error: "no_fighter" }, 404);
-    const styleDollars = Math.max(0, Math.min(MAX_DOLLARS, row.style_dollars + amount));
-    sql.exec("UPDATE profiles SET style_dollars = ? WHERE user_id = ?", styleDollars, userId);
-    return json({ ok: true, userId, styleDollars });
-  }
-  // Test site only: pretend the channel is live ({live:true}, a new stream id unless streamId is given), offline
-  // ({live:false}), or ask Twitch again ({live:null}).
-  if (path === "/dev-live" && request.method === "POST") {
-    if (!room.env?.DEV_TOOLS_TOKEN) return text("Not found", 404);
-    const read = await room.readJson(request);
-    if (!read.ok) return json({ error: read.error }, 400);
-    const body = parseRoomDevLive(read.value);
-    if (!body.ok) return json({ error: body.error }, 400);
-    const { live, streamId } = body.value,
-      sql = room.ctx.storage.sql;
-    if (typeof live !== "boolean") sql.exec("DELETE FROM dev_live");
-    else
-      sql.exec(
-        "INSERT OR REPLACE INTO dev_live (id, stream_id, started_at) VALUES (1, ?, ?)",
-        live ? "dev-" + (/^[a-z0-9_-]{1,36}$/i.test(streamId) ? streamId : randomHex().slice(0, 12)) : "",
-        Date.now(),
-      );
-    const row = sql.exec<{ stream_id: string }>("SELECT stream_id FROM dev_live WHERE id = 1").toArray()[0];
-    return json({ ok: true, live: row ? Boolean(row.stream_id) : null, streamId: row?.stream_id || "" });
-  }
-  if (path === "/chat" && request.method === "GET") return json(chatStatus(room.readState(channel)));
-  if (path === "/chat" && request.method === "POST") {
-    const body = await room.readJson(request);
-    if (!body.ok) return json({ error: body.error }, 400);
+  }),
+  // One chat line as if Twitch had delivered it on the current subscription.
+  "POST /dev-chat": devOnly(parsed(parseDevChat, devChat)),
+  // Add style dollars to a saved fighter (or take them back), as a channel point redemption would.
+  "POST /dev-style": devOnly(
+    withBody((room, _ctx, { userId, amount }) => {
+      const sql = room.ctx.storage.sql;
+      if (typeof userId !== "string" || typeof amount !== "number" || !Number.isInteger(amount))
+        return json({ error: "userId and amount required" }, 400);
+      const row = sql
+        .exec<{ style_dollars: number }>("SELECT style_dollars FROM profiles WHERE user_id = ?", userId)
+        .toArray()[0];
+      if (!row) return json({ error: "no_fighter" }, 404);
+      const styleDollars = Math.max(0, Math.min(MAX_DOLLARS, row.style_dollars + amount));
+      sql.exec("UPDATE profiles SET style_dollars = ? WHERE user_id = ?", styleDollars, userId);
+      return json({ ok: true, userId, styleDollars });
+    }),
+  ),
+  // Pretend the channel is live ({live:true}, a new stream id unless streamId is given), offline ({live:false}), or
+  // ask Twitch again ({live:null}).
+  "POST /dev-live": devOnly(
+    parsed(parseRoomDevLive, (room, _ctx, { live, streamId }) => {
+      const sql = room.ctx.storage.sql;
+      if (typeof live !== "boolean") sql.exec("DELETE FROM dev_live");
+      else
+        sql.exec(
+          "INSERT OR REPLACE INTO dev_live (id, stream_id, started_at) VALUES (1, ?, ?)",
+          live ? "dev-" + (/^[a-z0-9_-]{1,36}$/i.test(streamId) ? streamId : randomHex().slice(0, 12)) : "",
+          Date.now(),
+        );
+      const row = sql.exec<{ stream_id: string }>("SELECT stream_id FROM dev_live WHERE id = 1").toArray()[0];
+      return json({ ok: true, live: row ? Boolean(row.stream_id) : null, streamId: row?.stream_id || "" });
+    }),
+  ),
+  "GET /chat": (room, { channel }) => json(chatStatus(room.readState(channel))),
+  "POST /chat": withBody(async (room, { channel }, body) => {
     const event: GameEvent | null =
-      body.value.action === "connected"
+      body.action === "connected"
         ? {
             type: "chat_subscription",
-            subscriptionId: body.value.subscriptionId,
-            status: body.value.status,
-            createdAt: body.value.createdAt,
+            subscriptionId: body.subscriptionId,
+            status: body.status,
+            createdAt: body.createdAt,
           }
-        : body.value.action === "disconnected"
-          ? { type: "chat_disconnected", reason: body.value.reason }
+        : body.action === "disconnected"
+          ? { type: "chat_disconnected", reason: body.reason }
           : null;
     if (!event) return json({ error: "unknown chat action" }, 400);
     const result = room.advance(channel, event, Date.now());
     if (result.visible) room.broadcast(result.state);
     await room.scheduleAlarm(result.state);
     return json({ ...result.result, revision: result.state.revision, chatStatus: chatStatus(result.state) });
-  }
+  }),
+};
 
-  return text("Not found", 404);
+// Path families that own their methods and subpaths, tried in this order after the exact routes.
+const PREFIXES: [RegExp, Handler][] = [
+  [
+    /^\/(sprites(\/|$)|asset\/v-)/,
+    async (room, { request, url, path, channel }) => {
+      let changed: GameState | null = null;
+      const response = await handleRoomSprites(room, request, {
+        path,
+        url,
+        channel,
+        hooks: {
+          approved: (row, previous) => {
+            changed = wearSprite(room, channel, row, previous) || changed;
+          },
+          removed: (id) => {
+            changed = dropSprite(room, channel, id) || changed;
+          },
+        },
+      });
+      if (changed) room.broadcast(changed);
+      return response;
+    },
+  ],
+  [
+    /^\/(catalog$|asset(\/|$))/,
+    (room, { request, path, channel }) => handleRoomAssets(room, request, { path, channel }),
+  ],
+  [/^\/dev\//, (room, { request, url, path, channel }) => handleRoomDeveloper(room, request, { path, channel, url })],
+  [
+    /^\/points(\/|$)/,
+    (room, { request, path, channel }) => handleRoomPoints(room, request, { path, channel, maxDollars: MAX_DOLLARS }),
+  ],
+  [
+    /^\/pets(\/|$)/,
+    async (room, { request, path, channel }) => {
+      // A deleted upload leaves the fighters using it with no pet; the stored profiles are cleared by handleRoomPets.
+      let cleared: GameState | null = null;
+      const response = await handleRoomPets(room, request, {
+        path,
+        channel,
+        config: room.readState(channel).config,
+        onDelete: (id) => {
+          const state = room.readState(channel);
+          let hit = false;
+          for (const p of state.players)
+            if (p.pet === id) {
+              Object.assign(p, { pet: "", petTier: "", petBoost: emptyStats() });
+              hit = true;
+            }
+          if (hit) {
+            state.revision += 1;
+            room.writeState(state);
+            cleared = state;
+          }
+        },
+      });
+      if (cleared) room.broadcast(cleared);
+      return response;
+    },
+  ],
+];
+
+// Admin actions the room answers itself instead of the game reducer.
+const ADMIN_ACTIONS: { [action: string]: (room: ChannelRoom, ask: AdminAsk) => Response } = {
+  giftDollars: (room, { channel, payload, actorId, actorName }) =>
+    answer(giftDollars(room, channel, payload, actorId, actorName), PROFILE_STATUS),
+  resetPair: (room, { channel, payload, actorId, actorName }) =>
+    answer(resetPair(room, channel, payload.a, payload.b, actorId, actorName), PROFILE_STATUS),
+  saveCommand: editCommands,
+  deleteCommand: editCommands,
+  setCounter: editCommands,
+};
+function editCommands(room: ChannelRoom, { channel, action, payload, actorId, actorName }: AdminAsk): Response {
+  const out = editBotCommands(room, channel, action, payload, actorName || actorId);
+  return out.ok ? json({ ...out, botCommands: botCommands(room) }) : answer(out);
+}
+// Admin actions whose payload is rewritten before the reducer sees it; a Response ends the request there.
+const ADMIN_PAYLOADS: {
+  [action: string]: (room: ChannelRoom, payload: JsonObject) => { payload: JsonObject; note?: string } | Response;
+} = {
+  rollbackConfig(room, payload) {
+    const version = Number(payload.version);
+    const row = Number.isInteger(version)
+      ? room.ctx.storage.sql
+          .exec<Pick<ConfigHistoryRow, "config">>("SELECT config FROM config_history WHERE version = ?", version)
+          .toArray()[0]
+      : null;
+    if (!row) return json({ ok: false, reason: "config_version_not_found", error: "config_version_not_found" }, 404);
+    // A version saved before a setting existed has no value for it; it goes back to its default, not the current value.
+    return {
+      payload: { patch: { ...defaultConfig(), ...safeJsonParse(row.config, {}) } },
+      note: "rollback to v" + version,
+    };
+  },
+  // restoreRank {userId, before}: the fighter's last recorded rank before that time (server/ranklog.ts).
+  restoreRank(room, payload) {
+    if (!Number.isInteger(payload.before)) return { payload };
+    const rank = rankBefore(room.ctx.storage.sql, validUserId(payload.userId) || "", payload.before);
+    if (!rank) return json({ ok: false, reason: "no_rank_history", error: "no_rank_history" }, 404);
+    return { payload: { userId: payload.userId, ...rank } };
+  },
+};
+
+// Test site: the reply is the line a StreamElements bot would post.
+async function devChat(room: ChannelRoom, { channel }: Ctx, body: DevAccount): Promise<Response> {
+  const { userId, username, displayName, text: line } = body;
+  const now = Date.now(),
+    messageId = "dev:" + randomHex().slice(0, 24);
+  const msg: BotMessage = {
+    messageId,
+    timestamp: now,
+    subscription: { id: room.readState(channel).chat.subscriptionId || "" },
+    event: {
+      chatter_user_id: userId,
+      chatter_user_login: username,
+      chatter_user_name: displayName,
+      message_id: messageId,
+      message: { text: line },
+    },
+  };
+  await checkAccountAge(room, userId);
+  const result = processChatMessage(room, channel, msg, now, await streamNews(room, channel, line, now));
+  if (result.visible) room.broadcast(result.state);
+  if (result.changed) await room.scheduleAlarm(result.state);
+  const r = result.result || ({} as GameResult); // processChatMessage always has a result; {} only guards against none
+  if (r.reason === "quick_duel" || r.reason === "duel_completed") room.checkSavedProfiles(result.state, r.duelId);
+  const quick =
+    /^!(wallet|give|pay|pet)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i.exec(line.trim()) ??
+    /^!(checkin)(?:\s|$)/i.exec(line.trim());
+  if (quick) {
+    const action = String(quick[1]).toLowerCase();
+    const out = await QUICK_COMMANDS[action === "pay" ? "give" : action]?.(room, {
+      channel,
+      userId: validUserId(userId),
+      username: normalizeUsername(username),
+      who: displayName || username,
+      target: normalizeUsername(String(quick[2] || "").replace(/^@/, "")),
+      amount: quick[3],
+      origin: "",
+      // seSettings() adds the settings row, so only the commands that name other commands read it
+      get names() {
+        return room.seSettings().names;
+      },
+      now,
+    });
+    if (out) return json({ ...out.data, reply: out.reply });
+  }
+  const parsed = parseGameCommand(line);
+  // other actions keep their own name
+  const action = parsed
+    ? ({ duel: "challenge" } as { [action: string]: string | undefined })[parsed.action] || parsed.action
+    : "";
+  return json({
+    ...r,
+    revision: result.state.revision,
+    reply: parsed
+      ? seReplyText({
+          result: r,
+          state: result.state,
+          actorId: userId,
+          action,
+          target: parsed.target,
+          names: room.seSettings().names,
+          origin: "",
+          now,
+        })
+      : "",
+  });
 }
 
 export function saveProfile(room: ChannelRoom, channel: string, userId: string, input: ProfileInput): SaveResult {

@@ -31,7 +31,6 @@ export const SE_ACTIONS = [
   "stats",
   "changelog",
 ]; // quick duels need no attack commands
-export const SE_READ_ACTIONS = ["top", "elo", "help", "look", "changelog"]; // no game state, so they work while duels are paused
 // StreamElements has a built-in !top that can't be edited, so the leaderboard command is !ranks.
 export const DEFAULT_SE_NAMES = {
   challenge: "!challenge",
