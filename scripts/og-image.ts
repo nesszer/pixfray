@@ -1,11 +1,10 @@
 // Renders public/og.png (1200x630), the link preview Twitch and Discord show for pixfray.xyz.
 // Uses only the site's own character art and font. Rerun after adding characters: node scripts/og-image.ts
-import { chromium } from "@playwright/test";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { chromeOptions } from "../tests/chrome.ts";
+import { launchChrome } from "../tests/chrome.ts";
 
 const root = new URL("../public/", import.meta.url);
 // The fields of public/assets/characters.json this script reads.
@@ -34,7 +33,7 @@ p { margin: 20px 0 0; font-size: 36px; color: #d6c6a8; }
 <h1>PixFray</h1><p>Pick your fighter and duel in the Twitch chats you watch.</p>
 <div class="row">${picks.map(sprite).join("")}</div></div></body></html>`;
 
-const browser = await chromium.launch(chromeOptions());
+const browser = await launchChrome();
 const page = await browser.newPage({ viewport: { width: 1200, height: 630 } });
 const file = join(mkdtempSync(join(tmpdir(), "og-")), "og.html"); // file:// so the art and font load
 writeFileSync(file, html);

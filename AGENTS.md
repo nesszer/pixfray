@@ -42,19 +42,18 @@ It is not wrangler: never `wrangler deploy` or `--env`.
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
 - **Strict TypeScript.** New code is `.ts` with `.ts` imports, and `bun run typecheck` fails a TS
   file outside the strict programs. Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
-- **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.ts`. Don't set `HEADLESS=1`.
+- **Browser tests run headed with GPU flags** via `launchChrome()` in `tests/chrome.ts`. Don't set `HEADLESS=1`.
 - **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in
   `public/dashboard.css` (tokens, classes, one gold accent, lock-on selection) and the patterns reviews keep catching.
   Claude Code loads it here: @DESIGN.md
 
 ## Where things go
 
-- **Channel setting (mods change it on the admin page):** `DEFAULT_CONFIG` and the type list in
-  `validateConfigPatch` in `server/game.ts`; a field in a `GROUPS` entry in `src/admin.ts`; the reads in
+- **Channel setting (mods change it on the mod page):** `DEFAULT_CONFIG` and the type list in
+  `validateConfigPatch` in `server/game.ts`; a `GROUPS` field in `src/admin/rules.ts`; the reads in
   `server/channel.ts`; a test with a valid patch and an `invalid_config_<key>` rejection; `docs/CONTRACTS.md` §7.
-- **Bot chat command:** `botCommand` in `server/channel.ts`; command names and reply texts in
-  `server/streamelements.ts` (`botNames()`, `DEFAULT_SE_NAMES`, `se*Text`). Mods' own text commands are
-  `server/botcommands.ts`.
+- **Bot chat command:** `botCommand` in `server/channel.ts`; command names and reply texts in `server/streamelements.ts`
+  (`botNames()`, `DEFAULT_SE_NAMES`, `se*Text`). Mods' own text commands are `server/botcommands.ts`.
 - **Who is a mod in chat:** `ev.mod`, set once from the badges (`MOD_BADGES`: broadcaster, moderator,
   lead_moderator) in `slimEvent` in `server/eventsub.ts`.
   Don't read badges anywhere else. Admin-page access is a separate Helix check in `server/auth.ts`.
@@ -96,7 +95,7 @@ Each one has happened here. Check for it by name before calling work done.
 |LIVE_FIX.md: release flow, owner page fix/deploy/rollback, backups
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
 [Code]|server/: worker.ts routes|channel.ts ChannelRoom DO (state, bot commands, alarms)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|tracker.ts logs|points.ts|upgrades.ts pets.ts cosmetics.ts
-|src/: admin.ts mod page|dashboard.ts channel page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
+|src/: admin.ts admin/ mod page|dashboard.ts dashboard/ fighter page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
 |src/served/: overlay.ts|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
 |tests/: *.test.ts unit|fakes.ts doubles|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
 |scripts/: strict-check.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1

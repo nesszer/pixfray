@@ -622,6 +622,9 @@ export function parseArenaSnapshot(value), parseLooksMessage(value), parseLook(v
 export function parseAnswer(r, parse, kind)  // an ok answer whose body fails -> {ok:false, data:{error: UNREADABLE}}
 export function acceptedUnreadable(r)        // true for that case (a 2xx it couldn't read): the write may have gone through
 // the fighter page's profile save and shop purchase then say so and keep the button off, so a purchase can't run twice
+// src/ui.ts: shared page helpers ($, on, busy, api, dataTable, setStatus, tabKey). src/admin.ts and src/dashboard.ts are
+// the entries; each tab lives in src/admin/ (stream, arena, rules, characters, channel) or src/dashboard/ (fighter,
+// picker, shop, ranks, save), with the page's shared state in its state.ts
 ```
 
 `roomFetch` adds the internal secret and channel headers. `room.ctx.storage.sql` is the DO's SQLite.
@@ -662,7 +665,7 @@ bun run test:all           # everything below, in order (scripts/test-all.ts)
   between them, and in `public/*.html`, to `./<name>.js?v=<hash>`: the first 10 hex digits of a SHA-256 over
   each module's name and served code. The overlay compares the `?v=` it was loaded with against the one in
   `overlay.html` after a deploy and reloads itself between duels when they differ (`overlayVersionFromUrl`).
-  Pages bundled by Vite (`src/ui.ts`, `src/admin.ts`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
+  Pages bundled by Vite (`src/ui.ts`, `src/admin/characters.ts`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
   `/upload.js` by full URL at run time, without a version. URLs, `public/overlay.html` and `public/_headers`
   stay as they are; `src/dev.ts` is the owner page's bundled entry (`admin/dev/index.html`).
 - Bindings (`cloudflare.config.ts`): ASSETS, ROOMS, AUTH, `BACKUPS` (D1 `<worker>-backups`, filled
