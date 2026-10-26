@@ -70,41 +70,31 @@ const config = {
     heal: { amount: 15, cooldownMs: 12000 },
   },
 };
+// A leaderboard row: [userId, login, display name, character, color, ability, elo, wins, losses].
+type Row = [string, string, string, string, string, string, number, number, number];
+const fighter = ([userId, username, displayName, avatar, color, defaultAbility, elo, wins, losses]: Row) => ({
+  userId,
+  username,
+  displayName,
+  avatar,
+  color,
+  defaultAbility,
+  elo,
+  wins,
+  losses,
+});
 const board = [
-  {
-    userId: "3003",
-    username: "top_dog",
-    displayName: "top_dog",
-    avatar: "soldier",
-    color: "#34d399",
-    defaultAbility: "heavy",
-    elo: 1048,
-    wins: 4,
-    losses: 1,
-  },
-  {
-    userId: "1001",
-    username: "viewer_one",
-    displayName: "Viewer_One",
-    avatar: "zombie",
-    color: "#f472b6",
-    defaultAbility: "heal",
-    elo: 1012,
-    wins: 2,
-    losses: 1,
-  },
-  {
-    userId: "4004",
-    username: "newbie",
-    displayName: "newbie",
-    avatar: "female",
-    color: "#60a5fa",
-    defaultAbility: "strike",
-    elo: 976,
-    wins: 0,
-    losses: 2,
-  },
+  fighter(["3003", "top_dog", "top_dog", "soldier", "#34d399", "heavy", 1048, 4, 1]),
+  fighter(["1001", "viewer_one", "Viewer_One", "zombie", "#f472b6", "heal", 1012, 2, 1]),
+  fighter(["4004", "newbie", "newbie", "female", "#60a5fa", "strike", 976, 0, 2]),
 ];
+// A look with every cosmetic slot empty.
+const noItems = Object.fromEntries(
+  ["hat", "pet", "recolor", "petColor", "accessory", "trail", "winEffect", "taunt", "title"].map((k) => [k, ""]),
+);
+// A 48x64 sprite: one solid block of this color on a transparent sheet.
+const spritePng = (rgba: number[]) =>
+  makePng(48, 64, { pixel: (x, y) => (x > 8 && x < 40 && y > 4 ? rgba : [0, 0, 0, 0]) });
 async function noOverflow(page: Page, label: string) {
   const { sw, cw, wide } = await page.evaluate(() => ({
     sw: document.documentElement.scrollWidth,
@@ -189,6 +179,12 @@ const fitsWrap = (w: Where, sel: string) =>
     .evaluate((n) => n.scrollWidth <= n.clientWidth + 1);
 const attrIs = async (w: Where, sel: string, name: string, want: string | null, msg?: string) =>
   assert.equal(await w.locator(sel).getAttribute(name), want, msg);
+const attrHas = async (w: Where, sel: string, name: string, re: RegExp) =>
+  assert.match((await w.locator(sel).getAttribute(name)) ?? "", re);
+const valueHas = async (w: Where, sel: string, re: RegExp, msg?: string) =>
+  assert.match(await w.locator(sel).inputValue(), re, msg);
+const buttonOff = async (page: Page, name: string, msg?: string) =>
+  assert.equal(await page.getByRole("button", { name }).isDisabled(), true, msg);
 // Waits until the element's text matches; the pattern travels as source and flags.
 const waitText = (page: Page, sel: string, re: RegExp, options?: { timeout: number }) =>
   page.waitForFunction(
@@ -196,6 +192,11 @@ const waitText = (page: Page, sel: string, re: RegExp, options?: { timeout: numb
     [sel, re.source, re.flags] as const,
     options,
   );
+// Opens a path on the site and waits for the element that shows the page is ready.
+async function visit(page: Page, path: string, ready: string) {
+  await page.goto(base + path);
+  await page.waitForSelector(ready);
+}
 async function box(page: Page, sel: string) {
   const b = await page.locator(sel).boundingBox();
   assert.ok(b, sel + " has a box");
@@ -210,6 +211,7 @@ async function shot(page: Page, name: string, of: boolean | string = true) {
 const owner = { id: "9009", login: "nesszerra", displayName: "nesszerra" },
   newstreamer = { id: "5505", login: "newstreamer", displayName: "NewStreamer" };
 const viewerAccess = { owner: false, moderator: false, canManage: false },
+  ownerAccess = { owner: true, moderator: false, canManage: true },
   modAccess = { owner: false, moderator: true, canManage: true },
   broadcasterAccess = { owner: false, broadcaster: true, moderator: false, canManage: true };
 const disconnected = { connected: false, status: "disconnected", subscriptionId: "", createdAt: 0 };
@@ -242,7 +244,10 @@ const seSetup = (fields: object = {}, actions: string[] = []) => ({
   })),
   ...fields,
 });
+// A site whose chat runs through the PixFray bot, with an overlay open and mod access connected.
 const botSite = {
+  overlays: 1,
+  modsReady: true,
   chatBot: { login: "pixfray", debug: false },
   botCommands: { commands: [], counters: [], max: 50 },
   botStatus: null,
@@ -397,7 +402,7 @@ try {
       await page.locator('.jump a[href="#win-effects"]').click();
       await page.locator("label[for=effect-confetti]").click();
       await disabledIs(page, "#play-win", false);
-      assert.match((await page.locator("#preview").getAttribute("aria-label"))!, /Flames trail/); // the page sets this attribute
+      await attrHas(page, "#preview", "aria-label", /Flames trail/);
       await page.locator("#tab-fighter").click();
       await shot(page, "viewer-signed-out-real-" + s.name);
       await page.goto(base + "/admin/");
@@ -421,8 +426,7 @@ try {
   // 1b. /play/ asks which stream the viewer watches, so nobody saves a fighter on the wrong channel.
   for (const s of sizes)
     await withPage(s, async (page, context) => {
-      await page.goto(base + "/play/");
-      await page.waitForSelector("#channel-list a");
+      await visit(page, "/play/", "#channel-list a");
       await textIs(page, "h1:visible", "Which stream are you watching?");
       await attrIs(page, ".topbar .nav-cta", "href", "/play/", "the picker is the current page, not a channel");
       const links = await hrefs(page, "#channel-list a");
@@ -461,10 +465,8 @@ try {
       await attrIs(page, ".brand", "href", "/", "the brand goes home (the intro)");
       // the home page is the intro, and it offers the way back to the channel picked last
       await page.goto(base + "/");
-      assert.equal(await page.locator("h1").first().textContent(), "Your Twitch chat, in the ring.");
-      await page.waitForFunction(
-        () => document.querySelector("#hero-actions .btn")?.textContent === "Back to miolafff",
-      );
+      await textIs(page, "h1 >> nth=0", "Your Twitch chat, in the ring.");
+      await waitText(page, "#hero-actions .btn", /^Back to miolafff$/);
       await attrIs(page, "#hero-actions .btn", "href", "/?channel=miolafff");
       await textIs(page, '#hero-actions a[href="/play/"]', "Pick another channel");
     });
@@ -480,8 +482,7 @@ try {
         ),
       });
     });
-    await page.goto(base + "/play/");
-    await page.waitForSelector("#channel-list a");
+    await visit(page, "/play/", "#channel-list a");
     await countIs(page, "#channel-list li:visible", 8);
     await textHas(page, "#channel-status", /find the other 4 channels/);
     await page.fill("#channel-q", "streamer_9");
@@ -494,8 +495,7 @@ try {
   for (const s of sizes)
     await withPage(s, async (page) => {
       await page.route("**/api/picker", async (r) => json(r, { ...(await (await r.fetch()).json()), full: true }));
-      await page.goto(base + "/play/");
-      await page.waitForSelector("#channel-list a");
+      await visit(page, "/play/", "#channel-list a");
       await page.fill("#channel-q", "some_streamer");
       await textHas(
         page,
@@ -510,8 +510,7 @@ try {
   // 2. Signed out with Twitch configured (stubbed session): sign-in buttons show.
   await withPage(sizes[0], async (page) => {
     await stubSession(page, null);
-    await page.goto(base + "/?channel=nesszerra");
-    await page.waitForSelector("#save-signin:visible");
+    await visit(page, "/?channel=nesszerra", "#save-signin:visible");
     await countIs(page, '#who a[href^="/auth/login"]', 0, "no second sign-in button in the top bar");
     await page.screenshot({ path: shots + "/viewer-signed-out-configured-1280.png", fullPage: false });
   });
@@ -535,8 +534,7 @@ try {
       signedIn = true;
       return r.fulfill({ status: 302, headers: { location: base + "/?channel=nesszerra&signed_in=1" } });
     });
-    await page.goto(base + "/?channel=nesszerra");
-    await page.waitForSelector("#save-signin:visible");
+    await visit(page, "/?channel=nesszerra", "#save-signin:visible");
     await textIs(page, "#save-signin", "Sign in with Twitch to save", "a first visit gets the plain sign-in");
     await textIs(page, "#save-status", "");
     await page.evaluate(() => localStorage.setItem("pixfray:signed-in", "1"));
@@ -606,8 +604,7 @@ try {
         },
         board,
       );
-      await page.goto(base + "/?channel=nesszerra");
-      await page.waitForSelector("#save:not([hidden])");
+      await visit(page, "/?channel=nesszerra", "#save:not([hidden])");
       await checkedIs(page, "#char-zombie", true);
       await valueIs(page, "#color", "#f472b6");
       await attrIs(page, "#swatches > :last-child", "class", "custom-color", "Custom comes after the preset colors");
@@ -622,11 +619,7 @@ try {
       await page.locator('.swatch[data-color="#34d399"]').click();
       // Builds: one free slot; the next costs $60.
       await textHas(page, "#build-list", /Build 1\s*On stream/);
-      assert.equal(
-        await page.getByRole("button", { name: "Buy build slot 2 for $60" }).isDisabled(),
-        true,
-        "$12 is not enough for a slot",
-      );
+      await buttonOff(page, "Buy build slot 2 for $60", "$12 is not enough for a slot");
       // Hats and upgrades: 2 wins + 1 check-in point = 3 points; the crown needs 20 wins.
       await textHas(page, "#points-note", /3 of 3 points/);
       await page.locator("#tab-shop").click();
@@ -643,10 +636,10 @@ try {
       await hidden(page, "#shop-accessory", "only the Hats section shows first");
       await page.locator('.jump a[href="#shop-accessory"]').click();
       await hidden(page, "#hat-picker");
-      assert.equal(await page.getByRole("button", { name: "Buy Cape for $25" }).isDisabled(), true);
+      await buttonOff(page, "Buy Cape for $25");
       await page.locator('.jump a[href="#shop-title"]').click();
       await textIs(page, ".jump a[aria-current]", "Titles");
-      assert.equal(await page.getByRole("button", { name: "Buy Iron Wall title for $15" }).isDisabled(), true);
+      await buttonOff(page, "Buy Iron Wall title for $15");
       await page.locator("label[for=title-wall]").click();
       await textHas(page, "#save-status", /Trying on Iron Wall\. Buy it to save this look\./);
       await page.locator("#save").click();
@@ -657,7 +650,7 @@ try {
       await page.screenshot({ path: shots + "/viewer-shop-" + s.name + ".png", fullPage: true });
       await page.locator("#tab-pets").click();
       await checkedIs(page, "#pet-none", true);
-      assert.equal(await page.getByRole("button", { name: "Buy Dragon for $300" }).isDisabled(), true);
+      await buttonOff(page, "Buy Dragon for $300");
       const buyMouse = page.getByRole("button", { name: "Buy Mouse for $10" });
       await buyMouse.click();
       assert.equal(await buyMouse.textContent(), "Confirm: spend $10");
@@ -700,32 +693,22 @@ try {
       await page.getByRole("button", { name: "Put a level into Power for 1 point" }).click();
       await page.getByRole("button", { name: "Put a level into Power for 1 point" }).click();
       await page.getByRole("button", { name: "Put a level into Luck for 1 point" }).click();
-      assert.equal(
-        await page.getByRole("button", { name: "Put a level into Guard for 1 point" }).isDisabled(),
-        true,
-        "no points left",
-      );
+      await buttonOff(page, "Put a level into Guard for 1 point", "no points left");
       await textHas(page, "#save-status", /unsaved/i);
       if (s.name === "1280")
         await page.screenshot({ path: shots + "/viewer-signed-in-editing-1280.png", fullPage: true });
       await page.locator("#save").click();
       await waitText(page, "#save-status", /^Saved/);
       assert.deepEqual(posted, {
+        ...noItems,
         avatar: "adventurer",
         color: "#34d399",
-        defaultAbility: "heal",
+        defaultAbility: "heal", // the saved ability is kept as is
         stats: { power: 2, guard: 0, luck: 1, crit: 0, dodge: 0, counter: 0, vitality: 0 },
         hat: "cap",
         pet: "mouse",
-        recolor: "",
-        petColor: "",
-        accessory: "",
-        trail: "",
-        winEffect: "",
-        taunt: "",
-        title: "",
         build: 0,
-      }); // the saved ability is kept as is
+      });
       await textHas(page, "#upgrade-list", /2 \/ 16 \+1/, "the mouse adds +1 power past the points");
       await textHas(page, "#upgrade-list", /\+12% damage dealt \(1 from your pet\)/, "plain numbers, pet included");
       await noOverflow(page, "viewer signed-in " + s.name);
@@ -762,8 +745,7 @@ try {
       return json(r, { ok: true, reason: "bought" }); // no dollars or owned: unreadable to the page
     });
     await stubViewer(page, myFighter({ dollars: 12 }), board);
-    await page.goto(base + "/?channel=nesszerra");
-    await page.waitForSelector("#save:not([hidden])");
+    await visit(page, "/?channel=nesszerra", "#save:not([hidden])");
     await page.locator("#tab-pets").click();
     const buyMouse = page.getByRole("button", { name: "Buy Mouse for $10" });
     await buyMouse.click();
@@ -826,9 +808,6 @@ try {
                 : [220, 30, 30, 255]
               : [250, 250, 248, 255],
         });
-      const spritePng = makePng(48, 64, {
-        pixel: (x, y) => (x > 8 && x < 40 && y > 4 ? [220, 120, 30, 255] : [0, 0, 0, 0]),
-      });
       let sent: Loose = null, // Loose: the posted sprite body, read by field below
         redraws = 0;
       const status = () => ({
@@ -859,7 +838,7 @@ try {
         return json(r, [...real, mine("v-mine-aaaaaa", user.id, "Mine"), mine("v-other-bbbbbb", "5005", "Not mine")]);
       });
       await page.route(/\/api\/(assets\/nesszerra\/v-|sprite\/nesszerra\/pending)/, (r) =>
-        r.fulfill({ status: 200, contentType: "image/png", body: spritePng }),
+        r.fulfill({ status: 200, contentType: "image/png", body: spritePng([220, 120, 30, 255]) }),
       );
       await page.route("**/api/sprite/nesszerra/redraw", (r) => {
         redraws++;
@@ -872,8 +851,7 @@ try {
         }
         return json(r, status());
       });
-      await page.goto(base + "/?channel=nesszerra");
-      await page.waitForSelector("#sprite-maker:not([hidden])");
+      await visit(page, "/?channel=nesszerra", "#sprite-maker:not([hidden])");
       await countIs(page, "#char-v-mine-aaaaaa", 1, "the viewer's own sprite is in their list");
       await countIs(page, "#char-v-other-bbbbbb", 0, "another viewer's sprite is not");
       await textHas(page, "label[for=char-v-mine-aaaaaa]", /Your sprite/);
@@ -882,7 +860,7 @@ try {
       await page
         .locator("#sprite-file")
         .setInputFiles({ name: "my_cat.png", mimeType: "image/png", buffer: ball(300, 200) });
-      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#sprite-send")!.disabled); // the page has this element
+      await page.waitForSelector("#sprite-send:enabled");
       await valueIs(page, "#sprite-name", "my cat");
       await textHas(page, "#sprite-size", /^\d+ x 116 px$/);
       const painted = () =>
@@ -898,9 +876,7 @@ try {
       await visibleIs(page, "#sprite-plain", true);
       await textIs(page, "#sprite-ai", "Redraw again");
       await textHas(page, "#sprite-note", /2 AI redraws/);
-      await noOverflow(page, "viewer sprite maker " + s.name);
-      await page.locator("#sprite-maker").scrollIntoViewIfNeeded();
-      await page.locator("#sprite-maker").screenshot({ path: shots + "/viewer-sprite-maker-" + s.name + ".png" });
+      await shot(page, "viewer-sprite-maker-" + s.name, "#sprite-maker");
       await page.locator("#sprite-send").click();
       await waitText(page, "#sprite-current", /waiting for a mod/);
       await textHas(page, "#sprite-status", /^Sent/);
@@ -923,7 +899,7 @@ try {
     // The bare page names no channel: a viewer without a channel of their own is pointed to /start.
     await page.goto(base + "/admin/");
     await waitText(page, "#gate-text", /PixFray isn't on for viewer_one yet/);
-    assert.equal(await page.locator("h1").first().textContent(), "PixFray mod controls");
+    await textIs(page, "h1 >> nth=0", "PixFray mod controls");
     await countIs(page, '#gate-actions a[href="/start/"]', 1);
     await shot(page, "admin-bare-gate-390");
   });
@@ -950,27 +926,19 @@ try {
           reconnectNext = true,
           quickOff = false; // quickOff: the HP-fight abilities only matter when config.quickDuel is false
         let chatStatus = chatOn({ subscriptionId: "sub-1", lastNotificationAt: now - 4000, checkedAt: now - 600000 });
-        const history = () => [
-          {
-            version: 3,
-            config: { ...config, abilities: { ...config.abilities, heavy: { damage: 35, cooldownMs: 5000 } } },
-            actorId: mod.id,
-            at: now - 600000,
-            note: "back to preset",
-          },
-          {
-            version: 2,
-            config: { ...config, abilities: { ...config.abilities, heavy: { damage: 30, cooldownMs: 5000 } } },
-            actorId: "3003",
-            at: now - 3600000,
-            note: "heavier heavy",
-          },
+        const heavy = (damage: number) => ({
+          ...config,
+          abilities: { ...config.abilities, heavy: { damage, cooldownMs: 5000 } },
+        });
+        const history = [
+          { version: 3, config: heavy(35), actorId: mod.id, at: now - 600000, note: "back to preset" },
+          { version: 2, config: heavy(30), actorId: "3003", at: now - 3600000, note: "heavier heavy" },
           { version: 1, config, actorId: "system", at: now - 86400000, note: "" },
         ];
         const snapshot = () => ({
           revision: 40 + posts.length,
           chatStatus,
-          history: history(),
+          history,
           customUsage: { count: 1, limit: 24, bytes: 48213 },
           config: quickOff ? { ...config, quickDuel: false } : config,
           configVersion: version,
@@ -980,16 +948,8 @@ try {
             { ...board[1], hp: 85, lastSeen: now - 5000, registered: true, respawnAt: 0 },
             { ...board[2], hp: 0, lastSeen: now - 9000, registered: true, respawnAt: now + 60000 },
             {
-              userId: "5005",
-              username: "lurker",
-              displayName: "lurker",
-              avatar: "player",
-              color: "#a78bfa",
-              defaultAbility: "strike",
+              ...fighter(["5005", "lurker", "lurker", "player", "#a78bfa", "strike", 1000, 0, 0]),
               hp: 100,
-              elo: 1000,
-              wins: 0,
-              losses: 0,
               lastSeen: now - 120000,
               registered: false,
               respawnAt: 0,
@@ -1113,24 +1073,16 @@ try {
           }),
         );
         await page.route("**/api/sprites/nesszerra/*", (r) =>
-          r.fulfill({
-            status: 200,
-            contentType: "image/png",
-            body: makePng(48, 64, { pixel: (x, y) => (x > 8 && x < 40 && y > 4 ? [120, 200, 60, 255] : [0, 0, 0, 0]) }),
-          }),
+          r.fulfill({ status: 200, contentType: "image/png", body: spritePng([120, 200, 60, 255]) }),
         );
-        await page.goto(base + "/admin/");
-        await page.waitForSelector("#app:not([hidden])");
+        await visit(page, "/admin/", "#app:not([hidden])");
         await waitText(page, "#summary-title", /^Duels are live$/);
         await hidden(page, "#open-chat-setup", "no chat-setup shortcut while chat is live");
         await countIs(page, "#duels tbody tr", 2);
         await countIs(page, "#players tbody tr", 4);
         await countIs(page, "#ranks tbody tr", 3);
         await countIs(page, "#history tbody tr", 3);
-        assert.match(
-          (await page.locator("#history tbody tr").nth(1).textContent())!,
-          /Heavy strike damage 35 HP → 30 HP/,
-        );
+        await textHas(page, "#history tbody tr >> nth=1", /Heavy strike damage 35 HP → 30 HP/);
         await textHas(page, "#usage-title", /1 of 24/);
         await visibleIs(page, "#dev-open", role === "owner"); // on the Live tab, shown first
         await textIs(page, "#dev-link", "Owner");
@@ -1166,11 +1118,8 @@ try {
         await page.click("#tab-chat");
         assert.equal(new URL(page.url()).hash, "#chat");
         // the OBS Browser Source link moved here from the viewer page
-        assert.match(
-          await page.locator("#obs-url").inputValue(),
-          /\/overlay\.html\?channel=nesszerra&size=64&arena=1$/,
-        );
-        assert.match((await page.locator("#demo").getAttribute("href"))!, /arena=1&demo=1$/); // the page sets this attribute
+        await valueHas(page, "#obs-url", /\/overlay\.html\?channel=nesszerra&size=64&arena=1$/);
+        await attrHas(page, "#demo", "href", /arena=1&demo=1$/);
         await hidden(page, "#se-health", "no StreamElements note before any command");
         await visibleIs(page, "#owner-chat", role === "owner");
         await textHas(page, "#chat-text", /Last chat message/);
@@ -1268,7 +1217,7 @@ try {
         if (s.name !== "1280" || role !== "mod") return;
 
         await page.locator("#toggle-duels").click();
-        await page.waitForFunction(() => document.querySelector("#action-status")!.classList.contains("ok")); // the page has this element
+        await page.waitForSelector("#action-status.ok", { state: "attached" });
         assert.deepEqual(posts.at(-1), {
           action: "config",
           payload: { patch: { enabled: false }, baseVersion: 3, note: "duels paused" },
@@ -1276,16 +1225,17 @@ try {
         await page.locator("#duels tbody tr").first().getByRole("button", { name: "Cancel duel" }).click();
         await waitText(page, "#action-status", /cancelled/);
         assert.deepEqual(posts.at(-1), { action: "cancelDuel", payload: { duelId: "d1" } });
-        await page.locator("#reset-health").click();
-        await page.waitForTimeout(150);
-        assert.deepEqual(posts.at(-1), { action: "resetHealth" });
-        await page.locator("#reset-round").click();
-        await page.waitForTimeout(150);
-        assert.deepEqual(posts.at(-1), { action: "resetRound" });
+        // These leave no status text to wait for, so a short pause lets the POST land.
+        const posted = async (button: Locator, want: object, ms = 150) => {
+          await button.click();
+          await page.waitForTimeout(ms);
+          assert.deepEqual(posts.at(-1), want);
+        };
+        await posted(page.locator("#reset-health"), { action: "resetHealth" });
+        await posted(page.locator("#reset-round"), { action: "resetRound" });
         await page.click("#tab-players");
-        await page.locator("#ranks tbody tr").first().getByRole("button", { name: "Reset rank" }).click();
-        await page.waitForTimeout(150);
-        assert.deepEqual(posts.at(-1), { action: "resetRank", payload: { userId: "3003" } });
+        const resetRank = page.locator("#ranks tbody tr").first().getByRole("button", { name: "Reset rank" });
+        await posted(resetRank, { action: "resetRank", payload: { userId: "3003" } });
         await hidden(page, "#reset-all-ranks", "resetting every rank is the broadcaster's");
         await hidden(page, "#rotate-se", "a new StreamElements key is the broadcaster's");
         // mod gift: a Twitch name (with or without @) and a whole amount
@@ -1300,14 +1250,16 @@ try {
         // config: invalid value blocks save, valid value saves only the changed field
         await page.click("#tab-rules");
         await visibleIs(page, "#history", false, "version history starts collapsed");
+        const save = async () => {
+          await page.locator("#config-save").click();
+          await waitText(page, "#config-status", /^Saved as version/);
+        };
         // hidden HP-fight inputs still round trip: saving another field sends only that field
         await page.locator("#cfg-maxHp").fill("120");
-        await page.locator("#config-save").click();
-        await waitText(page, "#config-status", /^Saved as version/);
+        await save();
         assert.deepEqual(posts.at(-1).payload.patch, { maxHp: 120 });
         await page.locator("#cfg-streakBonus").uncheck();
-        await page.locator("#config-save").click();
-        await waitText(page, "#config-status", /^Saved as version/);
+        await save();
         assert.deepEqual(posts.at(-1).payload.patch, { streakBonus: false });
         // with quick duels off the HP-fight group shows
         quickOff = true;
@@ -1315,10 +1267,7 @@ try {
         await page.waitForSelector("#app:not([hidden])");
         await page.click("#tab-rules");
         await countIs(page, "#config-fields .config-group:visible", 6);
-        assert.match(
-          (await page.locator("#config-fields .config-group:visible").last().locator("legend").textContent())!,
-          /HP fight abilities/,
-        );
+        await textHas(page, "#config-fields .config-group:visible >> nth=-1 >> legend", /HP fight abilities/);
         const strike = page.locator("#cfg-abilities-strike-damage");
         await strike.fill("5000");
         await disabledIs(page, "#config-save", true);
@@ -1327,8 +1276,7 @@ try {
         await page.locator("#cfg-abilities-strike-cooldownMs").fill("2.5");
         await page.locator("#config-note").fill("faster strikes");
         const base0 = version;
-        await page.locator("#config-save").click();
-        await waitText(page, "#config-status", /^Saved as version/);
+        await save();
         assert.deepEqual(posts.at(-1), {
           action: "config",
           payload: {
@@ -1345,44 +1293,26 @@ try {
         await textHas(page, "#config-status", /Max health 100 HP → 150 HP/);
         await page.locator("#config-form").screenshot({ path: shots + "/admin-config-conflict-1280.png" });
         await page.click("#history-title");
-        await page
-          .locator("#history tbody tr")
-          .nth(1)
-          .getByRole("button", { name: /Revert to v2/ })
-          .click();
-        await page.waitForTimeout(200);
-        assert.deepEqual(posts.at(-1), { action: "rollbackConfig", payload: { version: 2 } });
-        if (s.name === "1280") {
-          await page.click("#tab-chat");
-          // Duel announcements save to the channel config (live overlays follow it); the link stays the same.
-          await page.click("#obs-setup details > summary"); // overlay options start folded
-          await valueIs(page, "#announce", "off");
-          await page.selectOption("#announce", "top");
-          await page.waitForFunction(
-            () =>
-              /within seconds/.test(document.querySelector("#announce-status")!.textContent) && // the page has this element
-              // the page has this select (querySelector<HTMLSelectElement> clashes with the Worker Element type)
-              !(document.querySelector("#announce") as unknown as HTMLSelectElement).disabled,
-          );
-          assert.deepEqual(posts.at(-1).payload.patch, { announce: "top" });
-          assert.match(
-            await page.locator("#obs-url").inputValue(),
-            /size=\d+&arena=1$/,
-            "the settings are not in the link",
-          );
-          // The on-stream limit is a channel setting too; out-of-range values are refused before posting.
-          await page.fill("#cap", "9");
-          await page.locator("#cap").dispatchEvent("change");
-          await textHas(page, "#cap-status", /15 to 100/);
-          await page.fill("#cap", "30");
-          await page.locator("#cap").dispatchEvent("change");
-          await page.waitForFunction(
-            () =>
-              /up to 30/.test(document.querySelector("#cap-status")!.textContent) && // the page has this element
-              !document.querySelector<HTMLInputElement>("#cap")!.disabled, // the page has this element
-          );
-          assert.deepEqual(posts.at(-1).payload.patch, { maxOnStream: 30 });
-        }
+        const revert = page.locator("#history tbody tr >> nth=1").getByRole("button", { name: /Revert to v2/ });
+        await posted(revert, { action: "rollbackConfig", payload: { version: 2 } }, 200);
+        await page.click("#tab-chat");
+        // Duel announcements save to the channel config (live overlays follow it); the link stays the same.
+        await page.click("#obs-setup details > summary"); // overlay options start folded
+        await valueIs(page, "#announce", "off");
+        await page.selectOption("#announce", "top");
+        await waitText(page, "#announce-status", /within seconds/);
+        await page.waitForSelector("#announce:enabled");
+        assert.deepEqual(posts.at(-1).payload.patch, { announce: "top" });
+        await valueHas(page, "#obs-url", /size=\d+&arena=1$/, "the settings are not in the link");
+        // The on-stream limit is a channel setting too; out-of-range values are refused before posting.
+        await page.fill("#cap", "9");
+        await page.locator("#cap").dispatchEvent("change");
+        await textHas(page, "#cap-status", /15 to 100/);
+        await page.fill("#cap", "30");
+        await page.locator("#cap").dispatchEvent("change");
+        await waitText(page, "#cap-status", /up to 30/);
+        await page.waitForSelector("#cap:enabled");
+        assert.deepEqual(posts.at(-1).payload.patch, { maxOnStream: 30 });
       });
     }
   // 6. StreamElements is the chat source but no command has reached this site: the Stream setup tab warns.
@@ -1422,8 +1352,7 @@ try {
         fields = { names, lastCommandAt: se.lastCommandAt, rejectedAt: se.rejectedAt };
       const streamelements = seSetup(fields, ["challenge", "accept", "decline"]);
       await stubAdmin(page, { lb: board, snapshot: () => ({ revision: 5, chatStatus, streamelements }) });
-      await page.goto(base + "/admin/#chat");
-      await page.waitForSelector("#se-health:not([hidden])");
+      await visit(page, "/admin/#chat", "#se-health:not([hidden])");
       await textHas(page, "#se-health", se.expect);
       assert.equal(await page.locator("#se-health").evaluate((n) => n.classList.contains("warning")), se.warn);
       await hidden(page, "#checkin-test"); // check-in test mode is for the site channel only
@@ -1467,8 +1396,7 @@ try {
           return json(r, { ok: true, checkinTest });
         },
       });
-      await page.goto(base + "/admin/");
-      await page.waitForSelector("#setup-next:not([hidden])");
+      await visit(page, "/admin/", "#setup-next:not([hidden])");
       await textIs(page, "#setup-next", "Stream setup: 0 of 3 steps done. Next: open the overlay in OBS.");
       await page.click("#setup-next a");
       await visibleIs(page, "#panel-chat", true);
@@ -1491,26 +1419,20 @@ try {
         "Not used yet",
       ]);
       // the command table uses the full step width: badges stay on one line, nothing is cut off, narrow screens scroll inside the wrap
-      const wrap = page.locator("#se-table").locator("xpath=.."),
-        wrapBox = (await wrap.boundingBox())!; // the element is on the page, so it has a box
+      // phones stack each command into rows, so nothing scrolls sideways there either
+      const wrapBox = await box(page, "#se-table >> xpath=..");
+      assert.ok(await fitsWrap(page, "#se-table"), "table is not clipped or scrolling sideways at " + s.name);
       for (const b of await page.locator("#se-table [data-seen] .badge").all())
-        assert.ok((await b.boundingBox())!.height < 28, "status badge on one line at " + s.name);
-      const lastCell = (await page.locator("#se-table tbody tr").first().locator("td").last().boundingBox())!;
+        assert.ok((await b.boundingBox())!.height < 28, "status badge on one line at " + s.name); // listed, so on the page
       if (s.name === "1280") {
         assert.ok(wrapBox.width > 800, "table is wider than the reading column, got " + wrapBox.width);
-        assert.ok(await wrap.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "table is not clipped at 1280");
+        const lastCell = await box(page, "#se-table tbody tr >> nth=0 >> td >> nth=-1");
         assert.ok(lastCell.x + lastCell.width <= wrapBox.x + wrapBox.width + 1, "Response to paste column fits");
         const prose = await box(page, "#se-setup > ol");
         assert.ok(prose.width <= 720, "step prose stays at reading width, got " + prose.width);
       } else {
-        // phones stack each command into rows, so nothing scrolls sideways and Copy reply stays in reach
-        assert.ok(
-          await wrap.evaluate((n) => n.scrollWidth <= n.clientWidth + 1),
-          "stacked table does not scroll sideways at 390",
-        );
         const copy = await page
-          .locator("#se-table tbody tr")
-          .first()
+          .locator("#se-table tbody tr >> nth=0")
           .getByRole("button", { name: /Copy/ })
           .boundingBox();
         assert.ok(
@@ -1523,15 +1445,10 @@ try {
       await page.check("#duel-module-off");
       await waitText(page, "#check-status", /Duel module is off/);
       assert.deepEqual(posts.at(-1), { action: "setDuelModuleOff", value: true });
-      // the page has this element
       await waitText(page, "#check-duel", /^\s*Done/); // after the reload
       overlays = 1;
       seen = { ...seen, accept: now };
-      await page.waitForFunction(
-        () => document.querySelector("#check-title")!.textContent === "Stream setup is done", // the page has this element
-        null,
-        { timeout: 15000 },
-      );
+      await waitText(page, "#check-title", /^Stream setup is done$/, { timeout: 15000 });
       await textHas(page, "#check-overlay", /1 overlay is connected right now/);
       await hidden(page, "#setup-next");
       // check-in test mode: on for 15 minutes, then off again
@@ -1590,8 +1507,6 @@ try {
           revision: 5,
           chatStatus,
           streamelements: seSetup({ duelModuleOff: true }),
-          overlays: 1,
-          modsReady: true,
           checkinTestAllowed: true,
           ...botSite,
           botCommands: data,
@@ -1664,10 +1579,9 @@ try {
       await page.click('[data-save-counter="nt"]');
       await waitText(page, "#counter-status", /Counter nt is 20 now/);
       assert.deepEqual(posts.at(-1), { action: "setCounter", payload: { name: "nt", value: 20 } });
-      await noOverflow(page, "chat commands " + s.name);
       for (const id of ["#bot-commands-table", "#bot-counters-table"])
         assert.ok(await fitsWrap(page, id), id + " does not scroll sideways at " + s.name);
-      await page.locator("#bot-commands").screenshot({ path: shots + "/admin-bot-commands-" + s.name + ".png" });
+      await shot(page, "admin-bot-commands-" + s.name, "#bot-commands");
       page.once("dialog", (d) => d.accept());
       await page.click('[data-delete="!sens"]');
       await waitText(page, "#command-status", /Deleted !sens/);
@@ -1675,100 +1589,74 @@ try {
     });
   // 7b. Step 4 "Let your moderators help" reads differently for the broadcaster, the site owner on another channel, and a moderator.
   {
-    const ownerAccess = { owner: true, moderator: false, canManage: true };
     const reconnect = "/auth/login?channel=newstreamer&connect=mods";
-    const cases = [
-      {
-        name: "owner, not connected",
-        channel: "miolafff",
-        session: owner,
-        access: ownerAccess,
-        extra: { modsReady: false },
-        text: /^Mod access isn't connected\. miolafff has to connect it from their own Stream setup page\.$/,
-        badge: "Optional",
-      },
-      {
-        name: "owner, connected",
-        channel: "miolafff",
-        session: owner,
-        access: ownerAccess,
-        extra: { modsReady: true },
-        text: /^Twitch moderators of miolafff can sign in and use this page\.$/,
-        badge: "Done",
-      },
-      {
-        name: "owner, expired",
-        channel: "miolafff",
-        session: owner,
-        access: ownerAccess,
-        extra: { modsReady: false, modsLapsed: true },
-        text: /^Mod access expired\. miolafff has to reconnect it from their own Stream setup page\.$/,
-        badge: "Expired",
-      },
-      {
-        name: "broadcaster, not connected",
-        channel: "newstreamer",
-        session: newstreamer,
-        access: broadcasterAccess,
-        extra: { modsReady: false },
-        text: /^Your Twitch moderators can't sign in yet\. PixFray needs permission to read your moderator list\. Connect mod access$/,
-        badge: "Optional",
-        link: ["Connect mod access", reconnect],
-      },
-      {
-        name: "broadcaster, expired",
-        channel: "newstreamer",
-        session: newstreamer,
-        access: broadcasterAccess,
-        extra: { modsReady: false, modsLapsed: true },
-        text: /^Mod access expired, so your Twitch moderators can't sign in until you reconnect it\. Reconnect mod access$/,
-        badge: "Expired",
-        link: ["Reconnect mod access", reconnect],
-      },
-      {
-        name: "moderator, not connected, duels paused",
-        channel: "miolafff",
-        session: mod,
-        access: modAccess,
-        extra: { modsReady: false },
-        paused: true,
-        text: /^Mod access isn't connected\. Ask miolafff to connect it\.$/,
-        badge: "Optional",
-      },
+    const roles = {
+      owner: { channel: "miolafff", who: owner, access: ownerAccess },
+      broadcaster: { channel: "newstreamer", who: newstreamer, access: broadcasterAccess },
+      moderator: { channel: "miolafff", who: mod, access: modAccess },
+    };
+    const states = {
+      "not connected": { extra: { modsReady: false }, badge: "Optional" },
+      connected: { extra: { modsReady: true }, badge: "Done" },
+      expired: { extra: { modsReady: false, modsLapsed: true }, badge: "Expired" },
+    };
+    // [who, mod access state, the step's text, its link if any]; the moderator's case also has duels paused
+    const cases: [keyof typeof roles, keyof typeof states, string, string?][] = [
+      [
+        "owner",
+        "not connected",
+        "Mod access isn't connected. miolafff has to connect it from their own Stream setup page.",
+      ],
+      ["owner", "connected", "Twitch moderators of miolafff can sign in and use this page."],
+      ["owner", "expired", "Mod access expired. miolafff has to reconnect it from their own Stream setup page."],
+      [
+        "broadcaster",
+        "not connected",
+        "Your Twitch moderators can't sign in yet. PixFray needs permission to read your moderator list. Connect mod access",
+        "Connect mod access",
+      ],
+      [
+        "broadcaster",
+        "expired",
+        "Mod access expired, so your Twitch moderators can't sign in until you reconnect it. Reconnect mod access",
+        "Reconnect mod access",
+      ],
+      ["moderator", "not connected", "Mod access isn't connected. Ask miolafff to connect it."],
     ];
-    for (const c of cases)
+    for (const [role, state, want, link] of cases)
       for (const s of sizes)
         await withPage(s, async (page) => {
-          const ch = c.channel;
+          const { channel: ch, who, access } = roles[role],
+            name = role + ", " + state,
+            paused = role === "moderator";
           await stubAdmin(page, {
             channel: ch,
-            who: c.session,
-            isOwner: c.session === owner,
-            access: c.access,
+            who,
+            isOwner: role === "owner",
+            access,
             snapshot: () => ({
-              config: { ...config, enabled: !c.paused },
+              config: { ...config, enabled: !paused },
               streamelements: null,
               overlays: 0,
               channelState: "on",
-              ...c.extra,
+              ...states[state].extra,
             }),
           });
-          await page.goto(base + "/admin/?channel=" + ch + "#chat");
-          await page.waitForSelector("#app:not([hidden])");
-          await page.waitForFunction(() => document.querySelector("#check-mods [data-detail]")!.textContent.length > 0); // the page has this element
+          await visit(page, "/admin/?channel=" + ch + "#chat", "#app:not([hidden])");
+          await waitText(page, "#check-mods [data-detail]", /[\s\S]/);
           const detail = (await text(page, "#check-mods [data-detail]")).trim();
-          assert.match(detail, c.text, c.name + " " + s.name);
-          assert.ok(!/Only \w+ can open this page/.test(detail), c.name + ": the old wording is gone");
-          await textIs(page, "#check-mods [data-badge]", c.badge, c.name + " badge");
-          if (c.link) {
-            assert.equal(await text(page, "#check-mods a"), c.link[0]);
-            assert.equal(await page.locator("#check-mods a").getAttribute("href"), c.link[1]);
-          } else await countIs(page, "#check-mods a", 0, c.name + ": no connect link for this viewer");
-          if (c.paused) {
+          assert.equal(detail, want, name + " " + s.name);
+          assert.ok(!/Only \w+ can open this page/.test(detail), name + ": the old wording is gone");
+          await textIs(page, "#check-mods [data-badge]", states[state].badge, name + " badge");
+          if (link) {
+            await textIs(page, "#check-mods a", link);
+            await attrIs(page, "#check-mods a", "href", reconnect);
+          } else await countIs(page, "#check-mods a", 0, name + ": no connect link for this viewer");
+          if (paused) {
             await page.click("#tab-live");
             await textHas(page, "#stats", /Duels\s*Paused\s*commands ignored/);
           }
-          if (s.name === "1280" && /owner, not/.test(c.name))
+          if (s.name === "1280" && role === "owner" && state === "not connected")
             await page.locator("#check-mods").screenshot({ path: shots + "/admin-step4-owner-1280.png" });
         });
   }
@@ -1776,29 +1664,23 @@ try {
   // next), coming back with bot=allowed connects chat by itself, and a mod is told to ask the broadcaster.
   {
     const ch = "newstreamer";
-    const cases = [
-      { name: "broadcaster", session: newstreamer, access: broadcasterAccess, query: "" },
-      {
-        name: "broadcaster back with bot=allowed",
-        session: newstreamer,
-        access: broadcasterAccess,
-        query: "&bot=allowed",
-      },
-      { name: "moderator", session: mod, access: modAccess, query: "" },
+    // [case, who, access, extra address query]
+    const cases: [string, object, object, string][] = [
+      ["broadcaster", newstreamer, broadcasterAccess, ""],
+      ["broadcaster back with bot=allowed", newstreamer, broadcasterAccess, "&bot=allowed"],
+      ["moderator", mod, modAccess, ""],
     ];
-    for (const c of cases)
+    for (const [name, who, access, query] of cases)
       for (const s of sizes)
         await withPage(s, async (page) => {
           let chatStatus: object = disconnected;
           const posts = await stubAdmin(page, {
             channel: ch,
-            who: c.session,
-            access: c.access,
+            who,
+            access,
             snapshot: () => ({
               chatStatus,
               streamelements: seSetup(),
-              overlays: 1,
-              modsReady: true,
               channelState: "on",
               ...botSite,
             }),
@@ -1807,26 +1689,24 @@ try {
               return json(r, { ok: true, chatStatus });
             },
           });
-          await page.goto(base + "/admin/?channel=" + ch + c.query + "#chat");
-          await page.waitForSelector("#app:not([hidden])");
-          await page.waitForFunction(() => document.querySelector("#check-bot [data-detail]")!.textContent.length > 0); // the page has this element
-          for (const id of ["#check-duel", "#check-commands"]) await hidden(page, id, c.name + ": " + id + " hidden");
-          await visibleIs(page, "#chat-box", true, c.name + ": the chat connection shows on a signed-up channel");
-          if (c.query) {
+          await visit(page, "/admin/?channel=" + ch + query + "#chat", "#app:not([hidden])");
+          await waitText(page, "#check-bot [data-detail]", /[\s\S]/);
+          for (const id of ["#check-duel", "#check-commands"]) await hidden(page, id, name + ": " + id + " hidden");
+          await visibleIs(page, "#chat-box", true, name + ": the chat connection shows on a signed-up channel");
+          if (query) {
             await waitText(page, "#check-bot [data-badge]", /^Done$/);
             assert.deepEqual(posts, [{ action: "connectChat" }], "bot=allowed connects chat once");
             assert.equal(new URL(page.url()).searchParams.get("bot"), null, "the flag leaves the address");
             await textHas(page, "#bot-status", /Chat connected/);
             await textIs(page, "#check-title", "Stream setup is done");
             await attrIs(page, "#copy", "class", "btn btn-primary", "Copy link is primary again");
-          } else if (c.access === broadcasterAccess) {
+          } else if (access === broadcasterAccess) {
             await textIs(page, "#check-bot [data-badge]", "To do");
             await textIs(page, "#check-title", "Stream setup: 1 of 2 steps done");
-            const add = page.locator("#bot-actions a");
-            assert.equal(await add.textContent(), "Add the PixFray bot");
-            assert.equal(await add.getAttribute("href"), "/auth/login?channel=newstreamer&connect=bot");
+            await textIs(page, "#bot-actions a", "Add the PixFray bot");
+            await attrIs(page, "#bot-actions a", "href", "/auth/login?channel=newstreamer&connect=bot");
             await countIs(page, "#panel-chat .btn-primary", 1, "one primary button");
-            assert.equal(await add.getAttribute("class"), "btn btn-primary");
+            await attrIs(page, "#bot-actions a", "class", "btn btn-primary");
             await textHas(page, "#setup-next", /Next: add the PixFray bot to your chat\./);
             await shot(page, "admin-bot-step-" + s.name, "#check-bot");
           } else {
@@ -1846,18 +1726,14 @@ try {
   {
     const ch = "newstreamer",
       login = "/auth/login?channel=newstreamer&connect=points";
-    const cases = [
-      { name: "broadcaster, not allowed yet", session: newstreamer, access: broadcasterAccess, ready: false },
-      { name: "broadcaster, allowed", session: newstreamer, access: broadcasterAccess, ready: true },
-      { name: "moderator", session: mod, access: modAccess, ready: true },
-      {
-        name: "site owner, not allowed yet",
-        session: owner,
-        access: { owner: true, moderator: false, canManage: true },
-        ready: false,
-      },
+    // [case, who, access, rewards allowed]
+    const cases: [string, object, object, boolean][] = [
+      ["broadcaster, not allowed yet", newstreamer, broadcasterAccess, false],
+      ["broadcaster, allowed", newstreamer, broadcasterAccess, true],
+      ["moderator", mod, modAccess, true],
+      ["site owner, not allowed yet", owner, ownerAccess, false],
     ];
-    for (const c of cases)
+    for (const [name, who, access, ready] of cases)
       for (const s of sizes)
         await withPage(s, async (page) => {
           const limits = { titleMax: 45, costMax: 1000000, dollarsMax: 10000, maxRewards: 5 };
@@ -1893,18 +1769,16 @@ try {
           ];
           const posts = await stubAdmin(page, {
             channel: ch,
-            who: c.session,
-            access: c.access,
+            who,
+            access,
             snapshot: () => ({
               chatStatus: chatOn({ source: "twitch", createdAt: now }),
               streamelements: null,
-              overlays: 1,
-              modsReady: true,
               channelState: "on",
               ...botSite,
               points: { rewards, redemptions, limits },
               pointsLogin: login,
-              pointsReady: c.ready,
+              pointsReady: ready,
             }),
             post: (body, r) => {
               if (body.action === "createPointReward" && body.payload.title === "Taken")
@@ -1923,13 +1797,12 @@ try {
               return json(r, { ok: true, rewards, redemptions, limits });
             },
           });
-          await page.goto(base + "/admin/?channel=" + ch + "#chat");
-          await page.waitForSelector("#points:not([hidden])");
+          await visit(page, "/admin/?channel=" + ch + "#chat", "#points:not([hidden])");
           assert.deepEqual(await page.locator("#points-table tbody tr").first().locator("td").allTextContents(), [
             "PixFray $100",
             "500",
             "$100",
-            c.name === "moderator" ? "" : "Delete",
+            name === "moderator" ? "" : "Delete",
           ]);
           assert.deepEqual(
             await page.locator("#points-redemptions tbody td:nth-child(4)").allTextContents(),
@@ -1937,17 +1810,14 @@ try {
               "Style dollars added",
               "No saved fighter, points refunded. Twitch's request queue wasn't updated, so check it there",
             ],
-            c.name + ": outcomes, and a refund Twitch refused",
+            name + ": outcomes, and a refund Twitch refused",
           );
-          assert.equal(
-            await page.locator("#points-redemptions tbody td:nth-child(3)").nth(1).textContent(),
-            "A deleted reward",
-          );
-          if (c.name === "moderator") {
+          await textIs(page, "#points-redemptions tbody td:nth-child(3) >> nth=1", "A deleted reward");
+          if (name === "moderator") {
             await hidden(page, "#points-form");
             await hidden(page, "#points-connect");
             await textIs(page, "#points-note", "Only newstreamer can add or delete rewards.");
-          } else if (c.name === "site owner, not allowed yet") {
+          } else if (name === "site owner, not allowed yet") {
             await hidden(page, "#points-connect", "Twitch takes only the broadcaster's account");
             await hidden(page, "#points-form");
             await textIs(
@@ -1955,7 +1825,7 @@ try {
               "#points-note",
               "newstreamer has to allow channel point rewards, signed in to Twitch as themself.",
             );
-          } else if (!c.ready) {
+          } else if (!ready) {
             await hidden(page, "#points-form", "no form before the permission");
             await attrIs(page, "#points-login", "href", login);
             await textHas(page, "#points-connect-text", /^Twitch no longer lets PixFray manage these rewards\./);
@@ -1973,10 +1843,7 @@ try {
               await page.fill("#points-cost", String(n * 100));
               await page.fill("#points-dollars", String(n * 10));
               await page.click("#points-add");
-              await page.waitForFunction(
-                (t) => document.querySelector("#points-status")!.textContent.startsWith("Added " + t), // the page has this element
-                "Reward " + n,
-              );
+              await waitText(page, "#points-status", new RegExp("^Added Reward " + n));
             }
             assert.deepEqual(posts.at(-1), {
               action: "createPointReward",
@@ -1985,10 +1852,9 @@ try {
             await countIs(page, "#points-table tbody tr", 5);
             await disabledIs(page, "#points-add", true, "five rewards is the limit");
             await textIs(page, "#points-note", "5 of 5 rewards. Delete one to add another.");
-            await noOverflow(page, "channel points " + s.name);
             for (const t of ["#points-table", "#points-redemptions"])
               assert.ok(await fitsWrap(page, t), t + " fits without sideways scrolling at " + s.name);
-            await page.locator("#points").screenshot({ path: shots + "/admin-points-" + s.name + ".png" });
+            await shot(page, "admin-points-" + s.name, "#points");
             page.once("dialog", (d) => d.accept());
             await page.click('[data-reward="rw1"]');
             await waitText(page, "#points-status", /^Deleted PixFray \$100\.$/);
@@ -2012,7 +1878,7 @@ try {
         "the closing band repeats the sign-in",
       );
       await hidden(page, "#signup-problem");
-      assert.match((await page.locator("#source a").getAttribute("href"))!, /^https:\/\/github\.com\//); // the page sets this attribute
+      await attrHas(page, "#source a", "href", /^https:\/\/github\.com\//);
       const stage = await box(page, ".stage"),
         frame = await box(page, ".stage iframe");
       const want = s.name === "390" ? 1 : 4 / 3; // phones get a square crop: the fighters stay readable and every nameplate fits
@@ -2033,11 +1899,17 @@ try {
         await page.locator(".stage iframe").evaluate((f: HTMLIFrameElement) => f.offsetWidth >= 640),
         "overlay lays out at 640px or wider",
       );
+      // the sign-in line sits below the copy (beside the demo on wide screens), never over it
+      await waitText(page, "#signup-text", /\S/);
+      const copy = await box(page, ".hero-copy"),
+        card = await box(page, "#signup");
+      const apart = card.x >= copy.x + copy.width || card.y >= copy.y + copy.height;
+      assert.ok(apart, `start ${s.name}: sign-in card overlaps the copy`);
+      assert.ok(copy.width >= Math.min(s.width * 0.5, 400), `start ${s.name}: copy squeezed to ${copy.width}px`);
       await page.waitForTimeout(5000); // let the demo fighters walk in before the screenshot
       await shot(page, "start-valid-" + s.name);
       // back from Twitch after cancelling the permission: offer setup without mod access, and drop ?error from the URL
-      await page.goto(base + "/start/?error=denied");
-      await page.waitForSelector("#signup-problem:not([hidden])");
+      await visit(page, "/start/?error=denied", "#signup-problem:not([hidden])");
       await textHas(page, "#signup-problem", /cancelled the Twitch permission/);
       assert.deepEqual(await hrefs(page, "#signup-actions a"), ["/auth/login?signup=1", "/auth/login?signup=1&mods=0"]);
       assert.equal(new URL(page.url()).search, "");
@@ -2046,8 +1918,7 @@ try {
         ["full", /PixFray is full right now/],
         ["failed", /sign-in didn't finish/],
       ] as const) {
-        await page.goto(base + "/start/?error=" + error);
-        await page.waitForSelector("#signup-problem:not([hidden])");
+        await visit(page, "/start/?error=" + error, "#signup-problem:not([hidden])");
         await textHas(page, "#signup-problem", re);
       }
       await page.goto(base + "/start/?invite=" + "ab".repeat(16));
@@ -2069,8 +1940,7 @@ try {
         },
       });
       page.on("dialog", (d) => d.accept());
-      await page.goto(base + "/admin/?channel=newstreamer&mods=denied#chat");
-      await page.waitForSelector("#app:not([hidden])");
+      await visit(page, "/admin/?channel=newstreamer&mods=denied#chat", "#app:not([hidden])");
       await waitText(page, "#check-status", /permission was cancelled/);
       assert.equal(new URL(page.url()).search, "?channel=newstreamer", "the mods flag is dropped from the URL");
       await attrIs(page, "#check-mods a", "href", "/auth/login?channel=newstreamer&connect=mods");
@@ -2102,13 +1972,11 @@ try {
   await withPage(sizes[0], async (page) => {
     let off = "paused";
     await page.route("**/api/state/*", (r) => json(r, { error: "off", off }, 403));
-    await page.goto(base + "/?channel=newstreamer");
-    await page.waitForSelector("#off-note:not([hidden])");
+    await visit(page, "/?channel=newstreamer", "#off-note:not([hidden])");
     await textHas(page, "#off-note", /PixFray is off on newstreamer's channel right now/);
     await visibleIs(page, ".fighter-card", true);
     off = "not_enabled";
-    await page.goto(base + "/?channel=nobodyhere");
-    await page.waitForSelector("#off-note:not([hidden])");
+    await visit(page, "/?channel=nobodyhere", "#off-note:not([hidden])");
     await textHas(page, "#off-note", /isn't set up on nobodyhere's channel/);
     await hidden(page, ".fighter-card");
     await shot(page, "viewer-not-set-up-390", false);
@@ -2117,19 +1985,7 @@ try {
   // 12. A paused channel: the signed-in viewer sees their fighter; saving and buying say they're closed.
   for (const paused of [false, true])
     await withPage(sizes[0], async (page) => {
-      const look = {
-        color: "#60a5fa",
-        stats: { power: 0, guard: 0, luck: 0 },
-        hat: "",
-        pet: "",
-        recolor: "",
-        petColor: "",
-        accessory: "",
-        trail: "",
-        winEffect: "",
-        taunt: "",
-        title: "",
-      };
+      const look = { ...noItems, color: "#60a5fa", stats: { power: 0, guard: 0, luck: 0 } };
       await stubViewer(
         page,
         myFighter({
@@ -2146,8 +2002,7 @@ try {
         }),
       );
       if (paused) await page.route("**/api/state/nesszerra", (r) => json(r, { error: "off", off: "paused" }, 403));
-      await page.goto(base + "/?channel=nesszerra");
-      await page.waitForSelector("#save:not([hidden])");
+      await visit(page, "/?channel=nesszerra", "#save:not([hidden])");
       const leaving = () =>
         page.evaluate(() => {
           const e = new Event("beforeunload", { cancelable: true });
@@ -2174,11 +2029,7 @@ try {
         await hidden(page, "#next-step");
         await page.locator("#tab-shop").click();
         await page.locator('.jump a[href="#shop-title"]').click();
-        assert.equal(
-          await page.getByRole("button", { name: "Buy Iron Wall title for $15" }).isDisabled(),
-          true,
-          "buying is closed",
-        );
+        await buttonOff(page, "Buy Iron Wall title for $15", "buying is closed");
         await shot(page, "viewer-paused-signed-in-1280", false);
       }
     });
@@ -2197,24 +2048,11 @@ try {
         builds: [{ avatar: "player", color: "#60a5fa" }],
       }),
     );
-    await page.goto(base + "/?channel=nesszerra");
-    await page.waitForSelector("#build-list button.build");
+    await visit(page, "/?channel=nesszerra", "#build-list button.build");
     await countIs(page, "#build-list > *", 5, "five builds and no buy button");
     assert.doesNotMatch(await text(page, "#build-list"), /null/, "no slot for sale leaves no text");
     await textIs(page, "#build-note", "(5 of 5)");
   });
-  // /start: the sign-in line sits below the copy (beside the demo on wide screens), never over it.
-  for (const size of sizes)
-    await withPage(size, async (page) => {
-      await page.goto(base + "/start/");
-      await page.waitForFunction(() => document.querySelector("#signup-text")?.textContent.trim());
-      const copy = await box(page, ".hero-copy"),
-        card = await box(page, "#signup");
-      const apart = card.x >= copy.x + copy.width || card.y >= copy.y + copy.height;
-      assert.ok(apart, `start ${size.name}: sign-in card overlaps the copy`);
-      assert.ok(copy.width >= Math.min(size.width * 0.5, 400), `start ${size.name}: copy squeezed to ${copy.width}px`);
-      await noOverflow(page, "start " + size.name);
-    });
   // The intro (the home page; /intro/ moves there): the loader finishes (WebGL or the text-only fallback), the headline
   // shows and nothing overflows while scrolling. A first visit offers the picker.
   for (const size of sizes)
@@ -2223,9 +2061,7 @@ try {
       await page.goto(base + "/intro/");
       assert.equal(new URL(page.url()).pathname, "/", "the old /intro/ address moves to the home page");
       await attrIs(page, "#hero-actions .btn", "href", "/play/");
-      await page.waitForFunction(() => document.querySelector("#loader")?.classList.contains("is-done"), null, {
-        timeout: 30000,
-      });
+      await page.waitForSelector("#loader.is-done", { state: "attached", timeout: 30000 });
       assert.ok(await page.locator("h1").isVisible(), `intro ${size.name}: headline hidden`);
       for (const y of [0, 0.5, 1]) {
         await page.evaluate((f) => scrollTo(0, f * (document.documentElement.scrollHeight - innerHeight)), y);
@@ -2235,10 +2071,10 @@ try {
     });
   // a browser without WebGL2 gets the text-only page and this one deliberate error
   // (in dev, Vite's client also logs when it can't forward that error to the server)
-  for (let i = errors.length - 1; i >= 0; i--)
-    // i stays inside errors
-    if (/WebGL2 is not available|Failed to send error to Vite server/.test(errors[i]!)) errors.splice(i, 1);
-  assert.deepEqual(errors, []);
+  assert.deepEqual(
+    errors.filter((e) => !/WebGL2 is not available|Failed to send error to Vite server/.test(e)),
+    [],
+  );
   console.log(
     "PASS: viewer + admin UI at 1280/390, signed-out (real server), signed-in viewer save, mod gate, admin actions, config save/409/revert; no page errors.",
   );
