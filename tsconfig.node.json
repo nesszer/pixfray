@@ -17,6 +17,7 @@
     "tests/cloudflare-test-loader.ts",
     "tests/csp-helper.ts",
     "tests/upload-helpers.ts",
+    "tests/worker-fakes.ts",
     "tests/auth.test.ts",
     "tests/channel-param.test.ts",
     "tests/changelog.test.ts",
