@@ -17,7 +17,6 @@ export const esc = (s: unknown) =>
   );
 if (reduced) document.body.classList.add("no-motion");
 
-// ---------- headings type in word by word ----------
 for (const h of document.querySelectorAll("[data-type]")) {
   const text = h.textContent.trim();
   h.setAttribute("aria-label", text);
@@ -27,18 +26,16 @@ for (const h of document.querySelectorAll("[data-type]")) {
     .join(" ");
 }
 
-// ---------- loader ----------
 export const loader = $("#loader"),
-  grid = loader.querySelector(".loader-grid") as HTMLElement, // element type from the page HTML
+  grid = $("#loader .loader-grid"),
   pct = $("#loader-pct");
 const cells = Array.from({ length: 100 }, () => grid.appendChild(document.createElement("i")));
 const order = cells.map((_, i) => i).sort((a, b) => Math.sin(a * 91.7) - Math.sin(b * 91.7));
 let shown = 0;
 export function setProgress(f: number) {
   const n = Math.round(clamp01(f) * 100);
-  for (; shown < n; shown++) {
-    cells[order[shown]!]!.className = "on"; // in range: shown < n <= 100, the length of cells and order
-  }
+  // in range: shown < n <= 100, the length of cells and order
+  for (; shown < n; shown++) cells[order[shown]!]!.className = "on";
   cells.forEach((c) => c.classList.remove("hot"));
   if (shown > 0 && shown < 100) cells[order[shown - 1]!]!.classList.add("hot"); // in range: 0 < shown < 100
   pct.textContent = n + "%";
@@ -55,7 +52,6 @@ export function finishLoading(lifted = () => {}) {
   );
 }
 
-// ---------- example ladder (DOM) ----------
 // Made-up fighters, so the page never shows a real channel's players.
 const EXAMPLE_LADDER = [
   { username: "emberfox", avatar: "adventurer", color: "#ff8a3d", elo: 1086, wins: 14, losses: 5 },
@@ -72,13 +68,12 @@ export function loadBoard() {
   return Promise.resolve(EXAMPLE_LADDER);
 }
 
-// ---------- sound toggle ----------
 export const sound = createSound();
 const soundBtn = $("#sound");
 export function setSound(on: boolean) {
   sound.setOn(on);
   soundBtn.setAttribute("aria-pressed", String(on));
-  (soundBtn.querySelector(".sound-label") as HTMLElement).textContent = on ? "Sound on" : "Sound off"; // element type from the page HTML
+  $("#sound .sound-label").textContent = on ? "Sound on" : "Sound off";
   try {
     localStorage.setItem("pixfray-intro-sound", on ? "1" : "0");
   } catch {
@@ -87,9 +82,8 @@ export function setSound(on: boolean) {
 }
 soundBtn.addEventListener("click", () => setSound(!sound.on));
 
-// ---------- scroll -> chapter coordinate ----------
 export const sections = [...document.querySelectorAll<HTMLElement>(".chapter")];
-const railItems = [...document.querySelectorAll("#rail li")];
+const railLinks = [...document.querySelectorAll<HTMLAnchorElement>("#rail li > a")];
 let bounds: { top: number; h: number }[] = [];
 export function measure() {
   bounds = sections.map((s) => ({ top: s.offsetTop, h: s.offsetHeight }));
@@ -97,8 +91,7 @@ export function measure() {
 export function scrollC() {
   const y = scrollY + innerHeight * 0.5;
   if (scrollY <= 2) return 0;
-  for (let i = 0; i < bounds.length; i++) {
-    const b = bounds[i]!; // in range: i < bounds.length
+  for (const [i, b] of bounds.entries()) {
     if (y < b.top + b.h) return Math.max(0, Math.min(5, i + (y - b.top) / b.h - 0.5));
   }
   return 5;
@@ -111,16 +104,15 @@ export function centerChapter(sec: HTMLElement) {
   const b = bounds[sections.indexOf(sec)];
   if (b) scrollTo({ top: sec === sections[0] ? 0 : b.top + b.h / 2 - innerHeight / 2, behavior: "instant" });
 }
-railItems.forEach((li) =>
-  // every rail item holds a link (page HTML)
-  li.querySelector("a")!.addEventListener("click", (e) => {
-    const sec = document.querySelector<HTMLElement>((e.currentTarget as HTMLAnchorElement).hash); // the listener is on a rail link
+for (const a of railLinks)
+  a.addEventListener("click", (e) => {
+    const sec = document.querySelector<HTMLElement>(a.hash);
     if (!sec || document.body.classList.contains("no-motion")) return;
     e.preventDefault();
-    history.pushState(null, "", (e.currentTarget as HTMLAnchorElement).hash); // the listener is on a rail link
+    history.pushState(null, "", a.hash);
     centerChapter(sec);
-  }),
-);
+  });
+addEventListener("scroll", () => document.body.classList.toggle("scrolled", scrollY > 40), { passive: true });
 // Back and Forward between chapters: the browser scrolls to the section's top, so centre it again once it has
 addEventListener("popstate", () => {
   const sec = sections.find((s) => location.hash === "#" + s.id);
@@ -142,9 +134,9 @@ export function setChapter(c: number) {
   }
   if (i === activeChapter) return;
   activeChapter = i;
-  railItems.forEach((li, k) => {
-    li.classList.toggle("is-on", k === i);
-    li.querySelector("a")!.toggleAttribute("aria-current", k === i); // every rail item holds a link (page HTML)
+  railLinks.forEach((a, k) => {
+    a.parentElement?.classList.toggle("is-on", k === i);
+    a.toggleAttribute("aria-current", k === i);
   });
   if (i > 0) sound.chapter(i);
 }

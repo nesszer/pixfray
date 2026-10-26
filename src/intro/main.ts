@@ -45,23 +45,13 @@ import {
   buildFrame,
   bakeNightEnv,
   addNightLights,
-  glow,
+  lightShaft,
 } from "./world.ts";
 import type { DieValue } from "./world.ts";
 import type { SpriteFrame, VoxelOptions } from "./voxels.ts";
 
 type Vec2 = [number, number];
 type Vec3 = [number, number, number];
-// one fighter on the example ladder or in the crowd; the fallback crowd has only an avatar
-type Person = {
-  avatar: string;
-  username?: string;
-  displayName?: string;
-  color?: string;
-  elo?: number;
-  wins?: number;
-  losses?: number;
-};
 // a /assets/characters.json entry, as far as this page reads it
 type Character = { id: string; url: string; frames: SpriteFrame[]; animations?: { idle?: SpriteFrame[] } };
 type Tag = {
@@ -78,21 +68,10 @@ type Box = { x0: number; y0: number; x1: number; y1: number };
 type FBox = [number, number, number, number, number, number]; // x0, x1, y0, y1, z0, z1
 type LockInfo = { key: string; title: string; sub: string; pos: string };
 type LockTarget = LockInfo & { boxes: FBox[] };
-type Lock = {
-  el: HTMLDivElement;
-  txt: HTMLElement;
-  b: HTMLElement;
-  s: HTMLElement;
-  r: Box | null;
-  key: string | null;
-  on: boolean;
-  pos: string | null;
-};
 type Roll = { at: number; v: DieValue; by: "a" | "b"; text: string };
 
 let bornAt = 1e9; // the hero assembles once the loader lifts, so the first thing people see is the knight forming
 
-// ---------- 3D ----------
 const canvas = $<HTMLCanvasElement>("#stage");
 let renderer: THREE.WebGLRenderer;
 try {
@@ -102,14 +81,7 @@ try {
   document.body.classList.add("no-webgl", "no-motion");
   measure();
   setChapter(0);
-  addEventListener(
-    "scroll",
-    () => {
-      setChapter(document.body.classList.contains("no-motion") ? Math.round(scrollC()) : scrollC());
-      document.body.classList.toggle("scrolled", scrollY > 40);
-    },
-    { passive: true },
-  );
+  addEventListener("scroll", () => setChapter(Math.round(scrollC())), { passive: true });
   loadBoard().then(() => finishLoading());
   throw new Error("PixFray intro: WebGL2 is not available; showing the text only.");
 }
@@ -118,16 +90,10 @@ try {
 // frames run slow (a big or high-DPI screen, a weaker GPU), so the camera keeps gliding instead of stepping
 const DPR = Math.min(devicePixelRatio || 1, small ? 1.5 : 2),
   PIXEL_BUDGET = 2560 * 1440;
-const QUALITY = [
-  { ao: true, s: 1 },
-  { ao: false, s: 1 },
-  { ao: false, s: 0.8 },
-  { ao: false, s: 0.65 },
-  { ao: false, s: 0.5 },
-];
+const QUALITY = [1, 1, 0.8, 0.65, 0.5]; // render scale per step; ambient occlusion only at step 0
 let quality = 0;
 // in range: govern() stops at the last QUALITY step
-const pixelRatio = () => Math.min(DPR, Math.sqrt(PIXEL_BUDGET / (innerWidth * innerHeight))) * QUALITY[quality]!.s;
+const pixelRatio = () => Math.min(DPR, Math.sqrt(PIXEL_BUDGET / (innerWidth * innerHeight))) * QUALITY[quality]!;
 renderer.setPixelRatio(pixelRatio());
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
@@ -199,7 +165,7 @@ composer.addPass(new OutputPass());
 const film = filmPass();
 composer.addPass(film);
 
-// ---------- tags pinned to 3D points ----------
+// HTML tags pinned to 3D points
 const tagLayer = $("#tags");
 const proj = new THREE.Vector3();
 function makeTag(cls: string, html: string): Tag {
@@ -228,7 +194,7 @@ function placeTag(tag: Tag, pos: THREE.Vector3, visible: boolean) {
     else {
       let x = ((proj.x + 1) / 2) * innerWidth;
       if (!tag.call && !tag.corner) {
-        const hw = (tag.w ||= (tag.el.firstElementChild as HTMLElement).offsetWidth) / 2 + 8; // makeTag's inner div
+        const hw = (tag.w ||= tag.inner.offsetWidth) / 2 + 8;
         x = Math.min(innerWidth - hw, Math.max(hw, x));
       }
       // plain labels grow upward from their point, so one near the top is held down clear of the header's links
@@ -242,33 +208,19 @@ function placeTag(tag: Tag, pos: THREE.Vector3, visible: boolean) {
     tag.el.classList.toggle("on", visible);
   }
 }
-// callouts: a dot on the 3D point, a leader line, then a title and one line of detail
-function makeCall(title: string, sub: string, cls = "") {
-  return Object.assign(
-    makeTag(
-      "tag-call " + cls,
-      `<i class="dot"></i><i class="lead"></i><span class="txt"><b>${title}</b><span>${sub}</span></span>`,
-    ),
-    { call: true },
-  );
-}
 // lock-on bracket: four corner marks that glide from subject to subject, with a two-line readout
-const lock = ((): Lock => {
-  const el = document.createElement("div");
-  el.className = "lock";
-  el.innerHTML = '<i></i><i></i><i></i><i></i><div class="lock-txt"><b></b><span></span></div>';
-  tagLayer.appendChild(el);
-  return {
-    el,
-    txt: el.lastChild as HTMLElement, // the .lock-txt div written just above
-    b: el.querySelector("b") as HTMLElement, // written just above
-    s: el.querySelector(".lock-txt span") as HTMLElement, // written just above
-    r: null,
-    key: null,
-    on: false,
-    pos: null,
-  };
-})();
+const lockEl = document.createElement("div");
+lockEl.className = "lock";
+lockEl.innerHTML = '<i></i><i></i><i></i><i></i><div class="lock-txt"><b></b><span></span></div>';
+tagLayer.appendChild(lockEl);
+// the elements written just above
+const lockTxt = lockEl.lastChild as HTMLElement,
+  lockTitle = lockEl.querySelector("b") as HTMLElement,
+  lockSub = lockEl.querySelector(".lock-txt span") as HTMLElement;
+let lockR: Box | null = null,
+  lockKey: string | null = null,
+  lockShown = false,
+  lockPos: string | null = null;
 const lockP = new THREE.Vector3(),
   lockBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
 function boxRect(boxes: FBox[], out: Box) {
@@ -293,9 +245,9 @@ const fbox = (f: VoxelFighter, pad = 0.25): FBox => {
 };
 function placeLock(target: LockTarget | null, alpha: number, dt: number, portrait: boolean) {
   const ok = target !== null && alpha > 0.01 && boxRect(target.boxes, lockBox);
-  if (ok !== lock.on) {
-    lock.on = ok;
-    lock.el.classList.toggle("on", ok);
+  if (ok !== lockShown) {
+    lockShown = ok;
+    lockEl.classList.toggle("on", ok);
   }
   if (ok) {
     const b = lockBox,
@@ -305,27 +257,27 @@ function placeLock(target: LockTarget | null, alpha: number, dt: number, portrai
     b.x1 = Math.min(innerWidth - m, b.x1 + pad);
     b.y0 = Math.max(m + 64, b.y0 - pad);
     b.y1 = Math.min(innerHeight - m, b.y1 + pad);
-    if (!lock.r) lock.r = { ...b };
+    if (!lockR) lockR = { ...b };
     else {
       const k = reduced ? 1 : 1 - Math.exp(-dt * 7);
-      for (const n of ["x0", "y0", "x1", "y1"] satisfies (keyof Box)[]) lock.r[n] += (b[n] - lock.r[n]) * k;
+      for (const n of ["x0", "y0", "x1", "y1"] satisfies (keyof Box)[]) lockR[n] += (b[n] - lockR[n]) * k;
     }
-    if (lock.key !== target.key) {
-      lock.key = target.key;
-      lock.b.textContent = target.title;
-      lock.s.textContent = target.sub;
+    if (lockKey !== target.key) {
+      lockKey = target.key;
+      lockTitle.textContent = target.title;
+      lockSub.textContent = target.sub;
     }
-    const r = lock.r,
-      st = lock.el.style;
+    const r = lockR,
+      st = lockEl.style;
     st.transform = `translate3d(${r.x0.toFixed(1)}px, ${r.y0.toFixed(1)}px, 0)`;
     st.width = `${(r.x1 - r.x0).toFixed(1)}px`;
     st.height = `${(r.y1 - r.y0).toFixed(1)}px`;
     st.opacity = alpha.toFixed(3);
     let pos = portrait ? "none" : target.pos; // on a phone the corners alone; the copy below carries the numbers
     if (pos === "below" && r.y1 + 64 > innerHeight) pos = "above";
-    if (pos !== lock.pos) {
-      lock.pos = pos;
-      lock.txt.className = `lock-txt ${pos}`;
+    if (pos !== lockPos) {
+      lockPos = pos;
+      lockTxt.className = `lock-txt ${pos}`;
     }
   }
 }
@@ -336,7 +288,6 @@ scrimR.className = "scrim scrim-r";
 document.body.insertBefore(scrimL, tagLayer);
 document.body.insertBefore(scrimR, tagLayer);
 
-// ---------- loading ----------
 const tasks: Promise<unknown>[] = [];
 let done = 0;
 const track = <T>(p: Promise<T>) => {
@@ -356,12 +307,7 @@ track(document.fonts?.load("650 40px Fraunces") ?? Promise.resolve());
 const catalog = await catalogP.catch(() => []);
 const byId = new Map<string, Character>(catalog.map((c) => [c.id, c]));
 const rows = await boardP;
-const FALLBACK_CROWD = ["adventurer", "pixel-bot", "cowgirl", "bunny-brown", "cute-girl"];
-// in range: the example ladder holds five fighters, like FALLBACK_CROWD
-const crowdPeople = rows.map((r: Person, i) => ({ ...r, avatar: byId.has(r.avatar) ? r.avatar : FALLBACK_CROWD[i]! }));
-const wanted = [...new Set(["knight", "toon-ranger", ...crowdPeople.map((p) => p.avatar)])].filter((id) =>
-  byId.has(id),
-);
+const wanted = [...new Set(["knight", "toon-ranger", ...rows.map((p) => p.avatar)])].filter((id) => byId.has(id));
 const images = new Map<string, HTMLImageElement>();
 await Promise.all(
   wanted.map((id) =>
@@ -388,47 +334,33 @@ function fighter(id: string, height: number, opts: VoxelOptions, density = 15) {
 const hero = fighter("knight", 2.3, { scatter: "burst", seed: 3, shadows: !small, layers: 8 }, 23);
 const rival = fighter("toon-ranger", 2.15, { scatter: "burst", seed: 7, shadows: !small, layers: 8 }, 23);
 if (rival) rival.group.scale.x = -1;
-const crowd = crowdPeople
-  .map((p, i) => ({
-    person: p,
-    f: fighter(p.avatar, 1.35, { scatter: "rain", seed: 11 + i, shadows: !small, layers: 6 }),
-  }))
-  .filter((c) => c.f) as { person: Person; f: VoxelFighter }[]; // the filter drops the fighters that didn't build
+const crowd = rows.flatMap((person, i) => {
+  const f = fighter(person.avatar, 1.35, { scatter: "rain", seed: 11 + i, shadows: !small, layers: 6 });
+  return f ? [{ person, f }] : [];
+});
 
-// podium: rank 1 in the middle, then 2 left, 3 right, 4 and 5 outside
-const PODIUM_X = [0, -1.25, 1.25, -2.5, 2.5],
-  PODIUM_Z = -2.05,
+// per rank: where the crowd stands, where it steps back to the ropes for the duel, its podium tower's x and levels (rank 1
+// in the middle and tallest, 2 left, 3 right, 4 and 5 outside; the Elo itself is on the tag)
+const RANKS = [
+  { spot: [-2.8, -1.0], duel: [-4.3, -1.9], x: 0, levels: 16 },
+  { spot: [-1.9, -2.3], duel: [-3.3, -3.5], x: -1.25, levels: 12 },
+  { spot: [0.2, -3.1], duel: [-5.6, -5.4], x: 1.25, levels: 10 },
+  { spot: [1.9, -2.3], duel: [-5.3, -3.6], x: -2.5, levels: 8 },
+  { spot: [2.8, -1.0], duel: [-2.1, -4.9], x: 2.5, levels: 7 },
+] satisfies { spot: Vec2; duel: Vec2; x: number; levels: number }[];
+const PODIUM_Z = -2.05,
   DUEL_X = 1.0;
-const stacks = [16, 12, 10, 8, 7]; // levels by rank (1st tallest); the Elo itself is on the tag
-const DUEL_SPOT = [
-  [-4.3, -1.9],
-  [-3.3, -3.5],
-  [-5.6, -5.4],
-  [-5.3, -3.6],
-  [-2.1, -4.9],
-] satisfies Vec2[]; // the crowd steps back to the ropes for the duel
 // a column of light over the rank 1 tower
-const beam = new THREE.Mesh(
+const beam = lightShaft(
   new THREE.CylinderGeometry(0.42, 0.62, 16, 20, 1, true),
-  glow(
-    { uA: { value: 0 }, uTime: { value: 0 } },
-    "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }",
-    `uniform float uA, uTime; varying vec2 vUv;
+  "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }",
+  `uniform float uA, uTime; varying vec2 vUv;
     void main(){ float band = 0.75 + 0.25 * step(0.5, fract(vUv.y * 22.0 - uTime * 0.8));
       float a = uA * sqrt(sqrt(max(1.0 - vUv.y, 0.0))) * (1.0 - smoothstep(0.85, 1.0, vUv.y)) * band * 0.32;
       gl_FragColor = vec4(vec3(1.0, 0.72, 0.38) * a, a); }`,
-    THREE.DoubleSide,
-  ),
 );
 beam.visible = false;
 scene.add(beam);
-const CROWD_SPOT = [
-  [-2.8, -1.0],
-  [-1.9, -2.3],
-  [0.2, -3.1],
-  [1.9, -2.3],
-  [2.8, -1.0],
-] satisfies Vec2[];
 
 const T = {
   lookReply: makeTag(
@@ -438,13 +370,17 @@ const T = {
   challenge: makeTag("tag-line", '<b style="color:#c9a45c">challenger</b> !challenge @rival'),
   fight: makeTag("tag-line", '<b style="color:#7fa7d9">rival</b> !fight'),
   roll: makeTag("tag-roll", ""),
-  hpA: makeTag("tag-hp", ""),
+  hpA: makeTag("tag-hp", 'Challenger · 100 HP<span class="bar"><i style="width:100%"></i></span>'),
   hpB: makeTag("tag-hp", ""),
-  loss: makeCall("+$3 a loss", "every finished duel pays"),
+  // a callout: a dot on the 3D point, a leader line, then a title and one line of detail
+  loss: makeTag(
+    "tag-call ",
+    '<i class="dot"></i><i class="lead"></i><span class="txt"><b>+$3 a loss</b><span>every finished duel pays</span></span>',
+  ),
   jump: makeTag("tag-jump", "!jump"),
   obsL: makeTag("tag-obs", "<b>OBS browser source</b> overlay link · 1920 × 1080"),
 };
-T.obsL.corner = true;
+T.obsL.corner = T.loss.call = true;
 const FIGHTERS = catalog.length || 56,
   top1 = crowd[0]?.person;
 const LOCKS = [
@@ -458,26 +394,17 @@ const LOCKS = [
   { key: "duel", title: "", sub: "", pos: "none" },
   {
     key: "top",
-    title: top1?.username ? `1. ${top1.displayName || top1.username}` : "Top of the ladder",
-    sub: top1?.username ? `${top1.elo} Elo · ${top1.wins}–${top1.losses}` : "example ladder",
+    title: top1 ? `1. ${top1.username}` : "Top of the ladder",
+    sub: top1 ? `${top1.elo} Elo · ${top1.wins}–${top1.losses}` : "example ladder",
     pos: "above",
   },
   { key: "loot", title: "+$5 a win", sub: "+$3 a loss · plus an upgrade point", pos: "left" },
 ] satisfies [LockInfo, LockInfo, LockInfo, LockInfo, LockInfo];
 const names = crowd.map((c) =>
-  makeTag(
-    "tag-line",
-    `<b style="color:${esc(c.person.color || "#c9a45c")}">${esc(c.person.displayName || c.person.username || c.person.avatar)}</b>`,
-  ),
+  makeTag("tag-line", `<b style="color:${esc(c.person.color)}">${esc(c.person.username)}</b>`),
 );
-const ranks = crowd.map((c, i) =>
-  makeTag(
-    "tag-rank",
-    c.person.username ? `<b>${c.person.elo}</b>${i + 1}. ${esc(c.person.displayName || c.person.username)}` : "",
-  ),
-);
+const ranks = crowd.map((c, i) => makeTag("tag-rank", `<b>${c.person.elo}</b>${i + 1}. ${esc(c.person.username)}`));
 
-// ---------- moods ----------
 // one entry per chapter: ember arena, teal dusk for chat, crimson duel, cold moonlit ladder, gold loot, blue night stream
 const hex = (...l: number[]) => l.map((h) => new THREE.Color(h));
 const rgb = (...l: number[]) => Array.from({ length: l.length / 3 }, (_, k) => new THREE.Color().fromArray(l, k * 3));
@@ -502,8 +429,10 @@ const MOOD = {
   moon: [1, 1, 0, 1, 0.4, 1],
   rim: [1.5, 0.9, 0.25, 1.4, 0.5, 1.8],
   bloom: [0.62, 0.62, 0.62, 0.62, 0.42, 0.62],
+  side: [1, 1, -1, 1, -1, 0.95], // which way the picture slides from the copy: +1 right, -1 left
 };
-function applyMood(C: number) {
+// sets the chapter mood for C (warm lights flicker with t) and returns MOOD.side
+function applyMood(C: number, t: number) {
   // in range (l[i]!, l[i + 1]!): i <= 4 and every MOOD list has 6 entries
   const i = Math.min(4, Math.floor(C)),
     f = ease(clamp01(C - i));
@@ -521,7 +450,10 @@ function applyMood(C: number) {
   key.intensity = n(MOOD.keyI);
   col(cool.color, MOOD.cool);
   cool.intensity = n(MOOD.coolI);
-  warm.forEach((l) => col(l.color, MOOD.warm));
+  warm.forEach((l, k) => {
+    col(l.color, MOOD.warm);
+    l.intensity = n(MOOD.warmI) * 16 + (reduced ? 0 : Math.sin(t * 7 + k * 2) * 1.5 + Math.sin(t * 17 + k) * 0.8);
+  });
   sky.material.uniforms.uMoon.value = n(MOOD.moon);
   rim.intensity = n(MOOD.rim);
   col(island.userData.floor.value, MOOD.floor);
@@ -531,11 +463,10 @@ function applyMood(C: number) {
   vec(film.uniforms.uLift.value, MOOD.lift);
   vec(film.uniforms.uGain.value, MOOD.gain);
   bloom.strength = n(MOOD.bloom);
-  return n(MOOD.warmI);
+  return n(MOOD.side);
 }
 
-// ---------- camera path ----------
-// each key looks at its subject; setViewOffset then slides the picture away from the copy (SIDE: +1 right, -1 left)
+// each key looks at its subject; setViewOffset then slides the picture away from the copy (MOOD.side)
 const KEYS = [
   { pos: [0.9, 1.15, 6.1], look: [0, 1.4, 0] },
   { pos: [0.8, 7.4, 6.9], look: [0, 0.5, -1.0] },
@@ -544,22 +475,14 @@ const KEYS = [
   { pos: [2.6, 2.2, 5.6], look: [-0.5, 1.75, 0.1] },
   { pos: [-3.2, 3.0, 28.6], look: [0, -0.5, 0] },
 ] satisfies { pos: Vec3; look: Vec3 }[];
-const SIDE = [1, 1, -1, 1, -1, 0.95];
-function sideAt(C: number) {
-  const i = Math.min(4, Math.floor(C)),
-    f = ease(clamp01(C - i));
-  return SIDE[i]! + (SIDE[i + 1]! - SIDE[i]!) * f; // in range: i <= 4 and SIDE has 6 entries
-}
-const posCurve = new THREE.CatmullRomCurve3(
-  KEYS.map((k) => new THREE.Vector3(...k.pos)),
-  false,
-  "centripetal",
-);
-const lookCurve = new THREE.CatmullRomCurve3(
-  KEYS.map((k) => new THREE.Vector3(...k.look)),
-  false,
-  "centripetal",
-);
+const curve = (pick: (k: (typeof KEYS)[number]) => Vec3) =>
+  new THREE.CatmullRomCurve3(
+    KEYS.map((k) => new THREE.Vector3(...pick(k))),
+    false,
+    "centripetal",
+  );
+const posCurve = curve((k) => k.pos),
+  lookCurve = curve((k) => k.look);
 const camPos = new THREE.Vector3(),
   camLook = new THREE.Vector3(),
   tmp = new THREE.Vector3(),
@@ -588,7 +511,6 @@ function cameraAt(C: number, portrait: boolean) {
   }
 }
 
-// ---------- footer ----------
 // the copy and the bottom bar are fixed to the screen; the site footer pushes them up as it scrolls in, instead of covering them
 const foot = document.querySelector(".site-foot");
 let footPx = -1;
@@ -603,7 +525,6 @@ addEventListener("scroll", footLift, { passive: true });
 addEventListener("resize", footLift);
 footLift();
 
-// ---------- pointer ----------
 const pointer = new THREE.Vector2(0, 0),
   pointerSmooth = new THREE.Vector2(0, 0);
 let pointerIn = false;
@@ -618,9 +539,7 @@ addEventListener(
   },
   { passive: true },
 );
-document.addEventListener("pointerleave", () => {
-  pointerIn = false;
-});
+document.addEventListener("pointerleave", () => (pointerIn = false));
 let overHero = false,
   jumpAt = -10;
 function jump() {
@@ -634,7 +553,6 @@ addEventListener("keydown", (e) => {
   if (e.key === "j" && !(e.target as Element).closest("input, textarea")) jump(); // a key event's target is the focused element or body
 });
 
-// ---------- state ----------
 let C = 0,
   targetC = 0,
   vC = 0;
@@ -668,14 +586,7 @@ function resize() {
   targetC = scrollC();
 }
 addEventListener("resize", resize);
-addEventListener(
-  "scroll",
-  () => {
-    targetC = scrollC();
-    document.body.classList.toggle("scrolled", scrollY > 40);
-  },
-  { passive: true },
-);
+addEventListener("scroll", () => (targetC = scrollC()), { passive: true });
 // smooth wheel: a mouse wheel moves the page in hard notches, so ease the page toward where the wheel wants it instead.
 // Keys, the scrollbar, touch and links keep the browser's own scrolling; any of them takes over from the wheel.
 let wantY: number | null = null,
@@ -753,7 +664,7 @@ function frame() {
       .add(camLook);
   const W = innerWidth,
     H = innerHeight,
-    side = sideAt(C);
+    side = applyMood(C, t);
   if (portrait) camera.setViewOffset(W, H, 0, H * (0.26 + 0.07 * clamp01(1 - Math.abs(C - 3) * 1.5)), W, H); // the ladder's pillar bases clear its headline
   else camera.setViewOffset(W, H, -side * W * (0.17 + 0.018 * clamp01(1 - C * 2)), 0, W, H);
   scrimL.style.opacity = portrait ? "0" : clamp01(side).toFixed(3);
@@ -767,12 +678,10 @@ function frame() {
     camera.position.addScaledVector(right, pointerSmooth.x * 0.28).addScaledVector(up, pointerSmooth.y * 0.16);
     camera.lookAt(camLook);
   }
-  const hitAge = t - rollAt,
-    hitK =
-      // in range: lastRoll >= 0 is checked first and lastRoll only holds ROLLS indexes
-      lastRoll >= 0 && ROLLS[lastRoll]!.by === "a" && hitAge < 0.6
-        ? (1 - hitAge / 0.6) * (ROLLS[lastRoll]!.v === 6 ? 1 : 0.45) // in range: as above
-        : 0;
+  const rolled = ROLLS[lastRoll],
+    hitAge = t - rollAt,
+    hitByA = rolled?.by === "a",
+    hitK = hitByA && hitAge < 0.6 ? (1 - hitAge / 0.6) * (rolled.v === 6 ? 1 : 0.45) : 0;
   if (hitK > 0 && !reduced)
     camera.position.add(tmp.set(Math.sin(t * 61) * 0.06, Math.sin(t * 47) * 0.05, 0).multiplyScalar(hitK));
 
@@ -798,17 +707,17 @@ function frame() {
     if (!reduced) hero.group.scale.y = 1 + Math.sin(t * 2.1) * 0.008;
     // cursor push: intersect the pointer ray with the hero's plane, in hero-local units
     overHero = false;
+    hero.pointer = null;
     if (pointerIn && C < 4.6) {
       ray.setFromCamera(pointer, camera);
       plane.constant = -hero.group.position.z;
       if (ray.ray.intersectPlane(plane, hit)) {
         const lx = hit.x - hero.group.position.x,
           ly = hit.y - hero.group.position.y;
-        const inside = Math.abs(lx) < hero.width * 0.6 && ly > -0.2 && ly < hero.height * 1.08;
-        overHero = inside;
-        hero.pointer = inside && !reduced ? { x: lx, y: ly } : null;
-      } else hero.pointer = null;
-    } else hero.pointer = null;
+        overHero = Math.abs(lx) < hero.width * 0.6 && ly > -0.2 && ly < hero.height * 1.08;
+        if (overHero && !reduced) hero.pointer = { x: lx, y: ly };
+      }
+    }
     document.body.style.cursor = overHero ? "pointer" : "";
     hero.update(reduced ? (heroGone > 0.5 ? 0 : 1) : Math.min(range(t - bornAt, 0.15, 2.3), 1 - heroGone));
     placeTag(T.jump, v.set(hero.group.position.x, hero.group.position.y + hero.height + 0.35, 0), t - jumpAt < 0.9);
@@ -817,18 +726,21 @@ function frame() {
   // crowd rains in during chapter 1, climbs the podium in chapter 3
   // both finish before the chapter settles at C = 3, so each fighter stands square on its tower instead of still sliding in
   const climb = ease(range(C, 2.62, 2.9)) * (1 - ease(range(C, 3.4, 3.75)));
-  const grow = range(C, 2.6, 2.88) * (1 - range(C, 3.45, 3.8));
+  const grow = range(C, 2.6, 2.88) * (1 - range(C, 3.45, 3.8)),
+    cell = podium.cell;
   let pi = 0;
   crowd.forEach((c, i) => {
     const a = Math.min(
       range(C, 0.3 + i * 0.07, 0.68 + i * 0.06),
       1 - range(C, 3.42 + i * 0.03, 3.68 + i * 0.03) + range(C, 4.4 + i * 0.05, 4.8 + i * 0.05),
     );
-    // in range (here and below): crowd has at most 5 fighters, like every per-rank list and names and ranks
-    const sx = CROWD_SPOT[i]![0] + (DUEL_SPOT[i]![0] - CROWD_SPOT[i]![0]) * duelIn,
-      sz = CROWD_SPOT[i]![1] + (DUEL_SPOT[i]![1] - CROWD_SPOT[i]![1]) * duelIn;
-    const px = PODIUM_X[i]!, // in range: as above
-      h = Math.round(stacks[i]! * grow) * podium.cell; // in range: as above
+    // in range (here and below): crowd has at most 5 fighters, like RANKS, names and ranks
+    const r = RANKS[i]!,
+      sx = r.spot[0] + (r.duel[0] - r.spot[0]) * duelIn,
+      sz = r.spot[1] + (r.duel[1] - r.spot[1]) * duelIn;
+    const px = r.x,
+      levels = Math.round(r.levels * grow),
+      h = levels * cell;
     c.f.group.position.set(sx + (px - sx) * climb, h * climb, sz + (PODIUM_Z - sz) * climb);
     c.f.update(reduced ? (C >= 0.5 ? 1 : 0) : a);
     placeTag(
@@ -839,7 +751,7 @@ function frame() {
     placeTag(
       ranks[i]!, // in range: as above
       v.set(px, h + c.f.height + 0.12, PODIUM_Z),
-      C > 2.95 && C < 3.4 && !portrait && Boolean(c.person.username) && i > 0,
+      C > 2.95 && C < 3.4 && !portrait && i > 0,
     );
     if (i === 0) {
       beam.visible = climb > 0.01;
@@ -848,26 +760,13 @@ function frame() {
       beam.material.uniforms.uTime.value = t;
     }
     // podium column: 2x2 cubes per level, brass at the top
-    const levels = Math.round(stacks[i]! * grow);
     for (let l = 0; l < levels; l++)
       for (let k = 0; k < 4; k++) {
-        m4.makeTranslation(
-          px + ((k & 1) - 0.5) * podium.cell,
-          (l + 0.5) * podium.cell - 0.0,
-          PODIUM_Z + ((k >> 1) - 0.5) * podium.cell,
-        );
+        const top = l === levels - 1,
+          rune = l % 4 === 2 && k === 3 - (i % 2);
+        m4.makeTranslation(px + ((k & 1) - 0.5) * cell, (l + 0.5) * cell, PODIUM_Z + ((k >> 1) - 0.5) * cell);
         podium.mesh.setMatrixAt(pi, m4);
-        podium.mesh.setColorAt(
-          pi,
-          l === levels - 1
-            ? COL_BRASS
-            : l % 4 === 2 && k === 3 - (i % 2)
-              ? COL_RUNE
-              : (l + k) % 2
-                ? COL_STONE_A
-                : COL_STONE_B,
-        );
-        pi++;
+        podium.mesh.setColorAt(pi++, top ? COL_BRASS : rune ? COL_RUNE : (l + k) % 2 ? COL_STONE_A : COL_STONE_B);
       }
   });
   podium.mesh.count = pi;
@@ -876,9 +775,7 @@ function frame() {
 
   if (rival) {
     const ra = range(C, 1.4, 1.8) * (1 - range(C, 2.62, 2.85));
-    let shake = 0;
-    const lastB = ROLLS[lastRoll];
-    if (lastB && lastB.by === "a" && t - rollAt < 0.5) shake = Math.sin(t * 70) * 0.05 * (1 - (t - rollAt) / 0.5);
+    const shake = hitByA && hitAge < 0.5 ? Math.sin(t * 70) * 0.05 * (1 - hitAge / 0.5) : 0;
     rival.group.position.set(DUEL_X + shake, 0, 0.15);
     rival.group.rotation.z = 0.05 * ra - shake * 0.8; // braced, rocked back by a hit
     clash.position.set(0, 1.25, 0.6);
@@ -892,16 +789,12 @@ function frame() {
     rival.update(reduced ? (ra > 0.5 ? 1 : 0) : ra);
   }
   // which roll has landed (scroll can run backwards)
-  let landed = -1;
-  ROLLS.forEach((r, i) => {
-    if (d >= r.at) landed = i;
-  });
+  const landed = ROLLS.findLastIndex((r) => d >= r.at);
   if (landed !== lastRoll) {
     if (landed > lastRoll && landed >= 0) {
-      const r = ROLLS[landed]!; // in range: landed >= 0 indexes ROLLS
-      if (r.v === 6) sound.hit(true);
-      else if (r.v === 5) sound.hit(false);
-      else sound.miss();
+      const pips = ROLLS[landed]!.v; // in range: landed >= 0 indexes ROLLS
+      if (pips < 5) sound.miss();
+      else sound.hit(pips === 6);
       rollAt = t;
     }
     lastRoll = landed;
@@ -912,20 +805,20 @@ function frame() {
     const next = ROLLS.find((r) => d < r.at),
       prev = landed >= 0 ? ROLLS[landed] : null;
     let rot = FACE_UP[prev ? prev.v : 1],
+      spin = 0,
       bounce = 0;
     if (next) {
       const u = range(d, next.at - 0.13, next.at);
       if (u > 0) {
-        const k = 1 - easeOut(u);
-        // [j]!: in range, j < 3; the map keeps the three axes
-        rot = FACE_UP[next.v].map((x, j) => x + k * [Math.PI * 4, Math.PI * 3, Math.PI * 2][j]!) as Vec3;
+        rot = FACE_UP[next.v];
+        spin = 1 - easeOut(u);
         bounce = Math.sin(u * Math.PI) * 0.55;
-        if (u > 0 && u < 0.05 && !reduced) sound.roll();
+        if (u < 0.05 && !reduced) sound.roll();
       }
     }
     const appear = easeOut(range(C, 1.55, 1.8)) * (1 - range(C, 2.55, 2.75));
     die.position.set(0, 2.45 + bounce + (reduced ? 0 : Math.sin(t * 1.6) * 0.05), 0.2);
-    e3.set(rot[0], rot[1], rot[2]);
+    e3.set(rot[0] + spin * (Math.PI * 4), rot[1] + spin * (Math.PI * 3), rot[2] + spin * (Math.PI * 2));
     die.quaternion.setFromEuler(e3).premultiply(DIE_TILT);
     if (!reduced) die.rotateOnWorldAxis(Y_AXIS, Math.sin(t * 0.9) * 0.18);
     die.scale.setScalar(Math.max(0.001, appear));
@@ -938,7 +831,6 @@ function frame() {
       : '<span class="n">d6</span><span class="t">Challenger swings first</span>',
   );
   placeTag(T.roll, v.set(0, 3.35, 0.2), duelTags);
-  T.hpA.set(`Challenger · 100 HP<span class="bar"><i style="width:100%"></i></span>`);
   T.hpB.set(`Rival · ${hpB} HP<span class="bar"><i style="width:${hpB}%"></i></span>`);
   placeTag(T.hpA, v.set(heroHome.x, -0.05, 0.6), duelTags && Boolean(hero));
   placeTag(T.hpB, v.set(DUEL_X, -0.05, 0.6), duelTags && Boolean(rival));
@@ -1045,10 +937,6 @@ function frame() {
     f.mesh.material.emissiveIntensity =
       2.8 + (reduced ? 0 : Math.sin(t * 9 + f.seed) * 0.35 + Math.sin(t * 23 + f.seed * 3) * 0.2);
   });
-  const warmI = applyMood(C);
-  warm.forEach((l, i) => {
-    l.intensity = warmI * 16 + (reduced ? 0 : Math.sin(t * 7 + i * 2) * 1.5 + Math.sin(t * 17 + i) * 0.8);
-  });
   islets.list.forEach((it, i) => {
     it.g.position.y = it.y + (reduced ? 0 : Math.sin(t * 0.4 + it.seed) * 0.25);
     it.g.rotation.y = reduced ? 0 : t * 0.03 * (i % 2 ? 1 : -1);
@@ -1084,7 +972,7 @@ function govern(ts: number) {
   frameMs = [];
   if (median > 22) {
     quality++;
-    if (gtao) gtao.enabled = QUALITY[quality]!.ao; // in range: the early return stops at the last step
+    if (gtao) gtao.enabled = false;
     resize();
   }
 }
@@ -1096,9 +984,7 @@ function loop(ts: number) {
   }
   requestAnimationFrame(loop);
 }
-document.addEventListener("visibilitychange", () => {
-  running = !document.hidden;
-});
+document.addEventListener("visibilitychange", () => (running = !document.hidden));
 
 // first frame, then hide the loader; restore the sound choice on the first click anywhere
 try {
@@ -1133,7 +1019,6 @@ try {
       culled.push(o);
       o.frustumCulled = false;
     }
-    // isInstancedMesh is declared only on InstancedMesh; any other object reads it as undefined.
     if (o.isInstancedMesh && o.count === 0) {
       empty.push(o);
       o.count = 1;
