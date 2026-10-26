@@ -36,14 +36,9 @@ import type { HttpError } from "./http.ts";
 import type { Env } from "./env.ts";
 import type { GameState } from "./model.ts";
 import type { JsonObject, Parsed } from "./parse.ts";
-// Live-fix space (/api/dev/*). Owned by Lane E. worker.ts and channel.ts only call the exports below;
-// keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
-// configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
-//   GitHub (code editor + deploy flow): secret GITHUB_TOKEN, text GITHUB_REPO ("owner/name"),
-//     optional GITHUB_BASE_BRANCH (main) and GITHUB_WORKFLOW (deploy.yml).
-//   Cloudflare read-only API (request usage, versions): secret CF_API_TOKEN, text CF_ACCOUNT_ID.
-//   Current version: version_metadata binding CF_VERSION_METADATA.
-// The Worker never holds a token that can deploy; deploys run in GitHub Actions (docs/LIVE_FIX.md).
+// Live-fix space (/api/dev/*), owner only; worker.ts and channel.ts call only the exports (docs/CONTRACTS.md §8).
+// GitHub and Cloudflare are optional and answer 501 *_not_configured without their settings (docs/LIVE_FIX.md).
+// The Worker never holds a token that can deploy; deploys run in GitHub Actions.
 
 /** The Worker's request context for /api/dev/* (server/worker.ts). */
 export type DevContext = {
@@ -124,7 +119,6 @@ const fail = (status: number, error: string, reason: string, extra: JsonObject =
   json({ error, reason, ...extra }, status);
 
 // ---------- Worker side ----------
-// c = { user, owner, dev (test-site dev token: no Origin check), url, path, roomFetch(channel, path, init?), chatAction(channel, action, { takeover? }), bodyJson(request, limit), waitUntil(promise) }
 export async function handleDeveloper(request: Request, env: Env, c: DevContext): Promise<Response> {
   if (!c.user) return fail(401, "Sign in with Twitch", "sign_in_required");
   if (!c.owner) return fail(403, "Owner only", "owner_only");
@@ -175,7 +169,10 @@ export async function handleDeveloper(request: Request, env: Env, c: DevContext)
 
 const ROUTES: { [op: string]: { [method: string]: Handler } } = {
   diagnostics: { GET: diagnostics },
-  channels: { GET: channelsList, POST: channelsAction },
+  channels: {
+    GET: async ({ env }) => json({ ...(await overview(env)), progressBatch: PROGRESS_MAX }),
+    POST: channelsAction,
+  },
   progress: { GET: progress },
   export: { GET: exportData },
   restore: { GET: restoreInfo, POST: restore },
@@ -203,15 +200,9 @@ const ROUTES: { [op: string]: { [method: string]: Handler } } = {
   rollback: { POST: withGithub(rollback) },
 };
 
-// Owner Channels table. Setup progress is a separate route (below), read in batches by the page, because each
-// channel's progress is one room read and a Worker request may make at most 50 subrequests (Free plan).
+// GET /api/dev/progress?logins=a,b,c: setup progress for up to 40 channels that are on. The owner page reads it in
+// batches because a Worker request may make at most 50 subrequests (Free plan): one AuthStore read plus one per login.
 const PROGRESS_MAX = 40;
-async function channelsList({ env }: RouteArgs): Promise<Response> {
-  return json({ ...(await overview(env)), progressBatch: PROGRESS_MAX });
-}
-
-// GET /api/dev/progress?logins=a,b,c: setup progress for up to 40 channels that are on (built in or enabled).
-// One AuthStore read plus one room read per login, so 41 subrequests at most.
 async function progress({ env, c, query }: RouteArgs): Promise<Response> {
   const raw = String(query.get("logins") || "")
       .split(",")
@@ -219,20 +210,16 @@ async function progress({ env, c, query }: RouteArgs): Promise<Response> {
       .filter(Boolean),
     logins = [...new Set(raw)];
   if (!logins.length)
-    return fail(
-      400,
-      "logins is required: up to " + PROGRESS_MAX + " comma-separated channel logins",
-      "logins_required",
-    );
+    return fail(400, `logins is required: up to ${PROGRESS_MAX} comma-separated channel logins`, "logins_required");
   if (logins.length > PROGRESS_MAX)
-    return fail(400, "At most " + PROGRESS_MAX + " logins per request", "too_many_logins", { max: PROGRESS_MAX });
+    return fail(400, `At most ${PROGRESS_MAX} logins per request`, "too_many_logins", { max: PROGRESS_MAX });
   const on = new Set([
     ...CHANNELS,
     ...(await listRecords(env, "channel:")).filter((r) => !r.value.pausedAt).map((r) => r.value.login),
   ]);
   const invalid = logins.filter((login) => !LOGIN.test(login) || !on.has(login));
   if (invalid.length)
-    return fail(400, "Not a channel that is on: " + invalid.slice(0, 5).join(", "), "unknown_channel", { invalid });
+    return fail(400, `Not a channel that is on: ${invalid.slice(0, 5).join(", ")}`, "unknown_channel", { invalid });
   const reads = await Promise.all(
     logins.map((login) =>
       c
@@ -281,7 +268,7 @@ async function exportData({ env, c, query }: RouteArgs): Promise<Response> {
   const login = String(query.get("channel") || "").toLowerCase();
   if (!login) return fail(400, "Use ?channel=<login> or ?registry=1", "export_target_required");
   const state = await channelState(env, login);
-  if (!state) return fail(404, login + " is not set up", "unknown_channel");
+  if (!state) return fail(404, `${login} is not set up`, "unknown_channel");
   const r = await c.roomFetch(login, "/dev/export");
   if (!r.ok) return fail(502, "The channel room could not be read", "room_unavailable", { status: r.status });
   return download(
@@ -291,11 +278,7 @@ async function exportData({ env, c, query }: RouteArgs): Promise<Response> {
   );
 }
 
-const exportHead = (at: number) => ({
-  format: "mini-chat-export",
-  version: 1,
-  exportedAt: new Date(at).toISOString(),
-});
+const exportHead = (at: number) => ({ format: "mini-chat-export", version: 1, exportedAt: new Date(at).toISOString() });
 
 // Daily backups (server/backups.ts). GET ?channel= lists the days kept; &day= downloads that day's export; &user= (login
 // or id) reads one fighter from it. POST {channel?} backs up one channel or all of them now.
@@ -311,14 +294,14 @@ async function backupsRead({ env, query }: RouteArgs): Promise<Response> {
   if (!day) return json({ channel: login, keepDays: BACKUP_DAYS, backups: await listBackups(env.BACKUPS, login) });
   if (!DAY.test(day)) return fail(400, "Use &day=YYYY-MM-DD", "invalid_day");
   const stored = await readBackup(env.BACKUPS, login, day);
-  if (!stored) return fail(404, "No backup of " + login + " on " + day, "no_backup");
+  if (!stored) return fail(404, `No backup of ${login} on ${day}`, "no_backup");
   // the handler's catch logs it and answers upstream_error, as it did when the stored JSON did not parse
-  if (!stored.ok) throw new Error("Backup of " + login + " on " + day + " is unreadable: " + stored.error);
+  if (!stored.ok) throw new Error(`Backup of ${login} on ${day} is unreadable: ${stored.error}`);
   const data = stored.value;
   if (!user) return download(data, `mini-chat-${login}-${day}-backup.json`);
   const lower = user.toLowerCase(),
     profile = data.profiles.find((p) => p.userId === user || String(p.username).toLowerCase() === lower);
-  if (!profile) return fail(404, user + " is not in the " + day + " backup", "fighter_not_in_backup");
+  if (!profile) return fail(404, `${user} is not in the ${day} backup`, "fighter_not_in_backup");
   const mine = (x: { userId: string }) => x.userId === profile.userId;
   return json({
     channel: login,
@@ -334,7 +317,7 @@ async function backupsRun({ env, c, body }: RouteArgs): Promise<Response> {
   const input = parseBackupsRun(body);
   if (!input.ok) return fail(400, "channel must be a login", input.error);
   const login = input.value.channel.toLowerCase();
-  if (login && !(await channelState(env, login))) return fail(404, login + " is not set up", "unknown_channel");
+  if (login && !(await channelState(env, login))) return fail(404, `${login} is not set up`, "unknown_channel");
   const now = Date.now();
   return json({ day: backupDay(now), channels: await backupChannels(env, now, c.roomFetch, login) });
 }
@@ -364,18 +347,16 @@ async function restore({ env, c, body }: RouteArgs): Promise<Response> {
   const input = parseRestore(body);
   if (!input.ok) return fail(400, "Send {channel, at} or {channel, undo: true}", input.error);
   const login = input.value.channel.toLowerCase(),
+    key = "restore:" + login,
     { undo, at } = input.value,
     now = Date.now();
   if (!LOGIN.test(login) || !(await channelState(env, login)))
-    return fail(404, (login || "That channel") + " is not set up", "unknown_channel");
-  const last = undo ? await record<RestoreRecord | null>(env, "restore:" + login) : null;
-  if (undo && !last?.undo) return fail(409, "There is no restore to undo on " + login, "nothing_to_undo");
-  if (
-    !undo &&
-    !(Number.isFinite(at) && at >= now - RESTORE_WINDOW_MS + RESTORE_MARGIN_MS && at <= now - RESTORE_MARGIN_MS)
-  ) {
-    return fail(400, "Pick a time between 30 days ago and 1 minute ago", "invalid_restore_time");
-  }
+    return fail(404, `${login || "That channel"} is not set up`, "unknown_channel");
+  const last = undo ? await record<RestoreRecord | null>(env, key) : null;
+  if (undo && !last?.undo) return fail(409, `There is no restore to undo on ${login}`, "nothing_to_undo");
+  const inWindow =
+    Number.isFinite(at) && at >= now - RESTORE_WINDOW_MS + RESTORE_MARGIN_MS && at <= now - RESTORE_MARGIN_MS;
+  if (!undo && !inWindow) return fail(400, "Pick a time between 30 days ago and 1 minute ago", "invalid_restore_time");
   const post = (path: string, data: unknown) => c.roomFetch(login, path, postJson(data));
   // undo is only true here when last.undo is set (checked above)
   const r = await post("/dev/restore", undo ? { bookmark: last!.undo } : { at });
@@ -397,17 +378,11 @@ async function restore({ env, c, body }: RouteArgs): Promise<Response> {
       // the room's /dev/restored answer
       .then((x) => (x.ok ? x.json<{ players: number; profiles: number }>() : null))
       .catch(() => null);
-  let undoSaved = true;
-  try {
-    await record(
-      env,
-      "restore:" + login,
-      undo ? null : { at, restoredAt: now, by: c.user.login, undo: point.undo },
-      now + RESTORE_WINDOW_MS,
-    );
-  } catch {
-    undoSaved = false;
-  }
+  const saved = undo ? null : { at, restoredAt: now, by: c.user.login, undo: point.undo };
+  const undoSaved = await record(env, key, saved, now + RESTORE_WINDOW_MS).then(
+    () => true,
+    () => false,
+  );
   if (!after)
     return fail(
       502,
@@ -431,9 +406,9 @@ async function channelsAction({ env, body }: RouteArgs): Promise<Response> {
   const input = parseChannelsAction(body);
   if (!input.ok) return fail(400, "login must be a channel login", input.error);
   const { action, login } = input.value;
+  if (action !== "pause" && action !== "resume") return fail(400, "Unknown action", "unknown_action");
   try {
-    if (action === "pause" || action === "resume") await setPaused(env, login, action === "pause", "owner");
-    else return fail(400, "Unknown action", "unknown_action");
+    await setPaused(env, login, action === "pause", "owner");
   } catch (error) {
     const e = error as HttpError; // setPaused throws an HttpError with a status and reason; anything else is unexpected
     if (e.status && e.reason) return fail(e.status, e.message, e.reason);
@@ -669,9 +644,7 @@ function ghError(r: { status: number; message?: unknown }, what: string): Respon
     // GitHub error bodies are { message }; clean() reads anything through String()
     `${what}: GitHub ${r.status} ${clean(r.message || "", 200)}`.trim(),
     "github_error",
-    {
-      githubStatus: r.status,
-    },
+    { githubStatus: r.status },
   );
 }
 const enc = (path: string) => path.split("/").map(encodeURIComponent).join("/");
@@ -868,14 +841,12 @@ async function dispatch(
     ? { ok: true, dispatched: { requestId, ref, ...all } }
     : { ok: false, response: ghError(r, "Start workflow") };
 }
-function common(
-  body: JsonObject,
-): { error: Response; sha?: undefined; reason?: undefined } | { error?: undefined; sha: unknown; reason: string } {
+function common(body: JsonObject): Step<{ sha: unknown; reason: string }> {
   if (body.sha !== undefined && body.sha !== "" && (typeof body.sha !== "string" || !SHA.test(body.sha)))
-    return { error: fail(400, "sha must be a 40-character commit sha", "invalid_sha") };
+    return { ok: false, response: fail(400, "sha must be a 40-character commit sha", "invalid_sha") };
   if (body.reason !== undefined && typeof body.reason !== "string")
-    return { error: fail(400, "reason must be a string", "invalid_reason") };
-  return { sha: body.sha || "", reason: clean(body.reason || "", 100) };
+    return { ok: false, response: fail(400, "reason must be a string", "invalid_reason") };
+  return { ok: true, sha: body.sha || "", reason: clean(body.reason || "", 100) };
 }
 
 async function deployTest({ g, gh, body }: GithubArgs): Promise<Response> {
@@ -885,7 +856,7 @@ async function deployTest({ g, gh, body }: GithubArgs): Promise<Response> {
   if (typeof ref !== "string" || !validRef(ref, g.base))
     return fail(400, "ref must be the base branch, live-fix/* or hotfix/*", "invalid_ref");
   const x = common(body);
-  if (x.error) return x.error;
+  if (!x.ok) return x.response;
   const d = await dispatch(g, gh, ref, { target: "test", sha: x.sha, reason: x.reason || "test deploy of " + ref });
   return d.ok ? json({ ok: true, ...d.dispatched }, 202) : d.response;
 }
@@ -899,7 +870,7 @@ async function promote({ g, gh, body }: GithubArgs): Promise<Response> {
   if (body.number !== undefined && (!Number.isInteger(body.number) || body.number < 1))
     return fail(400, "number must be a pull request number", "invalid_number");
   const x = common(body);
-  if (x.error) return x.error;
+  if (!x.ok) return x.response;
   let merged: { number: unknown; sha: unknown; alreadyMerged: boolean } | null = null,
     sha = x.sha;
   if (body.number) {
@@ -943,7 +914,7 @@ async function hotfix({ g, gh, body }: GithubArgs): Promise<Response> {
   if (typeof body.branch !== "string" || !body.branch.startsWith("hotfix/") || !BRANCH.test(body.branch))
     return fail(400, "branch must look like hotfix/<name>", "invalid_branch");
   const x = common(body);
-  if (x.error) return x.error;
+  if (!x.ok) return x.response;
   const d = await dispatch(g, gh, body.branch, {
     target: "production",
     sha: x.sha,
@@ -973,18 +944,15 @@ async function rollback({ g, gh, body }: GithubArgs): Promise<Response> {
   // Object.hasOwn turns any value into a key, so a non-string target is simply not found
   if (!Object.hasOwn(SCRIPTS, body.target as PropertyKey))
     return fail(400, "target must be test or production", "invalid_target");
-  if (
-    body.versionId !== undefined &&
-    body.versionId !== "" &&
-    (typeof body.versionId !== "string" || !UUID.test(body.versionId))
-  )
+  const { versionId = "" } = body;
+  if (versionId !== "" && (typeof versionId !== "string" || !UUID.test(versionId)))
     return fail(400, "versionId must be a Worker version UUID", "invalid_version");
   const x = common(body);
-  if (x.error) return x.error;
+  if (!x.ok) return x.response;
   const d = await dispatch(g, gh, g.base, {
     operation: "rollback",
     target: body.target,
-    version_id: body.versionId || "",
+    version_id: versionId,
     reason: x.reason || "rollback " + body.target,
   });
   return d.ok ? json({ ok: true, ...d.dispatched }, 202) : d.response;
@@ -1000,6 +968,10 @@ function clean(value: unknown, max: number): string {
 // Reached only with the internal secret (ChannelRoom.authorized), so these routes trust the caller.
 /** An error_log row. */
 type LogRow = { id: number; at: number; source: string; message: string; context: string };
+/** What the Worker posts to /dev/backup. */
+type BackupBody = { at?: unknown; status?: unknown };
+/** What the Worker posts to /dev/log. */
+type LogBody = { source?: unknown; message?: unknown; context?: unknown };
 
 export async function handleRoomDeveloper(
   room: DevRoom,
@@ -1078,9 +1050,7 @@ export async function handleRoomDeveloper(
   }
   if (path === "/dev/log" && method === "POST") {
     // Any JSON: trace stringifies and clips every field
-    const body = await request
-      .json<{ source?: unknown; message?: unknown; context?: unknown } | null>()
-      .catch((): { source?: unknown; message?: unknown; context?: unknown } => ({}));
+    const body = await request.json<LogBody | null>().catch((): LogBody => ({}));
     // The Worker logs errors here, and as "warn" the profile saves it refuses before they reach the room.
     const context = body?.context;
     trace(
@@ -1127,9 +1097,7 @@ export async function handleRoomDeveloper(
   if (path === "/dev/backup" && method === "POST") {
     if (!room.env.BACKUPS) return json({ error: "No BACKUPS database is bound", reason: "backups_unavailable" }, 501);
     // Any JSON: both fields are checked below
-    const { at, status } = await request
-      .json<{ at?: unknown; status?: unknown }>()
-      .catch((): { at?: unknown; status?: unknown } => ({}));
+    const { at, status } = await request.json<BackupBody>().catch((): BackupBody => ({}));
     // includes() is false for anything but those strings
     if (!Number.isInteger(at) || !["builtin", "on", "paused"].includes(status as string))
       return json({ error: "Send {at, status}", reason: "invalid_backup" }, 400);

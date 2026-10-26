@@ -152,12 +152,7 @@ function summary(lines: string[]) {
 }
 
 /** What run() resolves to: the deploy or rollback plan it carried out. */
-export type RunResult = {
-  previous: string | null;
-  target?: string | null;
-  versionId?: string;
-  versions?: Split[];
-};
+export type RunResult = { previous: string | null; target?: string | null; versionId?: string; versions?: Split[] };
 
 export async function run(opts: ReleaseOpts, env: ApiEnv = process.env, deps: ReleaseDeps = {}): Promise<RunResult> {
   const call = api(env, deps.fetch),

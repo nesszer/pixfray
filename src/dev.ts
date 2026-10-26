@@ -894,9 +894,7 @@ $<HTMLSelectElement>("#log-channel").addEventListener("change", () => {
 on("#clear-logs", (b) =>
   busy(b, async () => {
     if (!confirm("Clear every stored log row for " + $<HTMLSelectElement>("#log-channel").value + "?")) return;
-    const r = await api("/api/dev/logs?channel=" + $<HTMLSelectElement>("#log-channel").value, {
-      method: "DELETE",
-    });
+    const r = await api("/api/dev/logs?channel=" + $<HTMLSelectElement>("#log-channel").value, { method: "DELETE" });
     if (r.ok) {
       loadLogs();
       loadDiagnostics();
