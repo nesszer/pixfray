@@ -114,31 +114,16 @@ test("keepGood drops the entries that fail, warning once with the first reason",
   assert.equal(warn.mock.callCount(), 1);
 });
 
-test("overlay looks, players and duels: typed fields checked, extra fields kept", () => {
+test("overlay looks, players, duels and snapshots: typed fields checked, extra fields kept", () => {
   fits(parseLook, { avatar: "knight", color: "#fff", elo: 1000, registered: true, sparkle: [1] });
   fits(parseArenaPlayer, { userId: "1", username: "a" });
   fits(parseArenaDuel, DUEL);
-});
-
-test("overlay snapshot: a bad entry drops only that entry", (t) => {
-  const warn = t.mock.method(console, "warn", () => {});
   const snapshot = { revision: 4, paused: false, chat: null, build: "abc", players: [], duels: [], events: [] };
   assert.equal(parseArenaSnapshot(snapshot).value, snapshot, "a snapshot that fits passes as itself");
-  assert.deepEqual(
-    parseArenaSnapshot({ revision: 5, players: [{ userId: "1" }, { userId: 2 }], events: [{ type: "" }] }),
-    { ok: true, value: { revision: 5, players: [{ userId: "1" }], events: [] } },
-  );
-  assert.equal(warn.mock.callCount(), 2, "one warning for players, one for events");
 });
 
-test("overlay looks push, saved chat looks and demo messages", (t) => {
-  const warn = t.mock.method(console, "warn", () => {});
+test("overlay looks push, saved chat looks and demo messages", () => {
   fits(parseLooksMessage, { type: "looks", looks: { ann: { avatar: "mage" }, bob: null } });
-  assert.deepEqual(parseLooksMessage({ type: "looks", looks: { ann: { avatar: 1 }, bob: null } }), {
-    ok: true,
-    value: { type: "looks", looks: { bob: null } },
-  });
-  assert.equal(warn.mock.callCount(), 1);
 
   const saved = parseCosmeticSettings('{"ann":{"avatar":"mage"},"bob":{"color":5},"__proto__":{"color":"#000"}}');
   assert.equal(saved.ok, true);
@@ -188,15 +173,99 @@ test("session and access", () => {
   fits(parseAccess, { canManage: true });
 });
 
-test("fighter page: profile, saved builds, purchases, shop, config, leaderboard and the stored draft", (t) => {
+const PROFILE = { wins: 1, losses: 0, elo: 1000, dollars: 5, avatar: "knight", hat: "cap" };
+const ROW = { userId: "1", username: "ann", color: "#fff", avatar: "knight", elo: 1010, wins: 2, losses: 1 };
+const CONFIG = { maxDuels: 3, maxHp: 100, inactivityMs: 30000 };
+const MOD_DUEL = { id: "d", a: "1", b: "2", status: "pending", expiresAt: 9 };
+const PLAYER = {
+  userId: "1",
+  username: "ann",
+  color: "#fff",
+  respawnAt: 0,
+  hp: 100,
+  elo: 1000,
+  wins: 0,
+  losses: 0,
+  lastSeen: 1,
+};
+const ROOM = { revision: 1, config: CONFIG, configVersion: 2, duels: [MOD_DUEL], players: [PLAYER] };
+const ADMIN = { ...ROOM, overlays: 1, history: [{ version: 1 }] };
+const RUN = { createdAt: "2026-10-12", url: "u", title: null, id: 1, branch: null, conclusion: null, status: "queued" };
+const TARGET = { deployments: [{ createdOn: "x", versions: [] }], versions: [{ id: "v" }] };
+const VERSION = { version: 3, at: 1, note: null };
+const CHANNEL = { login: "bob", pausedAt: null };
+const PROGRESS = { overlays: 1, rejectedAt: 0, lastCommandAt: 0, lastChatAt: 0, commandsWorking: 1, commands: 2 };
+const LOG = { at: 1, source: "chat", message: "hi", context: { a: 1 } };
+const DAY = { day: "2026-10-16", counts: { requests: 40, alarms: 3 } };
+
+// Each list with a bad entry: what passes, and how many warnings (one per list kind) it logs.
+const DROPS: [string, () => unknown, unknown, number][] = [
+  [
+    "overlay snapshot",
+    () => parseArenaSnapshot({ revision: 5, players: [{ userId: "1" }, { userId: 2 }], events: [{ type: "" }] }),
+    { revision: 5, players: [{ userId: "1" }], events: [] },
+    2,
+  ],
+  [
+    "looks push",
+    () => parseLooksMessage({ type: "looks", looks: { ann: { avatar: 1 }, bob: null } }),
+    { type: "looks", looks: { bob: null } },
+    1,
+  ],
+  [
+    "saved builds",
+    () => parseProfile({ ...PROFILE, builds: [{ avatar: "mage" }, "lost", { color: 3 }] }),
+    { ...PROFILE, builds: [{ avatar: "mage" }, null, null] },
+    1,
+  ],
+  ["leaderboard", () => parseLeaderboard([ROW, { ...ROW, elo: "high" }]), [ROW], 1],
+  [
+    "admin duels and players",
+    () => parseAdmin({ ...ADMIN, duels: [MOD_DUEL, { id: "e" }], players: [{ userId: "2" }] }),
+    { ...ADMIN, duels: [MOD_DUEL], players: [] },
+    2,
+  ],
+  ["runs", () => parseRuns([RUN, { ...RUN, id: "1" }]), [RUN], 1],
+  ["deploy targets", () => parseVersions({ prod: TARGET, test: { deployments: "none" } }), { prod: TARGET }, 1],
+  [
+    "config versions",
+    () => parseSettings({ config: null, configVersion: 3, history: [VERSION, { version: "2" }] }),
+    { config: null, configVersion: 3, history: [VERSION] },
+    1,
+  ],
+  [
+    "channels",
+    () => parseChannels({ max: 10, builtin: ["ann"], channels: [CHANNEL, { login: 5 }] }),
+    { max: 10, builtin: ["ann"], channels: [CHANNEL] },
+    1,
+  ],
+  [
+    "progress",
+    () => parseProgress({ progress: { ann: PROGRESS, bob: { overlays: "1" } } }),
+    { progress: { ann: PROGRESS } },
+    1,
+  ],
+  ["logs", () => parseLogs([LOG, { at: 1 }]), [LOG], 1],
+  [
+    "stats",
+    () => parseStats({ channel: "ann", days: [DAY, { day: "2026-10-15", counts: { alarms: "3" } }] }),
+    [DAY],
+    1,
+  ],
+];
+
+test("a bad list entry drops only that entry, with one warning per list kind", (t) => {
   const warn = t.mock.method(console, "warn", () => {});
-  const profile = { wins: 1, losses: 0, elo: 1000, dollars: 5, avatar: "knight", hat: "cap" };
-  fits(parseProfile, { ...profile, builds: [null, { avatar: "mage" }] });
-  assert.deepEqual(parseProfile({ ...profile, builds: [{ avatar: "mage" }, "lost", { color: 3 }] }), {
-    ok: true,
-    value: { ...profile, builds: [{ avatar: "mage" }, null, null] },
-  });
-  assert.equal(warn.mock.callCount(), 1, "one warning for the bad saved builds");
+  for (const [name, parse, value, warnings] of DROPS) {
+    resetWarnings();
+    warn.mock.resetCalls();
+    assert.deepEqual(parse(), { ok: true, value }, name);
+    assert.equal(warn.mock.callCount(), warnings, name + " warnings");
+  }
+});
+
+test("fighter page: profile, saved builds, purchases, shop, config and the stored draft", () => {
+  fits(parseProfile, { ...PROFILE, builds: [null, { avatar: "mage" }] });
   fits(parseProfile, { wins: 1, losses: 0, elo: 1000 });
   fits(parseProfileOrNone, null);
   fits(parseProfileSaved, { profile: { wins: 0, losses: 0, elo: 1000, dollars: 0 } });
@@ -206,103 +275,25 @@ test("fighter page: profile, saved builds, purchases, shop, config, leaderboard 
     items: { hats: [{ id: "cap", label: "Cap", price: 20 }] },
     slots: { prices: [null, 40], max: 3 },
   });
-
   const config = { initialElo: 1000, challengeTimeoutMs: 60000, rematchDelayMs: 0, quickDuel: true };
   assert.deepEqual(parseStateConfig({ config, players: [] }), { ok: true, value: config });
-
-  const row = { userId: "1", username: "ann", color: "#fff", avatar: "knight", elo: 1010, wins: 2, losses: 1 };
-  assert.deepEqual(parseLeaderboard([row, { ...row, elo: "high" }]), { ok: true, value: [row] });
-
   fits(parseDraft, null);
   assert.deepEqual(parseDraft('{"d":{"avatar":"mage"},"at":5}'), { ok: true, value: { d: { avatar: "mage" }, at: 5 } });
 });
 
-test("mod page: the admin answer and live snapshots, with bad duels and players dropped", (t) => {
-  const warn = t.mock.method(console, "warn", () => {});
-  const config = { maxDuels: 3, maxHp: 100, inactivityMs: 30000 };
-  const duel = { id: "d", a: "1", b: "2", status: "pending", expiresAt: 9 };
-  const player = {
-    userId: "1",
-    username: "ann",
-    color: "#fff",
-    respawnAt: 0,
-    hp: 100,
-    elo: 1000,
-    wins: 0,
-    losses: 0,
-    lastSeen: 1,
-  };
-  const room = { revision: 1, config, configVersion: 2, duels: [duel], players: [player] };
-  const admin = { ...room, overlays: 1, history: [{ version: 1 }] };
-  fits(parseAdmin, admin);
-  assert.deepEqual(parseAdmin({ ...admin, duels: [duel, { id: "e" }], players: [{ userId: "2" }] }), {
-    ok: true,
-    value: { ...admin, duels: [duel], players: [] },
-  });
-  assert.equal(warn.mock.callCount(), 2, "one warning for duels, one for players");
+test("mod page: the admin answer and live snapshots", () => {
+  fits(parseAdmin, ADMIN);
   for (const [patch, error] of [
     [{ config: { maxDuels: 3 } }, "admin.config has the wrong type"],
     [{ streamelements: "on" }, "admin.streamelements has the wrong type"],
   ] as const)
-    assert.deepEqual(parseAdmin({ ...admin, ...patch }), { ok: false, error });
+    assert.deepEqual(parseAdmin({ ...ADMIN, ...patch }), { ok: false, error });
   // the page reads these loosely (overlays || 0, botStatus?.heardAt), so an answer without them still reads
-  fits(parseAdmin, { ...room, history: [{ version: 1 }], botStatus: null });
-
-  const snap = { ...room, type: "snapshot", revision: 2, duels: [], events: [] };
+  fits(parseAdmin, { ...ROOM, history: [{ version: 1 }], botStatus: null });
+  const snap = { ...ROOM, type: "snapshot", revision: 2, duels: [], events: [] };
   fits(parseAdminSnapshot, snap);
   assert.deepEqual(parseAdminSnapshot({ ...snap, type: "events" }), {
     ok: false,
     error: "snapshot.type has the wrong type",
   });
-});
-
-test("owner page: runs, versions, settings, channels, progress and logs", (t) => {
-  const warn = t.mock.method(console, "warn", () => {});
-  const run = {
-    createdAt: "2026-10-12",
-    url: "u",
-    title: null,
-    id: 1,
-    branch: null,
-    conclusion: null,
-    status: "queued",
-  };
-  assert.deepEqual(parseRuns([run, { ...run, id: "1" }]), { ok: true, value: [run] });
-
-  const target = { deployments: [{ createdOn: "x", versions: [] }], versions: [{ id: "v" }] };
-  assert.deepEqual(parseVersions({ prod: target, test: { deployments: "none" } }), {
-    ok: true,
-    value: { prod: target },
-  });
-
-  const version = { version: 3, at: 1, note: null };
-  assert.deepEqual(parseSettings({ config: null, configVersion: 3, history: [version, { version: "2" }] }), {
-    ok: true,
-    value: { config: null, configVersion: 3, history: [version] },
-  });
-
-  const channel = { login: "bob", pausedAt: null };
-  assert.deepEqual(parseChannels({ max: 10, builtin: ["ann"], channels: [channel, { login: 5 }] }), {
-    ok: true,
-    value: { max: 10, builtin: ["ann"], channels: [channel] },
-  });
-
-  const progress = { overlays: 1, rejectedAt: 0, lastCommandAt: 0, lastChatAt: 0, commandsWorking: 1, commands: 2 };
-  assert.deepEqual(parseProgress({ progress: { ann: progress, bob: { overlays: "1" } } }), {
-    ok: true,
-    value: { progress: { ann: progress } },
-  });
-
-  const log = { at: 1, source: "chat", message: "hi", context: { a: 1 } };
-  assert.deepEqual(parseLogs([log, { at: 1 }]), { ok: true, value: [log] });
-  const day = { day: "2026-10-16", counts: { requests: 40, alarms: 3 } };
-  assert.deepEqual(parseStats({ channel: "ann", days: [day, { day: "2026-10-15", counts: { alarms: "3" } }] }), {
-    ok: true,
-    value: [day],
-  });
-  assert.equal(
-    warn.mock.callCount(),
-    7,
-    "one warning per list kind: runs, targets, config versions, channels, progress, logs, stats",
-  );
 });

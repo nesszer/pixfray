@@ -1,24 +1,9 @@
-// Custom character uploader (Lane D). Browser only; vite.config.ts (servedBuild) serves it as /upload.js.
-//
-// Mount API, used by the /admin page (src/admin.ts):
-//   const { mountUpload } = await import('/upload.js');
-//   const handle = await mountUpload(root, { channel, usage, limits, items, refresh });
-//     root     Element to render into (its children are replaced).
-//     channel  Channel login (required).
-//     usage    Optional {count, limit, bytes} from GET /api/admin/:channel (customUsage).
-//     limits   Optional limits object; the stricter of these and the built-in LIMITS is enforced.
-//     items    Optional custom catalog entries (GET /api/assets/:channel items) for the delete list.
-//     refresh  Optional async () => void, called after a save or delete so the page can reload its data.
-//   handle = { destroy() }  stops the preview loop and empties root.
-// Without `items`/`usage` the module loads them itself from GET /api/assets/:channel (moderator session needed).
-//
-// Two ways to add a character:
-//   One PNG       one image; scaled down to fit 128 x 128 if needed. The overlay animates it with movement and
-//                 effects (flash, shake, fade) for attacks and knockouts.
-//   PNG frames    PNG files per animation (idle, walk, attack, knockout). Files in a slot play in name order.
-// Frames are aligned (bottom-centre) and packed into one atlas in the browser, previewed, then posted as
-// POST /api/assets/:channel {label, mode, fps, atlas:<base64 PNG>, frames, animations}. The server checks every
-// limit again: PNG only, 24 frames, 128 x 128 per frame, 1.5 MB per atlas, 24 characters per channel.
+// Custom character uploader, served as /upload.js. The mod page mounts it (src/admin/characters.ts) with
+// mountUpload(root, { channel, usage, limits, items, refresh }) (docs/CONTRACTS.md section 8); the stricter of the given
+// limits and LIMITS applies, and without items or usage it loads them from GET /api/assets/:channel.
+// One PNG is scaled down to fit and animated with effects; PNG frames per slot play in name order. Frames are packed
+// into one atlas in the browser, previewed, then posted to POST /api/assets/:channel, where the server checks every
+// limit again.
 import {
   LIMITS,
   ANIMATION_SLOTS,
@@ -98,10 +83,6 @@ const toBase64 = (blob: Blob) =>
     r.readAsDataURL(blob);
   });
 
-/**
- * @param {string} path
- * @param {{ method?: string, body?: unknown }} [opts]
- */
 async function api(path: string, { method = "GET", body }: { method?: string; body?: unknown } = {}) {
   try {
     // as: an undefined body sends none; RequestInit under exactOptionalPropertyTypes only allows leaving it out
@@ -218,11 +199,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     h(
       "p",
       { class: "hint small muted" },
-      "Larger images are scaled down to fit " +
-        limits.frameSize +
-        " x " +
-        limits.frameSize +
-        " px. The overlay moves the character and uses effects for attacks and knockouts.",
+      `Larger images are scaled down to fit ${limits.frameSize} x ${limits.frameSize} px. The overlay moves the character and uses effects for attacks and knockouts.`,
     ),
   );
   const framesBox = h(
@@ -296,17 +273,8 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
           h(
             "p",
             { class: "hint small muted" },
-            "Limits: PNG only, " +
-              limits.maxFrames +
-              " frames in total, " +
-              limits.frameSize +
-              " x " +
-              limits.frameSize +
-              " px per frame, " +
-              formatBytes(limits.maxAtlasBytes) +
-              " per atlas, " +
-              limits.maxCharacters +
-              " characters per channel.",
+            `Limits: PNG only, ${limits.maxFrames} frames in total, ${limits.frameSize} x ${limits.frameSize} px per frame, ` +
+              `${formatBytes(limits.maxAtlasBytes)} per atlas, ${limits.maxCharacters} characters per channel.`,
           ),
         ),
         h(
@@ -327,17 +295,9 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
 
   // ---- state -> view ----
   function renderUsage() {
-    if (!usage) {
-      usageLine.textContent = "Checking free slots…";
-      return;
-    }
-    usageLine.textContent =
-      usage.count +
-      " of " +
-      (usage.limit || limits.maxCharacters) +
-      " custom character slots used, " +
-      formatBytes(usage.bytes || 0) +
-      " stored.";
+    usageLine.textContent = usage
+      ? `${usage.count} of ${usage.limit || limits.maxCharacters} custom character slots used, ${formatBytes(usage.bytes || 0)} stored.`
+      : "Checking free slots…";
   }
   function renderDelete() {
     const list = items || [];
@@ -360,11 +320,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     if (state.mode === "frames") out.push(...checkFrames(g, limits));
     if (state.blob && state.blob.size > limits.maxAtlasBytes)
       out.push(
-        "The packed atlas is " +
-          formatBytes(state.blob.size) +
-          "; the limit is " +
-          formatBytes(limits.maxAtlasBytes) +
-          ". Use fewer or smaller frames.",
+        `The packed atlas is ${formatBytes(state.blob.size)}; the limit is ${formatBytes(limits.maxAtlasBytes)}. Use fewer or smaller frames.`,
       );
     if (usage && usage.count >= (usage.limit || limits.maxCharacters))
       out.push("All " + limits.maxCharacters + " custom character slots are used. Delete one first.");
@@ -381,26 +337,15 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     const shown = started
       ? list
       : list.filter((p) => p !== "Add at least one PNG frame." && p !== "Choose a PNG image.");
-    problemsBox.replaceChildren(
-      ...(shown.length
-        ? [
-            h(
-              "ul",
-              { class: "small" },
-              shown.map((p) => h("li", {}, p)),
-            ),
-          ]
-        : []),
-    );
+    problemsBox.replaceChildren();
+    if (shown.length) problemsBox.append(h("ul", { class: "small" }, ...shown.map((p) => h("li", {}, p))));
     problemsBox.className = "upload-problems" + (shown.length ? " callout negative" : "");
     saveButton.disabled = state.busy || !!list.length || !state.blob || !nameInput.value.trim();
   }
   function renderPreviewButtons() {
     const anims = state.plan?.animations || {};
-    const slots = state.mode === "single" ? (["idle", "walk", "attack", "ko"] satisfies Slot[]) : ANIMATION_SLOTS;
-    if (!slots.includes(state.previewSlot)) state.previewSlot = "walk";
     previewButtons.replaceChildren(
-      ...slots.map((s) =>
+      ...ANIMATION_SLOTS.map((s) =>
         h(
           "button",
           {
@@ -440,22 +385,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     const blob = await toBlob(atlas);
     Object.assign(state, { plan, atlas, blob });
     const count = plan.placements.length;
-    atlasInfo.textContent =
-      "Atlas " +
-      plan.width +
-      " x " +
-      plan.height +
-      " px, " +
-      count +
-      " frame" +
-      (count === 1 ? "" : "s") +
-      " of " +
-      plan.cell.w +
-      " x " +
-      plan.cell.h +
-      " px, " +
-      formatBytes(blob.size) +
-      ".";
+    atlasInfo.textContent = `Atlas ${plan.width} x ${plan.height} px, ${count} frame${count === 1 ? "" : "s"} of ${plan.cell.w} x ${plan.cell.h} px, ${formatBytes(blob.size)}.`;
     atlas.className = "upload-atlas";
     atlas.setAttribute("role", "img");
     atlas.setAttribute("aria-label", "Packed atlas, " + count + " frames");
@@ -545,12 +475,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
         image = c;
       }
       state.single = { name: f.name, w: fit.w, h: fit.h, image };
-      if (fit.scale < 1)
-        setStatus(
-          status,
-          f.name + " was scaled from " + f.w + " x " + f.h + " to " + fit.w + " x " + fit.h + " px.",
-          "",
-        );
+      if (fit.scale < 1) setStatus(status, `${f.name} was scaled from ${f.w} x ${f.h} to ${fit.w} x ${fit.h} px.`, "");
     }
     repack();
   });
@@ -609,9 +534,7 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
     if (!id || !confirm('Delete "' + (item?.label || id) + '"? Viewers using it fall back to a default character.'))
       return;
     deleteButton.disabled = true;
-    const r = await api("/api/assets/" + encodeURIComponent(channel) + "/" + encodeURIComponent(id), {
-      method: "DELETE",
-    });
+    const r = await api(`/api/assets/${encodeURIComponent(channel)}/${encodeURIComponent(id)}`, { method: "DELETE" });
     deleteButton.disabled = false;
     if (!r.ok) {
       setStatus(deleteStatus, "Not deleted: " + errorText(r), "error");
@@ -657,10 +580,4 @@ export async function mountUpload(root: Element, ctx: UploadContext = {}) {
 function setStatus(node: HTMLElement, message: string, kind: string) {
   node.textContent = message || "";
   node.className = "status" + (kind ? " " + kind : "");
-}
-
-// Standalone use: <div data-upload-root data-channel="<login>"></div><script type="module" src="/upload.js"></script>
-if (typeof document !== "undefined") {
-  for (const el of document.querySelectorAll<HTMLElement>("[data-upload-root]"))
-    mountUpload(el, { channel: el.dataset.channel });
 }
