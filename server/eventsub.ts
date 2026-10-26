@@ -4,6 +4,7 @@ import { record, seal, unseal, randomToken } from "./auth.ts";
 import site from "../site.config.js";
 import type { Sealed } from "./auth.ts";
 import type { Env } from "./env.ts";
+import { httpError as fail, postJson, readBody } from "./http.ts";
 import { isObject, parseEventsubEnvelope } from "./parse.ts";
 import type { JsonObject } from "./parse.ts";
 import type { ChatEvent, SendResult } from "./model.ts";
@@ -62,8 +63,6 @@ const HELIX = "https://api.twitch.tv/helix";
 const enc = new TextEncoder();
 const hex = (buf: ArrayBuffer): string =>
   Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, "0")).join("");
-const fail = (message: string, status: number, extra: Record<string, unknown> = {}) =>
-  Object.assign(new Error(message), { status, ...extra });
 const text = (body: string, status: number): Response =>
   new Response(body, { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
 const hmacKey = (secret: string, usage: string): Promise<CryptoKey> =>
@@ -133,24 +132,6 @@ export function parseTwitchTime(value: string): number {
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(value)) return NaN;
   return Date.parse(value.replace(/\.(\d{1,3})\d*/, ".$1"));
 }
-async function readRaw(request: Request, limit: number): Promise<Uint8Array> {
-  if (Number(request.headers.get("Content-Length")) > limit) throw fail("Request too large", 413);
-  const reader = request.body?.getReader();
-  if (!reader) return new Uint8Array(0);
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.length;
-    if (bytes > limit) {
-      await reader.cancel();
-      throw fail("Request too large", 413);
-    }
-    chunks.push(value);
-  }
-  return concat(...chunks);
-}
 
 // A lead moderator wears only lead_moderator (no moderator badge), so it has to count on its own.
 const MOD_BADGES = new Set(["broadcaster", "moderator", "lead_moderator"]);
@@ -202,7 +183,7 @@ export async function handleEventsub(
     subType = h("Subscription-Type");
   if (!id || !timestamp || !signature || !type || !subType || id.length > 100 || timestamp.length > 40)
     return text("Missing EventSub headers", 400);
-  const raw = await readRaw(request, MAX_EVENTSUB_BYTES); // read once
+  const raw = await readBody(request, MAX_EVENTSUB_BYTES); // read once
   if (!(await verify(env, id, timestamp, raw, signature))) return text("Invalid signature", 403);
   const at = parseTwitchTime(timestamp);
   if (!Number.isFinite(at) || now - at > 600000 || at - now > 60000) return text("Stale message", 403);
@@ -238,15 +219,8 @@ export async function handleEventsub(
     return own && !channels.includes(own) ? [...channels, own] : channels;
   };
   const send = async (channel: string, extra: { bot?: boolean; botId?: string } = {}): Promise<Response> => {
-    const r = await roomFetch(
-      channel,
-      "/eventsub" + (extra.bot ? "?origin=" + encodeURIComponent(origin(channel)) : ""),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...message, ...extra, event: chat }),
-      },
-    );
+    const query = extra.bot ? "?origin=" + encodeURIComponent(origin(channel)) : "";
+    const r = await roomFetch(channel, "/eventsub" + query, postJson({ ...message, ...extra, event: chat }));
     if (r.status >= 500) throw new Error("Room rejected EventSub message (" + r.status + ")");
     return r;
   };
@@ -258,12 +232,7 @@ export async function handleEventsub(
   }
   // Channel point redemptions (server/points.ts). The redemption id keys the room's row, so a retry grants nothing twice.
   if (subType === REDEMPTION_TYPE) {
-    const points = (channel: string, path: string, data: object) =>
-      roomFetch(channel, path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+    const points = (channel: string, path: string, data: object) => roomFetch(channel, path, postJson(data));
     if (type === "revocation") {
       for (const channel of await rooms())
         await points(channel, "/points/rewards", {

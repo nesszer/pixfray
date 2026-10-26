@@ -14,7 +14,8 @@
 //   GET    /api/sprites/:channel/:id     -> that sprite's PNG, waiting or approved
 //   POST   /api/sprites/:channel/:id     {action:"approve"|"reject"|"remove"} -> {ok, id, status}
 // Approved PNGs are public at /api/assets/:channel/:id (server/uploads.ts forwards v- ids to the room).
-import { readPng } from "./uploads.ts";
+import { readPng, slugId } from "./uploads.ts";
+import { bodyOr, json, png, postJson, refuse as fail } from "./http.ts";
 import {
   isObject,
   parseRedraw,
@@ -72,8 +73,6 @@ export type SpriteHooks = {
   approved?: (row: SpriteRow, previousLiveId: string) => void;
   removed?: (id: string, userId: string) => void;
 };
-/** What bodyJson throws: an Error with the HTTP status to answer. */
-type HttpError = Error & { status?: number };
 /** A live viewer_sprites row as spriteCatalog selects it. */
 type CatalogRow = { id: string; user_id: string; display_name: string; label: string; width: number; height: number };
 
@@ -99,14 +98,6 @@ const BODY_LIMIT = Math.ceil(SPRITE_LIMITS.maxBytes / 3) * 4 + 2_000;
 const AI_BODY_LIMIT = Math.ceil(SPRITE_LIMITS.aiMaxBytes / 3) * 4 + 2_000;
 const JPEG = [0xff, 0xd8, 0xff];
 
-const json = (data: unknown, status: number = 200): Response =>
-  Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
-const fail = (status: number, reason: string, error: string | undefined): Response =>
-  json({ ok: false, reason, error }, status);
-const png = (bytes: ArrayBuffer, cache: string): Response =>
-  new Response(bytes, {
-    headers: { "Content-Type": "image/png", "Cache-Control": cache, "X-Content-Type-Options": "nosniff" },
-  });
 export const spriteDay = (now: number = Date.now()): string => new Date(now).toISOString().slice(0, 10);
 
 function decodeB64(value: unknown, maxBytes: number): OrRefusal<{ bytes: Uint8Array<ArrayBuffer> }, SpriteRefusal> {
@@ -212,8 +203,7 @@ export function jpegSize(b: Uint8Array): PngSize | null {
 // mine = true for /api/sprite (the viewer's own), false for /api/sprites (moderators).
 export async function handleSprites(request: Request, env: Env, c: SpritesContext, mine: boolean): Promise<Response> {
   if (!c.user) return json({ error: "Sign in with Twitch first" }, 401);
-  const post = (path: string, body: unknown): Promise<Response> =>
-    c.roomFetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const post = (path: string, body: unknown): Promise<Response> => c.roomFetch(path, postJson(body));
   const who = { userId: c.user.id, username: c.user.login, displayName: c.user.displayName || c.user.login };
   if (mine) {
     if (request.method === "GET" && !c.id) {
@@ -230,16 +220,11 @@ export async function handleSprites(request: Request, env: Env, c: SpritesContex
         method: "DELETE",
       });
     if (request.method === "POST" && !c.id) {
-      let body;
-      try {
-        body = await c.bodyJson(request, BODY_LIMIT);
-      } catch (error) {
-        // bodyJson throws an HttpError (status 400 or 413)
-        return (error as HttpError).status === 413
-          ? fail(413, "image_too_large", "The sprite is larger than 64 KB")
-          : // bodyJson throws an HttpError, as above
-            fail((error as HttpError).status || 400, "invalid_upload", (error as HttpError).message || "Invalid JSON");
-      }
+      const body = await bodyOr(c.bodyJson(request, BODY_LIMIT), [
+        "image_too_large",
+        "The sprite is larger than 64 KB",
+      ]);
+      if (body instanceof Response) return body;
       const input = parseSpriteSubmit(body);
       if (!input.ok) return fail(400, input.error, submitError(input.error));
       const checked = validateSprite(input.value);
@@ -255,13 +240,8 @@ export async function handleSprites(request: Request, env: Env, c: SpritesContex
   if (!SPRITE_ID.test(c.id || "")) return fail(404, "not_found", "Sprite not found");
   if (request.method === "GET") return c.roomFetch("/sprites/png/" + c.id);
   if (request.method === "POST") {
-    let body;
-    try {
-      body = await c.bodyJson(request, 1000);
-    } catch (error) {
-      // bodyJson throws an HttpError, as above
-      return fail((error as HttpError).status || 400, "invalid_request", (error as HttpError).message);
-    }
+    const body = await bodyOr(c.bodyJson(request, 1000), null, "invalid_request");
+    if (body instanceof Response) return body;
     const review = parseSpriteReview(body);
     if (!review.ok) return fail(400, review.error, "action must be approve, reject or remove");
     return post("/sprites/review", {
@@ -282,16 +262,11 @@ async function redraw(
   post: (path: string, body: unknown) => Promise<Response>,
 ): Promise<Response> {
   if (!env.AI) return fail(503, "ai_unavailable", "AI redraw isn't available on this site");
-  let body;
-  try {
-    body = await c.bodyJson(request, AI_BODY_LIMIT);
-  } catch (error) {
-    // bodyJson throws an HttpError (status 400 or 413)
-    return (error as HttpError).status === 413
-      ? fail(413, "image_too_large", "The image is too large to redraw")
-      : // bodyJson throws an HttpError, as above
-        fail((error as HttpError).status || 400, "invalid_upload", (error as HttpError).message || "Invalid JSON");
-  }
+  const body = await bodyOr(c.bodyJson(request, AI_BODY_LIMIT), [
+    "image_too_large",
+    "The image is too large to redraw",
+  ]);
+  if (body instanceof Response) return body;
   const input = parseRedraw(body);
   if (!input.ok) return fail(400, input.error, "Choose an image");
   const image = validateRedrawImage(input.value.image);
@@ -359,19 +334,6 @@ const catalogEntry = (channel: string) => (r: CatalogRow) => ({
   custom: true,
   owner: r.user_id,
 });
-
-function spriteId(label: string): string {
-  const slug =
-    label
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 30)
-      .replace(/-+$/, "") || "sprite";
-  const rand = [...crypto.getRandomValues(new Uint8Array(3))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return "v-" + slug + "-" + rand;
-}
 
 const ROW =
   "id, user_id AS userId, username, display_name AS displayName, label, status, bytes, width, height, ai, created_at AS createdAt, reviewed_by AS reviewedBy, reviewed_at AS reviewedAt";
@@ -465,7 +427,7 @@ export async function handleRoomSprites(
       username = input.value.username.slice(0, 25),
       displayName = (input.value.displayName || username).slice(0, 48);
     if (!userId || !username) return fail(400, "invalid_upload", "Missing viewer");
-    const id = spriteId(sprite.label);
+    const id = slugId("v-", sprite.label, "sprite");
     const result = room.ctx.storage.transactionSync(() => {
       if (usage(sql, userId, day).submits >= SPRITE_LIMITS.submitsPerDay)
         return fail(

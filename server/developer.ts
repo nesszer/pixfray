@@ -30,7 +30,9 @@ import {
   parseSettings,
 } from "./parse.ts";
 import { BACKUP_DAYS, backupChannels, backupDay, listBackups, readBackup, writeBackup } from "./backups.ts";
+import { json, postJson } from "./http.ts";
 import type { TwitchUser } from "./auth.ts";
+import type { HttpError } from "./http.ts";
 import type { Env } from "./env.ts";
 import type { GameState } from "./model.ts";
 import type { JsonObject, Parsed } from "./parse.ts";
@@ -43,8 +45,6 @@ import type { JsonObject, Parsed } from "./parse.ts";
 //   Current version: version_metadata binding CF_VERSION_METADATA.
 // The Worker never holds a token that can deploy; deploys run in GitHub Actions (docs/LIVE_FIX.md).
 
-/** What bodyJson, setPaused and chatAction throw: an Error with the HTTP status to answer and chat details. */
-type HttpError = Error & { status?: number; reason?: string; reconnect?: unknown; connectedElsewhere?: unknown };
 /** The Worker's request context for /api/dev/* (server/worker.ts). */
 export type DevContext = {
   user: TwitchUser | null;
@@ -120,8 +120,6 @@ const BUILD_FILE =
 // Production changes need the owner signed in with Twitch; the test site's dev token can't make them.
 const productionChange = (op: string, body: JsonObject | null): boolean =>
   op === "promote" || op === "hotfix" || (op === "rollback" && body?.target === "production");
-const json = (data: unknown, status = 200): Response =>
-  Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 const fail = (status: number, error: string, reason: string, extra: JsonObject = {}): Response =>
   json({ error, reason, ...extra }, status);
 
@@ -143,14 +141,12 @@ export async function handleDeveloper(request: Request, env: Env, c: DevContext)
   if (method === "POST")
     try {
       body = await c.bodyJson(request, op === "code/save" ? MAX_FILE_BYTES * 2 + 4096 : 8000);
-    } catch (e) {
+    } catch (error) {
+      const e = error as HttpError; // bodyJson throws an HttpError (status 400 or 413)
       return fail(
-        // bodyJson throws an HttpError (status 400 or 413)
-        (e as HttpError).status || 400,
-        // bodyJson throws an HttpError, as above
-        (e as HttpError).message || "Invalid request body",
-        // bodyJson throws an HttpError, as above
-        (e as HttpError).status === 413 ? "body_too_large" : "invalid_body",
+        e.status || 400,
+        e.message || "Invalid request body",
+        e.status === 413 ? "body_too_large" : "invalid_body",
       );
     }
   if (c.dev && productionChange(op, body))
@@ -380,12 +376,7 @@ async function restore({ env, c, body }: RouteArgs): Promise<Response> {
   ) {
     return fail(400, "Pick a time between 30 days ago and 1 minute ago", "invalid_restore_time");
   }
-  const post = (path: string, data: unknown) =>
-    c.roomFetch(login, path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
+  const post = (path: string, data: unknown) => c.roomFetch(login, path, postJson(data));
   // undo is only true here when last.undo is set (checked above)
   const r = await post("/dev/restore", undo ? { bookmark: last!.undo } : { at });
   if (!r.ok) {
@@ -443,11 +434,10 @@ async function channelsAction({ env, body }: RouteArgs): Promise<Response> {
   try {
     if (action === "pause" || action === "resume") await setPaused(env, login, action === "pause", "owner");
     else return fail(400, "Unknown action", "unknown_action");
-  } catch (e) {
-    // setPaused throws an HttpError with a status and reason; anything else is unexpected. Each cast reads that error.
-    if ((e as HttpError).reason)
-      return fail((e as Required<HttpError>).status, (e as HttpError).message, (e as Required<HttpError>).reason);
-    throw e;
+  } catch (error) {
+    const e = error as HttpError; // setPaused throws an HttpError with a status and reason; anything else is unexpected
+    if (e.status && e.reason) return fail(e.status, e.message, e.reason);
+    throw error;
   }
   return json({ ok: true, ...(await overview(env)) });
 }
@@ -486,15 +476,14 @@ async function settings({ body, c, room }: RouteArgs): Promise<Response> {
   if (action === "connectChat" || action === "disconnectChat") {
     try {
       return await c.chatAction(site.defaultChannel, action, { takeover });
-    } catch (e) {
-      // chatAction throws an HttpError (status, maybe reconnect or connectedElsewhere) for answers the page shows;
-      // each cast below reads that error
-      if ((e as HttpError).status)
-        return fail((e as Required<HttpError>).status, (e as HttpError).message, "chat_error", {
-          ...((e as HttpError).reconnect ? { reconnect: (e as HttpError).reconnect } : {}),
-          ...((e as HttpError).connectedElsewhere ? { connectedElsewhere: (e as HttpError).connectedElsewhere } : {}),
-        });
-      throw e;
+    } catch (error) {
+      // chatAction throws an HttpError (status, maybe reconnect or connectedElsewhere) for answers the page shows
+      const e = error as HttpError;
+      if (!e.status) throw error;
+      return fail(e.status, e.message, "chat_error", {
+        ...(e.reconnect ? { reconnect: e.reconnect } : {}),
+        ...(e.connectedElsewhere ? { connectedElsewhere: e.connectedElsewhere } : {}),
+      });
     }
   }
   if (action !== "config" && action !== "rollbackConfig")

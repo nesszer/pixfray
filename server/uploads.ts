@@ -9,6 +9,7 @@
 //   atlas_dimensions, 413 atlas_too_large, 415 not_png, 409 custom_limit_reached.
 // DELETE /api/assets/:channel/:id (canManage) -> {ok:true, id, usage} or 404 {reason:"not_found"}.
 // The same validation runs in the Worker (cheap rejection) and again in the ChannelRoom before the insert.
+import { bodyOr, json, png, postJson, refuse as fail } from "./http.ts";
 import { parseUploadMeta } from "./parse.ts";
 import type { Env } from "./env.ts";
 import type { PetsContext } from "./pets.ts";
@@ -37,8 +38,6 @@ export type CatalogEntry = { [field: string]: unknown; id: string; url: string; 
 export type CustomUsage = { count: number; limit: number; bytes: number };
 /** The Worker's request context for /api/assets (server/worker.ts): the pets one plus a few unused fields. */
 export type UploadsContext = PetsContext & { owner?: unknown; channel?: string; url?: URL };
-/** What bodyJson throws: an Error with the HTTP status to answer. */
-type HttpError = Error & { status?: number };
 
 export const UPLOAD_LIMITS = Object.freeze({
   maxFrames: 24,
@@ -55,9 +54,6 @@ export const ANIMATIONS = Object.freeze(["idle", "walk", "attack", "ko", "jump",
 export const UPLOAD_BODY_LIMIT = Math.ceil(UPLOAD_LIMITS.maxAtlasBytes / 3) * 4 + 64_000;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const UPLOAD_LICENSE = "Uploaded by channel staff";
-const json = (data: unknown, status: number = 200): Response =>
-  Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
-const fail = (status: number, reason: string, error: string): Response => json({ ok: false, reason, error }, status);
 class UploadError extends Error {
   declare status: number;
   declare reason: string;
@@ -80,28 +76,15 @@ export async function handleUploads(request: Request, env: Env, c: UploadsContex
   if (!roles.canManage) return json({ error: roles.reason || "Moderator role required" }, c.user ? 403 : 401);
   if (request.method === "GET" && !c.id) return c.roomFetch("/asset");
   if (request.method === "POST" && !c.id) {
-    let body;
-    try {
-      body = await c.bodyJson(request, UPLOAD_BODY_LIMIT);
-    } catch (error) {
-      // bodyJson throws an HttpError (status 400 or 413)
-      return (error as HttpError).status === 413
-        ? fail(413, "atlas_too_large", "Upload is larger than the 1.5 MB atlas limit")
-        : // bodyJson throws an HttpError, as above
-          fail((error as HttpError).status || 400, "invalid_upload", (error as HttpError).message || "Invalid JSON");
-    }
-    try {
-      validateUpload(body);
-    } catch (error) {
-      if (error instanceof UploadError) return fail(error.status, error.reason, error.message);
-      throw error;
-    }
-    return c.roomFetch("/asset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // canManage (checked above) is only true for a signed-in user
-      body: JSON.stringify({ ...body, createdBy: c.user!.id }),
-    });
+    const body = await bodyOr(c.bodyJson(request, UPLOAD_BODY_LIMIT), [
+      "atlas_too_large",
+      "Upload is larger than the 1.5 MB atlas limit",
+    ]);
+    if (body instanceof Response) return body;
+    const upload = checked(body);
+    if (upload instanceof Response) return upload;
+    // canManage (checked above) is only true for a signed-in user
+    return c.roomFetch("/asset", postJson({ ...body, createdBy: c.user!.id }));
   }
   if (request.method === "DELETE" && c.id) {
     if (!CUSTOM_ID.test(c.id)) return fail(404, "not_found", "Custom character not found");
@@ -147,15 +130,10 @@ export async function handleRoomAssets(
     } catch {
       return fail(400, "invalid_upload", "Invalid JSON");
     }
-    let upload;
-    try {
-      upload = validateUpload(body);
-    } catch (error) {
-      if (error instanceof UploadError) return fail(error.status, error.reason, error.message);
-      throw error;
-    }
+    const upload = checked(body);
+    if (upload instanceof Response) return upload;
     const createdBy = typeof body.createdBy === "string" && body.createdBy ? body.createdBy.slice(0, 64) : "unknown";
-    const id = customId(upload.meta.label),
+    const id = slugId("c-", upload.meta.label, "char"),
       now = Date.now();
     // Count and insert in one transaction so two moderators can't both take the last slot.
     const inserted = room.ctx.storage.transactionSync(() => {
@@ -198,13 +176,7 @@ export async function handleRoomAssets(
     if (!CUSTOM_ID.test(id)) return json({ error: "Not found" }, 404);
     const row = sql.exec<{ atlas: ArrayBuffer }>("SELECT atlas FROM custom_characters WHERE id = ?", id).toArray()[0];
     if (!row) return json({ error: "Not found" }, 404);
-    return new Response(row.atlas, {
-      headers: {
-        "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=300",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+    return png(row.atlas, "public, max-age=300");
   }
   if (id && request.method === "DELETE") {
     if (!CUSTOM_ID.test(id)) return fail(404, "not_found", "Custom character not found");
@@ -230,6 +202,16 @@ export function customUsage(room: { ctx: DurableObjectState }): CustomUsage {
     // COUNT(*) and COALESCE(SUM) always return one row of numbers
     .toArray() as [{ count: number; bytes: number }];
   return { count: row.count, limit: UPLOAD_LIMITS.maxCharacters, bytes: row.bytes };
+}
+
+// validateUpload, or its refusal as a response.
+function checked(body: { [field: string]: unknown }): CheckedUpload | Response {
+  try {
+    return validateUpload(body);
+  } catch (error) {
+    if (error instanceof UploadError) return fail(error.status, error.reason, error.message);
+    throw error;
+  }
 }
 
 // Validates an upload body. Returns {meta, bytes:Uint8Array, png:{width,height}} or throws UploadError.
@@ -380,7 +362,8 @@ export function crc32(bytes: Uint8Array, start: number = 0, end: number = bytes.
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function customId(label: string): string {
+/** A new id from a label: prefix, a slug of at most 30 characters (fallback when empty), 6 random hex digits. */
+export function slugId(prefix: string, label: string, fallback: string): string {
   const slug =
     label
       .toLowerCase()
@@ -388,9 +371,9 @@ function customId(label: string): string {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 30)
-      .replace(/-+$/, "") || "char";
+      .replace(/-+$/, "") || fallback;
   const rand = [...crypto.getRandomValues(new Uint8Array(3))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return "c-" + slug + "-" + rand;
+  return prefix + slug + "-" + rand;
 }
 
 // Stored meta that is not a JSON object adds no fields.

@@ -3,6 +3,7 @@
 //   channel:<login> = { id, login, enabledAt, pausedAt?, pausedBy?, review? }   kept ~20 years; paused keeps fighters and ranks
 //   review = { reasons, at }: sign-up didn't pass the streamer check and waits, off, for the owner to turn it on.
 import { record, CHANNELS } from "./auth.ts";
+import { httpError } from "./http.ts";
 import { parseChannelRows } from "./parse.ts";
 import type { TwitchUser, HelixUser } from "./auth.ts";
 import type { Env } from "./env.ts";
@@ -97,7 +98,7 @@ const enabledCount = (rows: ChannelRow[]): number => rows.filter((r) => !r.value
 // No room for another channel that is on: sign-up says 'full', and the /play/ search stops inviting streamers here.
 export const isFull = async (env: Env): Promise<boolean> =>
   enabledCount(await listRecords(env, "channel:")) >= MAX_CHANNELS;
-const fail = (status: number, error: string, reason: string) => Object.assign(new Error(error), { status, reason });
+const fail = (status: number, error: string, reason: string) => httpError(error, status, { reason });
 
 // The streamer check for a new sign-up, from the signed-in Helix user: why it needs the owner's approval, [] when it
 // doesn't. 'young': the account is under 30 days old. 'never_streamed': not Affiliate or Partner and no past broadcast
