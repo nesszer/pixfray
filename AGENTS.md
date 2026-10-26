@@ -96,7 +96,7 @@ Each one has happened here. Check for it by name before calling work done.
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
 [Code]|server/: worker.ts routes|channel.ts ChannelRoom DO (state, bot commands, alarms)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|tracker.ts logs|points.ts|upgrades.ts pets.ts cosmetics.ts
 |src/: admin.ts admin/ mod page|dashboard.ts dashboard/ fighter page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
-|src/served/: overlay.ts|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
+|src/served/: overlay.ts|text.ts helpers|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
 |tests/: *.test.ts unit|fakes.ts doubles|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
 |scripts/: strict-check.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
 ```

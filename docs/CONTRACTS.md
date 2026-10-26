@@ -617,6 +617,10 @@ export function parseArenaSnapshot(value), parseLooksMessage(value), parseLook(v
   parseDemoMessage(value), keepGood(list, kind, parse), warnOnce(kind, error)
 // parseDemoMessage answers null for a message with no demoPaused field (a browser extension's), which the demo
 // ignores without a warning; one with a demoPaused that isn't true or false still warns once
+// src/served/text.ts (Lane B, served as /text.js): the overlay's pure helpers, kept off the canvas for Node tests
+export function parseCap(value, fallback = 100), effectiveCap(urlCap, serverMax), parseCommand(text), sanitizeColor(value),
+  stripExtraMarks(text), truncateText(text, max, ellipsis = ""), clipName(text), readableColor(hex, minContrast?),
+  overlayVersionFromUrl(url), overlayVersionFromHtml(html)
 // src/parse.ts (Lane B, bundled into the pages): /api/session, /api/access, the fighter page's profile, shop, state
 // config, leaderboard and stored draft, the mod page's /api/admin and snapshots, the owner page's lists
 export function parseAnswer(r, parse, kind)  // an ok answer whose body fails -> {ok:false, data:{error: UNREADABLE}}
@@ -664,7 +668,7 @@ bun run test:all           # everything below, in order (scripts/test-all.ts)
   and no version. The build writes them to the output root and rewrites each `./<name>.ts` or `./<name>.js`
   between them, and in `public/*.html`, to `./<name>.js?v=<hash>`: the first 10 hex digits of a SHA-256 over
   each module's name and served code. The overlay compares the `?v=` it was loaded with against the one in
-  `overlay.html` after a deploy and reloads itself between duels when they differ (`overlayVersionFromUrl`).
+  `overlay.html` after a deploy and reloads itself between duels when they differ (`overlayVersionFromUrl` in `src/served/text.ts`).
   Pages bundled by Vite (`src/ui.ts`, `src/admin/characters.ts`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
   `/upload.js` by full URL at run time, without a version. URLs, `public/overlay.html` and `public/_headers`
   stay as they are; `src/dev.ts` is the owner page's bundled entry (`admin/dev/index.html`).

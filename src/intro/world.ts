@@ -3,20 +3,16 @@
 import * as THREE from "three";
 import { bevel } from "./bevel.ts";
 
-/** A shader's uniforms with the type of each value, e.g. Uniforms<{ uTime: number }>. */
+// a shader's uniforms with the type of each value, e.g. Uniforms<{ uTime: number }>
 export type Uniforms<T> = { [K in keyof T]: THREE.IUniform<T[K]> };
-/** A ShaderMaterial whose uniforms are known by name and value type. */
-export interface ShaderMaterialOf<T> extends THREE.ShaderMaterial {
-  uniforms: Uniforms<T>;
-}
+type ShaderMaterialOf<T> = THREE.ShaderMaterial & { uniforms: Uniforms<T> };
 type RGB = [number, number, number];
-/** A die face value. */
 export type DieValue = 1 | 2 | 3 | 4 | 5 | 6;
-export type SkyMaterial = ShaderMaterialOf<{ uTime: number; uMoon: number; uMul: THREE.Vector3 }>;
-export type RuneUniforms = Uniforms<{ uI: number; uTime: number; uColor: THREE.Color }>;
-export type ConeMaterial = ShaderMaterialOf<{ uColor: THREE.Color; uA: number }>;
-export type EmberMaterial = ShaderMaterialOf<{ uTime: number; uPx: number; uBurst: number }>;
-export type CloudMaterial = ShaderMaterialOf<{
+type SkyMaterial = ShaderMaterialOf<{ uTime: number; uMoon: number; uMul: THREE.Vector3 }>;
+type RuneUniforms = Uniforms<{ uI: number; uTime: number; uColor: THREE.Color }>;
+type ConeMaterial = ShaderMaterialOf<{ uColor: THREE.Color; uA: number }>;
+type EmberMaterial = ShaderMaterialOf<{ uTime: number; uPx: number; uBurst: number }>;
+type CloudMaterial = ShaderMaterialOf<{
   uTime: number;
   uDeep: THREE.Color;
   uLit: THREE.Color;
@@ -24,74 +20,71 @@ export type CloudMaterial = ShaderMaterialOf<{
   uS: number;
   uV: number;
 }>;
-export type ShaftMaterial = ShaderMaterialOf<{ uA: number; uTime: number }>;
-/** A lantern's flame, flickered by the frame loop. */
-export interface Flame {
-  mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
-  seed: number;
+type ShaftMaterial = ShaderMaterialOf<{ uA: number; uTime: number }>;
+// one column of the gold heap; gem is an RGB colour or null
+type HoardColumn = { x: number; z: number; h: number; gem: RGB | null; s: number };
+
+// A baked night for reflections, shared by the home page and the fighter stage: dark sky, a moon high behind, warm
+// lantern panels around the ring, a cool side. Brass, gold, the ring and the wet floor pick it up; matte stone barely does.
+export function bakeNightEnv(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
+  const env = new THREE.Scene(),
+    box = new THREE.BoxGeometry(1, 1, 1);
+  env.add(
+    new THREE.Mesh(
+      new THREE.SphereGeometry(20, 24, 12),
+      new THREE.MeshBasicMaterial({ color: 0x1a120c, side: THREE.BackSide }),
+    ),
+  );
+  const glow = (c: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const m = new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: c }));
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz);
+    env.add(m);
+  };
+  glow(0xd8d0c4, 0, 12, -14, 4, 4, 1); // moon
+  glow(0x6a4a30, 0, -10, 0, 30, 1, 30); // warm floor bounce
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    glow(0xffa040, Math.cos(a) * 9, 2, Math.sin(a) * 9, 1.4, 2.4, 1.4);
+  }
+  glow(0x3a4a7a, -16, 6, 4, 1, 10, 14); // cool fill side
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(env, 0.02).texture;
+  scene.environmentIntensity = 0.55;
+  pmrem.dispose();
 }
-export interface LanternParts {
-  group: THREE.Group;
-  flames: Flame[];
-  cone: ConeMaterial;
-}
-export interface IsletParts {
-  group: THREE.Group;
-  list: { g: THREE.Group; y: number; seed: number }[];
-  glow: THREE.MeshStandardMaterial;
-}
-export interface PodiumParts {
-  mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
-  cell: number;
-  maxStack: number;
-  count: number;
-}
-export interface CoinParts {
-  mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
-  disc: [number, number][];
-  unit: number;
-  count: number;
-}
-export interface CloudParts {
-  group: THREE.Group;
-  mats: CloudMaterial[];
-}
-export interface ChestParts {
-  group: THREE.Group;
-  lid: THREE.Group;
-  shaft: THREE.Mesh<THREE.CylinderGeometry, ShaftMaterial>;
-  light: THREE.PointLight;
-  gold: THREE.MeshStandardMaterial;
-}
-/** One column of the gold heap; gem is an RGB colour or null. */
-export interface HoardColumn {
-  x: number;
-  z: number;
-  h: number;
-  gem: RGB | null;
-  s: number;
-}
-export interface HoardParts {
-  mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
-  cols: HoardColumn[];
-  top: number;
-}
-/** One cube of the stream frame: its slot, where it flies in from, its delay and spin. */
-export interface FrameCube {
-  x: number;
-  y: number;
-  from: THREE.Vector3;
-  delay: number;
-  spin: number;
-}
-export interface FrameParts {
-  group: THREE.Group;
-  mesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
-  list: FrameCube[];
-  edgeMat: THREE.MeshBasicMaterial;
-  w: number;
-  h: number;
-  unit: number;
+
+// The arena's lights: a cool fill from the front left against the warm lanterns (two-tone cubes read as solid), a warm
+// shadow-casting key, a cool rim and three warm lantern points. The two scenes differ only in strength and shadow box.
+export function addNightLights(
+  scene: THREE.Scene,
+  o: { hemi: number; cool: number; key: number; rim: number; shadowMap: number; shadowBox: object },
+) {
+  const hemi = new THREE.HemisphereLight(0x8a6a4a, 0x120c08, o.hemi);
+  const cool = new THREE.DirectionalLight(0x5d7cff, o.cool);
+  cool.position.set(-6, 1.6, 1.5);
+  const key = new THREE.DirectionalLight(0xffcf96, o.key);
+  key.position.set(4.5, 7.5, 5.5);
+  key.shadow.mapSize.set(o.shadowMap, o.shadowMap);
+  Object.assign(key.shadow.camera, { ...o.shadowBox, near: 1, far: 22 });
+  key.shadow.bias = -0.0008;
+  key.shadow.normalBias = 0.02;
+  const rim = new THREE.DirectionalLight(0x9db2ff, o.rim);
+  rim.position.set(-1.5, 10, -8);
+  scene.add(hemi, cool, key, rim);
+  const warm = (
+    [
+      [-3.2, 1.9, 2.6],
+      [3.3, 1.9, 2.2],
+      [0.2, 1.9, -3.6],
+    ] satisfies [number, number, number][]
+  ).map(([x, y, z]) => {
+    const l = new THREE.PointLight(0xff9a40, 16, 10, 2);
+    l.position.set(x, y, z);
+    scene.add(l);
+    return l;
+  });
+  return { hemi, cool, key, rim, warm };
 }
 
 // small deterministic noise
@@ -115,7 +108,6 @@ function vnoise(x: number, y: number) {
 const fbm = (x: number, y: number) =>
   vnoise(x, y) * 0.6 + vnoise(x * 2.1, y * 2.1) * 0.3 + vnoise(x * 4.3, y * 4.3) * 0.1;
 
-export const ARENA_R = 3.3;
 const RING_R0 = 3.3,
   RING_R1 = 3.62;
 const m4 = new THREE.Matrix4(),
@@ -392,9 +384,9 @@ export function buildIsland({
 }
 
 // Lantern posts on the ring. Returns { group, flames: [{ mesh, base }] } so the frame loop can flicker them.
-export function buildLanterns({ count = 8, radius = 3.95 }: { count?: number; radius?: number } = {}): LanternParts {
+export function buildLanterns({ count = 8, radius = 3.95 }: { count?: number; radius?: number } = {}) {
   const group = new THREE.Group(),
-    flames: Flame[] = [];
+    flames: { mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>; seed: number }[] = [];
   const wood = new THREE.MeshStandardMaterial({ color: 0x2b1d12, roughness: 0.9 });
   const brass = new THREE.MeshStandardMaterial({ color: 0xc9a45c, roughness: 0.35, metalness: 0.9 });
   bevel(wood, [0.07, 0.75, 0.07]);
@@ -482,9 +474,9 @@ export function buildEmbers(count = 900): THREE.Points<THREE.BufferGeometry, Emb
 }
 
 // Small floating rocks around the island: moss caps on top, a lantern crystal hanging underneath.
-export function buildIslets(): IsletParts {
+export function buildIslets() {
   const group = new THREE.Group(),
-    list: IsletParts["list"] = [];
+    list: { g: THREE.Group; y: number; seed: number }[] = [];
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.9 });
   mat.onBeforeCompile = (sh) => {
     sh.fragmentShader = sh.fragmentShader.replace(
@@ -642,7 +634,7 @@ export const FACE_UP: Record<DieValue, [number, number, number]> = {
 };
 
 // Podium columns for the ladder: one instanced mesh, heights set per frame.
-export function buildPodium(count = 5, cell = 0.3): PodiumParts {
+export function buildPodium(count = 5, cell = 0.3) {
   const geo = new THREE.BoxGeometry(cell * 0.96, cell * 0.96, cell * 0.96);
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.12 });
   // bright instance colours (brass, runes) glow; stone faces carry carved glyphs that smoulder, and their seams catch the moon
@@ -685,7 +677,7 @@ export function buildPodium(count = 5, cell = 0.3): PodiumParts {
 }
 
 // Voxel coins: each coin is a 5x5 disc of cubes.
-export function buildCoins(count = 40, unit = 0.05): CoinParts {
+export function buildCoins(count = 40, unit = 0.05) {
   const disc: [number, number][] = [];
   for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) if (a * a + b * b <= 5) disc.push([a, b]);
   const geo = new THREE.BoxGeometry(unit * 0.95, unit * 0.95, unit * 0.95);
@@ -703,7 +695,7 @@ export function buildCoins(count = 40, unit = 0.05): CoinParts {
 }
 
 // A sea of cloud below the island, lit by the chapter's mood: two drifting noise layers on big planes.
-export function buildClouds(): CloudParts {
+export function buildClouds() {
   const group = new THREE.Group(),
     mats: CloudMaterial[] = [];
   for (const [y, scale, speed, a] of [
@@ -748,7 +740,7 @@ export function buildClouds(): CloudParts {
 }
 
 // The treasure chest for the loot chapter: wood and brass boxes, a lid on a hinge, gold inside that glows.
-export function buildChest(): ChestParts {
+export function buildChest() {
   const group = new THREE.Group(),
     lid = new THREE.Group();
   const wood = bevel(new THREE.MeshStandardMaterial({ color: 0x5a3519, roughness: 0.8 }), [0.7, 0.3, 0.42], 0.6);
@@ -819,7 +811,7 @@ export function buildChest(): ChestParts {
 }
 
 // A heap of gold under the hero in the loot chapter: one column of stacked gold per cell, gems here and there.
-export function buildHoard({ radius = 1.6, cell = 0.14 }: { radius?: number; cell?: number } = {}): HoardParts {
+export function buildHoard({ radius = 1.6, cell = 0.14 }: { radius?: number; cell?: number } = {}) {
   const cols: HoardColumn[] = [];
   const n = Math.ceil(radius / cell);
   for (let a = -n; a <= n; a++)
@@ -865,11 +857,7 @@ export function buildHoard({ radius = 1.6, cell = 0.14 }: { radius?: number; cel
 
 // The stream frame for the finale: a 16:9 bezel of cubes around the whole island, with a lit inner edge.
 // Cubes fly in from a scatter as the chapter arrives (see main.ts).
-export function buildFrame({
-  w = 19.2,
-  h = 10.8,
-  unit = 0.4,
-}: { w?: number; h?: number; unit?: number } = {}): FrameParts {
+export function buildFrame({ w = 19.2, h = 10.8, unit = 0.4 }: { w?: number; h?: number; unit?: number } = {}) {
   const slots: [number, number][] = [];
   const nx = Math.round(w / unit),
     ny = Math.round(h / unit);

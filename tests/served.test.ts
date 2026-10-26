@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { linkServed, servedSources, servedVersion, stripServed } from "../scripts/lib/served.ts";
-import { overlayVersionFromHtml, overlayVersionFromUrl } from "../src/served/overlay.ts";
+import { overlayVersionFromHtml, overlayVersionFromUrl } from "../src/served/text.ts";
 
 const NAMES = ["overlay", "hats", "arena-client"];
 
@@ -105,6 +105,6 @@ test("served sources: .js and .ts in name order; one name with both is refused",
 test("served sources: the repo serves the overlay modules from src/served/", () => {
   assert.deepEqual(
     servedSources().map((m) => m.name),
-    ["arena-client", "atlas", "chat", "cosmetics", "hats", "overlay", "parse", "pets", "upload"],
+    ["arena-client", "atlas", "chat", "cosmetics", "hats", "overlay", "parse", "pets", "text", "upload"],
   );
 });

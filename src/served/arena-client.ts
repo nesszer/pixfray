@@ -1,8 +1,8 @@
 import { isArenaChat, isObject, parseArenaEvent, parseArenaSnapshot, parseLooksMessage, warnOnce } from "./parse.ts";
 import type { ArenaChat, ArenaEvent, ArenaSnapshot, JsonObject, LooksMessage } from "./parse.ts";
 
-export type SnapshotMeta = { revision: number | null; source: string };
-export type ArenaStatus = {
+type SnapshotMeta = { revision: number | null; source: string };
+type ArenaStatus = {
   state: string;
   message?: string | undefined;
   revision?: number | null;

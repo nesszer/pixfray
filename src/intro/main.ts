@@ -24,6 +24,8 @@ import {
   buildChest,
   buildHoard,
   buildFrame,
+  bakeNightEnv,
+  addNightLights,
 } from "./world.ts";
 import type { DieValue, Uniforms } from "./world.ts";
 import type { SpriteFrame, VoxelOptions } from "./voxels.ts";
@@ -285,88 +287,32 @@ const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.1, 20
 
 const sky = buildSky();
 scene.add(sky);
-// a baked night for reflections: dark sky, a moon high behind, warm lantern panels around the ring.
-// Brass, gold, the ring and the wet floor pick it up; matte stone barely does.
-{
-  const env = new THREE.Scene(),
-    box = new THREE.BoxGeometry(1, 1, 1);
-  env.add(
-    new THREE.Mesh(
-      new THREE.SphereGeometry(20, 24, 12),
-      new THREE.MeshBasicMaterial({ color: 0x1a120c, side: THREE.BackSide }),
-    ),
-  );
-  const glow = (c: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
-    const m = new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: c }));
-    m.position.set(x, y, z);
-    m.scale.set(sx, sy, sz);
-    env.add(m);
-  };
-  glow(0xd8d0c4, 0, 12, -14, 4, 4, 1); // moon
-  glow(0x6a4a30, 0, -10, 0, 30, 1, 30); // warm floor bounce
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
-    glow(0xffa040, Math.cos(a) * 9, 2, Math.sin(a) * 9, 1.4, 2.4, 1.4);
-  }
-  glow(0x3a4a7a, -16, 6, 4, 1, 10, 14); // cool fill side
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(env, 0.02).texture;
-  scene.environmentIntensity = 0.55;
-  pmrem.dispose();
-}
-const hemi = new THREE.HemisphereLight(0x8a6a4a, 0x120c08, 0.5);
-scene.add(hemi);
-// a cool fill from the front left, against the warm lanterns: two-tone cubes read as solid
-const cool = new THREE.DirectionalLight(0x5d7cff, 0.5);
-cool.position.set(-6, 1.6, 1.5);
-scene.add(cool);
-const key = new THREE.DirectionalLight(0xffcf96, 1.5);
-key.position.set(4.5, 7.5, 5.5);
+bakeNightEnv(renderer, scene);
+const { hemi, cool, key, rim, warm } = addNightLights(scene, {
+  hemi: 0.5,
+  cool: 0.5,
+  key: 1.5,
+  rim: 0.9,
+  shadowMap: 2048,
+  shadowBox: { left: -5, right: 5, top: 5, bottom: -5 },
+});
 key.castShadow = !small;
-key.shadow.mapSize.set(2048, 2048);
-Object.assign(key.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near: 1, far: 22 });
-key.shadow.bias = -0.0008;
-key.shadow.normalBias = 0.02;
-scene.add(key);
-const rim = new THREE.DirectionalLight(0x9db2ff, 0.9);
-rim.position.set(-1.5, 10, -8);
-scene.add(rim);
 const clash = new THREE.PointLight(0xffc070, 0, 4, 2);
 scene.add(clash); // the flash between the fighters on a hit
-const warm = (
-  [
-    [-3.2, 1.9, 2.6],
-    [3.3, 1.9, 2.2],
-    [0.2, 1.9, -3.6],
-  ] satisfies Vec3[]
-).map(([x, y, z]) => {
-  const l = new THREE.PointLight(0xff9a40, 16, 10, 2);
-  l.position.set(x, y, z);
-  scene.add(l);
-  return l;
-});
 
-const island = buildIsland({ shadows: !small });
-scene.add(island);
-const lanterns = buildLanterns();
-scene.add(lanterns.group);
-const embers = buildEmbers(small ? 380 : 900);
-scene.add(embers);
-const islets = buildIslets();
-scene.add(islets.group);
-const die = buildDie();
+const island = buildIsland({ shadows: !small }),
+  lanterns = buildLanterns(),
+  embers = buildEmbers(small ? 380 : 900),
+  islets = buildIslets(),
+  die = buildDie(),
+  podium = buildPodium(),
+  coins = buildCoins(),
+  clouds = buildClouds(),
+  chest = buildChest();
 die.visible = false;
-scene.add(die);
-const podium = buildPodium();
-scene.add(podium.mesh);
-const coins = buildCoins();
-scene.add(coins.mesh);
-const clouds = buildClouds();
-scene.add(clouds.group);
-const chest = buildChest();
 chest.group.position.set(-1.75, 0, 1.25);
 chest.group.rotation.y = 0.62;
-scene.add(chest.group);
+scene.add(island, lanterns.group, embers, islets.group, die, podium.mesh, coins.mesh, clouds.group, chest.group);
 // the chest's light lives in the scene (dark until the lid opens): a light that comes and goes with the chest changes the
 // light count, and that rebuilds every lit material at once, a multi-second freeze the first time the loot chapter shows
 chest.group.updateMatrixWorld(true);

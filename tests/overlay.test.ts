@@ -1,4 +1,4 @@
-// Pure helpers of the OBS overlay (src/served/overlay.ts): limits, text cutting, name colors, version parsing.
+// Pure helpers of the OBS overlay (src/served/text.ts): limits, text cutting, name colors, version parsing.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -10,28 +10,27 @@ import {
   readableColor,
   overlayVersionFromUrl,
   overlayVersionFromHtml,
-} from "../src/served/overlay.ts";
+} from "../src/served/text.ts";
 
 test("overlay: parseCap floors, clamps to 100 and falls back for anything below 1 or not a number", () => {
-  assert.equal(parseCap("8"), 8);
-  assert.equal(parseCap("8.9"), 8);
-  assert.equal(parseCap("1"), 1);
-  assert.equal(parseCap("100"), 100);
-  assert.equal(parseCap("250"), 100);
-  for (const bad of [null, undefined, "", "abc", "0", "0.5", "-3", "NaN", "Infinity", "1e999"]) {
+  for (const [value, cap] of Object.entries({ 8: 8, 8.9: 8, 1: 1, 100: 100, 250: 100 }))
+    assert.equal(parseCap(value), cap);
+  for (const bad of [null, undefined, "", "abc", "0", "0.5", "-3", "NaN", "Infinity", "1e999"])
     assert.equal(parseCap(bad), 100, "default for " + String(bad));
-  }
   assert.equal(parseCap("abc", 40), 40, "a custom default is used");
 });
 
 test("overlay: effectiveCap is the lower of the link cap and the channel limit", () => {
-  assert.equal(effectiveCap(8, 15), 8, "link cap lower than the channel limit wins");
-  assert.equal(effectiveCap(40, 15), 15, "channel limit lower than the link cap wins");
-  assert.equal(effectiveCap(100, 50), 50, "no link cap: the channel limit applies");
-  assert.equal(effectiveCap(8, undefined), 8, "no channel limit yet");
-  assert.equal(effectiveCap(undefined, undefined), 100);
-  assert.equal(effectiveCap(8, 0), 1, "never below 1");
-  assert.equal(effectiveCap(8, 500), 8, "channel limit is clamped to 100");
+  for (const [link, channel, cap, why] of [
+    [8, 15, 8, "link cap lower than the channel limit wins"],
+    [40, 15, 15, "channel limit lower than the link cap wins"],
+    [100, 50, 50, "no link cap: the channel limit applies"],
+    [8, undefined, 8, "no channel limit yet"],
+    [undefined, undefined, 100, "no limits at all"],
+    [8, 0, 1, "never below 1"],
+    [8, 500, 8, "channel limit is clamped to 100"],
+  ])
+    assert.equal(effectiveCap(link, channel), cap, String(why));
 });
 
 test("overlay: truncateText never cuts through an emoji, a flag or a ZWJ family", () => {
@@ -112,13 +111,18 @@ test("overlay: readableColor leaves readable colors alone and lightens dark ones
 });
 
 test("overlay: the overlay version is the ?v= hash on its own script URL and on the overlay page", () => {
-  assert.equal(overlayVersionFromUrl("https://pixfray.xyz/overlay.js?v=0123456789"), "0123456789");
-  assert.equal(overlayVersionFromUrl("https://pixfray.xyz/overlay.js"), "", "unbuilt (dev) overlay has no version");
-  assert.equal(overlayVersionFromUrl("https://pixfray.xyz/overlay.js?v=nothex!"), "");
-  assert.equal(overlayVersionFromUrl("not a url"), "");
-  const html = '<script type="module" src="./overlay.js?v=abcdef0123"></script>';
-  assert.equal(overlayVersionFromHtml(html), "abcdef0123");
-  assert.equal(overlayVersionFromHtml('<script src="./overlay.js"></script>'), "");
-  assert.equal(overlayVersionFromHtml(""), "");
-  assert.equal(overlayVersionFromHtml(null), "");
+  const urls = {
+    "https://pixfray.xyz/overlay.js?v=0123456789": "0123456789",
+    "https://pixfray.xyz/overlay.js": "", // unbuilt (dev) overlay has no version
+    "https://pixfray.xyz/overlay.js?v=nothex!": "",
+    "not a url": "",
+  };
+  for (const [url, v] of Object.entries(urls)) assert.equal(overlayVersionFromUrl(url), v, url);
+  const pages = [
+    ['<script type="module" src="./overlay.js?v=abcdef0123"></script>', "abcdef0123"],
+    ['<script src="./overlay.js"></script>', ""],
+    ["", ""],
+    [null, ""],
+  ];
+  for (const [html, v] of pages) assert.equal(overlayVersionFromHtml(html), v, String(html));
 });
