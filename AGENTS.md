@@ -82,7 +82,7 @@ Each one has happened here. Check for it by name before calling work done.
 ## Docs index
 
 ```
-[Design]|DESIGN.md: reader per page, structure, copy, tokens, motion, overlay, responsive, primitives, avoid list, verify
+[Design]|DESIGN.md: readers, copy, tokens, motion, overlay, primitives, avoid list
 [PixFray docs]|root: ./docs
 |README.md: map of these docs
 |STREAMER_SETUP.md: /start sign-in, OBS overlay, adding the bot, mods, viewer sprites, StreamElements, troubleshooting, turning PixFray or the bot off
@@ -95,10 +95,10 @@ Each one has happened here. Check for it by name before calling work done.
 |DEVTOOLS.md: test-site tools (bot fighters, scripted duels, alt account in real chat, OBS)
 |LIVE_FIX.md: release flow, owner page fix/deploy/rollback, backups
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
-[Code]|server/: worker.ts routes|channel.ts ChannelRoom DO (state, bot commands, alarms)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|tracker.ts logs|points.ts|upgrades.ts pets.ts cosmetics.ts
+[Code]|server/: worker.ts routes|channel.ts ChannelRoom DO (state, bot commands, alarms)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|http.ts replies|uploads.ts sprites.ts developer.ts security.ts ratelimit.ts dedupe.ts tracker.ts|points.ts|upgrades.ts pets.ts cosmetics.ts
 |src/: admin.ts mod page|dashboard.ts channel page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
 |src/served/: overlay.ts|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
-|tests/: *.test.ts unit|fakes.ts doubles|port/ port tools|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
+|tests/: *.test.ts unit|fakes.ts worker-fakes.ts doubles|port/ port tools|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
 |scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
 ```
 
