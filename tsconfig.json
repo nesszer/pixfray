@@ -1,7 +1,7 @@
 // Type checking (`bun run typecheck`): five strict programs, split by the globals their files run with, because the
 // Worker, the browser and Node each have their own and some of them clash (the Workers types declare `Buffer` as
 // `any`, and they and the DOM type streams, crypto and canvas contexts differently). Nothing is emitted.
-// scripts/port-check.ts --strict-list fails a TypeScript file that none of them checks.
+// scripts/strict-check.ts fails a TypeScript file that none of them checks, or a program that loosens a check.
 {
   "files": [],
   "references": [

@@ -34,8 +34,6 @@ function devVar(name: string) {
     .trim()
     .replace(/^(["'])(.*)\1$/, "$2");
 }
-// Each test file is its own string literal, so a rename that moves it is a path change port-check can follow.
-const node = (file: string) => "node " + file;
 function run(name: string, cmd: string, env: Record<string, string | undefined> = {}) {
   const started = Date.now();
   console.log("\n=== " + name + ": " + cmd);
@@ -78,11 +76,10 @@ function summary() {
 process.on("exit", stop);
 try {
   run("format, lint, types, unit tests", "bun run check");
-  run("port-check tests", "bun run test:port");
   run("cf build", "bunx cf build");
   run("cf build (test)", "bunx cf build --mode test");
-  run("module versions", node("tests/build-versions.ts"));
-  run("upload (workerd)", node("tests/upload-workerd.ts"));
+  run("module versions", "node tests/build-versions.ts");
+  run("upload (workerd)", "node tests/upload-workerd.ts");
   if (!external) {
     await start(); // first start creates the local AuthStore, then sessions are seeded with the server stopped
     await fetch(base + "/api/session", { headers: { Cookie: "mini_session=" + "0".repeat(64) } });
@@ -93,11 +90,11 @@ try {
     await start();
   }
   const env = { MINI_BASE_URL: base };
-  run("smoke (v1 overlay)", node("tests/smoke.ts"), env);
-  run("ui (dashboard/admin)", node("tests/ui.ts"), env);
-  run("dev-ui (owner page)", node("tests/dev-ui.ts"), env);
-  run("arena browser", node("tests/arena-browser.ts"), env);
-  run("e2e local", node("tests/e2e-local.ts"), { ...env, MINI_AUTH_SECRET: devVar("AUTH_SECRET") });
+  run("smoke (v1 overlay)", "node tests/smoke.ts", env);
+  run("ui (dashboard/admin)", "node tests/ui.ts", env);
+  run("dev-ui (owner page)", "node tests/dev-ui.ts", env);
+  run("arena browser", "node tests/arena-browser.ts", env);
+  run("e2e local", "node tests/e2e-local.ts", { ...env, MINI_AUTH_SECRET: devVar("AUTH_SECRET") });
 } catch (error) {
   console.error(error);
   results.push(["harness", "FAIL", ""]);

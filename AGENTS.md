@@ -15,7 +15,7 @@ before relying on memory. Don't guess commands, flags or file locations: they ar
 | Install | `bun install` (Bun runs packages and scripts; tools need Node 22.18+) |
 | Dev server | `bun run dev`, then http://127.0.0.1:5173 (`.dev.vars` holds throwaway local values only) |
 | Before every commit | `bun run check` (format, lint, types, unit tests; the pre-commit hook adds gitleaks) |
-| Unit tests | `bun run test:unit`, port tools `bun run test:port` |
+| Unit tests | `bun run test:unit` |
 | Smoke test | `bun run test` (needs the dev server) |
 | Everything | `bun run test:all` (unit, builds, workerd upload, browser tests, local e2e duel) |
 | Deploy to staging | `bunx cf deploy --mode test --secrets-file ~/.pixfray/secrets.test.json` |
@@ -40,8 +40,8 @@ It is not wrangler: never `wrangler deploy` or `--env`.
   refuses on its own.
 - **Every behavior change gets a unit test** in `tests/*.test.ts` and a doc update: routes, rules and config in
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
-- **Strict TypeScript.** New code is `.ts` with `.ts` imports. A port PR changes no runtime code
-  (`bun run port-check`). Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
+- **Strict TypeScript.** New code is `.ts` with `.ts` imports, and `bun run typecheck` fails a TS
+  file outside the strict programs. Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
 - **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.ts`. Don't set `HEADLESS=1`.
 - **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in
   `public/dashboard.css` (tokens, classes, one gold accent, lock-on selection) and the patterns reviews keep catching.
@@ -91,15 +91,15 @@ Each one has happened here. Check for it by name before calling work done.
 |CONTRACTS.md: §1 conventions|§2 HTTP routes, channel registry, admin actions|§3 overlay socket /api/live|§4 EventSub /api/eventsub|§5 characters, catalog|§6 game rules|§7 config and balance|§8 modules, signatures|§9 tests and build
 |TWITCH_SETUP.md: Twitch app, EventSub chat, PixFray bot account
 |SELF_HOSTING.md: site.config.js, Twitch app, secrets, deploy, limits
-|DEVELOPMENT.md: local dev, test suites, port-check rules, live chat env vars
+|DEVELOPMENT.md: local dev, test suites, TypeScript programs, live chat env vars
 |DEVTOOLS.md: test-site tools (bot fighters, scripted duels, alt account in real chat, OBS)
 |LIVE_FIX.md: release flow, owner page fix/deploy/rollback, backups
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
 [Code]|server/: worker.ts routes|channel.ts ChannelRoom DO (state, bot commands, alarms)|game.ts rules, DEFAULT_CONFIG, validateConfigPatch|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts|sprites.ts|developer.ts|security.ts|ratelimit.ts|dedupe.ts|tracker.ts logs|points.ts|upgrades.ts pets.ts cosmetics.ts
 |src/: admin.ts mod page|dashboard.ts channel page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
 |src/served/: overlay.ts|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
-|tests/: *.test.ts unit|fakes.ts doubles|port/ port tools|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
-|scripts/: port-check.ts port-rename.ts lib/port.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
+|tests/: *.test.ts unit|fakes.ts doubles|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
+|scripts/: strict-check.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
 ```
 
 ## Changing this file

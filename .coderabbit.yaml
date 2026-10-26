@@ -41,8 +41,7 @@ reviews:
     - path: "**/*.{ts,mts,cts,tsx}"
       instructions: >-
         Strict TypeScript (every file is in a tsconfig program that bun run typecheck checks) with .ts import paths and erasable syntax
-        only. A pull request from a port/ branch changes no runtime code; port-check proves it in CI. Flag every
-        any, as cast or ! assertion without a reason in a comment on that line or the line above.
+        only. Flag every any, as cast or ! assertion without a reason in a comment on that line or the line above.
     - path: "tests/**"
       instructions: >-
         node:test unit tests. Browser tests must use chromeOptions() from tests/chrome.ts (headed, GPU flags),

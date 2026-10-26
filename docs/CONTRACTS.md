@@ -637,43 +637,13 @@ bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
 bun run typecheck          # tsc on five strict programs split by globals (strict options in tsconfig.base.json):
                            # tsconfig.worker.json (Workers types: server/), tsconfig.web.json (DOM types: src/,
-                           # types/dom.ts), tsconfig.node.json (Workers and Node: scripts/, build configs, unit
-                           # tests of Worker modules and tests/fakes.ts), tsconfig.node-dom.json (DOM and Node:
-                           # unit tests of DOM modules, Playwright code, the character build) and
-                           # tsconfig.node-all.json (Workers, DOM and Node: tests that import both); then
-                           # port-check --strict-list. It requires every TypeScript file in the program tsc reads
-                           # from some strict config. It fails a tsc error reading any of them, a strict option
-                           # off in any, a .d.ts, .d.mts or .d.cts
-                           # under skipLibCheck, and in any code file in those programs a comment with
-                           # @ts-nocheck (any letter case) or eslint-disable / oxlint-disable (any form).
-bun run port-check         # node scripts/port-check.ts --base origin/main. Exits 1 on a difference or problem,
-                           # 2 on bad usage; CI runs it on pushes to and PRs from port/ branches
-                           # (docs/DEVELOPMENT.md has every rule).
-                           # - Pairs and compares every changed file and checks relative imports at head.
-                           # - Builds the merge base (in .port-check/<sha>/, git-ignored, never deleted by the
-                           #   tool, refused when it no longer holds the base tree) and the working tree with
-                           #   bunx cf build, offline, and compares every .cloudflare/output file (JS without
-                           #   comments, the rest byte for byte).
-                           # - Leaves tsconfig*.json changes to that build diff, but fails a new root
-                           #   tsconfig.json. For each strict config the merge base has (any of the five),
-                           #   the head's resolved compilerOptions for it
-                           #   (tsc --showConfig) must equal the base's; only its files list may change.
-                           # - In tests/, scripts/, cloudflare.config.ts and vite.config.ts, passes a string
-                           #   naming a moved file's new path.
-                           # - Treats public/ as served as written: its code keeps its path and stays
-                           #   JavaScript, and every file there compares byte for byte.
-                           # - Fails bytes that change but decode the same.
-                           # - Fails, and skips the builds, on a path committed at .port-check in any letter
-                           #   case, on anything in .port-check/ besides <sha> and <sha>.partial folders, and
-                           #   on a symlink or junction at .port-check, .port-check/<sha>, .cloudflare or
-                           #   .wrangler.
-node scripts/port-rename.ts <file.js>   # starts a port: renames to .ts, rewrites imports and doc paths;
-                                        # refuses files under public/ and never rewrites one: it lists each
-                                        # line there that names a renamed file as file:line
+                           # types/dom.ts), tsconfig.node.json (Workers and Node: every root, scripts/ and tests/
+                           # .ts file the next two don't list), tsconfig.node-dom.json (DOM and Node: unit tests
+                           # of DOM modules, Playwright code, the character build) and tsconfig.node-all.json
+                           # (Workers, DOM and Node: tests that import both); then node scripts/strict-check.ts,
+                           # which fails a TypeScript file in no program, a strict option off in any, a .d.ts in
+                           # any, and @ts-nocheck or an eslint-disable / oxlint-disable comment in any file
 bun run test:unit          # node --import ./tests/register.ts --test "tests/*.test.ts"
-bun run test:port          # node --test tests/port/port-check.test.ts: port-check and port-rename against fixture
-                           # repos in one new OS temp folder per run (the build tests run bunx cf build); not in
-                           # check, for speed; CI runs it next to bun run check
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test
 node tests/build-versions.ts   # after a build: each served module is at the output root, and every reference
