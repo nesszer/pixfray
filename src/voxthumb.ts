@@ -94,9 +94,7 @@ function render(look: Look, i: number) {
   renderer!.setScissor(x, y, SIZE, SIZE); // setup() made it before any job ran
   renderer!.render(scene, camera); // setup() made it before any job ran
   scene.remove(turn);
-  f.mesh.geometry.dispose();
-  f.mesh.material.dispose();
-  f.mesh.dispose();
+  f.dispose();
   return true;
 }
 function copyCell(i: number) {

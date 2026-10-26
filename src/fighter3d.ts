@@ -8,7 +8,15 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { sampleSprite, VoxelFighter } from "./intro/voxels.ts";
-import { buildSky, buildIsland, buildLanterns, buildEmbers, buildIslets } from "./intro/world.ts";
+import {
+  addNightLights,
+  bakeNightEnv,
+  buildEmbers,
+  buildIsland,
+  buildIslets,
+  buildLanterns,
+  buildSky,
+} from "./intro/world.ts";
 
 const HEIGHT = 2.1; // the fighter's height in world units (a floor cell is 0.34)
 const AWAKE_MS = 8000; // the arena animates this long after the last input, then holds still and stops drawing
@@ -48,58 +56,15 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 200);
   const sky = buildSky();
   scene.add(sky);
-  {
-    // the intro's baked night for reflections: moon behind, warm lantern panels around, a cool side
-    const env = new THREE.Scene(),
-      box = new THREE.BoxGeometry(1, 1, 1);
-    env.add(
-      new THREE.Mesh(
-        new THREE.SphereGeometry(20, 24, 12),
-        new THREE.MeshBasicMaterial({ color: 0x1a120c, side: THREE.BackSide }),
-      ),
-    );
-    const glow = (c: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
-      const m = new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: c }));
-      m.position.set(x, y, z);
-      m.scale.set(sx, sy, sz);
-      env.add(m);
-    };
-    glow(0xd8d0c4, 0, 12, -14, 4, 4, 1);
-    glow(0x6a4a30, 0, -10, 0, 30, 1, 30);
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      glow(0xffa040, Math.cos(a) * 9, 2, Math.sin(a) * 9, 1.4, 2.4, 1.4);
-    }
-    glow(0x3a4a7a, -16, 6, 4, 1, 10, 14);
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(env, 0.02).texture;
-    scene.environmentIntensity = 0.55;
-    pmrem.dispose();
-  }
-  scene.add(new THREE.HemisphereLight(0x8a6a4a, 0x120c08, 0.55));
-  const cool = new THREE.DirectionalLight(0x5d7cff, 0.55);
-  cool.position.set(-6, 1.6, 1.5);
-  scene.add(cool);
-  const key = new THREE.DirectionalLight(0xffcf96, 1.6);
-  key.position.set(4.5, 7.5, 5.5);
-  key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
-  Object.assign(key.shadow.camera, { left: -2.5, right: 2.5, top: 3.5, bottom: -1, near: 1, far: 22 });
-  key.shadow.bias = -0.0008;
-  key.shadow.normalBias = 0.02;
-  scene.add(key);
-  const rim = new THREE.DirectionalLight(0x9db2ff, 1.1);
-  rim.position.set(-1.5, 10, -8);
-  scene.add(rim);
-  for (const [x, y, z] of [
-    [-3.2, 1.9, 2.6],
-    [3.3, 1.9, 2.2],
-    [0.2, 1.9, -3.6],
-  ] satisfies [number, number, number][]) {
-    const l = new THREE.PointLight(0xff9a40, 16, 10, 2);
-    l.position.set(x, y, z);
-    scene.add(l);
-  }
+  bakeNightEnv(renderer, scene);
+  addNightLights(scene, {
+    hemi: 0.55,
+    cool: 0.55,
+    key: 1.6,
+    rim: 1.1,
+    shadowMap: 1024,
+    shadowBox: { left: -2.5, right: 2.5, top: 3.5, bottom: -1 },
+  }).key.castShadow = true;
   const island = buildIsland({ shadows: true });
   scene.add(island);
   const lanterns = buildLanterns();
@@ -157,13 +122,6 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
       shadows: true,
     });
   }
-  function drop(f: VoxelFighter | null) {
-    if (!f) return;
-    table.remove(f.group);
-    f.mesh.geometry.dispose();
-    f.mesh.material.dispose();
-    f.mesh.dispose();
-  }
   // a swapped-out look bursts apart while the new one gathers in through it, so the stage is never empty
   const OUT = 460,
     leaving: { f: VoxelFighter; at: number }[] = [];
@@ -173,10 +131,10 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
     if (!look || look.key === lookKey) return;
     const first = !lookKey;
     lookKey = look.key;
-    leaving.splice(0).forEach((l) => drop(l.f));
+    leaving.splice(0).forEach((l) => l.f.dispose());
     if (reduced || first) {
-      drop(fighter);
-      drop(pet);
+      fighter?.dispose();
+      pet?.dispose();
     } else for (const f of [fighter, pet]) if (f) leaving.push({ f, at: performance.now() });
     const small = innerWidth < 700;
     fighter = voxels(look.body, look.frameH, HEIGHT, { rows: small ? 40 : 52, layers: 14, seed: 3 });
@@ -317,7 +275,7 @@ export function createFighter3D(canvas: HTMLCanvasElement, { zoom = 1 }: { zoom?
       const l = leaving[i]!, // in range: i counts down from leaving.length - 1
         k = (now - l.at) / OUT;
       if (k >= 1) {
-        drop(l.f);
+        l.f.dispose();
         leaving.splice(i, 1);
       } else {
         l.f.pointer = null;

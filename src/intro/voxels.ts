@@ -46,6 +46,14 @@ export async function loadImage(url: string): Promise<HTMLImageElement> {
   return img;
 }
 
+const SIDES = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+] satisfies [number, number][];
+const CENTRE_AND_SIDES = [[0, 0], ...SIDES] satisfies [number, number][];
+
 // Samples one sprite frame on a grid of `step` pixels. Returns cells { x, y, color } with the feet on y = 0, centred on x = 0.
 export function sampleSprite(img: CanvasImageSource, frame: SpriteFrame, step: number): SampledSprite {
   const c = document.createElement("canvas");
@@ -62,13 +70,7 @@ export function sampleSprite(img: CanvasImageSource, frame: SpriteFrame, step: n
       // the most opaque of the cell's centre pixel and its four neighbours, so thin outlines survive
       let best = -1,
         bi = 0;
-      for (const [dx, dy] of [
-        [0, 0],
-        [-1, 0],
-        [1, 0],
-        [0, -1],
-        [0, 1],
-      ] satisfies [number, number][]) {
+      for (const [dx, dy] of CENTRE_AND_SIDES) {
         const x = Math.min(frame.w - 1, Math.max(0, Math.floor(q * step + step / 2) + dx)),
           y = Math.min(frame.h - 1, Math.max(0, Math.floor(r * step + step / 2) + dy));
         const i = (y * frame.w + x) * 4;
@@ -126,12 +128,12 @@ export class VoxelFighter {
   declare delay: Float32Array;
   declare push: Float32Array;
   declare rnd: Float32Array;
-  declare hurt: number;
-  declare hurtAt: LocalPoint;
-  declare hurtDone: number;
-  declare assemble: number;
-  declare pointer: LocalPoint | null;
-  declare settling: boolean;
+  hurt = 0; // damage 0..1 knocks cubes loose around hurtAt, a local impact point
+  hurtAt: LocalPoint = { x: 0, y: 0 };
+  hurtDone = 0;
+  assemble = -1;
+  pointer: LocalPoint | null = null; // local-space cursor point
+  settling = false;
 
   // sprite: result of sampleSprite; size: cube edge in world units; layers: depth in cubes.
   constructor(
@@ -146,25 +148,13 @@ export class VoxelFighter {
     const key = (q: number, r: number) => q * 4096 + r,
       dist = new Map(cells.map((c): [number, number] => [key(c.q, c.r), 0]));
     let ring: { q: number; r: number }[] = cells.filter((c) =>
-      (
-        [
-          [1, 0],
-          [-1, 0],
-          [0, 1],
-          [0, -1],
-        ] satisfies [number, number][]
-      ).some(([a, b]) => !dist.has(key(c.q + a, c.r + b))),
+      SIDES.some(([a, b]) => !dist.has(key(c.q + a, c.r + b))),
     );
     for (const c of ring) dist.set(key(c.q, c.r), 1);
     for (let d = 2; ring.length && d < layers; d++) {
       const next: { q: number; r: number }[] = [];
       for (const c of ring)
-        for (const [a, b] of [
-          [1, 0],
-          [-1, 0],
-          [0, 1],
-          [0, -1],
-        ] satisfies [number, number][]) {
+        for (const [a, b] of SIDES) {
           const k = key(c.q + a, c.r + b);
           if (dist.get(k) === 0) {
             dist.set(k, d);
@@ -198,9 +188,6 @@ export class VoxelFighter {
     this.delay = new Float32Array(this.count);
     this.push = new Float32Array(this.count * 3); // cursor displacement, eased
     this.rnd = new Float32Array(this.count);
-    this.hurt = 0;
-    this.hurtAt = { x: 0, y: 0 }; // damage 0..1 knocks cubes loose around a local impact point
-    this.hurtDone = 0;
     let rnd = seed * 9301 + 49297;
     const rand = () => (rnd = (rnd * 9301 + 49297) % 233280) / 233280;
     let i = 0;
@@ -227,10 +214,14 @@ export class VoxelFighter {
       }
     });
     this.mesh.instanceColor!.needsUpdate = true; // setColorAt above created it (callers skip empty sprites)
-    this.assemble = -1;
-    this.pointer = null; // local-space cursor point, or null
-    this.settling = false;
     this.update(0, true);
+  }
+
+  dispose(): void {
+    this.group.removeFromParent();
+    this.mesh.geometry.dispose();
+    this.mesh.material.dispose();
+    this.mesh.dispose();
   }
 
   // t: assembly 0..1. Writes instance matrices only when something moved.

@@ -24,6 +24,69 @@ type ShaftMaterial = ShaderMaterialOf<{ uA: number; uTime: number }>;
 // one column of the gold heap; gem is an RGB colour or null
 type HoardColumn = { x: number; z: number; h: number; gem: RGB | null; s: number };
 
+// A baked night for reflections, shared by the home page and the fighter stage: dark sky, a moon high behind, warm
+// lantern panels around the ring, a cool side. Brass, gold, the ring and the wet floor pick it up; matte stone barely does.
+export function bakeNightEnv(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
+  const env = new THREE.Scene(),
+    box = new THREE.BoxGeometry(1, 1, 1);
+  env.add(
+    new THREE.Mesh(
+      new THREE.SphereGeometry(20, 24, 12),
+      new THREE.MeshBasicMaterial({ color: 0x1a120c, side: THREE.BackSide }),
+    ),
+  );
+  const glow = (c: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const m = new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: c }));
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz);
+    env.add(m);
+  };
+  glow(0xd8d0c4, 0, 12, -14, 4, 4, 1); // moon
+  glow(0x6a4a30, 0, -10, 0, 30, 1, 30); // warm floor bounce
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    glow(0xffa040, Math.cos(a) * 9, 2, Math.sin(a) * 9, 1.4, 2.4, 1.4);
+  }
+  glow(0x3a4a7a, -16, 6, 4, 1, 10, 14); // cool fill side
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(env, 0.02).texture;
+  scene.environmentIntensity = 0.55;
+  pmrem.dispose();
+}
+
+// The arena's lights: a cool fill from the front left against the warm lanterns (two-tone cubes read as solid), a warm
+// shadow-casting key, a cool rim and three warm lantern points. The two scenes differ only in strength and shadow box.
+export function addNightLights(
+  scene: THREE.Scene,
+  o: { hemi: number; cool: number; key: number; rim: number; shadowMap: number; shadowBox: object },
+) {
+  const hemi = new THREE.HemisphereLight(0x8a6a4a, 0x120c08, o.hemi);
+  const cool = new THREE.DirectionalLight(0x5d7cff, o.cool);
+  cool.position.set(-6, 1.6, 1.5);
+  const key = new THREE.DirectionalLight(0xffcf96, o.key);
+  key.position.set(4.5, 7.5, 5.5);
+  key.shadow.mapSize.set(o.shadowMap, o.shadowMap);
+  Object.assign(key.shadow.camera, { ...o.shadowBox, near: 1, far: 22 });
+  key.shadow.bias = -0.0008;
+  key.shadow.normalBias = 0.02;
+  const rim = new THREE.DirectionalLight(0x9db2ff, o.rim);
+  rim.position.set(-1.5, 10, -8);
+  scene.add(hemi, cool, key, rim);
+  const warm = (
+    [
+      [-3.2, 1.9, 2.6],
+      [3.3, 1.9, 2.2],
+      [0.2, 1.9, -3.6],
+    ] satisfies [number, number, number][]
+  ).map(([x, y, z]) => {
+    const l = new THREE.PointLight(0xff9a40, 16, 10, 2);
+    l.position.set(x, y, z);
+    scene.add(l);
+    return l;
+  });
+  return { hemi, cool, key, rim, warm };
+}
+
 // small deterministic noise
 const hash = (x: number, y: number) => {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
