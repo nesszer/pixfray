@@ -93,6 +93,9 @@ scripts with no flags, and Vite and `cf build` strip the types from the pages an
 - Test doubles live in `tests/fakes.ts`: `fakeCtx()` (a Durable Object context on real SQLite
   through `node:sqlite`), `asEnv()` and `asExecutionContext()` for partial bindings, `must()` for a
   value the test expects to find, and `Loose` (`any`) for JSON bodies and rows a test asserts on.
+  Worker-level tests share `tests/worker-fakes.ts`: real `ChannelRoom`s behind a fake namespace
+  (`realRooms()`, `roomCall()`), an AuthStore in memory or on SQLite (`memoryAuth()`, `sqliteAuth()`),
+  `req()`/`call()`/`status()` for Worker requests, and Twitch sign-in (`signIn()`, `twitchSignIn()`).
 - `types/lib-guards.ts` lets `Number.isInteger` narrow `unknown` to a branded `number`. Inside
   `if (Number.isInteger(u))`, `let c = u` infers the branded type, so `c = c + 1` fails; write
   `let c: number = u`.
