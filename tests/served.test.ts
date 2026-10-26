@@ -105,6 +105,26 @@ test("served sources: .js and .ts in name order; one name with both is refused",
 test("served sources: the repo serves the overlay modules from src/served/", () => {
   assert.deepEqual(
     servedSources().map((m) => m.name),
-    ["arena-client", "atlas", "chat", "cosmetics", "hats", "overlay", "parse", "pets", "pixels", "text", "upload"],
+    [
+      "arena-client",
+      "atlas",
+      "chat",
+      "cosmetics",
+      "hats",
+      "overlay-demo",
+      "overlay-draw",
+      "overlay-duels",
+      "overlay-fx",
+      "overlay-move",
+      "overlay-sprites",
+      "overlay-stage",
+      "overlay-sync",
+      "overlay",
+      "parse",
+      "pets",
+      "pixels",
+      "text",
+      "upload",
+    ],
   );
 });

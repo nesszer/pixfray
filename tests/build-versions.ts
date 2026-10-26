@@ -24,8 +24,8 @@ assert.ok(
   "overlay.html loads overlay.js",
 );
 assert.ok(
-  refs.some((r) => r.f === "overlay.js" && r.name === "cosmetics"),
-  "overlay.js imports cosmetics.js",
+  refs.some((r) => r.f === "overlay-draw.js" && r.name === "cosmetics"),
+  "overlay-draw.js imports cosmetics.js",
 );
 assert.ok(
   refs.some((r) => r.f === "upload.js" && r.name === "atlas"),
