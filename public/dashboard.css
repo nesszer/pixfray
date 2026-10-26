@@ -175,6 +175,60 @@ video {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+[hidden] {
+  display: none !important;
+}
+td code {
+  white-space: nowrap;
+}
+input[aria-invalid="true"] {
+  border-color: var(--negative);
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  font: 650 var(--text-md)/1.3 var(--font-display);
+  color: var(--text);
+}
+input[type="radio"],
+input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+  accent-color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+}
+input[type="color"] {
+  padding: 2px;
+  width: 56px;
+  cursor: pointer;
+}
 
 /* ---------- layout ---------- */
 .page {
@@ -193,6 +247,12 @@ video {
   margin: 0;
   max-width: var(--measure);
 }
+.page > .section:first-child {
+  margin-top: 0;
+}
+.page-header h1 {
+  margin-bottom: var(--space-2);
+}
 .meta {
   font-size: var(--text-sm);
   color: var(--text-3);
@@ -201,6 +261,11 @@ video {
 .section {
   margin-top: var(--space-7);
 }
+.section > h2:first-child {
+  margin-top: 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
 .channel-list {
   list-style: none;
   padding: 0;
@@ -208,11 +273,6 @@ video {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
-}
-.section > h2:first-child {
-  margin-top: 0;
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border);
 }
 .stack > * + * {
   margin-top: var(--space-4);
@@ -227,6 +287,9 @@ video {
 }
 .grid-3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.grid-2 + p {
+  margin-top: var(--space-5);
 }
 .split {
   display: grid;
@@ -252,6 +315,9 @@ video {
 }
 .summary p:last-child {
   margin-bottom: 0;
+}
+.summary .toolbar + .small {
+  margin-top: var(--space-3);
 }
 .card {
   border: 1px solid var(--border);
@@ -335,6 +401,13 @@ video {
   /* .table-wrap is positioned so absolutely placed children (sr-only headers) scroll with it instead of widening the page */
   position: relative;
 }
+.table-wrap > table#leaderboard {
+  width: 100%;
+}
+/* Rules: the table keeps a reading width beside the stage */
+#panel-rules .table-wrap {
+  max-width: 840px;
+}
 table.data {
   width: 100%;
   border-collapse: collapse;
@@ -367,6 +440,10 @@ table.data caption {
   text-align: left;
   font-weight: 600;
   padding-bottom: var(--space-2);
+}
+table.data img.sprite-thumb {
+  width: 64px;
+  height: 64px;
 }
 
 /* ---------- controls ---------- */
@@ -417,24 +494,6 @@ table.data caption {
 .badge.warning {
   color: var(--warning);
   border-color: currentColor;
-}
-label {
-  display: block;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  margin-bottom: var(--space-1);
-}
-input,
-select,
-textarea {
-  width: 100%;
-  min-height: 40px;
-  padding: var(--space-2) var(--space-3);
-  font: inherit;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
 }
 .controls {
   display: grid;
@@ -526,6 +585,12 @@ textarea {
   .table-wrap > table.data.prose-table td:first-child {
     min-width: 0;
   }
+  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) {
+    width: 100%;
+  }
+  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) td:first-child {
+    min-width: 0;
+  }
   table.data.prose-table th {
     white-space: normal;
   }
@@ -539,12 +604,6 @@ textarea {
   table#ranks :is(th, td):nth-child(n + 4):nth-child(-n + 5),
   table#points-redemptions :is(th, td):nth-child(odd):not(:last-child) {
     display: none;
-  }
-  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) {
-    width: 100%;
-  }
-  .table-wrap > table:is(#duels, #players, #ranks, #points-table, #points-redemptions) td:first-child {
-    min-width: 0;
   }
   #points-table td:first-child,
   #points-redemptions td {
@@ -575,9 +634,6 @@ textarea {
 }
 
 /* ---------- PixFray app classes (built from the tokens above) ---------- */
-[hidden] {
-  display: none !important;
-}
 .sr-only {
   position: absolute;
   width: 1px;
@@ -589,14 +645,9 @@ textarea {
 .btn-primary {
   font-weight: 650;
 }
-.page > .section:first-child {
-  margin-top: 0;
-}
-.grid-2 + p {
-  margin-top: var(--space-5);
-}
-td code {
-  white-space: nowrap;
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  cursor: not-allowed;
 }
 .lead {
   font-size: var(--text-lg);
@@ -650,10 +701,6 @@ td code {
   font-size: var(--text-sm);
   color: var(--text-2);
 }
-
-.page-header h1 {
-  margin-bottom: var(--space-2);
-}
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -675,15 +722,11 @@ td code {
 .status.warning {
   color: var(--warning);
 }
-.btn:disabled,
-.btn[aria-disabled="true"] {
-  cursor: not-allowed;
+fieldset .status:empty {
+  display: none;
 }
 .btn-danger {
   color: var(--negative);
-  border-color: var(--negative);
-}
-input[aria-invalid="true"] {
   border-color: var(--negative);
 }
 .btn-small {
@@ -691,32 +734,8 @@ input[aria-invalid="true"] {
   padding: 0 var(--space-3);
   font-size: var(--text-xs);
 }
-fieldset {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  min-width: 0;
-}
-legend {
-  margin-bottom: var(--space-2);
-  padding: 0;
-  font: 650 var(--text-md)/1.3 var(--font-display);
-  color: var(--text);
-}
-input[type="radio"],
-input[type="checkbox"] {
-  width: auto;
-  min-height: 0;
-  accent-color: var(--accent);
-}
-input[type="range"] {
-  accent-color: var(--accent);
-  padding: 0;
-}
-input[type="color"] {
-  padding: 2px;
-  width: 56px;
-  cursor: pointer;
+#se-table .btn {
+  white-space: nowrap;
 }
 .hint {
   font-size: var(--text-sm);
@@ -755,6 +774,21 @@ input[type="color"] {
   margin-top: var(--space-4);
   color: var(--text-2);
 }
+.hero-pick {
+  grid-area: pick;
+}
+/* wide screens: the demo runs under the copy and the sign-in card across the full width; fighters and nameplates need the room */
+.hero-grid:has(.signup-card) {
+  grid-template-areas: "copy card" "pick pick";
+}
+.hero-card {
+  grid-area: card;
+  position: sticky;
+  top: var(--space-4);
+}
+.hero-card .status:empty:has(+ .next-step:not([hidden])) {
+  display: none;
+} /* the next step takes the empty status line's place */
 .rules {
   margin: 0 0 var(--space-4);
   padding-left: var(--space-5);
@@ -762,9 +796,6 @@ input[type="color"] {
 }
 .rules li + li {
   margin-top: var(--space-1);
-}
-.hero-pick {
-  grid-area: pick;
 }
 /* /start: the overlay demo on a dark stage (the overlay itself is transparent on stream) */
 .stage-figure {
@@ -783,24 +814,12 @@ input[type="color"] {
   border: 0;
   color-scheme: normal;
 } /* matching the overlay's scheme keeps the frame transparent */
-/* wide screens: the demo runs under the copy and the sign-in card across the full width; fighters and nameplates need the room */
-.hero-grid:has(.signup-card) {
-  grid-template-areas: "copy card" "pick pick";
-}
 .signup-card {
   grid-area: card;
 }
 .signup-card h2 {
   margin: 0;
 }
-.hero-card {
-  grid-area: card;
-  position: sticky;
-  top: var(--space-4);
-}
-.hero-card .status:empty:has(+ .next-step:not([hidden])) {
-  display: none;
-} /* the next step takes the empty status line's place */
 .form-stack > * + * {
   margin-top: var(--space-5);
 }
@@ -818,15 +837,6 @@ input[type="color"] {
 .fighter-card .status {
   margin: 0;
 }
-/* "Use my <channel> fighter": offered when the viewer has no fighter on this channel yet */
-.others > p {
-  margin: 0 0 var(--space-2);
-}
-.others-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
 .fighter-card .stat-strip {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -835,6 +845,15 @@ input[type="color"] {
 }
 .fighter-card .stat .value {
   font-size: var(--text-xl);
+}
+/* "Use my <channel> fighter": offered when the viewer has no fighter on this channel yet */
+.others > p {
+  margin: 0 0 var(--space-2);
+}
+.others-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 /* character picker */
@@ -880,40 +899,12 @@ input[type="color"] {
 .char-option .tag {
   font-weight: 400;
 }
-canvas.sprite {
-  image-rendering: pixelated;
-  display: block;
-}
-.item-grid.text-grid {
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-}
-.text-grid .char-option label {
-  align-content: center;
-  min-height: 56px;
-}
-.pet-thumb {
-  image-rendering: pixelated;
-  vertical-align: middle;
-  object-fit: contain;
-}
-.item-grid .char-option {
-  display: flex;
-  flex-direction: column;
-} /* Buy buttons line up under labels of any height */
-.item-grid .char-option label {
-  flex: 1;
-  align-content: start;
-}
 .char-option.locked label > span:first-of-type {
   color: var(--text-2);
 }
 .char-option .title-text {
   color: var(--trim);
   font-weight: 650;
-}
-canvas.sprite.sample {
-  width: 64px;
-  height: 48px;
 }
 /* character search and type filters */
 .char-filter {
@@ -923,6 +914,39 @@ canvas.sprite.sample {
 }
 .char-filter input[type="search"] {
   max-width: 320px;
+}
+canvas.sprite {
+  image-rendering: pixelated;
+  display: block;
+}
+canvas.sprite.sample {
+  width: 64px;
+  height: 48px;
+}
+td canvas.sprite {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: var(--space-2);
+}
+.item-grid.text-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.item-grid .char-option {
+  display: flex;
+  flex-direction: column;
+} /* Buy buttons line up under labels of any height */
+.text-grid .char-option label {
+  align-content: center;
+  min-height: 56px;
+}
+.pet-thumb {
+  image-rendering: pixelated;
+  vertical-align: middle;
+  object-fit: contain;
+}
+.item-grid .char-option label {
+  flex: 1;
+  align-content: start;
 }
 .filter-buttons {
   display: flex;
@@ -975,12 +999,23 @@ canvas.sprite.sample {
   margin-top: var(--space-1);
   white-space: nowrap;
 }
-fieldset .status:empty {
-  display: none;
-}
 /* collapsed picker: the first 12 characters plus the picked one, so hat and upgrades are a short scroll away */
 .char-grid.collapsed > .char-option:nth-child(n + 13):not(:has(input:checked)) {
   display: none;
+}
+.char-option input:checked + label::after,
+.build[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 10px solid transparent;
+  border-image: var(--lock) 10;
+  pointer-events: none;
+}
+.char-option input:checked + label {
+  border-color: var(--border-strong);
+  background: var(--accent-soft);
+  box-shadow: none;
 }
 .more-chars {
   margin-top: var(--space-3);
@@ -1027,11 +1062,6 @@ fieldset .status:empty {
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
-.stage-canvas {
-  display: block;
-  width: 100%;
-  height: 230px;
-}
 .preview-bar {
   display: flex;
   align-items: center;
@@ -1050,6 +1080,16 @@ fieldset .status:empty {
 .preview-bar .btn {
   flex: 0 0 auto;
 }
+.preview .caption {
+  font: 650 var(--text-md)/1.3 var(--font-display);
+  color: var(--text-2);
+  text-align: center;
+}
+.stage-canvas {
+  display: block;
+  width: 100%;
+  height: 230px;
+}
 .panel-section {
   margin-top: var(--space-7);
 }
@@ -1063,11 +1103,6 @@ fieldset .status:empty {
   border-radius: var(--radius-sm);
   background: var(--bg);
   border: 1px solid var(--border);
-}
-.preview .caption {
-  font: 650 var(--text-md)/1.3 var(--font-display);
-  color: var(--text-2);
-  text-align: center;
 }
 .swatches {
   display: flex;
@@ -1126,11 +1161,6 @@ fieldset .status:empty {
 tr.me td {
   background: var(--accent-soft);
 }
-td canvas.sprite {
-  display: inline-block;
-  vertical-align: middle;
-  margin-right: var(--space-2);
-}
 tr.podium td:first-child {
   color: var(--trim);
   font-weight: 650;
@@ -1173,6 +1203,28 @@ tr.podium td:first-child {
 }
 [role="tabpanel"] > :first-child {
   margin-top: 0;
+}
+html:has(.config-bar.dirty) {
+  scroll-padding-bottom: 140px;
+} /* a focused field scrolls clear of the bar */
+body::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 auto;
+  height: 900px;
+  pointer-events: none;
+  background: var(--bg) url("/assets/scene/page-sky.webp") center top / cover no-repeat;
+}
+body:has(.landing:not([hidden]))::before {
+  display: none;
+}
+/* the sky's moon sits above the locked card instead of half behind it */
+body:has(.gate:not([hidden]))::before {
+  background-position: center -140px;
+}
+body:has(> .scene-sky.is-ready)::before {
+  display: none;
 }
 details.history {
   margin-top: var(--space-6);
@@ -1272,6 +1324,9 @@ details.history[open] > summary {
 .setup-steps details[open] > summary {
   margin-bottom: var(--space-3);
 }
+.setup-steps .stack > :not(.table-wrap) {
+  max-width: var(--measure);
+}
 #troubleshoot details {
   border-top: 1px solid var(--border);
   padding: var(--space-2) 0;
@@ -1365,9 +1420,6 @@ details.history[open] > summary {
   background: var(--bg);
   border-top: 1px solid var(--border-strong);
 }
-html:has(.config-bar.dirty) {
-  scroll-padding-bottom: 140px;
-} /* a focused field scrolls clear of the bar */
 .config-bar .status:empty {
   display: none;
 }
@@ -1407,6 +1459,23 @@ html:has(.config-bar.dirty) {
   color: var(--text);
   border-left-color: var(--trim);
 }
+/* admin signed out: the gate spans the page grid, with no rule floating above it */
+body:has(#gate:not([hidden])) .page-header {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+/* mod controls, signed out: the heading and the lock sit together in the middle of the screen */
+body:has(#gate:not([hidden])) > main.page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+  padding-block: var(--space-7) var(--space-6);
+}
+/* /start: the page ends at its last call to action */
+main.page:has(> .ready:last-child) {
+  padding-bottom: 0;
+}
 
 /* changelog: releases newest first, separated by rules; the change kind is a quiet badge, never win/loss colors */
 .release + .release {
@@ -1434,8 +1503,6 @@ html:has(.config-bar.dirty) {
 }
 
 @media (max-width: 900px) {
-  /* narrow screens: the preview card sticks to the top of the screen as a compact bar while you pick in the tabs
-     below it, so the fighter and Save are always in view (dashboard.ts keeps scroll-padding-top clear of it) */
   /* :has() matches the wide /start rule's specificity, so the sign-in card also stacks */
   .hero-grid,
   .hero-grid:has(.signup-card) {
@@ -1444,6 +1511,8 @@ html:has(.config-bar.dirty) {
     padding: var(--space-6) var(--space-4);
     gap: var(--space-5);
   }
+  /* narrow screens: the preview card sticks to the top of the screen as a compact bar while you pick in the tabs
+     below it, so the fighter and Save are always in view (dashboard.ts keeps scroll-padding-top clear of it) */
   .hero-card {
     top: 0;
     z-index: 2;
@@ -1501,29 +1570,6 @@ html:has(.config-bar.dirty) {
   .hero-card .others > p {
     display: none;
   } /* the status line already says fighters are saved per channel */
-  .with-index {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-5);
-  }
-  .page-index {
-    position: static;
-  }
-  .page-index ol {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    border-left: 0;
-  }
-  .page-index a {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    margin: 0;
-    padding: var(--space-1) var(--space-3);
-  }
-  /* eleven release chips would push the first release off the phone screen */
-  .changelog .page-index {
-    display: none;
-  }
   /* phones: the sticky bar shows the 3D fighter beside the on-stream view */
   .hero-card.has-3d {
     background: var(--bg);
@@ -1570,17 +1616,8 @@ html:has(.config-bar.dirty) {
   .hero-card.has-3d .points-link:not([hidden]) + .toolbar {
     margin: 0;
   }
-  .topbar nav a {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-  }
   .hero-card.has-3d > :not(.showcase):not(.toolbar):not(:empty) {
     margin-top: var(--space-2);
-  }
-  /* keyboard focus and scrolled-to items stay clear of the fixed Save bar */
-  html:has(.hero-card.has-3d) {
-    scroll-padding-bottom: 88px;
   }
   .hero-card.has-3d .preview {
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1589,24 +1626,6 @@ html:has(.config-bar.dirty) {
   }
   .hero-card.has-3d .stage-canvas {
     height: 56px;
-  }
-  /* phones: once you scroll into the picker the stuck preview becomes a short strip (dashboard.ts compactPreview) */
-  html.compact .hero-card.has-3d .preview,
-  html.compact .hero-card.has-3d .points-link {
-    display: none;
-  }
-  /* the Save bar steps aside while scrolling down and on Ranks and Rules (dashboard.ts tuckSaveBar) */
-  html.bar-away .hero-card.has-3d .toolbar {
-    transform: translateY(110%);
-  }
-  /* with the preview compact, the tabs stick right under it so switching sections never needs a scroll back up */
-  html.compact .hero-pick .tabs {
-    position: sticky;
-    z-index: 2;
-    top: var(--stuck-h, 0px);
-    background: var(--bg);
-    margin-inline: calc(-1 * var(--space-4));
-    padding-inline: var(--space-4);
   }
   .hero-card.has-3d .toolbar::before {
     content: "";
@@ -1618,9 +1637,6 @@ html:has(.config-bar.dirty) {
     background: linear-gradient(to top, rgb(12 9 7 / 0.8), transparent);
     pointer-events: none;
   }
-  body:has(.hero-card.has-3d) {
-    padding-bottom: calc(88px + env(safe-area-inset-bottom));
-  }
   /* phones: a taller pinned stage, and the drag hint while it is full size */
   html:not(.compact) .hero-card.has-3d .showcase-tag .hint-turn {
     display: inline;
@@ -1631,6 +1647,83 @@ html:has(.config-bar.dirty) {
     transition:
       transform 0.2s ease-out,
       visibility 0s 0.2s;
+  }
+  .hero-card.has-3d .preview.is-playing .preview-label {
+    display: block;
+    position: absolute;
+    top: auto;
+    bottom: 108px;
+    left: 10px;
+    color: var(--text-2);
+  }
+  html[data-tab="ranks"] .hero-card.has-3d,
+  html[data-tab="rules"] .hero-card.has-3d {
+    display: none;
+  }
+  .with-index {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-5);
+  }
+  .page-index {
+    position: static;
+  }
+  .page-index ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    border-left: 0;
+  }
+  .page-index a {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin: 0;
+    padding: var(--space-1) var(--space-3);
+  }
+  /* eleven release chips would push the first release off the phone screen */
+  .changelog .page-index {
+    display: none;
+  }
+  .topbar nav a {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+  /* keyboard focus and scrolled-to items stay clear of the fixed Save bar */
+  html:has(.hero-card.has-3d) {
+    scroll-padding-bottom: 88px;
+  }
+  body:has(.hero-card.has-3d) {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
+  }
+  html {
+    scroll-padding-bottom: 72px;
+  }
+  /* phones: once you scroll into the picker the stuck preview becomes a short strip (dashboard.ts compactPreview) */
+  html.compact .hero-card.has-3d .preview,
+  html.compact .hero-card.has-3d .points-link {
+    display: none;
+  }
+  /* with the preview compact, the tabs stick right under it so switching sections never needs a scroll back up */
+  html.compact .hero-pick .tabs {
+    position: sticky;
+    z-index: 2;
+    top: var(--stuck-h, 0px);
+    background: var(--bg);
+    margin-inline: calc(-1 * var(--space-4));
+    padding-inline: var(--space-4);
+  }
+  html.compact .hero-card.has-3d .preview:not(.is-playing) {
+    display: none;
+  }
+  html.compact .hero-card.has-3d .preview.is-playing {
+    display: block;
+  }
+  html.compact .hero-card.has-3d .preview.is-playing .preview-bar {
+    display: none;
+  }
+  /* the Save bar steps aside while scrolling down and on Ranks and Rules (dashboard.ts tuckSaveBar) */
+  html.bar-away .hero-card.has-3d .toolbar {
+    transform: translateY(110%);
   }
   /* picker, phones: the live arena is a banner over the heading, with the top fighter standing in it */
   .landing.is-live .landing-inner {
@@ -1644,31 +1737,7 @@ html:has(.config-bar.dirty) {
     visibility: visible;
     transition: transform 0.2s ease-out;
   }
-  .hero-card.has-3d .preview.is-playing .preview-label {
-    display: block;
-    position: absolute;
-    top: auto;
-    bottom: 108px;
-    left: 10px;
-    color: var(--text-2);
-  }
-  html.compact .hero-card.has-3d .preview:not(.is-playing) {
-    display: none;
-  }
-  html.compact .hero-card.has-3d .preview.is-playing {
-    display: block;
-  }
-  html.compact .hero-card.has-3d .preview.is-playing .preview-bar {
-    display: none;
-  }
-  html {
-    scroll-padding-bottom: 72px;
-  }
   .showcase .readout span {
-    display: none;
-  }
-  html[data-tab="ranks"] .hero-card.has-3d,
-  html[data-tab="rules"] .hero-card.has-3d {
     display: none;
   }
 }
@@ -1729,15 +1798,6 @@ html:has(.config-bar.dirty) {
 #se-table input {
   width: 9rem;
 }
-#se-table .btn {
-  white-space: nowrap;
-}
-.setup-steps .stack > :not(.table-wrap) {
-  max-width: var(--measure);
-}
-.badge {
-  white-space: nowrap;
-}
 #se-table th,
 #se-table td {
   white-space: nowrap;
@@ -1749,25 +1809,16 @@ html:has(.config-bar.dirty) {
 #se-table td:nth-child(2) {
   min-width: 10rem;
 }
+.badge {
+  white-space: nowrap;
+}
 
 /* Characters: the uploader's slot line repeats the usage figure above it; the limits line stays in the form */
 #upload-root .upload-usage {
   display: none;
 }
-.summary .toolbar + .small {
-  margin-top: var(--space-3);
-}
 
 /* ---------- night arena (matches /intro): the scene behind the header, HUD lines, lock-on corners ---------- */
-body::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0 0 auto;
-  height: 900px;
-  pointer-events: none;
-  background: var(--bg) url("/assets/scene/page-sky.webp") center top / cover no-repeat;
-}
 @media (max-width: 760px) {
   body::before {
     height: 640px;
@@ -1786,23 +1837,17 @@ body::before {
   flex: none;
   fill: var(--accent);
 }
+.topbar nav + .who {
+  margin-left: 0;
+}
 .hero {
   background: none;
   border-bottom: 1px solid var(--border);
 }
-.char-option input:checked + label::after,
-.build[aria-pressed="true"]::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  border: 10px solid transparent;
-  border-image: var(--lock) 10;
-  pointer-events: none;
-}
-.char-option input:checked + label {
-  border-color: var(--border-strong);
-  background: var(--accent-soft);
-  box-shadow: none;
+.hero-copy .how a {
+  display: inline-block;
+  padding-block: var(--space-3);
+  margin-block: calc(-1 * var(--space-3));
 }
 .build {
   position: relative;
@@ -1865,17 +1910,6 @@ body::before {
   border-image: var(--lock) 10;
   pointer-events: none;
 }
-#preview3d {
-  display: block;
-  width: 100%;
-  height: 100%;
-  cursor: grab;
-  touch-action: pan-y;
-  outline-offset: -2px;
-}
-#preview3d.is-dragging {
-  cursor: grabbing;
-}
 .showcase-tag {
   position: absolute;
   left: 18px;
@@ -1918,6 +1952,21 @@ body::before {
   color: var(--text-2);
   white-space: nowrap;
 }
+#preview3d {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: pan-y;
+  outline-offset: -2px;
+}
+#preview3d.is-dragging {
+  cursor: grabbing;
+}
+/* The not-found page: the arena island floats off to the right, the way back sits on the left */
+body.is-lost::before {
+  content: none;
+}
 .preview {
   position: relative;
   background: var(--bg);
@@ -1944,9 +1993,6 @@ body::before {
   min-height: calc(100svh - 56px);
   background: var(--bg) url("/assets/scene/landing.webp") right center / cover no-repeat;
   border-bottom: 1px solid var(--border);
-}
-body:has(.landing:not([hidden]))::before {
-  display: none;
 }
 .landing-inner {
   width: 100%;
@@ -1976,6 +2022,10 @@ body:has(.landing:not([hidden]))::before {
     background-color 120ms ease,
     box-shadow 120ms ease;
 }
+.landing .caveat {
+  border-top: 0;
+  padding-top: 0;
+}
 .channel {
   position: relative;
   display: flex;
@@ -2002,10 +2052,6 @@ body:has(.landing:not([hidden]))::before {
   border: 10px solid transparent;
   border-image: var(--lock) 10;
   pointer-events: none;
-}
-.landing .caveat {
-  border-top: 0;
-  padding-top: 0;
 }
 .landing-links {
   display: flex;
@@ -2144,6 +2190,9 @@ body:has(.landing:not([hidden]))::before {
   border-top: 2px solid var(--trim);
   border-radius: 0;
 }
+body:has(#gate:not([hidden])) .gate {
+  margin: var(--space-6) 0 0;
+}
 @media (max-width: 760px) {
   .gate {
     grid-template-columns: minmax(0, 1fr);
@@ -2209,6 +2258,24 @@ body:has(.landing:not([hidden]))::before {
 .channel-meta:empty {
   display: none;
 }
+.channel-go {
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--trim);
+  border-radius: var(--radius-sm);
+  color: var(--accent-hover);
+  font-weight: 600;
+  /* Picker: both row actions share one width, so their edges line up */
+  min-width: 168px;
+  text-align: center;
+}
+.channel:hover .channel-go,
+.channel:focus-visible .channel-go {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
 @media (max-width: 900px) {
   .step-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2219,9 +2286,6 @@ body:has(.landing:not([hidden]))::before {
     grid-template-columns: minmax(0, 1fr);
     margin-left: var(--space-3);
   }
-}
-.topbar nav + .who {
-  margin-left: 0;
 }
 .topbar .who:empty {
   display: none;
@@ -2294,24 +2358,6 @@ body:has(.landing:not([hidden]))::before {
   #duels .prose-table td:first-child {
     white-space: normal;
   }
-}
-.channel-go {
-  font-size: var(--text-sm);
-  white-space: nowrap;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--trim);
-  border-radius: var(--radius-sm);
-  color: var(--accent-hover);
-  font-weight: 600;
-  /* Picker: both row actions share one width, so their edges line up */
-  min-width: 168px;
-  text-align: center;
-}
-.channel:hover .channel-go,
-.channel:focus-visible .channel-go {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
 }
 @media (max-width: 760px) {
   .channel {
@@ -2407,6 +2453,47 @@ body:has(.landing:not([hidden]))::before {
 .step-mock .mod {
   color: var(--text);
 }
+/* setup steps: a small step badge instead of a big numeral */
+.step-grid > li::before {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--trim);
+  border-radius: var(--radius-sm);
+  font: 650 var(--text-xs)/1 var(--font-sans);
+}
+.step-grid {
+  gap: 0;
+}
+.step-grid > li {
+  counter-increment: step;
+  color: var(--text-2);
+  position: relative;
+  border-top: 2px solid var(--border-strong);
+  padding: var(--space-5) var(--space-5) 0 0;
+  font-size: var(--text-md);
+  line-height: 1.55;
+}
+.step-grid > li::before {
+  position: absolute;
+  left: 0;
+}
+/* /start steps: equal mock-ups so the headings share a baseline, larger numbered markers */
+.step-grid > li::before {
+  width: 32px;
+  height: 32px;
+  top: -17px;
+  font-size: var(--text-md);
+  background: var(--trim);
+  color: var(--on-accent);
+  border-color: var(--trim);
+}
+.step-grid > li.optional::before {
+  background: var(--bg);
+  color: var(--trim);
+}
+.step-grid > li.optional > .badge {
+  margin-bottom: var(--space-2);
+}
 .perm-lists {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2425,16 +2512,35 @@ body:has(.landing:not([hidden]))::before {
 .perm-lists li + li {
   margin-top: var(--space-1);
 }
+.perm-lists ul.marks {
+  list-style: none;
+  padding: 0;
+}
+.perm-lists ul.marks li {
+  position: relative;
+  padding-left: var(--space-6);
+}
+.perm-lists ul.marks li::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 18px;
+  text-align: center;
+  font-weight: 650;
+}
+.perm-lists ul.yes li::before {
+  content: "✓";
+  color: var(--positive);
+}
+.perm-lists ul.no li::before {
+  content: "✕";
+  color: var(--negative);
+}
 @media (max-width: 760px) {
   .perm-lists {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-5);
   }
-}
-/* admin signed out: the gate spans the page grid, with no rule floating above it */
-body:has(#gate:not([hidden])) .page-header {
-  border-bottom: 0;
-  margin-bottom: 0;
 }
 /* phones: tabs and type filters are one scrolling row, like the desktop underline */
 @media (max-width: 900px) {
@@ -2487,6 +2593,12 @@ body:has(#gate:not([hidden])) .page-header {
   background: var(--panel);
   border-color: var(--border);
 }
+.item-grid .char-option canvas.vox {
+  width: 80px;
+  height: 80px;
+  /* character tiles: the voxel render is larger and stands on its own shadow, so it reads as the same model as the stage */
+  filter: drop-shadow(0 6px 4px rgb(0 0 0 / 0.6));
+}
 /* leaderboard: the top three read first */
 #leaderboard tr.podium td {
   padding-block: var(--space-3);
@@ -2499,24 +2611,10 @@ body:has(#gate:not([hidden])) .page-header {
   width: 48px;
   height: 48px;
 }
-/* mod controls, signed out: the heading and the lock sit together in the middle of the screen */
-body:has(#gate:not([hidden])) > main.page {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-height: 0;
-  padding-block: var(--space-7) var(--space-6);
-}
-body:has(#gate:not([hidden])) .gate {
-  margin: var(--space-6) 0 0;
-}
-/* setup steps: a small step badge instead of a big numeral */
-.step-grid > li::before {
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--trim);
-  border-radius: var(--radius-sm);
-  font: 650 var(--text-xs)/1 var(--font-sans);
+#leaderboard tr.podium .lb-char canvas.sprite,
+#leaderboard tr.podium .lb-char canvas.vox {
+  width: 48px;
+  height: 48px;
 }
 /* channel picker: the rows sit on one dark panel so the island never shows through the text */
 .landing .channel-list {
@@ -2564,52 +2662,12 @@ body:has(#gate:not([hidden])) .gate {
 .text-link:hover {
   color: var(--accent-hover);
 }
-.step-grid {
-  gap: 0;
-}
-.step-grid > li {
-  counter-increment: step;
-  color: var(--text-2);
-  position: relative;
-  border-top: 2px solid var(--border-strong);
-  padding: var(--space-5) var(--space-5) 0 0;
-  font-size: var(--text-md);
-  line-height: 1.55;
-}
-.step-grid > li::before {
-  position: absolute;
-  left: 0;
-}
 @media (max-width: 480px) {
   .step-grid > li {
     border-top: 0;
     border-left: 2px solid var(--border-strong);
     padding: 0 0 var(--space-6) var(--space-6);
   }
-}
-.perm-lists ul.marks {
-  list-style: none;
-  padding: 0;
-}
-.perm-lists ul.marks li {
-  position: relative;
-  padding-left: var(--space-6);
-}
-.perm-lists ul.marks li::before {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 18px;
-  text-align: center;
-  font-weight: 650;
-}
-.perm-lists ul.yes li::before {
-  content: "✓";
-  color: var(--positive);
-}
-.perm-lists ul.no li::before {
-  content: "✕";
-  color: var(--negative);
 }
 .gate-peek {
   margin: 0 0 var(--space-5);
@@ -2670,6 +2728,17 @@ body:has(#gate:not([hidden])) .gate {
 }
 .gate-peek .bar.short {
   flex-basis: 35%;
+}
+.gate-peek .peek-btn {
+  padding: 4px var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.gate-peek .peek-link {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  /* the gate's preview reads as a picture of the controls: drawn controls, not live ones */
+  color: var(--text-2);
 }
 @media (max-width: 900px) {
   .tabs [role="tab"],
@@ -2738,12 +2807,6 @@ body:has(#gate:not([hidden])) .gate {
 .thumb.has-vox canvas.sprite {
   visibility: hidden;
 }
-.item-grid .char-option canvas.vox {
-  width: 80px;
-  height: 80px;
-  /* character tiles: the voxel render is larger and stands on its own shadow, so it reads as the same model as the stage */
-  filter: drop-shadow(0 6px 4px rgb(0 0 0 / 0.6));
-}
 @media (prefers-reduced-motion: no-preference) {
   .char-option canvas.vox {
     transition: transform 0.18s ease;
@@ -2752,13 +2815,13 @@ body:has(#gate:not([hidden])) .gate {
   .char-option input:checked + label canvas.vox {
     transform: translateY(-3px) scale(1.06);
   }
-  [role="tabpanel"]:not([hidden]) {
-    animation: panel-in 0.2s ease-out;
-  }
   .char-option label {
     transition:
       border-color 0.15s ease,
       background-color 0.15s ease;
+  }
+  [role="tabpanel"]:not([hidden]) {
+    animation: panel-in 0.2s ease-out;
   }
 }
 /* phone: the on-stream strip sits under the 3D view as one slim row, not over it; the Save bar is slimmer */
@@ -2796,17 +2859,6 @@ body:has(#gate:not([hidden])) .gate {
     min-height: 44px;
   }
 }
-.gate-peek .peek-btn {
-  padding: 4px var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-}
-.gate-peek .peek-link {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  /* the gate's preview reads as a picture of the controls: drawn controls, not live ones */
-  color: var(--text-2);
-}
 @media (max-width: 760px) {
   .gate-peek {
     display: none;
@@ -2822,9 +2874,6 @@ body:has(#gate:not([hidden])) .gate {
   .hero-grid {
     grid-template-rows: auto 1fr;
   }
-  .step-mock {
-    height: 144px;
-  }
   /* builder, desktop: a wider card and a closer stage; the on-stream strip is one slim lane, not a black box */
   .hero-card.has-3d .preview-label {
     top: var(--space-2);
@@ -2839,12 +2888,19 @@ body:has(#gate:not([hidden])) .gate {
   .hero-card.has-3d .stage-canvas {
     height: 104px;
   }
+  .step-mock {
+    height: 144px;
+  }
   .item-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   #leaderboard td:nth-child(2),
   #leaderboard .lb-char {
     white-space: nowrap;
+  }
+  #leaderboard th,
+  #leaderboard td {
+    padding-inline: var(--space-2);
   }
   .landing .channel-list {
     max-width: 560px;
@@ -2858,10 +2914,6 @@ body:has(#gate:not([hidden])) .gate {
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  #leaderboard th,
-  #leaderboard td {
-    padding-inline: var(--space-2);
-  }
 }
 #leaderboard td {
   vertical-align: middle;
@@ -2871,6 +2923,16 @@ body:has(#gate:not([hidden])) .gate {
 }
 #leaderboard tbody tr:first-child:not(.empty) td:first-child {
   box-shadow: inset 2px 0 0 var(--trim);
+}
+/* Ranks: rank and name read left to right, the numbers line up under their headings, the table fills its column */
+#leaderboard th:first-child,
+#leaderboard td:first-child {
+  text-align: left;
+  width: 4em;
+}
+/* the name keeps its color square on its line at 390 */
+#leaderboard td:nth-child(2) {
+  overflow-wrap: anywhere;
 }
 #leaderboard .lb-char {
   display: inline-flex;
@@ -2882,28 +2944,6 @@ body:has(#gate:not([hidden])) .gate {
   width: 40px;
   height: 40px;
   margin: 0;
-}
-#leaderboard tr.podium .lb-char canvas.sprite,
-#leaderboard tr.podium .lb-char canvas.vox {
-  width: 48px;
-  height: 48px;
-}
-/* /start steps: equal mock-ups so the headings share a baseline, larger numbered markers */
-.step-grid > li::before {
-  width: 32px;
-  height: 32px;
-  top: -17px;
-  font-size: var(--text-md);
-  background: var(--trim);
-  color: var(--on-accent);
-  border-color: var(--trim);
-}
-.step-grid > li.optional::before {
-  background: var(--bg);
-  color: var(--trim);
-}
-.step-grid > li.optional > .badge {
-  margin-bottom: var(--space-2);
 }
 @media (max-width: 480px) {
   .step-grid > li::before {
@@ -2938,6 +2978,39 @@ body:has(#gate:not([hidden])) .gate {
   border-color: var(--border-strong);
   background: var(--raised);
 }
+.char-option .tag {
+  font-size: var(--text-sm);
+}
+#items-taunt .char-option label > span:first-of-type {
+  position: relative;
+  justify-self: center;
+  padding: var(--space-2) var(--space-3);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+#items-taunt .char-option label > span:first-of-type::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  border: inherit;
+  border-width: 0 1px 1px 0;
+  transform: rotate(45deg);
+  background-color: #0a0807;
+}
+#items-taunt .char-option:first-child label > span:first-of-type {
+  background: none;
+  border: 0;
+  color: var(--text-2);
+}
+#items-taunt .char-option:first-child label > span:first-of-type::after {
+  display: none;
+}
 /* the signed-out mod gate: copy and preview share a top edge */
 .gate {
   align-items: start;
@@ -2947,6 +3020,13 @@ body:has(#gate:not([hidden])) .gate {
   margin-top: var(--space-6);
   padding-top: var(--space-5);
   border-top: 1px solid var(--border);
+}
+.gate-peek .peek-tabs {
+  font-size: var(--text-sm);
+}
+.gate-peek .peek-btn,
+.gate-peek .peek-link {
+  font-size: var(--text-sm);
 }
 @media (max-width: 480px) {
   .hero-card.has-3d .stage-canvas {
@@ -2975,6 +3055,10 @@ body:has(#gate:not([hidden])) .gate {
 }
 .channel-crew .thumb.is-open {
   opacity: 0.5;
+}
+/* picker: every stream row has the same sprite slot at full strength; an open top spot is a plain stand-in, not a disabled row */
+.channel-crew canvas.is-open {
+  opacity: 1;
 }
 @media (max-width: 760px) {
   .channel-crew,
@@ -3018,8 +3102,11 @@ body:has(#gate:not([hidden])) .gate {
   font-size: var(--text-sm);
   min-height: 36px;
 }
-.char-option .tag {
-  font-size: var(--text-sm);
+/* a set of 3, 6, 9 … tiles lays out in threes so no row ends with one tile alone */
+.item-grid:not(.text-grid):has(> .char-option:last-child:nth-child(3n)):not(
+    :has(> .char-option:last-child:nth-child(4n))
+  ) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .preview-label,
 .showcase-tag .hint-turn,
@@ -3031,23 +3118,24 @@ body:has(#gate:not([hidden])) .gate {
   opacity: 0;
   transition: opacity 0.3s ease;
 }
-/* Ranks: rank and name read left to right, the numbers line up under their headings, the table fills its column */
-#leaderboard th:first-child,
-#leaderboard td:first-child {
-  text-align: left;
-  width: 4em;
-}
-.table-wrap > table#leaderboard {
-  width: 100%;
-}
-.gate-peek .peek-tabs {
-  font-size: var(--text-sm);
-}
 .step-grid strong .badge {
   margin-left: var(--space-2);
   vertical-align: 3px;
   font-family: var(--font-sans);
   font-weight: 600;
+}
+.step-mock .field {
+  font-size: var(--text-sm);
+  overflow-wrap: break-word;
+}
+/* /start step mocks: each card shows the state the step leaves behind */
+.step-mock .switch.on {
+  border-color: var(--trim);
+}
+.step-mock .switch.on::after {
+  left: auto;
+  right: 2px;
+  background: var(--trim);
 }
 /* "No pet" shows an empty slot where the pet would stand */
 .thumb.empty-slot {
@@ -3134,35 +3222,10 @@ body:has(#gate:not([hidden])) .gate {
   color: var(--text);
   border-bottom-color: var(--trim);
 }
-#items-taunt .char-option label > span:first-of-type {
-  position: relative;
-  justify-self: center;
-  padding: var(--space-2) var(--space-3);
-  background: rgba(0, 0, 0, 0.55);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  color: var(--text);
-}
-#items-taunt .char-option label > span:first-of-type::after {
-  content: "";
-  position: absolute;
-  left: 16px;
-  bottom: -6px;
-  width: 10px;
-  height: 10px;
-  background: inherit;
-  border: inherit;
-  border-width: 0 1px 1px 0;
-  transform: rotate(45deg);
-  background-color: #0a0807;
-}
-#items-taunt .char-option:first-child label > span:first-of-type {
-  background: none;
-  border: 0;
-  color: var(--text-2);
-}
-#items-taunt .char-option:first-child label > span:first-of-type::after {
-  display: none;
+/* shop section links: hovering only brightens the word; the gold rule stays on the section in view */
+.jump a:focus-visible {
+  outline: 2px solid var(--trim);
+  outline-offset: 2px;
 }
 .char-option .title-text {
   justify-self: center;
@@ -3173,14 +3236,6 @@ body:has(#gate:not([hidden])) .gate {
 .tabs [role="tab"][aria-selected="true"] {
   color: var(--accent-hover);
   border-bottom-width: 3px;
-}
-.gate-peek .peek-btn,
-.gate-peek .peek-link {
-  font-size: var(--text-sm);
-}
-.step-mock .field {
-  font-size: var(--text-sm);
-  overflow-wrap: break-word;
 }
 @media (max-width: 900px) {
   .jump {
@@ -3248,6 +3303,28 @@ body:has(#gate:not([hidden])) .gate {
 .landing.is-live .landing-inner > * {
   pointer-events: auto;
 }
+/* the picker has one primary action: the first stream's button is filled, the rest stay outlined */
+.landing .channel-list li:first-child .channel-go {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.landing .channel-list li:first-child .channel:hover .channel-go {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.landing .channel-list li:has(.channel:hover),
+.landing .channel-list li:has(.channel:focus-visible) {
+  background: rgb(201 164 92 / 0.07);
+  box-shadow: inset 3px 0 0 var(--trim);
+}
+/* the picker: both channels get the same outlined button, filled on hover; rows read larger */
+.landing .channel-list li .channel:hover .channel-go,
+.landing .channel-list li .channel:focus-visible .channel-go {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
 .showcase .readout {
   position: absolute;
   top: 24px;
@@ -3293,28 +3370,52 @@ body:has(#gate:not([hidden])) .gate {
   align-items: center;
   gap: 6px;
 }
-/* the sky's moon sits above the locked card instead of half behind it */
-body:has(.gate:not([hidden]))::before {
-  background-position: center -140px;
+/* the mod gate's drawn controls read as a picture: solid, dim, no dashed "press me" edges */
+.gate-peek .peek-btn {
+  border-style: solid;
+  color: var(--text-2);
 }
-/* /start step mocks: each card shows the state the step leaves behind */
-.step-mock .switch.on {
-  border-color: var(--trim);
+/* mod gate: the card title sits under the page h1, so it is a size smaller; the page ends after the card */
+#gate h2 {
+  font-size: var(--text-xl);
 }
-.step-mock .switch.on::after {
-  left: auto;
-  right: 2px;
-  background: var(--trim);
+body:has(#gate:not([hidden])) .gate {
+  margin-bottom: 0;
+}
+/* mod gate: one frame, not three. The copy sits on the page; only the preview picture keeps the corner brackets */
+#gate {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+#gate::after {
+  content: none;
+}
+.gate-peek .peek-tag::before {
+  content: "";
+  width: 10px;
+  height: 12px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M2 5V3.5a3 3 0 0 1 6 0V5h1v7H1V5zm1.5 0h3V3.5a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M2 5V3.5a3 3 0 0 1 6 0V5h1v7H1V5zm1.5 0h3V3.5a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+/* admin gate: the "Inside" list heading reads at body contrast */
+.gate-list h3 {
+  color: var(--text);
+  font-size: var(--text-md);
+}
+/* admin gate: the peek sits on a solid panel, so the scene behind never shows through it */
+.gate-inside .gate-peek,
+.gate-peek {
+  background: var(--surface);
 }
 .step-mock .btn-mock {
   padding: 2px var(--space-2);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text-2);
-}
-/* the name keeps its color square on its line at 390 */
-#leaderboard td:nth-child(2) {
-  overflow-wrap: anywhere;
 }
 /* the gate's right side is a window onto the arena the controls run, the locked preview floating in front */
 @media (min-width: 761px) {
@@ -3346,6 +3447,10 @@ body:has(.gate:not([hidden]))::before {
   color: var(--text-2);
   margin: 0 0 var(--space-5);
 }
+.ready,
+.ready-copy {
+  max-width: none;
+}
 @media (max-width: 760px) {
   .ready .toolbar > .btn {
     width: 100%;
@@ -3360,16 +3465,54 @@ body:has(.gate:not([hidden]))::before {
   /* a tile's price gets its own line instead of trailing a "·" */
   display: block;
 }
+/* pets: rare tiers carry their rank on the tile edge */
+.char-option.tier-epic label {
+  border-color: rgb(201 162 92 / 0.45);
+}
+.char-option.tier-legendary label {
+  border-color: var(--trim);
+  box-shadow: inset 0 -3px 0 var(--trim);
+}
+.char-option:is(.tier-epic, .tier-legendary) .tag {
+  color: var(--accent-hover);
+}
+#items-recolor .char-option label {
+  padding: var(--space-2) var(--space-1);
+  gap: var(--space-1);
+  min-height: 0;
+}
+#items-recolor .char-option label > span:not(.thumb):not(.tag) {
+  font-size: var(--text-xs);
+  line-height: 1.3;
+}
 /* tap targets: steppers, show-all and the inline rules link reach 44px */
 .upgrade .btn-small,
 .more-chars {
   min-height: 44px;
   min-width: 44px;
 }
-.hero-copy .how a {
-  display: inline-block;
-  padding-block: var(--space-3);
-  margin-block: calc(-1 * var(--space-3));
+/* upgrades: a segmented meter under each stat, one cell per point */
+.upgrade .meter {
+  display: flex;
+  margin-top: var(--space-2);
+  max-width: 240px;
+  /* upgrade meters: lit gold cells, empty cells a dim gold outline, readable at a glance */
+  gap: 4px;
+}
+.upgrade .meter i {
+  flex: 1;
+  height: 10px;
+  border-radius: 2px;
+  background: none;
+  box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.4);
+}
+.upgrade .meter i.on {
+  background: var(--trim);
+  box-shadow: none;
+}
+.upgrade .meter i.pet {
+  background: rgb(201 164 92 / 0.35);
+  box-shadow: inset 0 0 0 1px var(--trim);
 }
 /* the phone save bar reads as a layer: gold rule, solid ground, fade above */
 @media (max-width: 900px) {
@@ -3403,22 +3546,6 @@ body:has(.gate:not([hidden]))::before {
     margin: 0;
   }
 }
-/* shop section links: hovering only brightens the word; the gold rule stays on the section in view */
-.jump a:focus-visible {
-  outline: 2px solid var(--trim);
-  outline-offset: 2px;
-}
-/* pets: rare tiers carry their rank on the tile edge */
-.char-option.tier-epic label {
-  border-color: rgb(201 162 92 / 0.45);
-}
-.char-option.tier-legendary label {
-  border-color: var(--trim);
-  box-shadow: inset 0 -3px 0 var(--trim);
-}
-.char-option:is(.tier-epic, .tier-legendary) .tag {
-  color: var(--accent-hover);
-}
 /* the ranks table on phones: a long name ends in an ellipsis instead of breaking mid-word */
 @media (max-width: 480px) {
   #leaderboard td:nth-child(2) {
@@ -3444,19 +3571,6 @@ body:has(.gate:not([hidden]))::before {
   align-items: center;
   gap: var(--space-3) var(--space-6);
 }
-.foot-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  font: 650 var(--text-md)/1.2 var(--font-display);
-  color: var(--trim);
-  text-decoration: none;
-}
-.foot-brand .mark {
-  width: 16px;
-  height: 16px;
-  fill: var(--trim);
-}
 .site-foot nav {
   display: flex;
   flex-wrap: wrap;
@@ -3481,13 +3595,29 @@ body:has(.gate:not([hidden]))::before {
   font-size: var(--text-sm);
   max-width: var(--measure);
 }
+#pick:not([hidden]) ~ .site-foot {
+  margin-top: 0;
+}
+body:has(.hero-card.has-3d) .site-foot {
+  margin-top: 0;
+}
+.foot-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: 650 var(--text-md)/1.2 var(--font-display);
+  color: var(--trim);
+  text-decoration: none;
+}
+.foot-brand .mark {
+  width: 16px;
+  height: 16px;
+  fill: var(--trim);
+}
 @media (max-width: 620px) {
   .site-foot-inner {
     padding: var(--space-5) var(--space-4) var(--space-6);
   }
-}
-#pick:not([hidden]) ~ .site-foot {
-  margin-top: 0;
 }
 /* desktop: the preview is the stage. The card frame goes, the arena grows to the window's height and stays in view */
 @media (min-width: 901px) {
@@ -3512,9 +3642,10 @@ body:has(.gate:not([hidden]))::before {
 .step-mock .btn-mock {
   font-size: var(--text-sm);
 }
-.ready,
-.ready-copy {
-  max-width: none;
+/* /start: the mock example lines read at 14px like the rest of the mock */
+.step-mock .eg {
+  color: var(--text-2);
+  font-size: var(--text-sm);
 }
 .ready p {
   max-width: var(--measure);
@@ -3524,11 +3655,6 @@ body:has(.gate:not([hidden]))::before {
     padding: var(--space-6) 0;
     background: none;
   }
-}
-/* the mod gate's drawn controls read as a picture: solid, dim, no dashed "press me" edges */
-.gate-peek .peek-btn {
-  border-style: solid;
-  color: var(--text-2);
 }
 
 /* shop: the section links are sub-tabs (one section shows at a time), drawn like the character filters */
@@ -3546,13 +3672,6 @@ body:has(.gate:not([hidden]))::before {
   border-color: var(--text-2);
   color: var(--text);
 }
-/* mod gate: the card title sits under the page h1, so it is a size smaller; the page ends after the card */
-#gate h2 {
-  font-size: var(--text-xl);
-}
-body:has(#gate:not([hidden])) .gate {
-  margin-bottom: 0;
-}
 .topbar nav a.nav-cta {
   display: inline-flex;
   align-items: center;
@@ -3567,6 +3686,23 @@ body:has(#gate:not([hidden])) .gate {
   background: var(--accent-soft);
   color: var(--text);
   border-bottom-color: var(--trim);
+}
+/* the header's "Pick your fighter" is the same gold-edged button on every page, the current one included */
+.topbar nav a.nav-cta[aria-current] {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--trim);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  box-shadow: none;
+  color: var(--text);
+  /* the picker and the builder are where "Pick your fighter" leads, so they drop it */
+  display: none;
+}
+/* One header on every page, the intro's: no bar or rule, the cream wordmark at the page edge */
+.topbar {
+  background: none;
+  border-bottom: 0;
 }
 /* phones: "See a duel" lives in the footer, so the bar keeps 44px targets without scrolling sideways */
 @media (max-width: 480px) {
@@ -3583,25 +3719,6 @@ body:has(#gate:not([hidden])) .gate {
     padding: 0 var(--space-2);
   }
 }
-/* /start: the page ends at its last call to action */
-main.page:has(> .ready:last-child) {
-  padding-bottom: 0;
-}
-/* a set of 3, 6, 9 … tiles lays out in threes so no row ends with one tile alone */
-.item-grid:not(.text-grid):has(> .char-option:last-child:nth-child(3n)):not(
-    :has(> .char-option:last-child:nth-child(4n))
-  ) {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-/* mod gate: one frame, not three. The copy sits on the page; only the preview picture keeps the corner brackets */
-#gate {
-  background: none;
-  border: 0;
-  padding: 0;
-}
-#gate::after {
-  content: none;
-}
 @media (min-width: 761px) {
   .gate-inside::after {
     content: "";
@@ -3612,16 +3729,6 @@ main.page:has(> .ready:last-child) {
     pointer-events: none;
   }
 }
-.gate-peek .peek-tag::before {
-  content: "";
-  width: 10px;
-  height: 12px;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M2 5V3.5a3 3 0 0 1 6 0V5h1v7H1V5zm1.5 0h3V3.5a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M2 5V3.5a3 3 0 0 1 6 0V5h1v7H1V5zm1.5 0h3V3.5a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-}
 /* phones: the pinned preview is a full-width band ruled top and bottom, not a box holding boxes */
 @media (max-width: 900px) {
   .hero-card.has-3d {
@@ -3629,20 +3736,6 @@ main.page:has(> .ready:last-child) {
     border-color: var(--border-strong);
     border-radius: 0;
   }
-}
-/* the picker has one primary action: the first stream's button is filled, the rest stay outlined */
-.landing .channel-list li:first-child .channel-go {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-.landing .channel-list li:first-child .channel:hover .channel-go {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-/* picker: every stream row has the same sprite slot at full strength; an open top spot is a plain stand-in, not a disabled row */
-.channel-crew canvas.is-open {
-  opacity: 1;
 }
 @media (min-width: 761px) {
   .channel-crew,
@@ -3655,11 +3748,6 @@ main.page:has(> .ready:last-child) {
     height: 56px;
     margin-right: -28px;
   }
-}
-/* /start: the mock example lines read at 14px like the rest of the mock */
-.step-mock .eg {
-  color: var(--text-2);
-  font-size: var(--text-sm);
 }
 @media (max-width: 900px) {
   /* the page ends clear of the fixed Save bar */
@@ -3678,6 +3766,10 @@ main.page:has(> .ready:last-child) {
 .hero-copy:has(.how) .lead {
   display: none;
 }
+/* /start: the lead keeps a reading width beside the sign-in card; each step reads heading, text, then its example */
+.hero-copy .lead {
+  max-width: 52ch;
+}
 @media (min-width: 901px) {
   .hero-copy .how {
     font-size: var(--text-md);
@@ -3695,18 +3787,9 @@ main.page:has(> .ready:last-child) {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-2);
 }
-#items-recolor .char-option label {
-  padding: var(--space-2) var(--space-1);
-  gap: var(--space-1);
-  min-height: 0;
-}
 #items-recolor canvas.vox {
   width: 56px;
   height: 56px;
-}
-#items-recolor .char-option label > span:not(.thumb):not(.tag) {
-  font-size: var(--text-xs);
-  line-height: 1.3;
 }
 #items-recolor .tag:has(> .price:only-child) {
   display: none;
@@ -3715,21 +3798,6 @@ main.page:has(> .ready:last-child) {
   #items-recolor {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-}
-/* upgrades: a segmented meter under each stat, one cell per point */
-.upgrade .meter {
-  display: flex;
-  margin-top: var(--space-2);
-  max-width: 240px;
-  /* upgrade meters: lit gold cells, empty cells a dim gold outline, readable at a glance */
-  gap: 4px;
-}
-.upgrade .meter i {
-  flex: 1;
-  height: 10px;
-  border-radius: 2px;
-  background: none;
-  box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.4);
 }
 @media (max-width: 900px) {
   /* phones: the flat on-stream view rides over the 3D stage instead of taking a row. Only its "Preview a win" chip shows;
@@ -3806,6 +3874,9 @@ main.page:has(> .ready:last-child) {
   font-weight: 650;
   margin-right: 4px;
 }
+.step-grid .step-mock {
+  margin: var(--space-3) 0 0;
+}
 /* phones: the stage's lock-on readout is just the name, small, so it stays clear of the fighter's head */
 @media (max-width: 900px) {
   .showcase .readout {
@@ -3813,11 +3884,6 @@ main.page:has(> .ready:last-child) {
     right: 8px;
     padding: 2px 8px;
   }
-}
-/* admin gate: the "Inside" list heading reads at body contrast */
-.gate-list h3 {
-  color: var(--text);
-  font-size: var(--text-md);
 }
 /* desktop builder: a wider stage column, the arena filling the height left above Save */
 @media (min-width: 1101px) {
@@ -3839,40 +3905,6 @@ main.page:has(> .ready:last-child) {
     display: block;
     border-top: 1px solid var(--border);
     padding-top: var(--space-3);
-  }
-  .loadout-title {
-    font: 650 var(--text-sm)/1.2 var(--font-display);
-    color: var(--text-2);
-    margin: 0 0 var(--space-2);
-  }
-  #loadout {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
-    gap: var(--space-1) var(--space-3);
-    margin: 0;
-    font-size: var(--text-sm);
-  }
-  #loadout dt {
-    color: var(--text-2);
-  }
-  #loadout dd {
-    margin: 0;
-    color: var(--text);
-    min-width: 0;
-    gap: var(--space-1);
-    white-space: nowrap;
-  }
-  #loadout dd.muted {
-    color: var(--text-3);
-  }
-  #loadout .badge {
-    font-size: var(--text-xs);
-    padding: 0 var(--space-1);
-  }
-  .loadout-total {
-    margin: var(--space-2) 0 0;
-    font-size: var(--text-xs);
-    color: var(--text-2);
   }
   /* the strip's caption repeats the Wearing list, so its action moves up into the label row and the sticky card fits an 800px screen */
   .hero-card.has-3d .preview-bar {
@@ -3900,6 +3932,40 @@ main.page:has(> .ready:last-child) {
   .hero-card.has-3d > .status:empty {
     display: none;
   }
+  .loadout-title {
+    font: 650 var(--text-sm)/1.2 var(--font-display);
+    color: var(--text-2);
+    margin: 0 0 var(--space-2);
+  }
+  #loadout {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: var(--space-1) var(--space-3);
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+  #loadout dt {
+    color: var(--text-2);
+  }
+  #loadout dd {
+    margin: 0;
+    color: var(--text);
+    min-width: 0;
+    gap: var(--space-1);
+    white-space: nowrap;
+  }
+  .loadout-total {
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-xs);
+    color: var(--text-2);
+  }
+  #loadout dd.muted {
+    color: var(--text-3);
+  }
+  #loadout .badge {
+    font-size: var(--text-xs);
+    padding: 0 var(--space-1);
+  }
 }
 /* admin gate: the peek is a picture of the controls, not controls; dashed outlines and no underline say so */
 .peek-row .peek-btn {
@@ -3920,11 +3986,6 @@ main.page:has(> .ready:last-child) {
   .hero-pick [role="tabpanel"] {
     min-height: 640px;
   }
-}
-/* admin gate: the peek sits on a solid panel, so the scene behind never shows through it */
-.gate-inside .gate-peek,
-.gate-peek {
-  background: var(--surface);
 }
 /* phones: the bar drops the page you're already on (the heading says it) and keeps "See a duel" instead */
 @media (max-width: 480px) {
@@ -3971,14 +4032,6 @@ main.page:has(> .ready:last-child) {
     width: 22px;
     height: 22px;
   }
-}
-.upgrade .meter i.on {
-  background: var(--trim);
-  box-shadow: none;
-}
-.upgrade .meter i.pet {
-  background: rgb(201 164 92 / 0.35);
-  box-shadow: inset 0 0 0 1px var(--trim);
 }
 /* admin on phones: the locked preview comes first, the list that repeats it goes */
 @media (max-width: 760px) {
@@ -4106,11 +4159,6 @@ main.page:has(> .ready:last-child) {
     padding-right: 0;
   }
 }
-.landing .channel-list li:has(.channel:hover),
-.landing .channel-list li:has(.channel:focus-visible) {
-  background: rgb(201 164 92 / 0.07);
-  box-shadow: inset 3px 0 0 var(--trim);
-}
 @media (prefers-reduced-motion: reduce) {
   .landing .channel-list li {
     transition: none;
@@ -4120,6 +4168,13 @@ main.page:has(> .ready:last-child) {
 .loadout {
   display: none;
 }
+/* builder: each Wearing label lines up with its button */
+#loadout dt,
+#loadout dd {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+}
 /* builder: the tabs hold every section, so the page's own main keeps only the credits line; it no longer pads out an empty band */
 body:has(.hero-card.has-3d) .page {
   padding-block: 0 var(--space-6);
@@ -4127,9 +4182,9 @@ body:has(.hero-card.has-3d) .page {
 body:has(.hero-card.has-3d) .page .caveat {
   margin-top: 0;
 }
-body:has(.hero-card.has-3d) .site-foot {
-  margin-top: 0;
-}
+.page-header .meta:empty {
+  display: none;
+} /* an empty status line takes no room */
 
 /* the intro's camera moves on every page, as baked stills scrubbed by scroll (src/scrub.ts) */
 /* the backdrop: the camera pulls back from the floating islets as the page scrolls; the old still stays until it loads */
@@ -4145,9 +4200,6 @@ body:has(.hero-card.has-3d) .site-foot {
 }
 .scene-sky.is-ready {
   opacity: 1;
-}
-body:has(> .scene-sky.is-ready)::before {
-  display: none;
 }
 @media (prefers-reduced-motion: no-preference) {
   @supports (animation-timeline: scroll()) {
@@ -4202,6 +4254,10 @@ body:has(> .scene-sky.is-ready)::before {
 }
 .story .step-grid > li.optional > .badge {
   margin-bottom: 0;
+}
+/* /start: every step reads at full contrast; the active one is marked by its gold rule, not by dimming the rest */
+.story .step-grid > li {
+  opacity: 1;
 }
 @media (min-width: 961px) {
   .story {
@@ -4306,9 +4362,6 @@ body:has(> .scene-sky.is-ready)::before {
     position: static;
     margin-bottom: var(--space-3);
   }
-  .hero-grid:has(.signup-card) .lead {
-    font-size: var(--text-md);
-  }
   .story .step-grid > li.is-active {
     opacity: 1;
     border-color: rgb(201 164 92 / 0.6);
@@ -4317,6 +4370,9 @@ body:has(> .scene-sky.is-ready)::before {
   .story-stage canvas {
     flex: none;
     height: 168px;
+  }
+  .hero-grid:has(.signup-card) .lead {
+    font-size: var(--text-md);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -4328,22 +4384,6 @@ body:has(> .scene-sky.is-ready)::before {
 #loadout .slot-empty:hover {
   border-color: var(--trim);
   color: var(--text);
-}
-/* the header's "Pick your fighter" is the same gold-edged button on every page, the current one included */
-.topbar nav a.nav-cta[aria-current] {
-  min-height: 36px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--trim);
-  border-radius: var(--radius-sm);
-  background: var(--accent-soft);
-  box-shadow: none;
-  color: var(--text);
-  /* the picker and the builder are where "Pick your fighter" leads, so they drop it */
-  display: none;
-}
-/* Rules: the table keeps a reading width beside the stage */
-#panel-rules .table-wrap {
-  max-width: 840px;
 }
 /* the picker: each stream's fighters stand at a readable size */
 @media (min-width: 621px) {
@@ -4381,24 +4421,12 @@ body:has(> .scene-sky.is-ready)::before {
     background: rgb(201 164 92 / 0.06);
   }
 }
-/* One header on every page, the intro's: no bar or rule, the cream wordmark at the page edge */
-.topbar {
-  background: none;
-  border-bottom: 0;
-}
 .topbar-inner {
   max-width: none;
   padding-inline: clamp(16px, 3.2vw, 48px);
 }
 .topbar .brand {
   color: var(--text);
-}
-/* the picker: both channels get the same outlined button, filled on hover; rows read larger */
-.landing .channel-list li .channel:hover .channel-go,
-.landing .channel-list li .channel:focus-visible .channel-go {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
 }
 @media (min-width: 901px) {
   .landing-inner > * {
@@ -4428,6 +4456,38 @@ body:has(> .scene-sky.is-ready)::before {
 .landing-who:empty {
   display: none;
 }
+/* the picker's portrait boxes on every width; the shown row's box carries its "On the island" label */
+.landing .channel-crew {
+  position: relative;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(ellipse 60% 55% at 50% 72%, rgb(232 170 90 / 0.26), rgb(232 170 90 / 0) 70%),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.02), rgb(0 0 0 / 0.25));
+  box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.22);
+}
+.landing .channel.is-shown .channel-crew {
+  box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.6);
+  overflow: visible;
+}
+.landing .channel.is-shown .channel-crew::after {
+  content: "On the island";
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: -10px;
+  translate: -50% 0;
+  white-space: nowrap;
+  padding: 1px 6px;
+  background: rgb(13 9 6 / 0.85);
+  border: 1px solid rgb(201 164 92 / 0.55);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: 500 var(--text-xs)/1.4 var(--font-sans);
+}
+/* a search that filters every row out hides the empty panel */
+.landing .channel-list:not(:has(li:not([hidden]))) {
+  display: none;
+}
 @media (max-width: 760px) {
   .landing-who {
     display: none;
@@ -4435,13 +4495,6 @@ body:has(> .scene-sky.is-ready)::before {
   .landing-inner {
     padding-bottom: var(--space-5);
   }
-}
-/* /start: the lead keeps a reading width beside the sign-in card; each step reads heading, text, then its example */
-.hero-copy .lead {
-  max-width: 52ch;
-}
-.step-grid .step-mock {
-  margin: var(--space-3) 0 0;
 }
 /* with no rule under the header, the picker's arena fades in from the top instead of starting on a hard edge */
 @media (min-width: 901px) {
@@ -4510,6 +4563,28 @@ body:has(> .scene-sky.is-ready)::before {
   padding: var(--space-4) var(--space-5);
   background: var(--surface);
 }
+.gate-proof {
+  margin: var(--space-4) 0 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--trim);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+/* admin gate: the page header says who it's for, so the gate opens on the sign-in line; the locked tabs read as locked */
+.gate-main #gate-text {
+  color: var(--text);
+  font-size: var(--text-lg);
+  line-height: 1.45;
+}
+.gate .gate-main .gate-proof {
+  margin: var(--space-5) 0 0;
+}
+.gate-peek .peek-tabs > span[aria-disabled] {
+  cursor: not-allowed;
+  /* admin gate: the locked tabs read at full contrast; the lock label and the not-allowed cursor say they're locked */
+  opacity: 1;
+  color: var(--text-2);
+}
 @media (max-width: 760px) {
   .gate-inside {
     order: 1;
@@ -4526,13 +4601,6 @@ body:has(> .scene-sky.is-ready)::before {
     display: grid;
     padding: var(--space-4);
   }
-}
-.gate-proof {
-  margin: var(--space-4) 0 0;
-  padding-left: var(--space-3);
-  border-left: 2px solid var(--trim);
-  color: var(--text-2);
-  font-size: var(--text-sm);
 }
 /* credits: inline links get taller lines on phones so each is easy to tap */
 @media (max-width: 760px) {
@@ -4591,33 +4659,11 @@ body:has(> .scene-sky.is-ready)::before {
     scroll-margin-top: 240px;
   }
 }
-/* admin gate: the page header says who it's for, so the gate opens on the sign-in line; the locked tabs read as locked */
-.gate-main #gate-text {
-  color: var(--text);
-  font-size: var(--text-lg);
-  line-height: 1.45;
-}
-.gate .gate-main .gate-proof {
-  margin: var(--space-5) 0 0;
-}
-.gate-peek .peek-tabs > span[aria-disabled] {
-  cursor: not-allowed;
-  /* admin gate: the locked tabs read at full contrast; the lock label and the not-allowed cursor say they're locked */
-  opacity: 1;
-  color: var(--text-2);
-}
-.page-header .meta:empty {
-  display: none;
-} /* an empty status line takes no room */
 /* Picker: each stream's fighter stands lit in its own portrait box, and the row whose fighter is on the island says so */
 @media (min-width: 621px) {
   .landing-who {
     display: none;
   }
-}
-/* /start: every step reads at full contrast; the active one is marked by its gold rule, not by dimming the rest */
-.story .step-grid > li {
-  opacity: 1;
 }
 /* builder: an empty slot is a real button (solid edge), not a placeholder; the phone preview strip gives the controls more room */
 #loadout .slot-empty {
@@ -4639,34 +4685,6 @@ body:has(> .scene-sky.is-ready)::before {
     height: 160px;
   }
 }
-/* the picker's portrait boxes on every width; the shown row's box carries its "On the island" label */
-.landing .channel-crew {
-  position: relative;
-  border-radius: var(--radius);
-  background:
-    radial-gradient(ellipse 60% 55% at 50% 72%, rgb(232 170 90 / 0.26), rgb(232 170 90 / 0) 70%),
-    linear-gradient(to bottom, rgb(255 255 255 / 0.02), rgb(0 0 0 / 0.25));
-  box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.22);
-}
-.landing .channel.is-shown .channel-crew {
-  box-shadow: inset 0 0 0 1px rgb(201 164 92 / 0.6);
-  overflow: visible;
-}
-.landing .channel.is-shown .channel-crew::after {
-  content: "On the island";
-  position: absolute;
-  z-index: 2;
-  left: 50%;
-  top: -10px;
-  translate: -50% 0;
-  white-space: nowrap;
-  padding: 1px 6px;
-  background: rgb(13 9 6 / 0.85);
-  border: 1px solid rgb(201 164 92 / 0.55);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  font: 500 var(--text-xs)/1.4 var(--font-sans);
-}
 @media (max-width: 620px) {
   .landing .channel-crew,
   .landing .channel-crew:empty {
@@ -4685,18 +4703,6 @@ body:has(> .scene-sky.is-ready)::before {
     margin-left: -32px;
     display: none;
   }
-}
-/* builder: each Wearing label lines up with its button */
-#loadout dt,
-#loadout dd {
-  display: flex;
-  align-items: center;
-  min-height: 40px;
-}
-
-/* The not-found page: the arena island floats off to the right, the way back sits on the left */
-body.is-lost::before {
-  content: none;
 }
 .lost {
   position: relative;
@@ -4760,6 +4766,23 @@ body.is-lost::before {
 .admin-page main.page {
   padding-top: var(--space-5);
 }
+.admin-page .summary {
+  padding: var(--space-4) var(--space-5);
+}
+.admin-page .summary h2 {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-2);
+}
+/* the live state and the moderation buttons share the first screen */
+.admin-page #panel-live > .summary + .section,
+.admin-page #panel-live > .moderation {
+  margin-top: var(--space-5);
+}
+.admin-page #panel-live > .moderation > h2:first-child {
+  font-size: var(--text-lg);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
+}
 .page-header.compact {
   padding-bottom: var(--space-4);
   margin-bottom: var(--space-5);
@@ -4777,13 +4800,6 @@ body.is-lost::before {
   margin: 0 0 0 var(--space-2);
   color: var(--text-3);
   font-size: var(--text-sm);
-}
-.admin-page .summary {
-  padding: var(--space-4) var(--space-5);
-}
-.admin-page .summary h2 {
-  font-size: var(--text-lg);
-  margin-bottom: var(--space-2);
 }
 .stat .value.word {
   font-size: var(--text-xl);
@@ -4857,6 +4873,10 @@ body.is-lost::before {
   #se-table td:nth-child(4) .btn {
     min-height: 44px;
   }
+  #bot-commands-table .btn,
+  #bot-counters-table .btn {
+    min-height: 44px;
+  }
   #se-table .reply-preview {
     display: none;
   }
@@ -4899,10 +4919,6 @@ body.is-lost::before {
   }
   #bot-commands-table td[colspan] {
     grid-area: 1 / 1 / 2 / 3;
-  }
-  #bot-commands-table .btn,
-  #bot-counters-table .btn {
-    min-height: 44px;
   }
   .table-wrap > #bot-counters-table td:first-child {
     min-width: 0;
@@ -4974,6 +4990,10 @@ input[type="file"]::file-selector-button:hover {
   font-size: var(--text-xs);
   padding-inline: var(--space-2);
 }
+#channel-status .btn {
+  margin-left: var(--space-1);
+  vertical-align: baseline;
+}
 
 /* character preview placeholder */
 .upload-stage {
@@ -4992,17 +5012,6 @@ input[type="file"]::file-selector-button:hover {
 }
 .upload-stage.empty canvas {
   visibility: hidden;
-}
-
-/* the live state and the moderation buttons share the first screen */
-.admin-page #panel-live > .summary + .section,
-.admin-page #panel-live > .moderation {
-  margin-top: var(--space-5);
-}
-.admin-page #panel-live > .moderation > h2:first-child {
-  font-size: var(--text-lg);
-  padding-bottom: var(--space-2);
-  margin-bottom: var(--space-3);
 }
 .config-bar.dirty .config-clean {
   display: none;
@@ -5032,19 +5041,11 @@ input[type="file"]::file-selector-button:hover {
 #channel-status:empty {
   display: none;
 }
-#channel-status .btn {
-  margin-left: var(--space-1);
-  vertical-align: baseline;
-}
 #channel-status .invite-note {
   display: block;
   margin-top: var(--space-2);
   font-size: var(--text-sm);
   color: var(--text-2);
-}
-/* a search that filters every row out hides the empty panel */
-.landing .channel-list:not(:has(li:not([hidden]))) {
-  display: none;
 }
 
 /* a viewer's own sprite (/play/) and the mods' review list (/admin/): pixel art drawn at whole-pixel scale */
@@ -5097,10 +5098,6 @@ img.sprite-thumb {
 .sprite-current p {
   margin: 0;
   flex: 1 1 200px;
-}
-table.data img.sprite-thumb {
-  width: 64px;
-  height: 64px;
 }
 @media (max-width: 480px) {
   .sprite-maker {
