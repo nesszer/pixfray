@@ -633,12 +633,7 @@ export type Channel = {
   review?: { reasons: string[]; at: number };
 };
 const parseChannel = shape<Channel>(
-  {
-    login: str,
-    pausedAt: opt(orNull(num)),
-    pausedBy: opt(str),
-    review: opt(fits({ reasons: strList, at: num })),
-  },
+  { login: str, pausedAt: opt(orNull(num)), pausedBy: opt(str), review: opt(fits({ reasons: strList, at: num })) },
   "channel",
 );
 /** GET or POST /api/dev/channels: the cap, the built-in channels and the signed-up ones. */

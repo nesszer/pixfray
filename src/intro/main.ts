@@ -6,9 +6,28 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
-import { createSound } from "./sound.ts";
+import {
+  $,
+  reduced,
+  small,
+  clamp01,
+  ease,
+  easeOut,
+  range,
+  esc,
+  setProgress,
+  finishLoading,
+  loadBoard,
+  sound,
+  setSound,
+  sections,
+  measure,
+  scrollC,
+  centerChapter,
+  setChapter,
+} from "./page.ts";
+import { filmPass } from "./film.ts";
 import { loadImage, sampleSprite, VoxelFighter } from "./voxels.ts";
 import {
   buildSky,
@@ -26,8 +45,9 @@ import {
   buildFrame,
   bakeNightEnv,
   addNightLights,
+  glow,
 } from "./world.ts";
-import type { DieValue, Uniforms } from "./world.ts";
+import type { DieValue } from "./world.ts";
 import type { SpriteFrame, VoxelOptions } from "./voxels.ts";
 
 type Vec2 = [number, number];
@@ -68,175 +88,9 @@ type Lock = {
   on: boolean;
   pos: string | null;
 };
-type Mood = {
-  fog: number;
-  fogD: number;
-  cloud: number;
-  sky: Vec3;
-  hemi: number;
-  key: number;
-  keyI: number;
-  cool: number;
-  coolI: number;
-  warm: number;
-  warmI: number;
-  moon: number;
-  lift: Vec3;
-  gain: Vec3;
-  bloom?: number;
-  rim: number;
-  floor: Vec3;
-  ring: number;
-};
 type Roll = { at: number; v: DieValue; by: "a" | "b"; text: string };
 
-const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector(s) as T; // element type from the page HTML
-const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-const small = matchMedia("(max-width: 760px)").matches;
-const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
-const ease = (t: number) => t * t * (3 - 2 * t);
-const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
-const range = (x: number, a: number, b: number) => clamp01((x - a) / (b - a));
-// the regex matches only the four keys
-const esc = (s: unknown) =>
-  String(s).replace(
-    /[&<>"]/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c as "&" | "<" | ">" | '"'],
-  );
-if (reduced) document.body.classList.add("no-motion");
-
-// ---------- headings type in word by word ----------
-for (const h of document.querySelectorAll("[data-type]")) {
-  const text = h.textContent.trim();
-  h.setAttribute("aria-label", text);
-  h.innerHTML = text
-    .split(" ")
-    .map((w, i) => `<span class="w" aria-hidden="true" style="--i:${i}">${esc(w)}</span>`)
-    .join(" ");
-}
-
-// ---------- loader ----------
-const loader = $("#loader"),
-  grid = loader.querySelector(".loader-grid") as HTMLElement, // element type from the page HTML
-  pct = $("#loader-pct");
-const cells = Array.from({ length: 100 }, () => grid.appendChild(document.createElement("i")));
-const order = cells.map((_, i) => i).sort((a, b) => Math.sin(a * 91.7) - Math.sin(b * 91.7));
-let shown = 0;
-function setProgress(f: number) {
-  const n = Math.round(clamp01(f) * 100);
-  for (; shown < n; shown++) {
-    cells[order[shown]!]!.className = "on"; // in range: shown < n <= 100, the length of cells and order
-  }
-  cells.forEach((c) => c.classList.remove("hot"));
-  if (shown > 0 && shown < 100) cells[order[shown - 1]!]!.classList.add("hot"); // in range: 0 < shown < 100
-  pct.textContent = n + "%";
-}
 let bornAt = 1e9; // the hero assembles once the loader lifts, so the first thing people see is the knight forming
-function finishLoading() {
-  setProgress(1);
-  setTimeout(
-    () => {
-      bornAt = now;
-      loader.classList.add("is-done");
-      document.body.classList.remove("is-loading");
-    },
-    reduced ? 0 : 350,
-  );
-}
-
-// ---------- example ladder (DOM) ----------
-// Made-up fighters, so the page never shows a real channel's players.
-const EXAMPLE_LADDER = [
-  { username: "emberfox", avatar: "adventurer", color: "#ff8a3d", elo: 1086, wins: 14, losses: 5 },
-  { username: "tinyrook", avatar: "pixel-bot", color: "#6cc4ff", elo: 1052, wins: 11, losses: 6 },
-  { username: "dusk_rider", avatar: "cowgirl", color: "#e0b04a", elo: 1031, wins: 9, losses: 7 },
-  { username: "bitbunny", avatar: "bunny-brown", color: "#f07aa8", elo: 1008, wins: 7, losses: 7 },
-  { username: "voxelvale", avatar: "cute-girl", color: "#8fd47a", elo: 994, wins: 5, losses: 8 },
-];
-function loadBoard() {
-  $("#board").innerHTML = EXAMPLE_LADDER.map(
-    (x) => `<li><span>${esc(x.username)}<span class="rec">${x.wins}–${x.losses}</span></span><b>${x.elo}</b></li>`,
-  ).join("");
-  $("#board-source").innerHTML = "Example ladder: Elo with wins–losses.";
-  return Promise.resolve(EXAMPLE_LADDER);
-}
-
-// ---------- sound toggle ----------
-const sound = createSound();
-const soundBtn = $("#sound");
-function setSound(on: boolean) {
-  sound.setOn(on);
-  soundBtn.setAttribute("aria-pressed", String(on));
-  (soundBtn.querySelector(".sound-label") as HTMLElement).textContent = on ? "Sound on" : "Sound off"; // element type from the page HTML
-  try {
-    localStorage.setItem("pixfray-intro-sound", on ? "1" : "0");
-  } catch {
-    /* private mode */
-  }
-}
-soundBtn.addEventListener("click", () => setSound(!sound.on));
-
-// ---------- scroll -> chapter coordinate ----------
-const sections = [...document.querySelectorAll<HTMLElement>(".chapter")];
-const railItems = [...document.querySelectorAll("#rail li")];
-let bounds: { top: number; h: number }[] = [];
-function measure() {
-  bounds = sections.map((s) => ({ top: s.offsetTop, h: s.offsetHeight }));
-}
-function scrollC() {
-  const y = scrollY + innerHeight * 0.5;
-  if (scrollY <= 2) return 0;
-  for (let i = 0; i < bounds.length; i++) {
-    const b = bounds[i]!; // in range: i < bounds.length
-    if (y < b.top + b.h) return Math.max(0, Math.min(5, i + (y - b.top) / b.h - 0.5));
-  }
-  return 5;
-}
-let activeChapter = -1,
-  activeCopy = -1;
-// a chapter's scene is framed when the middle of its section is mid-screen; a plain #link would stop at the section's top,
-// a fifth of a chapter short. The camera eases there on its own, so the page itself jumps.
-function centerChapter(sec: HTMLElement) {
-  const b = bounds[sections.indexOf(sec)];
-  if (b) scrollTo({ top: sec === sections[0] ? 0 : b.top + b.h / 2 - innerHeight / 2, behavior: "instant" });
-}
-railItems.forEach((li) =>
-  // every rail item holds a link (page HTML)
-  li.querySelector("a")!.addEventListener("click", (e) => {
-    const sec = document.querySelector<HTMLElement>((e.currentTarget as HTMLAnchorElement).hash); // the listener is on a rail link
-    if (!sec || document.body.classList.contains("no-motion")) return;
-    e.preventDefault();
-    history.pushState(null, "", (e.currentTarget as HTMLAnchorElement).hash); // the listener is on a rail link
-    centerChapter(sec);
-  }),
-);
-// Back and Forward between chapters: the browser scrolls to the section's top, so centre it again once it has
-addEventListener("popstate", () => {
-  const sec = sections.find((s) => location.hash === "#" + s.id);
-  if (sec && !document.body.classList.contains("no-motion")) requestAnimationFrame(() => centerChapter(sec));
-});
-// the copy is fixed in place while its chapter is on, so a keyboard user tabbing into another chapter's link scrolls that chapter in
-document.addEventListener("focusin", (e) => {
-  // the target is an element, or the document, which has no closest(); chapters are HTML elements
-  const sec = (e.target as { closest?: (selector: string) => HTMLElement | null }).closest?.(".chapter");
-  if (sec && !sec.classList.contains("is-on") && !document.body.classList.contains("no-motion")) centerChapter(sec);
-});
-// the rail follows the nearest chapter; the copy shows only near a chapter's centre, so text never sits on a scene change
-function setChapter(c: number) {
-  const i = Math.round(c),
-    copy = reduced || Math.abs(c - i) < (innerWidth < innerHeight ? 0.4 : 0.45) ? i : -1; // phones: the copy sits under the scene, so it can stay on longer
-  if (copy !== activeCopy) {
-    activeCopy = copy;
-    sections.forEach((s, k) => s.classList.toggle("is-on", k === copy));
-  }
-  if (i === activeChapter) return;
-  activeChapter = i;
-  railItems.forEach((li, k) => {
-    li.classList.toggle("is-on", k === i);
-    li.querySelector("a")!.toggleAttribute("aria-current", k === i); // every rail item holds a link (page HTML)
-  });
-  if (i > 0) sound.chapter(i);
-}
 
 // ---------- 3D ----------
 const canvas = $<HTMLCanvasElement>("#stage");
@@ -256,7 +110,7 @@ try {
     },
     { passive: true },
   );
-  loadBoard().then(finishLoading);
+  loadBoard().then(() => finishLoading());
   throw new Error("PixFray intro: WebGL2 is not available; showing the text only.");
 }
 
@@ -342,83 +196,7 @@ if (gtao) {
 const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.62, 0.55, 0.78);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
-const film = new ShaderPass({
-  uniforms: {
-    tDiffuse: { value: null },
-    uTime: { value: 0 },
-    uAspect: { value: 1 },
-    uFray: { value: 0 },
-    uHit: { value: 0 },
-    uDir: { value: 1 },
-    uRes: { value: new THREE.Vector2(1, 1) },
-    uLift: { value: new THREE.Vector3() },
-    uGain: { value: new THREE.Vector3(1, 1, 1) },
-    uBlur: { value: 1 },
-  },
-  vertexShader:
-    "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }",
-  fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float uTime, uAspect, uFray, uHit, uDir; uniform vec2 uRes; uniform vec3 uLift, uGain; uniform float uBlur; varying vec2 vUv;
-    float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233))) * 43758.5453); }
-    void main(){
-      vec2 uv = vUv; float frayed = 0.0, tilePx = 1.0; vec2 tileF = vec2(0.5);
-      // pixel fray: while the camera travels between chapters, blocks of the frame snap to coarse pixels and slip
-      // in the travel direction; the band of frayed blocks sweeps down (or up) the screen as it goes
-      if (uFray > 0.001) {
-        float bs = 6.0 * uRes.y / 900.0;
-        vec2 blk = floor(vUv * uRes / (bs * 6.0));
-        float tick = floor(uTime * 12.0), r = h(blk + tick);
-        float band = fract(-uDir * uTime * 0.55), dy = abs(vUv.y - band);
-        float sweep = smoothstep(0.2, 0.0, min(dy, 1.0 - dy));
-        if (r < uFray * sweep * 1.3) {
-          tilePx = bs * (1.0 + floor(h(blk * 1.7 + tick) * 2.0));
-          vec2 pc = vUv * uRes / tilePx; tileF = fract(pc);
-          uv = (floor(pc) + 0.5) * tilePx / uRes;
-          uv.y += uDir * h(blk.xx + tick) * 0.085 * uFray;
-          uv.x += (h(blk.yy + tick) - 0.5) * 0.04 * uFray;
-          frayed = 1.0;
-        }
-      }
-      vec2 d0 = vUv - 0.5;
-      float ca = 0.0016 + uFray * 0.006 + uHit * 0.014;
-      vec2 split = frayed * vec2(0.0, uDir * 0.006 * uFray);   // frayed blocks split red and blue along the travel
-      vec3 c = vec3(texture2D(tDiffuse, uv + d0 * ca + split).r, texture2D(tDiffuse, uv).g, texture2D(tDiffuse, uv - d0 * ca - split).b);
-      // depth of field, cheaply: the frame softens toward its edges, so the subject in the middle stays the sharpest thing
-      float soft = uBlur * (1.0 - frayed) * smoothstep(0.42, 0.95, length(d0 * vec2(uAspect, 1.0)));
-      if (soft > 0.01) {
-        vec2 px = soft * 3.2 * uRes.y / 900.0 / uRes; vec3 acc = c;
-        for (int k = 0; k < 8; k++) { float a = float(k) * 0.785398 + 0.4; acc += texture2D(tDiffuse, uv + vec2(cos(a), sin(a)) * px * (1.0 + mod(float(k), 2.0))).rgb; }
-        c = mix(c, acc / 9.0, min(1.0, soft * 1.4));
-      }
-      float steps = mix(256.0, 10.0, frayed);   // frayed blocks drop to a few colour steps
-      c = floor(c * steps + 0.5) / steps;
-      if (frayed > 0.5) {   // each coarse pixel drawn as a little cube: a dark seam, a lit top and left edge
-        float g = max(1.0, uRes.y / 900.0) / tilePx;
-        float seam = max(step(tileF.x, g), step(1.0 - g, tileF.y));
-        float lit = max(step(1.0 - 3.0 * g, tileF.y), step(tileF.x, 3.0 * g));
-        c = c * mix(1.0 + 0.16 * lit, 0.7, seam) + vec3(0.012, 0.008, 0.004) * lit;
-      }
-      // chapter grade: a tinted lift in the shadows and a per-channel gain
-      c = c * uGain + uLift * (1.0 - clamp(dot(c, vec3(0.3, 0.59, 0.11)) * 2.0, 0.0, 1.0));
-      vec2 d = (vUv - 0.5) * vec2(uAspect, 1.0);
-      c *= mix(1.0, 0.52, smoothstep(0.35, 1.05, length(d)));
-      c += (h(vUv * 1000.0 + fract(uTime) * 61.0) - 0.5) * 0.028;
-      gl_FragColor = vec4(c, 1.0);
-    }`, // as on the next line: the uniforms passed in above
-}) as ShaderPass & {
-  uniforms: Uniforms<{
-    tDiffuse: THREE.Texture | null;
-    uTime: number;
-    uAspect: number;
-    uFray: number;
-    uHit: number;
-    uDir: number;
-    uRes: THREE.Vector2;
-    uLift: THREE.Vector3;
-    uGain: THREE.Vector3;
-    uBlur: number;
-  }>;
-};
+const film = filmPass();
 composer.addPass(film);
 
 // ---------- tags pinned to 3D points ----------
@@ -514,8 +292,11 @@ const fbox = (f: VoxelFighter, pad = 0.25): FBox => {
   return [p.x - f.width / 2, p.x + f.width / 2, p.y, p.y + f.height, p.z - pad, p.z + pad];
 };
 function placeLock(target: LockTarget | null, alpha: number, dt: number, portrait: boolean) {
-  // target!: ok is true only when Boolean(target) was (here and below)
-  const ok = Boolean(target) && alpha > 0.01 && boxRect(target!.boxes, lockBox);
+  const ok = target !== null && alpha > 0.01 && boxRect(target.boxes, lockBox);
+  if (ok !== lock.on) {
+    lock.on = ok;
+    lock.el.classList.toggle("on", ok);
+  }
   if (ok) {
     const b = lockBox,
       pad = 12,
@@ -529,11 +310,10 @@ function placeLock(target: LockTarget | null, alpha: number, dt: number, portrai
       const k = reduced ? 1 : 1 - Math.exp(-dt * 7);
       for (const n of ["x0", "y0", "x1", "y1"] satisfies (keyof Box)[]) lock.r[n] += (b[n] - lock.r[n]) * k;
     }
-    // target!: ok is true only when Boolean(target) was
-    if (lock.key !== target!.key) {
-      lock.key = target!.key; // target!: as above
-      lock.b.textContent = target!.title; // target!: as above
-      lock.s.textContent = target!.sub; // target!: as above
+    if (lock.key !== target.key) {
+      lock.key = target.key;
+      lock.b.textContent = target.title;
+      lock.s.textContent = target.sub;
     }
     const r = lock.r,
       st = lock.el.style;
@@ -541,16 +321,12 @@ function placeLock(target: LockTarget | null, alpha: number, dt: number, portrai
     st.width = `${(r.x1 - r.x0).toFixed(1)}px`;
     st.height = `${(r.y1 - r.y0).toFixed(1)}px`;
     st.opacity = alpha.toFixed(3);
-    let pos = portrait ? "none" : target!.pos; // on a phone the corners alone; the copy below carries the numbers
+    let pos = portrait ? "none" : target.pos; // on a phone the corners alone; the copy below carries the numbers
     if (pos === "below" && r.y1 + 64 > innerHeight) pos = "above";
     if (pos !== lock.pos) {
       lock.pos = pos;
       lock.txt.className = `lock-txt ${pos}`;
     }
-  }
-  if (ok !== lock.on) {
-    lock.on = ok;
-    lock.el.classList.toggle("on", ok);
   }
 }
 const scrimL = document.createElement("div"),
@@ -581,9 +357,8 @@ const catalog = await catalogP.catch(() => []);
 const byId = new Map<string, Character>(catalog.map((c) => [c.id, c]));
 const rows = await boardP;
 const FALLBACK_CROWD = ["adventurer", "pixel-bot", "cowgirl", "bunny-brown", "cute-girl"];
-const crowdPeople = (rows.length ? rows : FALLBACK_CROWD.map((a) => ({ avatar: a })))
-  .slice(0, 5)
-  .map((r: Person, i) => ({ ...r, avatar: byId.has(r.avatar) ? r.avatar : FALLBACK_CROWD[i]! })); // in range: i < 5
+// in range: the example ladder holds five fighters, like FALLBACK_CROWD
+const crowdPeople = rows.map((r: Person, i) => ({ ...r, avatar: byId.has(r.avatar) ? r.avatar : FALLBACK_CROWD[i]! }));
 const wanted = [...new Set(["knight", "toon-ranger", ...crowdPeople.map((p) => p.avatar)])].filter((id) =>
   byId.has(id),
 );
@@ -635,19 +410,15 @@ const DUEL_SPOT = [
 // a column of light over the rank 1 tower
 const beam = new THREE.Mesh(
   new THREE.CylinderGeometry(0.42, 0.62, 16, 20, 1, true),
-  new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-    uniforms: { uA: { value: 0 }, uTime: { value: 0 } },
-    vertexShader:
-      "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }",
-    fragmentShader: `uniform float uA, uTime; varying vec2 vUv;
+  glow(
+    { uA: { value: 0 }, uTime: { value: 0 } },
+    "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }",
+    `uniform float uA, uTime; varying vec2 vUv;
     void main(){ float band = 0.75 + 0.25 * step(0.5, fract(vUv.y * 22.0 - uTime * 0.8));
       float a = uA * sqrt(sqrt(max(1.0 - vUv.y, 0.0))) * (1.0 - smoothstep(0.85, 1.0, vUv.y)) * band * 0.32;
       gl_FragColor = vec4(vec3(1.0, 0.72, 0.38) * a, a); }`,
-  }) as THREE.ShaderMaterial & { uniforms: Uniforms<{ uA: number; uTime: number }> }, // the uniforms passed in above
+    THREE.DoubleSide,
+  ),
 );
 beam.visible = false;
 scene.add(beam);
@@ -659,7 +430,6 @@ const CROWD_SPOT = [
   [2.8, -1.0],
 ] satisfies Vec2[];
 
-// tags
 const T = {
   lookReply: makeTag(
     "tag-line tag-log",
@@ -708,166 +478,60 @@ const ranks = crowd.map((c, i) =>
 );
 
 // ---------- moods ----------
-// each chapter is its own world: ember arena, teal dusk for chat, crimson duel, cold moonlit ladder, gold loot, blue night stream
-const MOODS = (
-  [
-    {
-      fog: 0x0d0906,
-      fogD: 0.027,
-      cloud: 0x4a3020,
-      sky: [1, 1, 1],
-      hemi: 0x8a6a4a,
-      key: 0xffcf96,
-      keyI: 1.8,
-      cool: 0x5d7cff,
-      coolI: 0.8,
-      warm: 0xff9a40,
-      warmI: 1,
-      moon: 1,
-      lift: [0, 0, 0],
-      gain: [1, 1, 1],
-      rim: 1.5,
-      floor: [1, 1, 1],
-      ring: 0xff7a26,
-    },
-    {
-      fog: 0x061110,
-      fogD: 0.025,
-      cloud: 0x1f4846,
-      sky: [0.5, 1.15, 1.25],
-      hemi: 0x3f7a76,
-      key: 0xffd7a8,
-      keyI: 1.5,
-      cool: 0x46d0c4,
-      coolI: 1.3,
-      warm: 0xff9a40,
-      warmI: 0.95,
-      moon: 1,
-      lift: [0, 0.024, 0.032],
-      gain: [0.8, 1.04, 1.14],
-      rim: 0.9,
-      floor: [0.72, 0.92, 0.98],
-      ring: 0x2fd0c0,
-    },
-    {
-      fog: 0x120506,
-      fogD: 0.027,
-      cloud: 0x4a1a16,
-      sky: [1.45, 0.6, 0.55],
-      hemi: 0x7a4038,
-      key: 0xffa27a,
-      keyI: 1.95,
-      cool: 0x7c66ff,
-      coolI: 0.6,
-      warm: 0xff6a34,
-      warmI: 1.05,
-      moon: 0,
-      lift: [0.014, 0, 0.004],
-      gain: [1.03, 0.97, 0.95],
-      rim: 0.25,
-      floor: [1.08, 0.78, 0.74],
-      ring: 0xff3020,
-    },
-    {
-      fog: 0x050a16,
-      fogD: 0.024,
-      cloud: 0x2c3c66,
-      sky: [0.45, 0.75, 1.7],
-      hemi: 0x45578a,
-      key: 0x9fb8ff,
-      keyI: 1.45,
-      cool: 0x7090ff,
-      coolI: 1.7,
-      warm: 0xffa850,
-      warmI: 0.55,
-      moon: 1,
-      lift: [0, 0.004, 0.022],
-      gain: [0.9, 0.98, 1.12],
-      rim: 1.4,
-      floor: [0.7, 0.8, 1.08],
-      ring: 0x6c9cff,
-    },
-    {
-      fog: 0x0e0802,
-      fogD: 0.03,
-      cloud: 0x4a3010,
-      sky: [1.3, 1.0, 0.4],
-      hemi: 0x8a6a34,
-      key: 0xfff0d0,
-      keyI: 2.3,
-      cool: 0x5d7cff,
-      coolI: 0.35,
-      warm: 0xffb040,
-      warmI: 1.3,
-      moon: 0.4,
-      lift: [0.012, 0.008, 0.002],
-      gain: [1.1, 1.05, 0.94],
-      bloom: 0.42,
-      rim: 0.5,
-      floor: [1.1, 0.98, 0.8],
-      ring: 0xffb030,
-    },
-    {
-      fog: 0x070913,
-      fogD: 0.011,
-      cloud: 0x2a3560,
-      sky: [0.6, 0.7, 1.35],
-      hemi: 0x6a7090,
-      key: 0xffd9a8,
-      keyI: 1.9,
-      cool: 0x6a86ff,
-      coolI: 1.1,
-      warm: 0xffa040,
-      warmI: 1.35,
-      moon: 1,
-      lift: [0, 0.004, 0.018],
-      gain: [0.9, 0.97, 1.12],
-      rim: 1.8,
-      floor: [0.86, 0.88, 1.0],
-      ring: 0xff8a36,
-    },
-  ] satisfies Mood[]
-).map((m) => ({
-  ...m,
-  cloud: new THREE.Color(m.cloud),
-  fog: new THREE.Color(m.fog),
-  hemi: new THREE.Color(m.hemi),
-  key: new THREE.Color(m.key),
-  cool: new THREE.Color(m.cool),
-  warm: new THREE.Color(m.warm),
-  ring: new THREE.Color(m.ring),
-}));
-const mixN = (a: number, b: number, f: number) => a + (b - a) * f;
+// one entry per chapter: ember arena, teal dusk for chat, crimson duel, cold moonlit ladder, gold loot, blue night stream
+const hex = (...l: number[]) => l.map((h) => new THREE.Color(h));
+const rgb = (...l: number[]) => Array.from({ length: l.length / 3 }, (_, k) => new THREE.Color().fromArray(l, k * 3));
+const xyz = (...l: number[]) => rgb(...l).map((c) => new THREE.Vector3(c.r, c.g, c.b));
+const MOOD = {
+  fog: hex(0x0d0906, 0x061110, 0x120506, 0x050a16, 0x0e0802, 0x070913),
+  cloud: hex(0x4a3020, 0x1f4846, 0x4a1a16, 0x2c3c66, 0x4a3010, 0x2a3560),
+  hemi: hex(0x8a6a4a, 0x3f7a76, 0x7a4038, 0x45578a, 0x8a6a34, 0x6a7090),
+  key: hex(0xffcf96, 0xffd7a8, 0xffa27a, 0x9fb8ff, 0xfff0d0, 0xffd9a8),
+  cool: hex(0x5d7cff, 0x46d0c4, 0x7c66ff, 0x7090ff, 0x5d7cff, 0x6a86ff),
+  warm: hex(0xff9a40, 0xff9a40, 0xff6a34, 0xffa850, 0xffb040, 0xffa040),
+  ring: hex(0xff7a26, 0x2fd0c0, 0xff3020, 0x6c9cff, 0xffb030, 0xff8a36),
+  // three numbers per chapter
+  floor: rgb(1, 1, 1, 0.72, 0.92, 0.98, 1.08, 0.78, 0.74, 0.7, 0.8, 1.08, 1.1, 0.98, 0.8, 0.86, 0.88, 1.0),
+  sky: xyz(1, 1, 1, 0.5, 1.15, 1.25, 1.45, 0.6, 0.55, 0.45, 0.75, 1.7, 1.3, 1.0, 0.4, 0.6, 0.7, 1.35),
+  lift: xyz(0, 0, 0, 0, 0.024, 0.032, 0.014, 0, 0.004, 0, 0.004, 0.022, 0.012, 0.008, 0.002, 0, 0.004, 0.018),
+  gain: xyz(1, 1, 1, 0.8, 1.04, 1.14, 1.03, 0.97, 0.95, 0.9, 0.98, 1.12, 1.1, 1.05, 0.94, 0.9, 0.97, 1.12),
+  fogD: [0.027, 0.025, 0.027, 0.024, 0.03, 0.011],
+  keyI: [1.8, 1.5, 1.95, 1.45, 2.3, 1.9],
+  coolI: [0.8, 1.3, 0.6, 1.7, 0.35, 1.1],
+  warmI: [1, 0.95, 1.05, 0.55, 1.3, 1.35],
+  moon: [1, 1, 0, 1, 0.4, 1],
+  rim: [1.5, 0.9, 0.25, 1.4, 0.5, 1.8],
+  bloom: [0.62, 0.62, 0.62, 0.62, 0.42, 0.62],
+};
 function applyMood(C: number) {
-  // in range: i <= 4 and MOODS has 6 entries
+  // in range (l[i]!, l[i + 1]!): i <= 4 and every MOOD list has 6 entries
   const i = Math.min(4, Math.floor(C)),
-    f = ease(clamp01(C - i)),
-    a = MOODS[i]!,
-    b = MOODS[i + 1]!;
-  scene.fog.color.copy(a.fog).lerp(b.fog, f);
-  // scene.fog is always the FogExp2 this file creates at scene setup.
-  scene.fog.density = mixN(a.fogD, b.fogD, f) * FOG;
+    f = ease(clamp01(C - i));
+  const n = (l: number[]) => l[i]! + (l[i + 1]! - l[i]!) * f;
+  const col = (out: THREE.Color, l: THREE.Color[]) => out.lerpColors(l[i]!, l[i + 1]!, f);
+  const vec = (out: THREE.Vector3, l: THREE.Vector3[]) => out.lerpVectors(l[i]!, l[i + 1]!, f);
+  col(scene.fog.color, MOOD.fog);
+  scene.fog.density = n(MOOD.fogD) * FOG;
   for (const m of clouds.mats) {
     m.uniforms.uDeep.value.copy(scene.fog.color);
-    m.uniforms.uLit.value.copy(a.cloud).lerp(b.cloud, f);
+    col(m.uniforms.uLit.value, MOOD.cloud);
   }
-  hemi.color.copy(a.hemi).lerp(b.hemi, f);
-  key.color.copy(a.key).lerp(b.key, f);
-  key.intensity = mixN(a.keyI, b.keyI, f);
-  cool.color.copy(a.cool).lerp(b.cool, f);
-  cool.intensity = mixN(a.coolI, b.coolI, f);
-  warm.forEach((l) => l.color.copy(a.warm).lerp(b.warm, f));
-  sky.material.uniforms.uMoon.value = mixN(a.moon, b.moon, f);
-  rim.intensity = mixN(a.rim ?? 0.7, b.rim ?? 0.7, f);
-  // b.X[j]!: in range, every mood tuple has three entries; the map keeps them three
-  island.userData.floor.value.setRGB(...a.floor.map((x, j) => mixN(x, b.floor[j]!, f)));
-  island.userData.rune.uColor.value.copy(a.ring).lerp(b.ring, f);
-  lanterns.cone.uniforms.uColor.value.copy(a.warm).lerp(b.warm, f);
-  sky.material.uniforms.uMul.value.set(...(a.sky.map((x, j) => mixN(x, b.sky[j]!, f)) as Vec3)); // as above
-  film.uniforms.uLift.value.set(...(a.lift.map((x, j) => mixN(x, b.lift[j]!, f)) as Vec3)); // as above
-  film.uniforms.uGain.value.set(...(a.gain.map((x, j) => mixN(x, b.gain[j]!, f)) as Vec3)); // as above
-  bloom.strength = mixN(a.bloom ?? 0.62, b.bloom ?? 0.62, f);
-  return mixN(a.warmI, b.warmI, f);
+  col(hemi.color, MOOD.hemi);
+  col(key.color, MOOD.key);
+  key.intensity = n(MOOD.keyI);
+  col(cool.color, MOOD.cool);
+  cool.intensity = n(MOOD.coolI);
+  warm.forEach((l) => col(l.color, MOOD.warm));
+  sky.material.uniforms.uMoon.value = n(MOOD.moon);
+  rim.intensity = n(MOOD.rim);
+  col(island.userData.floor.value, MOOD.floor);
+  col(island.userData.rune.uColor.value, MOOD.ring);
+  col(lanterns.cone.uniforms.uColor.value, MOOD.warm);
+  vec(sky.material.uniforms.uMul.value, MOOD.sky);
+  vec(film.uniforms.uLift.value, MOOD.lift);
+  vec(film.uniforms.uGain.value, MOOD.gain);
+  bloom.strength = n(MOOD.bloom);
+  return n(MOOD.warmI);
 }
 
 // ---------- camera path ----------
@@ -959,17 +623,15 @@ document.addEventListener("pointerleave", () => {
 });
 let overHero = false,
   jumpAt = -10;
-addEventListener("click", (e) => {
-  if (!overHero || (e.target as Element).closest("a, button, .copy")) return; // a click lands on an element
+function jump() {
   jumpAt = now;
   sound.jump();
+}
+addEventListener("click", (e) => {
+  if (overHero && !(e.target as Element).closest("a, button, .copy")) jump(); // a click lands on an element
 });
 addEventListener("keydown", (e) => {
-  // as: a key event's target is the focused element or body
-  if (e.key === "j" && !(e.target as Element).closest("input, textarea")) {
-    jumpAt = now;
-    sound.jump();
-  }
+  if (e.key === "j" && !(e.target as Element).closest("input, textarea")) jump(); // a key event's target is the focused element or body
 });
 
 // ---------- state ----------
@@ -1212,7 +874,6 @@ function frame() {
   podium.mesh.instanceMatrix.needsUpdate = true;
   if (podium.mesh.instanceColor) podium.mesh.instanceColor.needsUpdate = true;
 
-  // rival and the duel
   if (rival) {
     const ra = range(C, 1.4, 1.8) * (1 - range(C, 2.62, 2.85));
     let shake = 0;
@@ -1285,7 +946,6 @@ function frame() {
   placeTag(T.fight, v.set(DUEL_X, (rival?.height || 2) + 0.25, 0.15), C > 1.62 && C < 2.05 && !portrait);
   placeTag(T.lookReply, v.set(0.9, 0.05, 1.7), C > 0.7 && C < 1.3 && !portrait);
 
-  // the hoard and the chest
   if (gold !== lastGold) {
     lastGold = gold;
     hoard.mesh.visible = chest.group.visible = gold > 0.005;
@@ -1377,7 +1037,6 @@ function frame() {
   const fy = frame3d.group.position.y - frame3d.h / 2 - frame3d.unit; // under the frame's bottom-left corner, clear of the moon
   placeTag(T.obsL, v.set(-frame3d.w / 2 - frame3d.unit, fy, 0.4), fr > 0.97);
 
-  // ambience
   const tm = reduced ? 0.25 : 1;
   sky.material.uniforms.uTime.value = t;
   embers.material.uniforms.uTime.value = t * tm;
@@ -1496,7 +1155,7 @@ if (linked) {
 }
 timer.update();
 frame();
-finishLoading();
+finishLoading(() => (bornAt = now));
 requestAnimationFrame(loop);
 window.__intro = {
   get C() {

@@ -6,12 +6,25 @@ import { bevel } from "./bevel.ts";
 // a shader's uniforms with the type of each value, e.g. Uniforms<{ uTime: number }>
 export type Uniforms<T> = { [K in keyof T]: THREE.IUniform<T[K]> };
 type ShaderMaterialOf<T> = THREE.ShaderMaterial & { uniforms: Uniforms<T> };
+// additive light (beams, the duel circle, embers): no depth write, so it never hides what is behind it
+export const glow = <T>(
+  uniforms: Uniforms<T>,
+  vertexShader: string,
+  fragmentShader: string,
+  side: THREE.Side = THREE.FrontSide,
+) =>
+  new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side,
+    uniforms,
+    vertexShader,
+    fragmentShader,
+  }) as ShaderMaterialOf<T>; // the uniforms passed in
 type RGB = [number, number, number];
 export type DieValue = 1 | 2 | 3 | 4 | 5 | 6;
 type SkyMaterial = ShaderMaterialOf<{ uTime: number; uMoon: number; uMul: THREE.Vector3 }>;
-type RuneUniforms = Uniforms<{ uI: number; uTime: number; uColor: THREE.Color }>;
-type ConeMaterial = ShaderMaterialOf<{ uColor: THREE.Color; uA: number }>;
-type EmberMaterial = ShaderMaterialOf<{ uTime: number; uPx: number; uBurst: number }>;
 type CloudMaterial = ShaderMaterialOf<{
   uTime: number;
   uDeep: THREE.Color;
@@ -20,7 +33,6 @@ type CloudMaterial = ShaderMaterialOf<{
   uS: number;
   uV: number;
 }>;
-type ShaftMaterial = ShaderMaterialOf<{ uA: number; uTime: number }>;
 // one column of the gold heap; gem is an RGB colour or null
 type HoardColumn = { x: number; z: number; h: number; gem: RGB | null; s: number };
 
@@ -108,6 +120,11 @@ function vnoise(x: number, y: number) {
 const fbm = (x: number, y: number) =>
   vnoise(x, y) * 0.6 + vnoise(x * 2.1, y * 2.1) * 0.3 + vnoise(x * 4.3, y * 4.3) * 0.1;
 
+// the same value noise in GLSL: nh is the hash, vn the smoothed noise
+const NOISE = `float nh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+  float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+    return mix(mix(nh(i), nh(i + vec2(1., 0.)), f.x), mix(nh(i + vec2(0., 1.)), nh(i + vec2(1., 1.)), f.x), f.y); }`;
+
 const RING_R0 = 3.3,
   RING_R1 = 3.62;
 const m4 = new THREE.Matrix4(),
@@ -123,13 +140,11 @@ export function buildSky(): THREE.Mesh<THREE.SphereGeometry, SkyMaterial> {
     vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }`,
     fragmentShader: `
       varying vec3 vDir; uniform float uTime, uMoon; uniform vec3 uMul;
-      float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
-      float n2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
-        return mix(mix(h(i), h(i + vec2(1., 0.)), f.x), mix(h(i + vec2(0., 1.)), h(i + vec2(1., 1.)), f.x), f.y); }
-      float fb(vec2 p){ return n2(p) * .55 + n2(p * 2.07 + 3.1) * .3 + n2(p * 4.3 + 7.7) * .15; }
+      ${NOISE}
+      float fb(vec2 p){ return vn(p) * .55 + vn(p * 2.07 + 3.1) * .3 + vn(p * 4.3 + 7.7) * .15; }
       // a skyline of distant rock spires, stepped into big pixels; returns the ridge height at angle a
       float ridge(float a, float k, float px){ float q = floor(a * px) / px; float r = fb(vec2(q * 3.0 + k, k));
-        return (pow(max(r - 0.32, 0.0), 1.6) * 0.55 + 0.004) * step(0.3, n2(vec2(q * 1.2 + k * 3.0, 1.0)) + 0.25); }
+        return (pow(max(r - 0.32, 0.0), 1.6) * 0.55 + 0.004) * step(0.3, vn(vec2(q * 1.2 + k * 3.0, 1.0)) + 0.25); }
       void main(){
         float y = vDir.y;
         vec3 low = vec3(0.105, 0.064, 0.036), mid = vec3(0.043, 0.030, 0.022), top = vec3(0.016, 0.013, 0.012);
@@ -161,7 +176,7 @@ export function buildSky(): THREE.Mesh<THREE.SphereGeometry, SkyMaterial> {
         if (yq < r2 && y > -0.004) { c = haze * 0.42; if (yq > r2 - 1.5 / 120.0) c += vec3(0.07, 0.06, 0.05) * uMul; }
         // sparse square stars: pixels, not dots
         vec2 g = vec2(atan(vDir.z, vDir.x) * 160.0, asin(clamp(y, -1., 1.)) * 160.0);
-        vec2 cell = floor(g); float s = h(cell);
+        vec2 cell = floor(g); float s = nh(cell);
         float star = step(0.9965, s) * step(0.12, y) * (0.55 + 0.45 * sin(uTime * (0.6 + s * 3.0) + s * 40.0));
         c += vec3(0.95, 0.85, 0.65) * star * 0.55 * smoothstep(0.12, 0.4, y);
         // a big pixel moon behind the arena: a disc drawn on a 15x15 grid, with darker 'craters' and a soft halo
@@ -172,8 +187,8 @@ export function buildSky(): THREE.Mesh<THREE.SphereGeometry, SkyMaterial> {
         vec2 px = floor(uv * 7.5);
         float disc = step(length((px + 0.5) / 7.5), 1.0) * front * uMoon;
         vec2 pc = (px + 0.5) / 7.5; float pr = length(pc);
-        float crater = step(0.62, h(floor(px / 3.0) + 7.0)) * step(0.4, h(px + 3.0));
-        float shade = 0.9 + 0.1 * h(px + 11.0) - 0.22 * crater;
+        float crater = step(0.62, nh(floor(px / 3.0) + 7.0)) * step(0.4, nh(px + 3.0));
+        float shade = 0.9 + 0.1 * nh(px + 11.0) - 0.22 * crater;
         shade *= mix(1.0, 0.55, smoothstep(-0.2, 0.9, dot(pc, normalize(vec2(1.0, -0.8)))));   // lit from the upper left
         shade += 0.22 * step(0.82, pr) * step(0.2, dot(pc, normalize(vec2(-1.0, 0.8))));   // bright rim
         c = mix(c, vec3(0.78, 0.72, 0.62) * shade, disc);
@@ -181,7 +196,7 @@ export function buildSky(): THREE.Mesh<THREE.SphereGeometry, SkyMaterial> {
         c += vec3(0.62, 0.5, 0.36) * halo * front * uMoon * (1.0 - disc);
         // moon rays: a fan of soft beams through the cloud bands, stepped like everything else
         float ang = floor(atan(uv.y, uv.x) * 40.0) / 40.0, lr = length(uv);
-        float rays = smoothstep(0.45, 0.8, n2(vec2(ang * 7.0, uTime * 0.03))) * exp(-max(0., lr - 1.0) * 0.22) * step(1.0, lr);
+        float rays = smoothstep(0.45, 0.8, vn(vec2(ang * 7.0, uTime * 0.03))) * exp(-max(0., lr - 1.0) * 0.22) * step(1.0, lr);
         c += vec3(0.55, 0.45, 0.32) * rays * 0.07 * front * uMoon * (0.6 + cl);
         gl_FragColor = vec4(c, 1.);
       }`,
@@ -259,21 +274,19 @@ export function buildIsland({
         "#include <common>",
         `#include <common>
       varying vec3 vWp; varying float vUp; uniform vec3 uFloor;
-      float gh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
-      float gn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
-        return mix(mix(gh(i), gh(i + vec2(1., 0.)), f.x), mix(gh(i + vec2(0., 1.)), gh(i + vec2(1., 1.)), f.x), f.y); }`,
+      ${NOISE}`,
       )
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
         float rr = length(vWp.xz), onFloor = step(rr, ${RING_R0.toFixed(2)}) * step(0.5, vUp);
-        float grain = gn(vec2(vWp.x * 26.0, vWp.z * 2.2)) * 0.7 + gn(vec2(vWp.x * 70.0, vWp.z * 5.0)) * 0.3;
+        float grain = vn(vec2(vWp.x * 26.0, vWp.z * 2.2)) * 0.7 + vn(vec2(vWp.x * 70.0, vWp.z * 5.0)) * 0.3;
         diffuseColor.rgb *= mix(1.0, 0.8 + 0.34 * grain, onFloor) * mix(vec3(1.0), uFloor, step(0.5, vUp));`,
       )
       .replace(
         "#include <roughnessmap_fragment>",
         `#include <roughnessmap_fragment>
-        float wet = smoothstep(0.6, 0.76, gn(vWp.xz * 0.9 + 4.0) * 0.7 + gn(vWp.xz * 3.1) * 0.3) * step(0.5, vUp);
+        float wet = smoothstep(0.6, 0.76, vn(vWp.xz * 0.9 + 4.0) * 0.7 + vn(vWp.xz * 3.1) * 0.3) * step(0.5, vUp);
         roughnessFactor = mix(roughnessFactor, 0.2, wet);`,
       );
   };
@@ -292,16 +305,14 @@ export function buildIsland({
         "#include <common>",
         `#include <common>
       varying vec3 vWp;
-      float vh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
-      float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
-        return mix(mix(vh(i), vh(i + vec2(1., 0.)), f.x), mix(vh(i + vec2(0., 1.)), vh(i + vec2(1., 1.)), f.x), f.y); }`,
+      ${NOISE}`,
       )
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
         vec3 wq = floor(vWp / ${(cell * 0.5).toFixed(3)}) * ${(cell * 0.5).toFixed(3)};
         float band = floor(wq.y / ${(cell * 1.5).toFixed(3)});
-        diffuseColor.rgb *= 0.9 + 0.8 * vh(vec2(band, 3.0)) + 0.25 * vn(wq.xz * 1.3);`,
+        diffuseColor.rgb *= 0.9 + 0.8 * nh(vec2(band, 3.0)) + 0.25 * vn(wq.xz * 1.3);`,
       )
       .replace(
         "#include <emissivemap_fragment>",
@@ -344,17 +355,13 @@ export function buildIsland({
     }),
   );
   // the duel circle: drawn in fine pixels (8 per floor cell) on a flat disc, so it stays a clean circle at any angle
-  const rune: RuneUniforms = { uI: { value: 0.9 }, uTime: { value: 0 }, uColor: { value: new THREE.Color(0xff7a26) } };
+  const rune = { uI: { value: 0.9 }, uTime: { value: 0 }, uColor: { value: new THREE.Color(0xff7a26) } };
   const disc = new THREE.Mesh(
     new THREE.CircleGeometry(3.05, 72).rotateX(-Math.PI / 2),
-    new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      uniforms: rune,
-      vertexShader:
-        "varying vec2 vP; void main(){ vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }",
-      fragmentShader: `uniform float uI, uTime; uniform vec3 uColor; varying vec2 vP;
+    glow(
+      rune,
+      "varying vec2 vP; void main(){ vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }",
+      `uniform float uI, uTime; uniform vec3 uColor; varying vec2 vP;
       void main(){
         vec2 q = (floor(vP / 0.0425) + 0.5) * 0.0425;
         float r = length(q), a = atan(q.y, q.x) / 6.28318;
@@ -364,7 +371,7 @@ export function buildIsland({
         float pulse = 0.8 + 0.2 * sin(a * 18.85 - uTime * 1.4);
         gl_FragColor = vec4(uColor * (line + inner * 0.45 + ticks * 0.75) * uI * pulse, 1.0);
       }`,
-    }),
+    ),
   );
   disc.position.y = 0.006;
   disc.renderOrder = 1;
@@ -392,17 +399,14 @@ export function buildLanterns({ count = 8, radius = 3.95 }: { count?: number; ra
   bevel(wood, [0.07, 0.75, 0.07]);
   // a soft cone of light under each lantern: additive, brightest near the flame and in the middle of the cone
   const coneGeo = new THREE.CylinderGeometry(0.1, 0.95, 1.62, 28, 1, true);
-  const cone = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-    uniforms: { uColor: { value: new THREE.Color(0xff9a40) }, uA: { value: 0.16 } },
-    vertexShader: `varying float vY; varying vec3 vN, vV;
+  const cone = glow(
+    { uColor: { value: new THREE.Color(0xff9a40) }, uA: { value: 0.16 } },
+    `varying float vY; varying vec3 vN, vV;
       void main(){ vY = position.y / 1.62 + 0.5; vec4 mv = modelViewMatrix * vec4(position, 1.); vN = normalMatrix * normal; vV = -mv.xyz; gl_Position = projectionMatrix * mv; }`,
-    fragmentShader: `uniform vec3 uColor; uniform float uA; varying float vY; varying vec3 vN, vV;
+    `uniform vec3 uColor; uniform float uA; varying float vY; varying vec3 vN, vV;
       void main(){ float f = abs(dot(normalize(vN), normalize(vV))); float a = f * f * smoothstep(0.0, 0.3, vY) * (0.35 + 0.65 * vY); gl_FragColor = vec4(uColor * a * uA, 1.0); }`,
-  }) as ConeMaterial; // the uniforms passed above
+    THREE.DoubleSide,
+  );
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2 + Math.PI / count;
     const x = Math.sin(a) * radius,
@@ -427,7 +431,7 @@ export function buildLanterns({ count = 8, radius = 3.95 }: { count?: number; ra
 }
 
 // Embers drifting up from the arena: points whose motion lives entirely in the vertex shader.
-export function buildEmbers(count = 900): THREE.Points<THREE.BufferGeometry, EmberMaterial> {
+export function buildEmbers(count = 900) {
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(count * 3),
     seed = new Float32Array(count);
@@ -439,12 +443,9 @@ export function buildEmbers(count = 900): THREE.Points<THREE.BufferGeometry, Emb
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   geo.setAttribute("seed", new THREE.BufferAttribute(seed, 1));
-  const mat = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    uniforms: { uTime: { value: 0 }, uPx: { value: 1 }, uBurst: { value: 0 } },
-    vertexShader: `
+  const mat = glow(
+    { uTime: { value: 0 }, uPx: { value: 1 }, uBurst: { value: 0 } },
+    `
       attribute float seed; uniform float uTime, uPx, uBurst; varying float vA; varying float vS;
       void main(){
         vec3 p = position;
@@ -459,7 +460,7 @@ export function buildEmbers(count = 900): THREE.Points<THREE.BufferGeometry, Emb
         vS = seed;
         gl_PointSize = min((1.6 + seed * 2.6) * uPx * (8.0 / -mv.z), 9.0 * uPx);
       }`,
-    fragmentShader: `
+    `
       varying float vA; varying float vS;
       void main(){
         vec2 d = abs(gl_PointCoord - 0.5);
@@ -467,7 +468,7 @@ export function buildEmbers(count = 900): THREE.Points<THREE.BufferGeometry, Emb
         vec3 c = mix(vec3(1.0, 0.45, 0.12), vec3(1.0, 0.78, 0.42), vS);
         gl_FragColor = vec4(c * 1.6, vA);
       }`,
-  }) as EmberMaterial; // the uniforms passed above
+  );
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false;
   return pts;
@@ -717,12 +718,10 @@ export function buildClouds() {
       vertexShader:
         "varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }",
       fragmentShader: `uniform float uTime, uA, uS, uV; uniform vec3 uDeep, uLit; varying vec3 vW;
-        float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-        float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
-          return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
+        ${NOISE}
         void main(){
           vec2 p = vW.xz * uS + vec2(uTime * 0.012 * uV, uTime * 0.006 * uV);
-          float d = n(p) * 0.5 + n(p * 2.1 + 3.7) * 0.28 + n(p * 4.3 - 1.3) * 0.14 + n(p * 8.9) * 0.08;
+          float d = vn(p) * 0.5 + vn(p * 2.1 + 3.7) * 0.28 + vn(p * 4.3 - 1.3) * 0.14 + vn(p * 8.9) * 0.08;
           float dens = smoothstep(0.38, 0.78, d);
           float far = length(vW.xz - cameraPosition.xz);
           float a = dens * uA * (1.0 - smoothstep(38.0, 90.0, far));
@@ -787,20 +786,16 @@ export function buildChest() {
   // light pouring out of the open chest
   const shaft = new THREE.Mesh(
     new THREE.CylinderGeometry(0.75, 0.55, 3.2, 24, 1, true),
-    new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      uniforms: { uA: { value: 0 }, uTime: { value: 0 } },
-      vertexShader:
-        "varying vec2 vUv; varying vec3 vN, vV; void main(){ vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.); vN = normalMatrix * normal; vV = -mv.xyz; gl_Position = projectionMatrix * mv; }",
-      fragmentShader: `uniform float uA, uTime; varying vec2 vUv; varying vec3 vN, vV;
+    glow(
+      { uA: { value: 0 }, uTime: { value: 0 } },
+      "varying vec2 vUv; varying vec3 vN, vV; void main(){ vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.); vN = normalMatrix * normal; vV = -mv.xyz; gl_Position = projectionMatrix * mv; }",
+      `uniform float uA, uTime; varying vec2 vUv; varying vec3 vN, vV;
       void main(){ float d = clamp(abs(dot(normalize(vN), normalize(vV))), 0.0, 1.0), y = clamp(1.0 - vUv.y, 0.0, 1.0);
         float rays = 0.6 + 0.4 * step(0.5, fract(vUv.x * 9.0 + uTime * 0.05));
         float a = uA * d * sqrt(d) * y * y * rays * 0.15;   // no pow(): pow(0, y) is NaN on some GPUs
         gl_FragColor = vec4(vec3(1.0, 0.7, 0.3) * a, 1.0); }`,
-    }) as ShaftMaterial, // the uniforms passed above
+      THREE.DoubleSide,
+    ),
   );
   shaft.position.y = 0.62 + 1.6;
   group.add(shaft);
