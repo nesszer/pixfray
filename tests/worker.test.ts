@@ -79,10 +79,8 @@ test("custom character uploads are gated; atlas reads are public", async () => {
 test("catalog merges static and custom characters; profiles may pick either", async () => {
   const f = environment(),
     cookie = await signedIn(f);
-  assert.deepEqual(
-    (await f.json("/api/catalog/nesszerra")).map((x: { id: string }) => x.id),
-    ["player", "c-robot"],
-  );
+  const ids = (await f.json("/api/catalog/nesszerra")).map((x: { id: string }) => x.id);
+  assert.deepEqual(ids, ["player", "c-robot"]);
   for (const [body, code] of [
     [look, 200],
     [{ ...look, avatar: "ghost" }, 400],
@@ -124,21 +122,15 @@ test("a saved fighter is indexed per viewer, and /others lists their look on oth
   assert.deepEqual(f.entries.get("fighters:2"), { channels: ["newstreamer"] });
   assert.equal(await f.st("/api/profile/nesszerra", "POST", look, cookie), 200);
   assert.deepEqual(f.entries.get("fighters:2"), { channels: ["nesszerra", "newstreamer"] });
-  assert.deepEqual(
-    (await others()).map((x) => x.channel),
-    ["newstreamer", "miolafff"],
-  );
-  assert.ok(
-    !f.forwarded.some((x) => x.channel === "nesszerra" && x.path === "/profile" && !x.body),
-    "this channel is not asked",
-  );
+  const listed = (await others()).map((x) => x.channel);
+  assert.deepEqual(listed, ["newstreamer", "miolafff"]);
+  const asked = f.forwarded.some((x) => x.channel === "nesszerra" && x.path === "/profile" && !x.body);
+  assert.ok(!asked, "this channel is not asked");
   // A channel that was turned off is skipped.
   f.entries.delete("channel:newstreamer");
   forgetChannel("newstreamer");
-  assert.deepEqual(
-    (await others()).map((x) => x.channel),
-    ["miolafff"],
-  );
+  const left = (await others()).map((x) => x.channel);
+  assert.deepEqual(left, ["miolafff"]);
 });
 
 test("malformed and oversized bodies are rejected before reaching a room", async () => {
@@ -443,12 +435,10 @@ test("connectChat keeps an existing matching webhook instead of creating another
     subscriptions: [sub("keep-me"), sub("dupe-pending", { status: "webhook_callback_verification_pending" })],
   });
   assert.equal((await connect(f)).status, 200);
-  assert.deepEqual(
-    calls
-      .filter((c) => c.method !== "GET" && c.url.host === "api.twitch.tv")
-      .map((c) => c.method + " " + (c.url.searchParams.get("id") || "")),
-    ["DELETE dupe-pending"],
-  );
+  const writes = calls
+    .filter((c) => c.method !== "GET" && c.url.host === "api.twitch.tv")
+    .map((c) => c.method + " " + (c.url.searchParams.get("id") || ""));
+  assert.deepEqual(writes, ["DELETE dupe-pending"]);
   assert.equal(f.forwarded.at(-1).body.subscriptionId, "keep-me");
 });
 
@@ -469,15 +459,10 @@ test("connectChat: a live subscription for the same channel on the other site is
     res.body.error,
     /Chat is connected to https:\/\/test\.chat\.miolaf\.xyz\. Only one site can receive chat at a time/,
   );
-  assert.equal(
-    helix.calls.some((c) => c.method !== "GET" && c.url.host === "api.twitch.tv"),
-    false,
-    "nothing is deleted or created without takeover",
-  );
-  assert.equal(
-    f.forwarded.some((x) => x.path === "/chat" && x.body),
-    false,
-  );
+  const wrote = helix.calls.some((c) => c.method !== "GET" && c.url.host === "api.twitch.tv");
+  assert.equal(wrote, false, "nothing is deleted or created without takeover");
+  const told = f.forwarded.some((x) => x.path === "/chat" && x.body);
+  assert.equal(told, false);
   // takeover deletes the other site's subscription (and dead ones for this channel), then creates ours
   assert.equal((await connect(f, { takeover: true })).status, 200);
   assert.deepEqual(helix.deleted(), ["on-test-site", "dead-elsewhere"]);
@@ -502,11 +487,8 @@ test("connectChat: a Twitch authorization error tells the owner to reconnect Twi
   const res = await connect(f);
   assert.deepEqual([res.status, res.body.reconnect], [403, "/auth/login?connect=1"]);
   assert.match(res.body.error, /Reconnect Twitch at \/auth\/login\?connect=1/);
-  assert.equal(
-    f.forwarded.some((x) => x.path === "/chat" && x.body),
-    false,
-    "the room is not told anything",
-  );
+  const told = f.forwarded.some((x) => x.path === "/chat" && x.body);
+  assert.equal(told, false, "the room is not told anything");
 });
 
 test("disconnectChat deletes the subscription and pauses the room; viewers cannot manage chat", async (t) => {
@@ -571,10 +553,8 @@ test("dev token (test site only): a missing binding, a wrong token or no token i
   f.entries.set("owner:nesszerra", { id: "1" });
   // production: no DEV_TOOLS_TOKEN binding, so even a well-formed token is refused and devtools do not exist
   assert.equal(await dev(f, "/api/dev/diagnostics"), 401);
-  assert.equal(
-    await dev(f, "/api/devtools/nesszerra/chat", { userId: "t1", username: "testbot_a", text: "!fight" }),
-    401,
-  );
+  const chat = await dev(f, "/api/devtools/nesszerra/chat", { userId: "t1", username: "testbot_a", text: "!fight" });
+  assert.equal(chat, 401);
   const line = { userId: "t1", username: "testbot_a", text: "hi" };
   const session = await f.st("/api/devtools/nesszerra/chat", "POST", line, await signedIn(f, true));
   assert.equal(session, 404, "an owner session alone does not open devtools");
@@ -618,11 +598,8 @@ test("dev token (test site only): the right token acts as the owner and can seed
   f.env.DEV_TOOLS_TOKEN = DEV;
   const last = () => f.forwarded.at(-1);
   assert.equal(await dev(f, "/api/dev/diagnostics"), 200);
-  assert.equal(
-    await dev(f, "/api/admin/nesszerra", { action: "removePlayer", userId: "testbot:a" }),
-    200,
-    "no Origin needed",
-  );
+  const removed = await dev(f, "/api/admin/nesszerra", { action: "removePlayer", userId: "testbot:a" });
+  assert.equal(removed, 200, "no Origin needed");
   assert.equal(last().body.actorId, "1");
   const settings = await dev(f, "/api/dev/settings", { action: "config", payload: { patch: { quickDuel: false } } });
   assert.notEqual(settings, 403, "dev routes skip the Origin check with a token too");
@@ -682,15 +659,10 @@ test("pets: the catalog and images are public; uploads and deletes need a mod; t
   assert.equal(await f.st("/api/pets/nesszerra", "POST", {}, await signedIn(f)), 403);
   const owner = await signedIn(f, true),
     sent = f.forwarded.length;
-  assert.equal(
-    (await f.json("/api/pets/nesszerra", "POST", { label: "Blob", tier: "mythic" }, owner)).reason,
-    "invalid_tier",
-  );
-  assert.equal(
-    await f.st("/api/pets/nesszerra/fox", "DELETE", undefined, owner),
-    404,
-    "built-in pets cannot be deleted",
-  );
+  const mythic = await f.json("/api/pets/nesszerra", "POST", { label: "Blob", tier: "mythic" }, owner);
+  assert.equal(mythic.reason, "invalid_tier");
+  const fox = await f.st("/api/pets/nesszerra/fox", "DELETE", undefined, owner);
+  assert.equal(fox, 404, "built-in pets cannot be deleted");
   assert.equal(f.forwarded.length, sent, "rejected uploads and deletes never reach the room");
   assert.equal(await f.st("/api/pets/nesszerra/p-blob-abc123", "DELETE", undefined, owner), 200);
   assert.equal(last().path, "/pets/p-blob-abc123");
@@ -813,11 +785,8 @@ test("chat bot: a signed-up channel gets its verification, and the bot answers o
     "webhook_callback_verification",
   );
   assert.equal(await verify.text(), "abc");
-  assert.deepEqual(
-    f.forwarded.map((x) => x.channel),
-    ["nesszerra", "miolafff", "solo"],
-    "the signed-up room hears its verification",
-  );
+  const heard = f.forwarded.map((x) => x.channel);
+  assert.deepEqual(heard, ["nesszerra", "miolafff", "solo"], "the signed-up room hears its verification");
   f.forwarded.length = 0;
   const line = (login: string, text: string) => {
     const body = botBody(text);
@@ -834,10 +803,8 @@ test("chat bot: a signed-up channel gets its verification, and the bot answers o
   assert.equal(f.forwarded[0].body.bot, true, "the bot is also the broadcaster here");
   assert.equal(f.forwarded[0].body.botId, "42");
   await Promise.all(waits);
-  assert.deepEqual(
-    helix.map((x) => x.body.sender_id),
-    ["42"],
-  );
+  const senders = helix.map((x) => x.body.sender_id);
+  assert.deepEqual(senders, ["42"]);
 });
 
 test("chat bot: Connect chat subscribes as the signed-in bot account, and asks for it first", async (t) => {
@@ -941,10 +908,8 @@ test("chat bot: several reply lines go out in order, about a second apart, and o
   });
   assert.deepEqual(sent, ["one", "two", "three"]);
   assert.deepEqual(waits, [1100, 1100]);
-  assert.deepEqual(
-    out.map((r) => r.sent),
-    [false, true, true],
-  );
+  const flags = out.map((r) => r.sent);
+  assert.deepEqual(flags, [false, true, true]);
 });
 
 test("check-in test mode: a mod or the owner turns it on, only on the site channel; viewers cannot", async () => {
@@ -954,10 +919,8 @@ test("check-in test mode: a mod or the owner turns it on, only on the site chann
   const other = await call(f.env, "/api/admin/miolafff", "POST", on, await signedIn(f, true));
   assert.equal(other.status, 403);
   assert.match(other.body.error, /only for nesszerra's channel/);
-  assert.equal(
-    f.forwarded.some((x) => x.path === "/checkin-test"),
-    false,
-  );
+  const told = f.forwarded.some((x) => x.path === "/checkin-test");
+  assert.equal(told, false);
   assert.equal(await f.st("/api/admin/nesszerra", "POST", on, await signedIn(f, true)), 200);
   assert.deepEqual(f.forwarded.find((x) => x.path === "/checkin-test").body, { on: true, by: "nesszerra" });
 });
@@ -1025,8 +988,6 @@ test("viewer sprites: only the owner may wear one; sends need sign-in, reviews n
     }),
   );
   assert.equal((await redraw(64)).status, 502);
-  assert.deepEqual(
-    f.forwarded.filter((x) => x.path === "/sprites/ai").map((x) => x.body.op),
-    ["take", "take", "refund"],
-  );
+  const ops = f.forwarded.filter((x) => x.path === "/sprites/ai").map((x) => x.body.op);
+  assert.deepEqual(ops, ["take", "take", "refund"]);
 });

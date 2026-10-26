@@ -185,21 +185,17 @@ test("mutations must be same-origin, unknown routes 404, wrong methods 405", asy
   const f = environment(GITHUB),
     owner = await f.owner();
   const evil = { Origin: "https://evil.example" };
-  assert.equal(
-    (await call(f.env, "/api/dev/channels", "POST", { action: "pause", login: "someone" }, owner, evil)).status,
-    403,
-  );
+  const cross = await call(f.env, "/api/dev/channels", "POST", { action: "pause", login: "someone" }, owner, evil);
+  assert.equal(cross.status, 403);
   for (const [method, path, code] of [
     ["GET", "nope", 404],
     ["GET", "codex", 404], // the Codex switch is gone
     ["GET", "deploy", 405],
     ["POST", "diagnostics", 405],
-  ] as const)
-    assert.equal(
-      (await call(f.env, "/api/dev/" + path, method, method === "POST" ? {} : undefined, owner)).status,
-      code,
-      path,
-    );
+  ] as const) {
+    const r = await call(f.env, "/api/dev/" + path, method, method === "POST" ? {} : undefined, owner);
+    assert.equal(r.status, code, path);
+  }
   for (const body of ["[1]", "{bad"]) assert.equal((await post(f, "channels", body, owner)).status, 400);
 });
 
@@ -255,20 +251,9 @@ test("channels lists the registry without reading any room, and progress answers
   assert.equal(r.status, 200);
   assert.deepEqual(Object.keys(r.body.progress).sort(), [...list.body.builtin].sort());
   const p = r.body.progress.nesszerra;
-  assert.deepEqual(
-    Object.keys(p).sort(),
-    [
-      "commands",
-      "commandsWorking",
-      "duelCommands",
-      "duelModuleOff",
-      "lastChatAt",
-      "lastCommandAt",
-      "overlays",
-      "players",
-      "rejectedAt",
-      "source",
-    ].sort(),
+  assert.equal(
+    Object.keys(p).sort().join(" "),
+    "commands commandsWorking duelCommands duelModuleOff lastChatAt lastCommandAt overlays players rejectedAt source",
   );
   assert.deepEqual([p.overlays, p.source, p.commands, p.commandsWorking], [0, "", 14, 0]);
 });
@@ -375,18 +360,11 @@ test("export downloads one room as JSON: fighters, ranks, config, history, chara
     [data.format, data.version, data.kind, data.channel, data.status],
     ["mini-chat-export", 1, "channel", "nesszerra", "builtin"],
   );
-  assert.deepEqual(
-    data.profiles.map((p: { username: string; elo: number; wins: number; losses: number }) => [
-      p.username,
-      p.elo,
-      p.wins,
-      p.losses,
-    ]),
-    [
-      ["fighter1", 1234, 9, 3],
-      ["fighter2", 900, 1, 8],
-    ],
-  );
+  const ranks = data.profiles.map((p: Loose) => [p.username, p.elo, p.wins, p.losses]); // export rows, read by property
+  assert.deepEqual(ranks, [
+    ["fighter1", 1234, 9, 3],
+    ["fighter2", 900, 1, 8],
+  ]);
   assert.deepEqual([first.power, first.hat, first.defaultAbility, first.userId], [1, "crown", "strike", "11"]);
   assert.deepEqual([first.dollars, first.title, first.build, first.bonus], [70, "legend", 1, 0]);
   // the export's field names and order, as the SQL aliases give them
@@ -397,13 +375,11 @@ test("export downloads one room as JSON: fighters, ranks, config, history, chara
       "trail winEffect taunt title build",
   );
   assert.deepEqual([data.config.maxHp, data.configVersion], [120, 2]);
-  assert.deepEqual(
-    data.configHistory.map((h: { version: number; note: string }) => [h.version, h.note]),
-    [
-      [2, "tankier"],
-      [1, "initial"],
-    ],
-  );
+  const history = data.configHistory.map((h: { version: number; note: string }) => [h.version, h.note]);
+  assert.deepEqual(history, [
+    [2, "tankier"],
+    [1, "initial"],
+  ]);
   assert.deepEqual(data.customCharacters, [
     { id: "c-orc-abc123", meta: { label: "Orc", fps: 8 }, bytes: 4, createdBy: "11", createdAt: 99 },
   ]);
@@ -507,10 +483,8 @@ test("restore refuses times outside the 30-day window, unknown channels, and loc
   room.ctx.storage.getBookmarkForTime = async () => "not a bookmark; DROP TABLE";
   assert.deepEqual(await restore("nesszerra", now - day), [502, "invalid_bookmark"]);
   const body = { channel: "nesszerra", at: now - day };
-  assert.equal(
-    (await call(f.env, "/api/dev/restore", "POST", body, owner, { Origin: "https://evil.example" })).status,
-    403,
-  );
+  const cross = await call(f.env, "/api/dev/restore", "POST", body, owner, { Origin: "https://evil.example" });
+  assert.equal(cross.status, 403);
 });
 
 test("export does not create a StreamElements key or change the room", async () => {
@@ -538,10 +512,9 @@ test("export of the channel list has every channel and who turned it off", async
   const f = environment();
   f.entries.set("channel:oldone", { id: "7", login: "oldone", enabledAt: 1000, pausedAt: 2000 });
   const res = await download(f, "export?registry=1", await f.owner());
-  assert.match(
-    res.headers.get("Content-Disposition") as string, // a missing header fails the match all the same
-    /^attachment; filename="mini-chat-channels-\d{4}-\d{2}-\d{2}\.json"$/,
-  );
+  // a missing header fails the match all the same
+  const disposition = res.headers.get("Content-Disposition") as string;
+  assert.match(disposition, /^attachment; filename="mini-chat-channels-\d{4}-\d{2}-\d{2}\.json"$/);
   const data = await res.json<Loose>(); // the export JSON, read by property
   assert.deepEqual([data.kind, data.builtin], ["registry", ["nesszerra", "miolafff"]]);
   assert.deepEqual(data.channels, [{ id: "7", login: "oldone", enabledAt: 1000, pausedAt: 2000, pausedBy: "" }]);
@@ -566,10 +539,8 @@ test("the daily cron backs up every channel into D1; the owner lists the days, d
 
   const list = await get(f, "backups?channel=NessZerra", owner);
   assert.deepEqual([list.status, list.body.keepDays], [200, 90]);
-  assert.deepEqual(
-    list.body.backups.map((b: Backup) => [b.day, b.at]),
-    [["2026-10-09", at]],
-  );
+  const days = list.body.backups.map((b: Backup) => [b.day, b.at]);
+  assert.deepEqual(days, [["2026-10-09", at]]);
   assert.ok(list.body.backups[0].bytes > 100);
   for (const user of ["fighter1", "@FIGHTER1", "11"]) {
     const one = await get(f, "backups?channel=nesszerra&day=2026-10-09&user=" + user, owner),
@@ -579,17 +550,13 @@ test("the daily cron backs up every channel into D1; the owner lists the days, d
       [one.body.day, one.body.exportedAt, profile.elo, profile.wins, profile.losses],
       ["2026-10-09", "2026-10-09T09:00:00.000Z", 1234, 9, 3],
     );
-    assert.deepEqual(
-      one.body.purchases.map((p: { itemId: string }) => p.itemId),
-      ["legend"],
-    );
+    const items = one.body.purchases.map((p: { itemId: string }) => p.itemId);
+    assert.deepEqual(items, ["legend"]);
     assert.deepEqual(one.body.builds, [{ userId: "11", slot: 0, data: { title: "legend" } }]);
   }
   const res = await download(f, "backups?channel=nesszerra&day=2026-10-09", owner);
-  assert.equal(
-    res.headers.get("Content-Disposition"),
-    'attachment; filename="mini-chat-nesszerra-2026-10-09-backup.json"',
-  );
+  const disposition = res.headers.get("Content-Disposition");
+  assert.equal(disposition, 'attachment; filename="mini-chat-nesszerra-2026-10-09-backup.json"');
   const data = await res.json<Loose>(); // the export JSON, read by property
   assert.deepEqual(
     [data.format, data.kind, data.channel, data.status, data.counts.profiles, data.counts.purchases],
@@ -616,18 +583,14 @@ test("backups keep 90 days, and a second backup on the same day replaces that da
     start = Date.UTC(2026, 6, 1, 9);
   const list = async (): Promise<Backup[]> => (await get(f, "backups?channel=nesszerra", owner)).body.backups;
   for (const at of [start, start + day, start + day + 60000]) await cron(f, at);
-  assert.deepEqual(
-    (await list()).map((b) => [b.day, b.at]),
-    [
-      ["2026-07-02", start + day + 60000],
-      ["2026-07-01", start],
-    ],
-  );
+  const replaced = (await list()).map((b) => [b.day, b.at]);
+  assert.deepEqual(replaced, [
+    ["2026-07-02", start + day + 60000],
+    ["2026-07-01", start],
+  ]);
   await cron(f, start + 91 * day);
-  assert.deepEqual(
-    (await list()).map((b) => b.day),
-    ["2026-09-30", "2026-07-02"],
-  );
+  const kept = (await list()).map((b) => b.day);
+  assert.deepEqual(kept, ["2026-09-30", "2026-07-02"]);
 });
 
 test("the owner can back up one channel now; without D1 the routes answer 501 and the cron does nothing", async () => {
@@ -636,15 +599,11 @@ test("the owner can back up one channel now; without D1 the routes answer 501 an
   const now = await post(f, "backups", { channel: "NessZerra" }, owner);
   assert.equal(now.status, 200);
   assert.match(now.body.day, /^\d{4}-\d{2}-\d{2}$/);
-  assert.deepEqual(
-    now.body.channels.map((c: BackupResult) => [c.channel, c.ok]),
-    [["nesszerra", true]],
-  );
+  const one = now.body.channels.map((c: BackupResult) => [c.channel, c.ok]);
+  assert.deepEqual(one, [["nesszerra", true]]);
   assert.equal((await get(f, "backups?channel=miolafff", owner)).body.backups.length, 0);
-  assert.deepEqual(
-    (await post(f, "backups", {}, owner)).body.channels.map((c: BackupResult) => c.channel),
-    ["nesszerra", "miolafff"],
-  );
+  const all = (await post(f, "backups", {}, owner)).body.channels.map((c: BackupResult) => c.channel);
+  assert.deepEqual(all, ["nesszerra", "miolafff"]);
   const unknown = await post(f, "backups", { channel: "nobody_here" }, owner);
   assert.deepEqual([unknown.status, unknown.body.reason], [404, "unknown_channel"]);
   const room = await roomPost(f, "/dev/backup", { at: "soon", status: "on" });
@@ -708,10 +667,8 @@ test("owner logs filter by every stored source, and stats show today's counters"
   logRoomEvent(r, "alarm", "ran rematch_lock");
   for (const source of ["command", "warn", "alarm"]) {
     const logs = await get(f, "logs?source=" + source, owner);
-    assert.deepEqual(
-      logs.body.map((l: { source: string }) => l.source),
-      [source],
-    );
+    const sources = logs.body.map((l: { source: string }) => l.source);
+    assert.deepEqual(sources, [source]);
   }
   const stats = await get(f, "stats?channel=nesszerra&days=3", owner);
   const { counts } = stats.body.days[0];
