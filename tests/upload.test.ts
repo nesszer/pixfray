@@ -90,20 +90,16 @@ test("an atlas over 1.5 MB is rejected", () => {
   const atLimit = makePng(256, 64, { extra: [["tEXt", Buffer.alloc(pad, 0x41)]] });
   assert.equal(atLimit.length, UPLOAD_LIMITS.maxAtlasBytes);
   assert.equal(validateUpload(body({ atlas: b64(atLimit) })).bytes.length, UPLOAD_LIMITS.maxAtlasBytes);
-  assert.ok(
-    UPLOAD_BODY_LIMIT >= Math.ceil(UPLOAD_LIMITS.maxAtlasBytes / 3) * 4,
-    "the body limit fits a full-size base64 atlas",
-  );
+  const fullAtlas = Math.ceil(UPLOAD_LIMITS.maxAtlasBytes / 3) * 4;
+  assert.ok(UPLOAD_BODY_LIMIT >= fullAtlas, "the body limit fits a full-size base64 atlas");
 });
 
 test("frame limits: 24 frames, 128 x 128, inside the atlas, known animations only", () => {
   const wide = b64(makePng(1024, 384));
   const grid = (n: number) =>
     Array.from({ length: n }, (_, i) => ({ x: (i % 8) * 128, y: Math.floor(i / 8) * 128, w: 128, h: 128 }));
-  assert.equal(
-    validateUpload(body({ atlas: wide, frames: grid(24), animations: { walk: grid(24) } })).meta.frames.length,
-    24,
-  );
+  const { meta } = validateUpload(body({ atlas: wide, frames: grid(24), animations: { walk: grid(24) } }));
+  assert.equal(meta.frames.length, 24);
   refuses([
     [{ atlas: wide, frames: grid(24), animations: { attack: frame(0) } }, 400, "too_many_frames"],
     [{ atlas: wide, frames: grid(25) }, 400, "invalid_frames"],

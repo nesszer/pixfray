@@ -690,11 +690,8 @@ test("room /profile: a base look field of the wrong type is invalid_profile, not
     // as const: keeps each field name a literal key of the profile body
     const send = room();
     assert.equal((await send("/profile", base, "u1")).status, 200);
-    assert.deepEqual(
-      await send("/profile", { ...base, [field]: value }, "u1"),
-      { status: 400, body: { error: "invalid_profile" } },
-      field + " " + JSON.stringify(value),
-    );
+    const bad = await send("/profile", { ...base, [field]: value }, "u1");
+    assert.deepEqual(bad, { status: 400, body: { error: "invalid_profile" } }, field + " " + JSON.stringify(value));
   }
 });
 
@@ -777,12 +774,10 @@ test("Worker routes refuse a wrong-typed body at the edge, after the role check"
     [viewer, "/api/sprite/nesszerra", { label: "Cat", image: PNG, ai: "yes" }, SEND_UPLOAD],
     [viewer, "/api/sprite/nesszerra/redraw", { image: 5 }, refused("invalid_image", "Choose an image")],
   ];
-  for (const [cookie, path, body, answer] of cases)
-    assert.deepEqual(
-      await call(f.env, path, "POST", body, cookie),
-      { status: 400, body: answer },
-      path + " " + JSON.stringify(body),
-    );
+  for (const [cookie, path, body, answer] of cases) {
+    const got = await call(f.env, path, "POST", body, cookie);
+    assert.deepEqual(got, { status: 400, body: answer }, path + " " + JSON.stringify(body));
+  }
   // the role check still answers first
   assert.equal((await call(f.env, "/api/admin/nesszerra", "POST", { action: 5 }, viewer)).status, 403);
 });
@@ -961,10 +956,8 @@ test("registry: a channel record of the wrong shape is left out and logged, and 
   assert.deepEqual(warn.mock.calls.at(-1)?.arguments, ["registry records skipped", "channel:streamer_a"]);
   const list = await call(f.env, "/api/dev/channels", "GET", undefined, owner);
   assert.equal(list.status, 200);
-  assert.deepEqual(
-    list.body.channels.map((c: { login: string }) => c.login),
-    ["streamer_b"],
-  );
+  const logins = list.body.channels.map((c: { login: string }) => c.login);
+  assert.deepEqual(logins, ["streamer_b"]);
 });
 
 test("CHANNEL_ORIGINS: anything but an object of URLs is no channel domains", () => {
@@ -1061,10 +1054,8 @@ test("GitHub: an ok answer of the wrong shape gets the route's GitHub error", as
     ["PUT", /\/pulls\/7\/merge$/, 200, { merged: true, message: "Pull Request successfully merged" }],
     ["POST", /\/dispatches$/, 204, null],
   ]);
-  assert.deepEqual(
-    await call(f.env, "/api/dev/promote", "POST", { number: 7 }, owner),
-    unreadable("Merge pull request (it may have merged; check GitHub)"),
-  );
+  const promote = await call(f.env, "/api/dev/promote", "POST", { number: 7 }, owner);
+  assert.deepEqual(promote, unreadable("Merge pull request (it may have merged; check GitHub)"));
   assert.equal(calls.filter((x) => x.endsWith("/dispatches")).length, 0, "nothing dispatched");
 });
 

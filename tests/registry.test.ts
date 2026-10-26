@@ -133,11 +133,8 @@ test("a renamed Twitch name: the new holder of the login gets no say over the ol
   assert.equal(await status(env, "/api/admin/newstreamer", "POST", { action: "pauseChannel" }, cookie), 403);
   mock.mock.restore();
   assert.equal(await where(t, env, newcomer), "/start/?error=taken");
-  assert.equal(
-    (await record(env, "channel:newstreamer")).id,
-    "55",
-    "the channel stays with the account that set it up",
-  );
+  const kept = await record(env, "channel:newstreamer");
+  assert.equal(kept.id, "55", "the channel stays with the account that set it up");
   // the original account, still signed in under its id, keeps the channel
   const original = await signIn(env, STREAMER);
   assert.equal((await call(env, "/api/access/newstreamer", "GET", undefined, original)).body.broadcaster, true);
@@ -154,10 +151,8 @@ test("sign-up on a bot site also asks for channel:bot and comes back with bot=al
   env.CHAT_BOT = "1";
   env.BOT_LOGIN = "pixfray";
   assert.equal((await loginParams(env, "signup=1")).get("scope"), "moderation:read channel:bot");
-  assert.equal(
-    await where(t, env, STREAMER, ["moderation:read", "channel:bot"]),
-    "/admin/?channel=newstreamer&signed_in=1&bot=allowed#chat",
-  );
+  const back = await where(t, env, STREAMER, ["moderation:read", "channel:bot"]);
+  assert.equal(back, "/admin/?channel=newstreamer&signed_in=1&bot=allowed#chat");
   // Twitch handed back moderation:read alone: no bot flag, the page shows the Add the PixFray bot step
   assert.equal(await where(t, env, STREAMER), BACK);
   assert.equal((await loginParams(env, "signup=1&mods=0")).get("scope"), "", "mods=0 asks for neither");
@@ -279,11 +274,8 @@ test("turning a channel off keeps its admin page; overlay feed, viewer page and 
   ];
   for (const [method, path, data, code, why] of cases)
     assert.equal(await status(env, `/api/${path}/newstreamer`, method, data, viewer), code, why);
-  assert.notEqual(
-    await status(env, "/api/profile/newstreamer", "GET", undefined, viewer),
-    403,
-    "the saved fighter stays readable",
-  );
+  const fighter = await status(env, "/api/profile/newstreamer", "GET", undefined, viewer);
+  assert.notEqual(fighter, 403, "the saved fighter stays readable");
   const admin = await call(env, "/api/admin/newstreamer", "GET", undefined, streamer);
   assert.deepEqual([admin.status, admin.body.channelState], [200, "paused"]);
   // the broadcaster can still sign in to turn it back on
@@ -327,14 +319,10 @@ test("connect=mods: only the broadcaster can store the mod-list permission later
     query = "channel=newstreamer&connect=mods";
   await enable(env, "newstreamer", "55");
   assert.equal((await loginParams(env, query)).get("scope"), "moderation:read");
-  assert.equal(
-    await where(t, env, VIEWER9, ["moderation:read"], query),
-    "/admin/?channel=newstreamer&mods=wrong_account#chat",
-  );
+  const wrong = await where(t, env, VIEWER9, ["moderation:read"], query);
+  assert.equal(wrong, "/admin/?channel=newstreamer&mods=wrong_account#chat");
   assert.equal(await record(env, "broadcaster:newstreamer"), null);
-  assert.equal(
-    await where(t, env, STREAMER, ["moderation:read"], query),
-    "/admin/?channel=newstreamer&signed_in=1&mods=connected#chat",
-  );
+  const connected = await where(t, env, STREAMER, ["moderation:read"], query);
+  assert.equal(connected, "/admin/?channel=newstreamer&signed_in=1&mods=connected#chat");
   assert.ok(await record(env, "broadcaster:newstreamer"));
 });
