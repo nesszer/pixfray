@@ -60,12 +60,6 @@ export function applyChannel() {
   }
 }
 export const DEFAULT_COLOR = "#a78bfa";
-export const DEFAULT_ABILITIES = {
-  strike: { damage: 20, cooldownMs: 2000 },
-  heavy: { damage: 35, cooldownMs: 5000 },
-  heal: { amount: 15, cooldownMs: 12000 },
-};
-export const ABILITY_NAMES = { strike: "Strike", heavy: "Heavy strike", heal: "Heal" };
 
 // JSON fetch that never throws: {ok, status, data}. Same-origin, so POSTs carry the Origin header the Worker requires.
 export async function api(
@@ -169,9 +163,11 @@ export const onSubmit = (selector: string, fn: () => unknown) =>
 // Keeps control disabled while work runs.
 export async function busy<T>(control: { disabled: boolean }, work: () => Promise<T>) {
   control.disabled = true;
-  const result = await work();
-  control.disabled = false;
-  return result;
+  try {
+    return await work();
+  } finally {
+    control.disabled = false;
+  }
 }
 // A small button; onClick gets the button itself.
 export function button(label: string, onClick: (b: HTMLButtonElement) => unknown, attrs: Record<string, unknown> = {}) {
@@ -218,11 +214,6 @@ export const seconds = (ms: number) => {
   const s = ms / 1000;
   return (Number.isInteger(s) ? s : s.toFixed(2).replace(/0+$/, "")) + " s";
 };
-export function abilityDetail(name: string, spec: { damage?: number; amount?: number; cooldownMs?: number } = {}) {
-  const cd = Number.isInteger(spec.cooldownMs) ? seconds(spec.cooldownMs) + " cooldown" : "";
-  if (name === "heal") return (spec.amount ?? "?") + " HP heal, " + cd;
-  return (spec.damage ?? "?") + " damage, " + cd;
-}
 export function timeAgo(ms: number | null | undefined) {
   if (!ms) return "never";
   const s = Math.round((Date.now() - ms) / 1000);
@@ -361,7 +352,7 @@ const served = (name: string, keep: (m: any) => void) =>
   );
 served("hats", (m) => (hats = m));
 served("pets", (m) => (pets = m));
-export const cosmeticsReady = served("cosmetics", (m) => (cosmetics = m));
+served("cosmetics", (m) => (cosmetics = m));
 const tint = (id: string | undefined) => cosmetics?.recolorFilter(id) || "none";
 const petArg = (pet: Pet | null | undefined) => (pet?.url ? { image: image(pet.url) } : pet?.id || "");
 // A still pet on its own canvas (the dashboard's pet list), in a pet color (cosmetics.js) if one is given.

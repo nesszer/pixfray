@@ -11,7 +11,7 @@ import {
   parseVersions,
 } from "./parse.ts";
 import type { Channel, Channels, Progress, TargetVersions } from "./parse.ts";
-import { $, api, errorText, h, setStatus } from "./ui.ts";
+import { $, api, busy, emptyRow, errorText, h, on, row, setStatus, signOut } from "./ui.ts";
 // The /api/dev/* answers the page lists from are parsed where they arrive (src/parse.ts); the smaller ones (diagnostics,
 // code tree, save, pr, restore) are read with the shapes below or checked where they are read.
 type Integration = { configured?: boolean; repo?: string; missing?: string[]; versionMetadata?: boolean };
@@ -73,29 +73,14 @@ const ago = (t: number | null | undefined) => {
 };
 const short = (id: unknown) => (id ? String(id).slice(0, 8) : "–");
 function rows(tbody: string, list: Node[], empty: string, cols: number) {
-  // every rows() target is a tbody on the page
-  const t = $<HTMLTableSectionElement>(tbody);
-  t.replaceChildren();
-  if (!list.length) {
-    t.append(h("tr", {}, h("td", { colspan: cols, class: "muted" }, empty)));
-    return;
-  }
-  for (const r of list) t.append(r);
-}
-async function busy(button: HTMLButtonElement, fn: () => Promise<unknown>) {
-  button.disabled = true;
-  try {
-    await fn();
-  } finally {
-    button.disabled = false;
-  }
+  $(tbody).replaceChildren(...(list.length ? list : [emptyRow(cols, empty)]));
 }
 
 // ---------- access ----------
 async function start() {
   const s = parseAnswer(await api("/api/session"), parseSession, "the session");
   S.session = s.ok ? s.data : null;
-  const who = $<HTMLDivElement>("#who");
+  const who = $("#who");
   who.replaceChildren();
   if (s.ok && s.data.user)
     who.append(
@@ -113,7 +98,7 @@ async function start() {
       h("a", { class: "btn", href: "/admin/" }, "Open mod controls"),
     ]);
   $("#gate").hidden = true;
-  $<HTMLDivElement>("#app").hidden = false;
+  $("#app").hidden = false;
   if (!$<HTMLInputElement>("#branch").value)
     $<HTMLInputElement>("#branch").value = "live-fix/" + new Date().toISOString().slice(0, 10);
   await Promise.all([loadDiagnostics(), loadConfig(), loadLogs(), loadStats(), loadChannels()]);
@@ -121,22 +106,18 @@ async function start() {
   loadVersions();
 }
 function gate(text: string, actions: Node[]) {
-  $<HTMLParagraphElement>("#gate-text").textContent = text;
-  $<HTMLDivElement>("#gate-actions").replaceChildren(...actions);
+  $("#gate-text").textContent = text;
+  $("#gate-actions").replaceChildren(...actions);
   $("#gate").hidden = false;
-  $<HTMLDivElement>("#app").hidden = true;
-}
-async function signOut() {
-  await api("/auth/logout", { method: "POST", body: {} });
-  location.reload();
+  $("#app").hidden = true;
 }
 
 // ---------- diagnostics ----------
 async function loadDiagnostics() {
   const r = await api("/api/dev/diagnostics");
   if (!r.ok) {
-    $<HTMLHeadingElement>("#summary-title").textContent = "Diagnostics unavailable";
-    $<HTMLParagraphElement>("#summary-text").textContent = errorText(r);
+    $("#summary-title").textContent = "Diagnostics unavailable";
+    $("#summary-text").textContent = errorText(r);
     return;
   }
   const d = (S.diag = r.data),
@@ -146,9 +127,9 @@ async function loadDiagnostics() {
   // StreamElements counts as working only once a command has arrived; picking it as the source isn't enough.
   const se = chat.connected && chat.source === "streamelements",
     chatOn = chat.connected && (!se || room.seLastCommandAt > 0);
-  $<HTMLDivElement>("#s-chat").textContent = !chat.connected ? "Offline" : se ? "StreamElements" : "Twitch chat";
-  $<HTMLDivElement>("#s-chat").className = "value " + (chatOn ? "up" : "down");
-  $<HTMLDivElement>("#s-chat-note").textContent = chat.lastRevocationReason
+  $("#s-chat").textContent = !chat.connected ? "Offline" : se ? "StreamElements" : "Twitch chat";
+  $("#s-chat").className = "value " + (chatOn ? "up" : "down");
+  $("#s-chat-note").textContent = chat.lastRevocationReason
     ? "Revoked: " + chat.lastRevocationReason
     : se
       ? room.seLastCommandAt
@@ -160,24 +141,22 @@ async function loadDiagnostics() {
           ? "No chat message yet"
           : "Connect chat in Mod controls";
   if (use.configured && Number.isFinite(use.requests)) {
-    $<HTMLDivElement>("#s-requests").textContent = fmtNum(use.requests);
-    $<HTMLDivElement>("#s-requests-note").textContent = use.percent + "% used, resets " + fmtTime(use.resetsAt);
-    $<HTMLDivElement>("#s-requests-note").className = "delta" + (use.percent >= 80 ? " down" : "");
+    $("#s-requests").textContent = fmtNum(use.requests);
+    $("#s-requests-note").textContent = use.percent + "% used, resets " + fmtTime(use.resetsAt);
+    $("#s-requests-note").className = "delta" + (use.percent >= 80 ? " down" : "");
   } else {
-    $<HTMLDivElement>("#s-requests").textContent = "Unknown";
-    $<HTMLDivElement>("#s-requests-note").textContent = use.configured
+    $("#s-requests").textContent = "Unknown";
+    $("#s-requests-note").textContent = use.configured
       ? use.error || "Analytics unavailable"
       : "Cloudflare API not configured";
   }
-  $<HTMLDivElement>("#s-errors").textContent = fmtNum(room.errors ?? 0);
-  $<HTMLDivElement>("#s-errors-note").textContent = room.lastError
-    ? "Latest " + fmtTime(room.lastError.at)
-    : "None stored";
-  $<HTMLDivElement>("#s-errors-note").className = "delta" + (room.errors ? " down" : "");
-  $<HTMLDivElement>("#s-sockets").textContent = fmtNum(room.sockets?.live ?? 0);
-  $<HTMLDivElement>("#s-sockets-note").textContent = `${room.players ?? 0} players, ${room.openDuels ?? 0} open duels`;
+  $("#s-errors").textContent = fmtNum(room.errors ?? 0);
+  $("#s-errors-note").textContent = room.lastError ? "Latest " + fmtTime(room.lastError.at) : "None stored";
+  $("#s-errors-note").className = "delta" + (room.errors ? " down" : "");
+  $("#s-sockets").textContent = fmtNum(room.sockets?.live ?? 0);
+  $("#s-sockets-note").textContent = `${room.players ?? 0} players, ${room.openDuels ?? 0} open duels`;
   const ver = d.worker?.deployedVersion;
-  $<HTMLParagraphElement>("#meta").textContent =
+  $("#meta").textContent =
     `Worker ${d.worker?.version || ""}` +
     (ver ? ` · version ${short(ver.id)}${ver.tag ? " (" + ver.tag + ")" : ""}` : " · version id unavailable") +
     ` · checked ${fmtTime(Date.now())}`;
@@ -192,12 +171,12 @@ async function loadDiagnostics() {
   ];
   if (use.configured && Number.isFinite(use.requests))
     parts.push(`${fmtNum(use.requests)} of 100,000 daily requests are used (${use.percent}%)`);
-  $<HTMLHeadingElement>("#summary-title").textContent = !chatOn
+  $("#summary-title").textContent = !chatOn
     ? "Site is up; " + SITE.channel + " chat offline"
     : room.errors
       ? `Site is up, with ${room.errors} logged errors`
       : "Site is running normally";
-  $<HTMLParagraphElement>("#summary-text").textContent = parts.join("; ") + ".";
+  $("#summary-text").textContent = parts.join("; ") + ".";
   renderIntegrations(d.integrations || {});
 }
 
@@ -209,35 +188,29 @@ function renderIntegrations(i: { github?: Integration; cloudflare?: Integration 
   rows(
     "#integrations",
     [
-      h(
-        "tr",
-        {},
-        h("td", {}, "GitHub" + (g.repo ? " (" + g.repo + ")" : "")),
-        h("td", {}, badge(g.configured)),
-        h("td", {}, (g.missing || []).join(", ") || "–"),
-        h("td", {}, "Code editor, deploy, promote, hotfix, rollback"),
-      ),
-      h(
-        "tr",
-        {},
-        h("td", {}, "Cloudflare API (read-only)"),
-        h("td", {}, badge(c.configured)),
-        h("td", {}, (c.missing || []).join(", ") || "–"),
-        h("td", {}, "Request usage, Worker versions"),
-      ),
-      h(
-        "tr",
-        {},
-        h("td", {}, "Version metadata binding"),
-        h("td", {}, badge(c.versionMetadata)),
-        h("td", {}, c.versionMetadata ? "–" : "CF_VERSION_METADATA"),
-        h("td", {}, "Showing the version that served this page"),
-      ),
+      row([
+        "GitHub" + (g.repo ? " (" + g.repo + ")" : ""),
+        badge(g.configured),
+        (g.missing || []).join(", ") || "–",
+        "Code editor, deploy, promote, hotfix, rollback",
+      ]),
+      row([
+        "Cloudflare API (read-only)",
+        badge(c.configured),
+        (c.missing || []).join(", ") || "–",
+        "Request usage, Worker versions",
+      ]),
+      row([
+        "Version metadata binding",
+        badge(c.versionMetadata),
+        c.versionMetadata ? "–" : "CF_VERSION_METADATA",
+        "Showing the version that served this page",
+      ]),
     ],
     "",
     4,
   );
-  const missing = $<HTMLParagraphElement>("#github-missing");
+  const missing = $("#github-missing");
   missing.hidden = !!g.configured;
   missing.textContent = g.configured
     ? ""
@@ -258,7 +231,7 @@ function renderIntegrations(i: { github?: Integration; cloudflare?: Integration 
     $<HTMLButtonElement>(id).disabled = !g.configured;
   // Without GitHub, releases happen from a local checkout (gh and cf CLIs), so the editor and release steps stay out of the way.
   $("#sec-code").hidden = $("#sec-release").hidden = !g.configured;
-  $<HTMLParagraphElement>("#local-release").hidden = !!g.configured;
+  $("#local-release").hidden = !!g.configured;
   $("#dev-tools-title").textContent = g.configured
     ? "Developer tools: code editor, releases and raw settings"
     : "Developer tools: raw settings and integrations";
@@ -279,15 +252,13 @@ function released(r: ApiResult, what: string) {
   status("#release-status", `${what} started (run ${r.data.requestId}).${extra}${pr} Watch the run below.`, "ok");
   setTimeout(loadRuns, 4000);
 }
-$<HTMLButtonElement>("#deploy-test").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#deploy-test", (b) =>
+  busy(b, async () => {
     released(await api("/api/dev/deploy", { method: "POST", body: { ref: branch() } }), "Test deploy of " + branch());
   }),
 );
-$<HTMLButtonElement>("#promote").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#promote", (b) =>
+  busy(b, async () => {
     const number = $<HTMLInputElement>("#pr-number").value
         ? Number($<HTMLInputElement>("#pr-number").value)
         : undefined,
@@ -300,18 +271,16 @@ $<HTMLButtonElement>("#promote").addEventListener("click", (e) =>
     );
   }),
 );
-$<HTMLButtonElement>("#hotfix").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#hotfix", (b) =>
+  busy(b, async () => {
     if (!branch().startsWith("hotfix/"))
       return status("#release-status", "Set the branch to hotfix/<name> in the code editor first.", "error");
     if (!confirm(`Deploy ${branch()} straight to ${new URL(SITE.origin).host} without the test site?`)) return;
     released(await api("/api/dev/hotfix", { method: "POST", body: { branch: branch() } }), "Hotfix");
   }),
 );
-$<HTMLButtonElement>("#rollback").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#rollback", (b) =>
+  busy(b, async () => {
     const target = $<HTMLSelectElement>("#rb-target").value,
       versionId = $<HTMLSelectElement>("#rb-version").value;
     if (
@@ -397,22 +366,20 @@ function fillVersions() {
 }
 
 // ---------- code editor ----------
-$<HTMLButtonElement>("#load-tree").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#load-tree", (b) =>
+  busy(b, async () => {
     const r = await api("/api/dev/code/tree?ref=" + encodeURIComponent(branch() || "main"));
     const r2 = r.ok ? r : await api("/api/dev/code/tree");
     if (!r2.ok) return status("#code-status", errorText(r2, "Could not list files"), "error");
-    $<HTMLDataListElement>("#files").replaceChildren(
+    $("#files").replaceChildren(
       // /api/dev/code/tree body: the repo's file list
       ...(r2.data.files as { path: string }[]).map((f) => h("option", { value: f.path })),
     );
     status("#code-status", `${r2.data.files.length} files on ${r2.data.ref}. Start typing a path in File.`, "ok");
   }),
 );
-$<HTMLButtonElement>("#load-file").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#load-file", (b) =>
+  busy(b, async () => {
     const path = $<HTMLInputElement>("#path").value.trim();
     if (!path) return status("#code-status", "Enter a file path.", "error");
     const r = await api(
@@ -425,7 +392,7 @@ $<HTMLButtonElement>("#load-file").addEventListener("click", (e) =>
     S.fileSha = r.data.sha;
     S.fileRef = r.data.ref;
     S.filePath = path;
-    $<HTMLSpanElement>("#file-info").textContent = `${path} from ${r.data.ref} (${fmtNum(r.data.size)} bytes)`;
+    $("#file-info").textContent = `${path} from ${r.data.ref} (${fmtNum(r.data.size)} bytes)`;
     status(
       "#code-status",
       r.data.ref === branch()
@@ -435,9 +402,8 @@ $<HTMLButtonElement>("#load-file").addEventListener("click", (e) =>
     );
   }),
 );
-$<HTMLButtonElement>("#save-file").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#save-file", (b) =>
+  busy(b, async () => {
     const path = $<HTMLInputElement>("#path").value.trim();
     if (!path || path !== S.filePath)
       return status("#code-status", "Load the file first so the save is based on its current version.", "error");
@@ -454,7 +420,7 @@ $<HTMLButtonElement>("#save-file").addEventListener("click", (e) =>
     if (!r.ok) return status("#code-status", errorText(r, "Save failed"), "error");
     S.fileSha = r.data.sha;
     S.fileRef = r.data.branch;
-    $<HTMLSpanElement>("#file-info").textContent = `${path} on ${r.data.branch}`;
+    $("#file-info").textContent = `${path} on ${r.data.branch}`;
     status(
       "#code-status",
       `Saved to ${r.data.branch}${r.data.branchCreated ? " (new branch)" : ""}, commit ${String(r.data.commit).slice(0, 7)}. Next: deploy the branch to test.`,
@@ -462,16 +428,15 @@ $<HTMLButtonElement>("#save-file").addEventListener("click", (e) =>
     );
   }),
 );
-$<HTMLButtonElement>("#open-pr").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#open-pr", (b) =>
+  busy(b, async () => {
     const r = await api("/api/dev/code/pr", {
       method: "POST",
       body: { branch: branch(), title: $<HTMLInputElement>("#commit-msg").value.trim() || undefined },
     });
     if (!r.ok) return status("#code-status", errorText(r, "Could not open the pull request"), "error");
     $<HTMLInputElement>("#pr-number").value = r.data.number;
-    const s = $<HTMLParagraphElement>("#code-status");
+    const s = $("#code-status");
     s.className = "status ok";
     s.replaceChildren(
       `Pull request #${r.data.number} ${r.data.existing ? "is already open" : "opened"}: `,
@@ -488,7 +453,7 @@ async function loadConfig() {
   S.config = r.data.config;
   S.configVersion = r.data.configVersion;
   $<HTMLTextAreaElement>("#config").value = JSON.stringify(r.data.config, null, 2);
-  $<HTMLSpanElement>("#config-version").textContent = "version " + r.data.configVersion;
+  $("#config-version").textContent = "version " + r.data.configVersion;
   $("#history-title").textContent = "Config history (" + (r.data.history || []).length + " versions)";
   rows(
     "#history",
@@ -530,9 +495,8 @@ $<HTMLButtonElement>("#reload-config").addEventListener("click", () => {
   status("#config-status", "");
   loadConfig();
 });
-$<HTMLButtonElement>("#save-config").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#save-config", (b) =>
+  busy(b, async () => {
     let next;
     try {
       next = JSON.parse($<HTMLTextAreaElement>("#config").value);
@@ -645,7 +609,7 @@ const reviewText = (c: Channel) => c.review!.reasons.map((r) => REVIEW[r] || r).
 function renderChannels(d: Channels) {
   S.channels = d;
   // element type from the page HTML
-  $<HTMLSpanElement>("#channels-max").textContent = d.max as unknown as string; // as it was: the DOM turns the number into text
+  $("#channels-max").textContent = d.max as unknown as string; // as it was: the DOM turns the number into text
   const admin = (login: string) => h("a", { href: "/admin/?channel=" + login + "#chat" }, login);
   const row = (login: string, state: "builtin" | "on" | "off", c?: Channel) => {
     const p = state === "off" ? null : S.progress[login],
@@ -744,14 +708,14 @@ function renderChannels(d: Channels) {
   );
   const on = d.builtin.length + d.channels.filter((c) => !c.pausedAt).length;
   const done = Object.values(S.progress).filter((p) => setupOf(p) === 3).length;
-  $<HTMLHeadingElement>("#channels-title").textContent =
+  $("#channels-title").textContent =
     on +
     (on === 1 ? " channel is on" : " channels are on") +
     ", " +
     done +
     " with setup done right now" +
     (S.progressLoading ? " (checked " + S.progressSeen + " of " + S.progressTotal + " so far)" : "");
-  $<HTMLParagraphElement>("#channels-text").textContent =
+  $("#channels-text").textContent =
     (waiting.length
       ? waiting.length +
         (waiting.length === 1 ? " sign-up is" : " sign-ups are") +
@@ -806,7 +770,7 @@ async function loadRestore() {
   if (!login) return;
   const r = await api("/api/dev/restore?channel=" + encodeURIComponent(login));
   const last = r.ok ? r.data.last : null;
-  $<HTMLParagraphElement>("#restore-last").textContent = !r.ok
+  $("#restore-last").textContent = !r.ok
     ? errorText(r, "Could not read the last restore")
     : last
       ? login + " was restored to " + fmtTime(last.at) + " by " + last.by + ", " + ago(last.restoredAt) + "."
@@ -847,14 +811,8 @@ async function runRestore(button: HTMLButtonElement, undo: boolean) {
   });
 }
 $<HTMLSelectElement>("#restore-channel").addEventListener("change", loadRestore);
-$<HTMLButtonElement>("#restore").addEventListener("click", (e) =>
-  // the listener sits on this button
-  runRestore(e.currentTarget as HTMLButtonElement, false),
-);
-$<HTMLButtonElement>("#undo-restore").addEventListener("click", (e) =>
-  // the listener sits on this button
-  runRestore(e.currentTarget as HTMLButtonElement, true),
-);
+on("#restore", (b) => runRestore(b, false));
+on("#undo-restore", (b) => runRestore(b, true));
 
 // ---------- logs ----------
 async function loadLogs() {
@@ -904,7 +862,7 @@ async function loadStats() {
   const channel = $<HTMLSelectElement>("#log-channel").value,
     r = parseAnswer(await api("/api/dev/stats?days=7&channel=" + channel), parseStats, "the counters");
   const days = r.ok ? r.data : [];
-  $<HTMLTableRowElement>("#stats-head").replaceChildren(
+  $("#stats-head").replaceChildren(
     h("th", {}, "Counter"),
     ...days.map((d) => h("th", { class: "num" }, d.day.slice(5))),
   );
@@ -933,9 +891,8 @@ $<HTMLSelectElement>("#log-channel").addEventListener("change", () => {
   loadLogs();
   loadStats();
 });
-$<HTMLButtonElement>("#clear-logs").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#clear-logs", (b) =>
+  busy(b, async () => {
     if (!confirm("Clear every stored log row for " + $<HTMLSelectElement>("#log-channel").value + "?")) return;
     const r = await api("/api/dev/logs?channel=" + $<HTMLSelectElement>("#log-channel").value, {
       method: "DELETE",
@@ -949,9 +906,8 @@ $<HTMLButtonElement>("#clear-logs").addEventListener("click", (e) =>
 $<HTMLAnchorElement>('a[href="#dev-tools"]').addEventListener("click", () => {
   $<HTMLDetailsElement>("#dev-tools").open = true;
 });
-$<HTMLButtonElement>("#refresh").addEventListener("click", (e) =>
-  // the listener sits on a button
-  busy(e.currentTarget as HTMLButtonElement, async () => {
+on("#refresh", (b) =>
+  busy(b, async () => {
     await Promise.all([loadDiagnostics(), loadLogs(), loadStats(), loadChannels()]);
     loadRuns();
     loadVersions();
