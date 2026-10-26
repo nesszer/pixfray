@@ -166,13 +166,8 @@ export function resizeArea(img: Image, w: number, h: number): Image {
       for (let yy = Math.floor(y0); yy < Math.min(img.height, Math.ceil(y1)); yy++)
         for (let xx = Math.floor(x0); xx < Math.min(img.width, Math.ceil(x1)); xx++)
           taps.push([xx, yy, (Math.min(yy + 1, y1) - Math.max(yy, y0)) * (Math.min(xx + 1, x1) - Math.max(xx, x0))]);
-      mix(
-        img,
-        out,
-        (y * w + x) * 4,
-        taps,
-        taps.reduce((sum, [, , wt]) => sum + wt, 0),
-      );
+      const wsum = taps.reduce((sum, [, , wt]) => sum + wt, 0);
+      mix(img, out, (y * w + x) * 4, taps, wsum);
     }
   return out;
 }
