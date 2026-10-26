@@ -4,9 +4,9 @@
 import { subjectMask, labOf, kmeans, d3, toRgb } from "./autosprite.ts";
 
 export const SPRITE_MAX = 128;
-export const SOURCE_MAX = 512; // pictures are decoded at most this size before any step
+const SOURCE_MAX = 512; // pictures are decoded at most this size before any step
 export const REDRAW_MAX = 504; // the AI model takes images under 512 px a side
-export const FILE_MAX = 10 * 1024 * 1024;
+const FILE_MAX = 10 * 1024 * 1024;
 /** A plain RGBA image in ImageData's shape (4 bytes a pixel), so tests run the steps without a DOM. */
 export type Img = { width: number; height: number; data: Uint8ClampedArray };
 /** A rectangle inside an image, in pixels. */

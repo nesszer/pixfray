@@ -11,7 +11,7 @@ export interface SpriteFrame {
   h: number;
 }
 /** One opaque cell of a sampled frame: grid column q and row r, and its place with the feet on y = 0. */
-export interface SpriteCell {
+interface SpriteCell {
   q: number;
   r: number;
   color: THREE.Color;
@@ -19,7 +19,7 @@ export interface SpriteCell {
   y: number;
 }
 /** What sampleSprite returns: the opaque cells and the grid size they span. */
-export interface SampledSprite {
+interface SampledSprite {
   cells: SpriteCell[];
   cols: number;
   rows: number;
@@ -33,7 +33,7 @@ export interface VoxelOptions {
   shadows?: boolean;
 }
 /** A point in the fighter's local x/y plane (a THREE.Vector3 fits). */
-export interface LocalPoint {
+interface LocalPoint {
   x: number;
   y: number;
 }

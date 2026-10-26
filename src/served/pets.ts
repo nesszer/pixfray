@@ -5,7 +5,7 @@
 // (legendary pets); wings = rows of a second frame swapped in every other beat while it moves or hovers.
 type PetArt = { fly?: boolean; colors: Record<string, string>; rows: string[]; wings?: string[] };
 /** A built-in pet id, or an uploaded pet's loaded image. */
-export type PetArg = string | { image?: HTMLImageElement | null } | null | undefined;
+type PetArg = string | { image?: HTMLImageElement | null } | null | undefined;
 type PetCanvas = HTMLCanvasElement | OffscreenCanvas;
 
 const PETS: Record<string, PetArt> = {
@@ -210,7 +210,6 @@ const PETS: Record<string, PetArt> = {
   },
 };
 
-export const PET_IDS = Object.keys(PETS);
 const RARE_SPARKLE: Record<string, string> = { epic: "#c4b5fd", legendary: "#fde047" };
 
 // Each built-in pet frame is painted once into a small canvas (CELL px per pixel-art cell) and then drawn as one

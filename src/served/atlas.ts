@@ -13,9 +13,9 @@ export const ANIMATION_SLOTS = Object.freeze(["idle", "walk", "attack", "ko"] as
 export type Slot = (typeof ANIMATION_SLOTS)[number];
 type Size = { w: number; h: number };
 type Cell = { x: number; y: number; w: number; h: number };
-export type Groups = Partial<Record<Slot, Size[]>>;
+type Groups = Partial<Record<Slot, Size[]>>;
 export type AtlasPlan = ReturnType<typeof planAtlas>;
-export const ATLAS_COLUMNS = 8; // 8 x 128 = 1024 px wide at most; 24 frames -> 3 rows.
+const ATLAS_COLUMNS = 8; // 8 x 128 = 1024 px wide at most; 24 frames -> 3 rows.
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 // Reads width and height from PNG bytes (signature + IHDR). Returns null when the bytes are not a PNG.

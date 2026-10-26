@@ -18,7 +18,7 @@ const LEAK_TAU = 0.06,
 // ---------- color: Oklab, so distances match what the eye sees ----------
 const lin = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const gam = (c: number) => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
-export function toLab(r: number, g: number, b: number): [number, number, number] {
+function toLab(r: number, g: number, b: number): [number, number, number] {
   const R = lin(r),
     G = lin(g),
     B = lin(b);
@@ -399,7 +399,7 @@ function heapOf(key: Float32Array) {
 }
 
 /** The subject at the image's own size (1 = subject, 0 = background). whole: no clear subject, so all of it. */
-export type Subject = { mask: Uint8Array; whole: boolean };
+type Subject = { mask: Uint8Array; whole: boolean };
 
 export function subjectMask(img: Img): Subject {
   const k0 = Math.min(1, SEG_MAX / Math.max(img.width, img.height)),

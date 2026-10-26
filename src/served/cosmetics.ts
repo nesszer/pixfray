@@ -74,22 +74,11 @@ export function recoloredFrame(image: CanvasImageSource, frame: Frame, id: strin
   }
   return byKey.get(key);
 }
-// The swatch color shown for a recolor in lists.
-export const RECOLOR_SWATCH = {
-  crimson: "#c0392b",
-  ocean: "#2f80c9",
-  forest: "#3f8f3a",
-  violet: "#7c4dcc",
-  gold: "#e0a526",
-  ghost: "#e8edf2",
-  shadow: "#2b2b33",
-  negative: "#38c7c0",
-};
 
 // ---------- accessories ----------
 // Drawn in the sprite's own box (dx, dy, dw, dh), facing right; callers mirror for left. The cape is behind the body
 // (layer "back"), the rest in front. Placement follows the head found by hats.ts.
-export const BACK_ACCESSORIES = new Set(["cape"]);
+const BACK_ACCESSORIES = new Set(["cape"]);
 export function drawAccessory(
   ctx: CanvasRenderingContext2D,
   id: string,
