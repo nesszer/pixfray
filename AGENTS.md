@@ -82,7 +82,7 @@ Each one has happened here. Check for it by name before calling work done.
 ## Docs index
 
 ```
-[Design]|DESIGN.md: readers, copy, tokens, motion, overlay, primitives, avoid list
+[Design]|DESIGN.md: readers, copy, tokens, motion, overlay, primitives, avoid list, verify
 [PixFray docs]|root: ./docs
 |README.md: map of these docs
 |STREAMER_SETUP.md: /start sign-in, OBS overlay, adding the bot, mods, viewer sprites, StreamElements, troubleshooting, turning PixFray or the bot off
