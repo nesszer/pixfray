@@ -7,9 +7,9 @@ import type { Cosmetics } from "./model.ts";
 export const COSMETIC_KINDS = ["recolor", "petcolor", "accessory", "trail", "effect", "taunt", "title"] as const; // const: each kind a literal
 export type CosmeticKind = (typeof COSMETIC_KINDS)[number];
 /** One item of a kind: its id (stored on the profile) and the label the shop and chat show. */
-export type CosmeticItem = { id: string; label: string };
+type CosmeticItem = { id: string; label: string };
 /** Prices from the channel config (DEFAULT_CONFIG in server/model.ts); a missing key means not for sale. */
-export type CosmeticPriceConfig = {
+type CosmeticPriceConfig = {
   [key in (typeof COSMETIC_PRICE_KEYS)[CosmeticKind] | "buildSlotPrice" | "buildSlotPriceMore"]?: number;
 };
 export const COSMETIC_FIELDS: { [kind in CosmeticKind]: keyof Cosmetics } = {
@@ -21,7 +21,7 @@ export const COSMETIC_FIELDS: { [kind in CosmeticKind]: keyof Cosmetics } = {
   taunt: "taunt",
   title: "title",
 };
-export const COSMETIC_PRICE_KEYS = {
+const COSMETIC_PRICE_KEYS = {
   recolor: "recolorPrice",
   petcolor: "petColorPrice",
   accessory: "accessoryPrice",
