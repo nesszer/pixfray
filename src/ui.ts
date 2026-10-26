@@ -240,7 +240,8 @@ const redrawAll = () => {
 // Lists rebuild their canvases on every render; the old ones are dropped a moment later, once the new list is in
 // the page (a canvas is added here before it is attached).
 let sweep: ReturnType<typeof setTimeout> = 0; // a number in the browser, so 0 means none
-function onRedraw(canvas: Element, draw: () => void) {
+// Calls draw whenever a drawing module (hats, pets, cosmetics) or a watched image arrives.
+export function onLooksReady(canvas: Element, draw: () => void) {
   redraws.set(draw, canvas);
   if (!sweep)
     sweep = setTimeout(() => {
@@ -270,33 +271,25 @@ export const framesFor = (entry: Entry | null | undefined, anim: string) => {
 };
 // Hats are drawn by src/served/hats.ts, the same module the overlay uses. It is served as /hats.js (vite.config.ts),
 // not bundled, so it loads at runtime.
-let hats: any = null; // src/served/hats.ts, loaded at runtime from its URL, so no types reach here
-const HATS_URL = new URL("/hats.js", location.href).href; // a full URL, so Vite leaves the import alone
-import(/* @vite-ignore */ HATS_URL)
-  .then((m) => {
-    hats = m;
-    redrawAll();
-  })
-  .catch(() => {});
-// Pets come from src/served/pets.ts the same way. A pet is { id, tier, url? }; uploaded pets have a url to their PNG.
-let pets: any = null; // src/served/pets.ts, loaded at runtime like hats
-const PETS_URL = new URL("/pets.js", location.href).href;
-import(/* @vite-ignore */ PETS_URL)
-  .then((m) => {
-    pets = m;
-    redrawAll();
-  })
-  .catch(() => {});
-// Cosmetics (recolors, accessories, trails, win effects, taunts, titles) come from src/served/cosmetics.ts, as on stream.
-let cosmetics: any = null; // src/served/cosmetics.ts, loaded at runtime like hats
-const COSMETICS_URL = new URL("/cosmetics.js", location.href).href;
-export const cosmeticsReady = import(/* @vite-ignore */ COSMETICS_URL)
-  .then((m) => {
-    cosmetics = m;
-    redrawAll();
-    return m;
-  })
-  .catch(() => null);
+// Pets (src/served/pets.ts) and cosmetics (recolors, accessories, trails, win effects, taunts, titles;
+// src/served/cosmetics.ts) load the same way, as on stream.
+// any: these modules load at runtime from their URLs, so no types reach here
+let hats: any = null,
+  pets: any = null,
+  cosmetics: any = null;
+// a full URL, so Vite leaves the import alone; m is any for the reason above
+const served = (name: string, keep: (m: any) => void) =>
+  import(/* @vite-ignore */ new URL("/" + name + ".js", location.href).href).then(
+    (m) => {
+      keep(m);
+      redrawAll();
+      return m;
+    },
+    () => null,
+  );
+served("hats", (m) => (hats = m));
+served("pets", (m) => (pets = m));
+export const cosmeticsReady = served("cosmetics", (m) => (cosmetics = m));
 const tint = (id: string | undefined) => cosmetics?.recolorFilter(id) || "none";
 const petArg = (pet: Pet | null | undefined) => (pet?.url ? { image: image(pet.url) } : pet?.id || "");
 // A still pet on its own canvas (the dashboard's pet list), in a pet color (cosmetics.js) if one is given.
@@ -315,7 +308,7 @@ export function addPet(
       tint: tint(color),
     });
   };
-  onRedraw(canvas, draw);
+  onLooksReady(canvas, draw);
   if (pet?.url) image(pet.url).addEventListener("load", draw, { once: true });
   draw();
 }
@@ -339,7 +332,7 @@ export function addCosmeticSample(canvas: HTMLCanvasElement, kind: string, id: s
         7,
       );
   };
-  onRedraw(canvas, draw);
+  onLooksReady(canvas, draw);
   draw();
 }
 // looks: { recolor, accessory, petColor } (cosmetics.js ids), drawn as on stream.
@@ -376,16 +369,30 @@ export function drawFrame(
       tint: tint(looks.petColor),
     });
   }
-  const look = { headHint: entry.head, t, moving: t > 0 };
+  drawFighter(ctx, entry, img, frame, [dx, dy, dw, dh], hat, looks, t, t > 0);
+  return true;
+}
+// The fighter in box [x, y, w, h]: accessory back layer, the recolored body, the hat, then the accessory's front.
+function drawFighter(
+  ctx: CanvasRenderingContext2D,
+  entry: Entry,
+  img: HTMLImageElement,
+  frame: Frame,
+  box: [number, number, number, number],
+  hat: string,
+  looks: Looks,
+  t: number,
+  moving: boolean,
+) {
+  const look = { headHint: entry.head, t, moving };
   if (looks.accessory && cosmetics)
-    cosmetics.drawAccessory(ctx, looks.accessory, img, frame, dx, dy, dw, dh, { ...look, layer: "back" });
+    cosmetics.drawAccessory(ctx, looks.accessory, img, frame, ...box, { ...look, layer: "back" });
   ctx.save();
   ctx.filter = tint(looks.recolor); // the recolor tints the body only
-  ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
+  ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, ...box);
   ctx.restore();
-  if (hat && hats) hats.drawHat(ctx, hat, img, frame, dx, dy, dw, dh, entry.head);
-  if (looks.accessory && cosmetics) cosmetics.drawAccessory(ctx, looks.accessory, img, frame, dx, dy, dw, dh, look);
-  return true;
+  if (hat && hats) hats.drawHat(ctx, hat, img, frame, ...box, entry.head);
+  if (looks.accessory && cosmetics) cosmetics.drawAccessory(ctx, looks.accessory, img, frame, ...box, look);
 }
 // sprite = {canvas, entry, anim, active()} ; returns a handle with .set(entry) and .destroy()
 export function addSprite(
@@ -401,55 +408,30 @@ export function addSprite(
 ) {
   const s: Sprite = { canvas, entry, anim, active, hat, pet, looks, looksKey: JSON.stringify(looks), drawn: "" };
   sprites.add(s);
-  const img = entry && image(entry.url);
-  img?.addEventListener(
-    "load",
-    () => {
-      s.drawn = "";
-      start();
-    },
-    { once: true },
-  );
-  start();
+  // redraws now, and again once the picture at url has loaded
+  const redraw = (url?: string) => {
+    s.drawn = "";
+    if (url) image(url).addEventListener("load", () => redraw(), { once: true });
+    start();
+  };
+  redraw(entry?.url);
   return {
     hat(id: string | null | undefined) {
       s.hat = id || "";
-      s.drawn = "";
-      start();
+      redraw();
     },
     looks(next: Looks | null | undefined) {
       s.looks = next || {};
       s.looksKey = JSON.stringify(s.looks);
-      s.drawn = "";
-      start();
+      redraw();
     },
     pet(next: Pet | null | undefined) {
       s.pet = next?.id ? next : null;
-      s.drawn = "";
-      if (next?.url)
-        image(next.url).addEventListener(
-          "load",
-          () => {
-            s.drawn = "";
-            start();
-          },
-          { once: true },
-        );
-      start();
+      redraw(next?.url);
     },
     set(next: Entry | null | undefined) {
       s.entry = next;
-      s.drawn = "";
-      if (next)
-        image(next.url).addEventListener(
-          "load",
-          () => {
-            s.drawn = "";
-            start();
-          },
-          { once: true },
-        );
-      start();
+      redraw(next?.url);
     },
     destroy() {
       sprites.delete(s);
@@ -468,7 +450,7 @@ const REST_MS = 10000,
   stages = new Set<() => void>();
 let lastInput = performance.now();
 const awake = () => performance.now() - lastInput < REST_MS;
-for (const ev of [
+const INPUTS = [
   "pointermove",
   "pointerover",
   "pointerdown",
@@ -477,7 +459,8 @@ for (const ev of [
   "change",
   "scroll",
   "visibilitychange",
-])
+];
+for (const ev of INPUTS)
   addEventListener(
     ev,
     () => {
@@ -499,20 +482,7 @@ function tick(now: number) {
     const index = moving && frames.length ? Math.floor(now / (1000 / (s.entry?.fps || 8))) % frames.length : 0;
     // A pet animates on its own clock (hop, hover, wings), so a moving sprite with a pet redraws every frame.
     const petT = s.pet && moving ? Math.round(now) : 0;
-    const key =
-      (s.entry?.id || "") +
-      ":" +
-      (moving ? s.anim : "idle") +
-      ":" +
-      index +
-      ":" +
-      s.hat +
-      ":" +
-      (s.pet?.id || "") +
-      ":" +
-      petT +
-      ":" +
-      s.looksKey;
+    const key = [s.entry?.id, moving ? s.anim : "idle", index, s.hat, s.pet?.id, petT, s.looksKey].join(":");
     // s.entry as Entry: without an entry there are no frames, and drawFrame returns before reading it
     if (key !== s.drawn && drawFrame(s.canvas, s.entry as Entry, frames[index], s.hat, s.pet, petT, s.looks))
       s.drawn = key;
@@ -570,10 +540,6 @@ export function composeLook(
     out.pet = c;
   }
   return out;
-}
-// Calls fn whenever a drawing module (hats, pets, cosmetics) or a watched image arrives.
-export function onLooksReady(canvas: Element, fn: () => void) {
-  onRedraw(canvas, fn);
 }
 export function whenImage(url: string, fn: () => void) {
   const img = image(url);
@@ -717,18 +683,9 @@ export function addStage(canvas: HTMLCanvasElement) {
       : null;
     if (frame && img.complete && img.naturalWidth) {
       const dh = s * fitOf(st.entry!, img, frames[0]!), // st.entry!, frames[0]!: as above
-        dw = (dh * frame.w) / frame.h,
-        dx = x - dw / 2,
-        dy = ground - dh;
-      const look = { headHint: st.entry!.head, t: now, moving }; // st.entry!: see the frame check above
-      if (L.accessory && cosmetics)
-        cosmetics.drawAccessory(ctx, L.accessory, img, frame, dx, dy, dw, dh, { ...look, layer: "back" });
-      ctx.save();
-      ctx.filter = tint(L.recolor);
-      ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
-      ctx.restore();
-      if (st.hat && hats) hats.drawHat(ctx, st.hat, img, frame, dx, dy, dw, dh, st.entry!.head); // see the frame check
-      if (L.accessory && cosmetics) cosmetics.drawAccessory(ctx, L.accessory, img, frame, dx, dy, dw, dh, look);
+        dw = (dh * frame.w) / frame.h;
+      // st.entry!: as above
+      drawFighter(ctx, st.entry!, img, frame, [x - dw / 2, ground - dh, dw, dh], st.hat, L, now, moving);
     }
     // The win effect, shrunk if the stage is too short for it; a still page shows one frame of it.
     if (effectOn && L.winEffect && cosmetics) {
@@ -777,7 +734,7 @@ export function addStage(canvas: HTMLCanvasElement) {
       ctx.fillText(taunt, bx, top + 18 * k, Math.max(1, bw - 8 * k));
     }
   }
-  onRedraw(canvas, kick);
+  onLooksReady(canvas, kick);
   new ResizeObserver(kick).observe(canvas);
   kick();
   return {
