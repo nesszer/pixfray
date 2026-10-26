@@ -174,6 +174,15 @@ export function errorText(error: unknown, max?: number): string {
   return String((error as Thrown)?.message || error).slice(0, max);
 }
 // A table's own entry for a name a client sent (never an Object.prototype method).
+// Adds each "name TYPE ..." column the table doesn't have yet (the schema's later versions).
+export function addColumns(sql: SqlStorage, table: string, columns: string[]): void {
+  const have = sql
+    .exec<{ name: string }>(`PRAGMA table_info(${table})`)
+    .toArray()
+    .map((c) => c.name);
+  for (const column of columns)
+    if (!have.includes(column.slice(0, column.indexOf(" ")))) sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
+}
 export function own<T>(table: { [name: string]: T }, name: string): T | undefined {
   return Object.hasOwn(table, name) ? table[name] : undefined;
 }

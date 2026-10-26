@@ -29,6 +29,7 @@ import {
   normalizeProfileRow,
   normalizeUsername,
   PROFILE_COLUMNS,
+  addColumns,
   errorText,
   randomHex,
   RESULT_RETRY_MS,
@@ -96,10 +97,6 @@ export class ChannelRoom extends DurableObject<Env> {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
-    // last time each held-duel reason was logged
-    this.heldLogged = undefined;
-    // text command cooldowns (customReply)
-    this.commandCooldowns = undefined;
     // Overlays send "ping" every 20 s to catch a half-open socket. The runtime answers "pong" itself, without waking this
     // object from hibernation or billing its time (src/served/arena-client.ts).
     if (typeof WebSocketRequestResponsePair === "function")
@@ -111,49 +108,37 @@ export class ChannelRoom extends DurableObject<Env> {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT NOT NULL, avatar TEXT NOT NULL, color TEXT NOT NULL, default_ability TEXT NOT NULL, elo INTEGER NOT NULL, wins INTEGER NOT NULL, losses INTEGER NOT NULL, last_seen INTEGER NOT NULL DEFAULT 0)",
     );
-    // v2.5: upgrade points spent from wins (server/upgrades.ts) and the chosen hat.
-    const profileColumns = sql
-      .exec<{ name: string }>("PRAGMA table_info(profiles)")
-      .toArray()
-      .map((c) => c.name);
-    // v2.10: crit, dodge and counter join the upgrade stats; v2.11: vitality.
-    for (const column of STATS)
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-    if (!profileColumns.includes("hat")) sql.exec("ALTER TABLE profiles ADD COLUMN hat TEXT NOT NULL DEFAULT ''");
-    if (!profileColumns.includes("last_opponent"))
-      sql.exec("ALTER TABLE profiles ADD COLUMN last_opponent TEXT NOT NULL DEFAULT ''"); // !rematch
-    // v2.6: !checkin. Check-in points live apart from wins, so a rank reset keeps them; upsertProfile never writes them.
-    for (const column of ["bonus_points", "checkins", "streak", "last_stream_seq", "free_miss_at"])
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-    if (!profileColumns.includes("last_stream"))
-      sql.exec("ALTER TABLE profiles ADD COLUMN last_stream TEXT NOT NULL DEFAULT ''");
-    // v2.7: PixFray dollars, and what each viewer gave away in which stream (!give). upsertProfile never writes them either.
-    for (const column of ["dollars", "given_in_stream"])
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-    if (!profileColumns.includes("give_stream"))
-      sql.exec("ALTER TABLE profiles ADD COLUMN give_stream TEXT NOT NULL DEFAULT ''");
-    // 0.12.0: style dollars from channel point rewards (server/points.ts). They buy looks and build slots, never pets,
-    // and !give never moves them, so channel points can't buy duel strength.
-    if (!profileColumns.includes("style_dollars"))
-      sql.exec("ALTER TABLE profiles ADD COLUMN style_dollars INTEGER NOT NULL DEFAULT 0");
+    const int = (column: string) => column + " INTEGER NOT NULL DEFAULT 0";
+    const str = (column: string) => column + " TEXT NOT NULL DEFAULT ''";
+    // v2.5: upgrade points spent from wins (server/upgrades.ts) and the hat; v2.10 crit, dodge, counter; v2.11 vitality.
+    // v2.6: !checkin points live apart from wins, so a rank reset keeps them; v2.7: dollars and what each viewer gave in
+    // which stream (!give). upsertProfile never writes either. 0.12.0: style dollars from channel point rewards
+    // (server/points.ts) buy looks and build slots, never pets, and !give never moves them, so points can't buy strength.
     // v2.8: the active pet, plus bought items and uploaded pets (server/pets.ts). PROFILE_COLUMNS reads custom_pets.
-    if (!profileColumns.includes("pet")) sql.exec("ALTER TABLE profiles ADD COLUMN pet TEXT NOT NULL DEFAULT ''");
+    addColumns(sql, "profiles", [
+      ...STATS.map(int),
+      str("hat"),
+      str("last_opponent"), // !rematch
+      ...["bonus_points", "checkins", "streak", "last_stream_seq", "free_miss_at"].map(int),
+      str("last_stream"),
+      int("dollars"),
+      int("given_in_stream"),
+      str("give_stream"),
+      int("style_dollars"),
+      str("pet"),
+    ]);
     const rolled = ensurePetSchema(sql);
     // v3.1: sprites viewers made from their own images, waiting for a mod or approved (server/sprites.ts).
     ensureSpriteSchema(sql);
     // v2.9: cosmetics worn (server/cosmetics.ts) and the active build slot. Each slot's loadout is a JSON row in builds;
     // the profile columns always hold the active one. Bought build slots are owned_items rows of kind "slot".
-    for (const column of ["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"])
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`);
-    if (!profileColumns.includes("build")) sql.exec("ALTER TABLE profiles ADD COLUMN build INTEGER NOT NULL DEFAULT 0");
     // v3.0: when the fighter's Twitch account was made (0 = not known yet) and when the room last asked Twitch.
-    for (const column of ["account_created_at", "account_checked_at"])
-      if (!profileColumns.includes(column))
-        sql.exec(`ALTER TABLE profiles ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+    addColumns(sql, "profiles", [
+      ...["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"].map(str),
+      int("build"),
+      int("account_created_at"),
+      int("account_checked_at"),
+    ]);
     sql.exec(
       "CREATE TABLE IF NOT EXISTS builds (user_id TEXT NOT NULL, slot INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (user_id, slot))",
     );
@@ -173,13 +158,7 @@ export class ChannelRoom extends DurableObject<Env> {
       "CREATE TABLE IF NOT EXISTS bot_reminder (id INTEGER PRIMARY KEY CHECK (id = 1), broadcaster_id TEXT NOT NULL, bot_id TEXT NOT NULL, origin TEXT NOT NULL, next_at INTEGER NOT NULL DEFAULT 0)",
     );
     // results_through: the latest duel revealAt the bot has announced, so a result line goes out once.
-    if (
-      !sql
-        .exec<{ name: string }>("PRAGMA table_info(bot_reminder)")
-        .toArray()
-        .some((c) => c.name === "results_through")
-    )
-      sql.exec("ALTER TABLE bot_reminder ADD COLUMN results_through INTEGER NOT NULL DEFAULT 0");
+    addColumns(sql, "bot_reminder", [int("results_through")]);
     // The bot's own text commands (admin page, Chat commands) and the counters their replies use (server/botcommands.ts).
     sql.exec(
       "CREATE TABLE IF NOT EXISTS bot_commands (name TEXT PRIMARY KEY, reply TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '')",
@@ -198,13 +177,7 @@ export class ChannelRoom extends DurableObject<Env> {
       "CREATE TABLE IF NOT EXISTS config_history (version INTEGER PRIMARY KEY, config TEXT NOT NULL, actor_id TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '')",
     );
     // v2.1: keep the actor's display name so history reads well for mods without a profile.
-    if (
-      !sql
-        .exec<{ name: string }>("PRAGMA table_info(config_history)")
-        .toArray()
-        .some((c) => c.name === "actor_name")
-    )
-      sql.exec("ALTER TABLE config_history ADD COLUMN actor_name TEXT NOT NULL DEFAULT ''");
+    addColumns(sql, "config_history", [str("actor_name")]);
     ensureUploadSchema(sql);
     ensureDeveloperSchema(sql);
     ensureTrackerSchema(sql);
@@ -214,19 +187,14 @@ export class ChannelRoom extends DurableObject<Env> {
     );
     // v2.4: when a StreamElements command last reached this room with the right key, and with a wrong one, so the admin
     // page can tell when the bot's commands were copied from another site (test vs production) or an old key.
-    const seColumns = sql
-      .exec<{ name: string }>("PRAGMA table_info(se_settings)")
-      .toArray()
-      .map((c) => c.name);
-    for (const column of ["last_command_at", "rejected_at"])
-      if (!seColumns.includes(column))
-        sql.exec(`ALTER TABLE se_settings ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-    // v2.5: when each command (action) last arrived with the right key, for the setup checklist.
-    if (!seColumns.includes("seen_json"))
-      sql.exec("ALTER TABLE se_settings ADD COLUMN seen_json TEXT NOT NULL DEFAULT '{}'");
-    // and the broadcaster's "StreamElements Duel module is off" tick (nothing can check it for them)
-    if (!seColumns.includes("duel_module_off"))
-      sql.exec("ALTER TABLE se_settings ADD COLUMN duel_module_off INTEGER NOT NULL DEFAULT 0");
+    // v2.5: when each command (action) last arrived with the right key, for the setup checklist, and the broadcaster's
+    // "StreamElements Duel module is off" tick (nothing can check it for them).
+    addColumns(sql, "se_settings", [
+      int("last_command_at"),
+      int("rejected_at"),
+      "seen_json TEXT NOT NULL DEFAULT '{}'",
+      int("duel_module_off"),
+    ]);
     this.seenMessages = new Map(); // EventSub Message-Id -> receivedAt; commands are also deduped durably by message_id
     // Legendary pets ensurePetSchema just rolled: fighters on stage take their rolled boost.
     const stored = rolled.length ? this.readStoredState() : null;
@@ -479,13 +447,7 @@ export class ChannelRoom extends DurableObject<Env> {
       }
     }
     if (!reset && !Object.keys(looks).length) return;
-    const message = JSON.stringify({ type: "looks", looks, ...(reset ? { reset: true } : {}) } satisfies LiveMessage);
-    for (const ws of sockets) {
-      if (ws.readyState !== WebSocket.OPEN) continue;
-      try {
-        ws.send(message);
-      } catch {}
-    }
+    this.sendLive({ type: "looks", looks, ...(reset ? { reset: true } : {}) }, sockets);
   }
 
   publicState(state: GameState): Snapshot & { build: string } {
@@ -738,11 +700,15 @@ export class ChannelRoom extends DurableObject<Env> {
   }
 
   broadcast(state: GameState): void {
-    const message = JSON.stringify(this.publicState(state) satisfies LiveMessage);
-    for (const ws of this.ctx.getWebSockets("live")) {
+    this.sendLive(this.publicState(state));
+  }
+
+  sendLive(message: LiveMessage, sockets = this.ctx.getWebSockets("live")): void {
+    const text = JSON.stringify(message);
+    for (const ws of sockets) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       try {
-        ws.send(message);
+        ws.send(text);
       } catch {}
     }
   }

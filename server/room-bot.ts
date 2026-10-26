@@ -470,9 +470,6 @@ export async function botCommand(
   return sendBotLines(room, lines, channel);
 }
 
-// The bot's reply lines that fit under BOT_REPLIES_PER_30S, as the Worker expects them: { reply, replies }.
-// Replies to commands stop BOT_RESERVED_LINES short of the cap; the bot's own lines (results, expired challenges;
-// the first `system` lines) may use the rest, so a chatter spamming commands can't crowd out who won.
 // How many more command replies fit under the cap right now.
 export function botReplyRoom(room: ChannelRoom, now: number): number {
   return Math.max(
@@ -481,6 +478,9 @@ export function botReplyRoom(room: ChannelRoom, now: number): number {
   );
 }
 
+// The bot's reply lines that fit under BOT_REPLIES_PER_30S, as the Worker expects them: { reply, replies }.
+// Replies to commands stop BOT_RESERVED_LINES short of the cap; the bot's own lines (results, expired challenges;
+// the first `system` lines) may use the rest, so a chatter spamming commands can't crowd out who won.
 export function sendBotLines(
   room: ChannelRoom,
   lines: string[],
