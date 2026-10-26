@@ -55,13 +55,13 @@ const DEFAULT_CONFIG: Config = {
   sharedCooldownMs: 1_000,
   initialElo: 1_000,
   eloK: 24,
-  // !checkin: upgrade points per stream check-in, and extra points at streak milestones (server/channel.ts
+  // !checkin: upgrade points per stream check-in, and extra points at streak milestones (server/room-economy.ts
   // STREAK_MILESTONES: +1 at 3, 7, 14 and 30 streams, +2 at 60, +3 at 100, +5 at 200, +10 at 365).
   checkinPoints: 1,
   streakBonus: true,
   // The highest level of each upgrade stat that counts on this channel; levels above it stay saved.
   maxStatLevel: 16,
-  // PixFray dollars (server/channel.ts payDuels, give). Saved fighters earn them per finished duel.
+  // PixFray dollars (server/room-economy.ts payDuels, give). Saved fighters earn them per finished duel.
   winDollars: 5,
   lossDollars: 3,
   // Ranked duels per pair of fighters per live stream (0 = no limit). Past it they duel unrated for half the dollars.
@@ -178,7 +178,7 @@ function defaultProfile(userId: string, config: Config, now: number): Player {
     respawnAt: 0,
     stats: emptyStats(),
     hat: "",
-    bonus: 0, // check-in points (server/channel.ts checkin), added to the wins for upgrades
+    bonus: 0, // check-in points (server/room-economy.ts checkin), added to the wins for upgrades
     pet: "", // the active pet's id (server/pets.ts), its tier for the overlay, and its stat boost
     petTier: "",
     petBoost: emptyStats(),
@@ -783,7 +783,7 @@ function finishDuel(
     duel.ratings[winnerId]!.bonus = bonus;
     duel.flawless = true;
   }
-  // Dollars for saved fighters; the room adds them to the profiles once (server/channel.ts payDuels). Past the pair's
+  // Dollars for saved fighters; the room adds them to the profiles once (server/room-economy.ts payDuels). Past the pair's
   // limit a duel pays half; offline and new-account duels pay nothing.
   const pay = (amount: number): number => (rated ? amount : duel.unrated === "pair_cap" ? Math.floor(amount / 2) : 0);
   const payout: Record<string, number> = {};

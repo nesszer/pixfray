@@ -158,7 +158,7 @@ export type Duel = {
   cancelReason?: string;
   ratings?: Record<string, Rating>;
   flawless?: boolean;
-  /** userId -> dollars the room pays out once (server/channel.ts payDuels). */
+  /** userId -> dollars the room pays out once (server/room-economy.ts payDuels). */
   payout?: Record<string, number>;
   /** How a quick duel ended when not by knockout: "hp" or "sudden_death". */
   decision?: string;
@@ -221,7 +221,7 @@ export type AdminPayload = {
   b?: unknown;
 };
 
-/** A chat command as the room hands it to the reducer (server/channel.ts processChatMessage). */
+/** A chat command as the room hands it to the reducer (server/room-bot.ts processChatMessage). */
 export type CommandEvent = {
   type: "command";
   messageId?: unknown;
