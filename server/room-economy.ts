@@ -8,8 +8,15 @@ import { buildOf, COSMETIC_KINDS, cosmeticItem, cosmeticPrice, MAX_BUILDS, slotP
 import type { CosmeticKind } from "./cosmetics.ts";
 import type { CheckinReply, GiveReply } from "./streamelements.ts";
 import type { Duel, GameState } from "./model.ts";
-import { getProfile, getProfileByUsername, MAX_DOLLARS, normalizeUsername, safeJsonParse } from "./room-shared.ts";
-import type { JsonObject, Profile, ProfileTable, Thrown } from "./room-shared.ts";
+import {
+  errorText,
+  getProfile,
+  getProfileByUsername,
+  MAX_DOLLARS,
+  normalizeUsername,
+  safeJsonParse,
+} from "./room-shared.ts";
+import type { JsonObject, Profile, ProfileTable } from "./room-shared.ts";
 import type { ChannelRoom } from "./channel.ts";
 
 /** What a fighter bought (owned): ids per pet, hat and cosmetic kind, plus build slots. */
@@ -42,16 +49,8 @@ export async function checkin(
   now = Date.now(),
 ): Promise<CheckinReply> {
   if (!userId || !getProfile(room, userId, room.readState(channel).config)) return { reason: "no_fighter" };
-  let stream: { id: string; startedAt: number } | null;
-  try {
-    stream = await currentStream(room, channel, now);
-  } catch (error) {
-    logRoomEvent(room, "warn", "twitch stream lookup failed", {
-      channel,
-      error: String((error as Thrown)?.message || error).slice(0, 200), // anything can be thrown
-    });
-    return { reason: "twitch_error" };
-  }
+  const stream = await liveOrError(room, channel, now);
+  if (stream === "error") return { reason: "twitch_error" };
   // Test mode while offline: the check-in a next stream would give, worked out the same way but never saved.
   const test = !stream && Boolean(checkinTest(room, now));
   if (!stream && !test) return { reason: "not_live" };
@@ -154,16 +153,8 @@ export async function give(
   const to = getProfileByUsername(room, target, config);
   if (!to) return { reason: "target_not_found" };
   if (to.userId === giver.userId) return { reason: "self_give" };
-  let stream: { id: string; startedAt: number } | null;
-  try {
-    stream = await currentStream(room, channel, now);
-  } catch (error) {
-    logRoomEvent(room, "warn", "twitch stream lookup failed", {
-      channel,
-      error: String((error as Thrown)?.message || error).slice(0, 200), // anything can be thrown
-    });
-    return { reason: "twitch_error" };
-  }
+  const stream = await liveOrError(room, channel, now);
+  if (stream === "error") return { reason: "twitch_error" };
   if (!stream) return { reason: "not_live" };
   return room.ctx.storage.transactionSync((): GiveReply => {
     const sql = room.ctx.storage.sql,
@@ -599,6 +590,16 @@ export async function currentStream(
   return stream;
 }
 
+// currentStream for a command that needs the channel live; a failed lookup is logged and answers "error".
+async function liveOrError(room: ChannelRoom, channel: string, now: number) {
+  try {
+    return await currentStream(room, channel, now);
+  } catch (error) {
+    logRoomEvent(room, "warn", "twitch stream lookup failed", { channel, error: errorText(error, 200) });
+    return "error";
+  }
+}
+
 // The live check for a chat line that can start a duel (game.ts noteStream): {id, startedAt}, null offline, or
 // undefined (another command, no Twitch app, or Twitch didn't answer) so the room keeps its last answer.
 export async function streamNews(
@@ -616,10 +617,7 @@ export async function streamNews(
   try {
     return await currentStream(room, channel, now);
   } catch (error) {
-    // anything can be thrown
-    logRoomEvent(room, "warn", `live check failed: ${String((error as Thrown)?.message || error).slice(0, 80)}`, {
-      channel,
-    });
+    logRoomEvent(room, "warn", `live check failed: ${errorText(error, 80)}`, { channel });
     return undefined;
   }
 }

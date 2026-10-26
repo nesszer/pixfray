@@ -29,6 +29,7 @@ import {
   normalizeProfileRow,
   normalizeUsername,
   PROFILE_COLUMNS,
+  errorText,
   randomHex,
   RESULT_RETRY_MS,
   RESULT_WINDOW_MS,
@@ -49,7 +50,6 @@ import type {
   ProfileTable,
   ReadJson,
   RoomEvent,
-  Thrown,
 } from "./room-shared.ts";
 import { route } from "./room-routes.ts";
 import { botCommand, checkAccountAge, noteBotSent, postExpired, postResults, processChatMessage } from "./room-bot.ts";
@@ -915,7 +915,7 @@ export class ChannelRoom extends DurableObject<Env> {
       if (out.sent) logRoomEvent(this, "command", "bot reminder sent", { channel, via: "reminder" });
       noteBotSent(this, channel, [out], "reminder");
     } catch (error) {
-      noteBotSent(this, channel, [{ sent: false, reason: String((error as Thrown)?.message || error) }], "reminder"); // anything can be thrown
+      noteBotSent(this, channel, [{ sent: false, reason: errorText(error) }], "reminder");
     }
   }
 }

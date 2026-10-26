@@ -50,12 +50,13 @@ import {
   normalizeProfileRow,
   normalizeUsername,
   PROFILE_COLUMNS,
+  errorText,
   randomHex,
   timingSafeEqual,
   upsertProfile,
   validUserId,
 } from "./room-shared.ts";
-import type { BotMessage, ChatOutcome, JsonObject, Profile, ProfileRow, ProfileTable, Thrown } from "./room-shared.ts";
+import type { BotMessage, ChatOutcome, JsonObject, Profile, ProfileRow, ProfileTable } from "./room-shared.ts";
 import { leaderboard } from "./room-routes.ts";
 import { checkin, give, payDuels, petInfo, resetPair, statsInfo, streamNews, wallet } from "./room-economy.ts";
 import type { ChannelRoom, SeSettings } from "./channel.ts";
@@ -1021,14 +1022,9 @@ export async function checkAccountAge(room: ChannelRoom, userId: unknown): Promi
     if (at > 0) sql.exec("UPDATE profiles SET account_created_at = ? WHERE user_id = ?", at, id);
   } catch (error) {
     // anything can be thrown
-    logRoomEvent(
-      room,
-      "warn",
-      `account age lookup failed: ${String((error as Thrown)?.message || error).slice(0, 80)}`,
-      {
-        userId: id,
-      },
-    );
+    logRoomEvent(room, "warn", `account age lookup failed: ${errorText(error, 80)}`, {
+      userId: id,
+    });
   }
 }
 
@@ -1179,10 +1175,7 @@ export function expiredLines(room: ChannelRoom, state: GameState, since: number)
   room.expiredSaid ||= new Set();
   const names = botNames(room.seSettings().names),
     lines: string[] = [];
-  const name = (id: string) => {
-    const p = state.players.find((x) => x.userId === id) || getProfile(room, id, state.config);
-    return p?.displayName || p?.username || "someone";
-  };
+  const name = (id: string) => fighterName(room, state, id);
   for (const e of state.events) {
     if (e.type !== "challenge_expired" || Number(e.id) <= since || room.expiredSaid.has(e.id)) continue;
     room.expiredSaid.add(e.id);
@@ -1221,15 +1214,9 @@ export async function postResultsOnce(room: ChannelRoom, channel: string, now: n
   const state = room.readState(channel),
     due = room.dueResults(state, now);
   if (!due.length) return;
-  const sql = room.ctx.storage.sql,
-    row = sql
-      .exec<{ broadcaster_id: string; bot_id: string }>("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1")
-      .toArray()[0];
-  if (!row?.broadcaster_id || !row?.bot_id) return;
-  const name = (id: string) => {
-    const p = state.players.find((x) => x.userId === id) || getProfile(room, id, state.config);
-    return p?.displayName || p?.username || "someone";
-  };
+  const sender = botSender(room);
+  if (!sender) return;
+  const name = (id: string) => fighterName(room, state, id);
   for (const d of due) {
     // in reveal order; one that can't go out now stops the rest, so chat keeps the order
     const loser = d.winnerId === d.a ? d.b : d.a;
@@ -1247,41 +1234,50 @@ export async function postResultsOnce(room: ChannelRoom, channel: string, now: n
     if (!replies.length) return;
     // A failed call (network, Twitch 5xx or 429 after its retries) is tried again; a line Twitch read and dropped
     // (AutoMod, chat settings) would be dropped again, so it counts as done.
-    let out: SendResult,
-      failed = false;
-    try {
-      out = await sendChatMessage(room.env, {
-        broadcasterId: row.broadcaster_id,
-        senderId: row.bot_id,
-        message: replies[0]!, // checked non-empty above
-      });
-    } catch (error) {
-      out = { sent: false, reason: String((error as Thrown)?.message || error) }; // anything can be thrown
-      failed = true;
-    }
+    const { out, failed } = await sendAsBot(room, sender, replies[0]!); // checked non-empty above
     noteBotSent(room, channel, [out]);
     if (failed) return;
-    sql.exec("UPDATE bot_reminder SET results_through = MAX(results_through, ?) WHERE id = 1", d.revealAt);
+    room.ctx.storage.sql.exec(
+      "UPDATE bot_reminder SET results_through = MAX(results_through, ?) WHERE id = 1",
+      d.revealAt,
+    );
   }
 }
 
 // Lines the bot posts on its own (no chat line to answer), under the reply cap.
 export async function postBotLines(room: ChannelRoom, channel: string, lines: string[]): Promise<void> {
   if (!lines.length || room.readState(channel).config.botEnabled === false) return;
-  const row = room.ctx.storage.sql
-    .exec<{ broadcaster_id: string; bot_id: string }>("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1")
-    .toArray()[0];
-  if (!row?.broadcaster_id || !row?.bot_id) return;
+  const sender = botSender(room);
+  if (!sender) return;
   const { replies } = await sendBotLines(room, lines, channel, { system: lines.length }).json<{ replies: string[] }>(); // sendBotLines's answer
-  for (const message of replies) {
-    try {
-      noteBotSent(room, channel, [
-        await sendChatMessage(room.env, { broadcasterId: row.broadcaster_id, senderId: row.bot_id, message }),
-      ]);
-    } catch (error) {
-      noteBotSent(room, channel, [{ sent: false, reason: String((error as Thrown)?.message || error) }]); // anything can be thrown
-    }
+  for (const message of replies) noteBotSent(room, channel, [(await sendAsBot(room, sender, message)).out]);
+}
+
+type BotSender = { broadcaster_id: string; bot_id: string };
+// Who the bot posts as and in which channel, saved from a bot command (bot_reminder); null before one.
+function botSender(room: ChannelRoom): BotSender | null {
+  const row = room.ctx.storage.sql
+    .exec<BotSender>("SELECT broadcaster_id, bot_id FROM bot_reminder WHERE id = 1")
+    .toArray()[0];
+  return row?.broadcaster_id && row.bot_id ? row : null;
+}
+// One line posted as the bot. A call that throws (network, Twitch 5xx or 429 after its retries) comes back `failed`.
+async function sendAsBot(
+  room: ChannelRoom,
+  to: BotSender,
+  message: string,
+): Promise<{ out: SendResult; failed: boolean }> {
+  try {
+    const out = await sendChatMessage(room.env, { broadcasterId: to.broadcaster_id, senderId: to.bot_id, message });
+    return { out, failed: false };
+  } catch (error) {
+    return { out: { sent: false, reason: errorText(error) }, failed: true };
   }
+}
+// A fighter's shown name, from the arena or the saved profiles.
+function fighterName(room: ChannelRoom, state: GameState, id: string): string {
+  const p = state.players.find((x) => x.userId === id) || getProfile(room, id, state.config);
+  return p?.displayName || p?.username || "someone";
 }
 
 // Saves who the reminder posts as (the bot) and in which channel, from a bot command. Writes only when something changed.

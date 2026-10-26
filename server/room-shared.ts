@@ -118,7 +118,7 @@ export type Look = ReturnType<typeof savedLook>;
 /** What a chat message did to the game (processChatMessage, advance). */
 export type ChatOutcome = Pick<ReduceOutput, "state" | "result" | "changed" | "visible">;
 /** A caught value: anything can be thrown, and an Error's message reads best. */
-export type Thrown = { message?: unknown } | null | undefined;
+type Thrown = { message?: unknown } | null | undefined;
 /** A duel whose result chat may now hear (dueResults): completed, rated and revealed. */
 export type DueDuel = Duel & { ratings: NonNullable<Duel["ratings"]>; revealAt: number };
 /** readJson's answer. Each side names the other's fields as optional, for the loose worker program. */
@@ -169,6 +169,10 @@ export const MAX_DOLLARS = 1_000_000; // a wallet never holds more
 export const PROFILE_COLUMNS =
   "user_id, username, display_name, avatar, color, default_ability, elo, wins, losses, last_seen, power, guard, luck, crit, dodge, counter, vitality, hat, bonus_points, checkins, streak, dollars, style_dollars, pet, recolor, pet_color, accessory, trail, win_effect, taunt, title, build, (SELECT tier || ':' || stat || ':' || stat2 FROM custom_pets WHERE custom_pets.id = profiles.pet) AS pet_custom, (SELECT roll FROM owned_items o WHERE o.user_id = profiles.user_id AND o.kind = 'pet' AND o.item_id = profiles.pet) AS pet_roll";
 
+// What was thrown, as text: anything can be thrown.
+export function errorText(error: unknown, max?: number): string {
+  return String((error as Thrown)?.message || error).slice(0, max);
+}
 // A table's own entry for a name a client sent (never an Object.prototype method).
 export function own<T>(table: { [name: string]: T }, name: string): T | undefined {
   return Object.hasOwn(table, name) ? table[name] : undefined;
