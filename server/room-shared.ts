@@ -4,8 +4,7 @@ import { cleanCosmetics } from "./cosmetics.ts";
 import type { ChatEvent, Config, Cosmetics, Player, ReduceOutput } from "./model.ts";
 import type { ChannelRoom } from "./channel.ts";
 
-/** A JSON object request body, as readJson parses it; routes check each field they read. */
-export type JsonObject = { [field: string]: unknown };
+export type { JsonObject } from "./parse.ts";
 /** A profiles row: the table the constructor makes, with every column its migrations add. */
 export type ProfileTable = {
   user_id: string;
@@ -130,20 +129,6 @@ export function errorText(error: unknown, max?: number): string {
 export function own<T>(table: { [name: string]: T }, name: string): T | undefined {
   return Object.hasOwn(table, name) ? table[name] : undefined;
 }
-export function json(data: unknown, status = 200, headers: { [name: string]: string } = {}): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers },
-  });
-}
-
-export function text(value: string, status = 200): Response {
-  return new Response(value, {
-    status,
-    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
-  });
-}
-
 export function validUserId(value: unknown): string {
   const id = String(value ?? "").trim();
   return id.length > 0 && id.length <= MAX_PROFILE_ID_LENGTH && /^[a-zA-Z0-9_:-]+$/.test(id) ? id : "";

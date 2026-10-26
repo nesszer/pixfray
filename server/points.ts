@@ -8,11 +8,12 @@ import { count } from "./tracker.ts";
 import { isObject } from "./parse.ts";
 import type { JsonObject } from "./parse.ts";
 import type { Env } from "./env.ts";
+import { httpError, json } from "./http.ts";
 
 export const REDEMPTION_TYPE = "channel.channel_points_custom_reward_redemption.add";
 /** Rewards one channel can have through PixFray (Twitch allows 50 of every kind). */
 export const MAX_POINT_REWARDS = 5;
-export const POINT_LIMITS = { titleMax: 45, costMax: 1_000_000, dollarsMax: 10_000 };
+const POINT_LIMITS = { titleMax: 45, costMax: 1_000_000, dollarsMax: 10_000 };
 /** Redemption rows kept per room (the admin page shows the newest; ids older than this can't be retried by Twitch). */
 const KEEP_REDEMPTIONS = 500;
 
@@ -29,7 +30,7 @@ export type PointReward = {
   createdAt: number;
 };
 /** What happened to one redemption. `refunded` and `granted` are marked on Twitch; the rest are not. */
-export type RedeemOutcome = "granted" | "refunded" | "no_fighter" | "ignored";
+type RedeemOutcome = "granted" | "refunded" | "no_fighter" | "ignored";
 /** The fields of a redemption event PixFray reads (Twitch EventSub reference, redemption add). */
 export type Redemption = {
   id: string;
@@ -42,8 +43,6 @@ export type Redemption = {
   status: string;
 };
 
-const fail = (message: string, status: number, extra: Record<string, unknown> = {}) =>
-  Object.assign(new Error(message), { status, ...extra });
 const str = (v: unknown, n: number): string => (typeof v === "string" ? v.slice(0, n) : "");
 
 /** The redemption event Twitch sent, cut to the fields PixFray reads; null without an id, user or reward. */
@@ -77,7 +76,7 @@ export function rewardProblem(title: unknown, cost: unknown, dollars: unknown): 
 
 // The refusal that sends the streamer to the points sign-in link.
 const notConnected = (channel: string) =>
-  fail(channel + " must allow channel point rewards at " + pointsLoginUrl(channel), 409, {
+  httpError(channel + " must allow channel point rewards at " + pointsLoginUrl(channel), 409, {
     reason: "points_not_connected",
     reconnect: pointsLoginUrl(channel),
   });
@@ -110,7 +109,7 @@ export async function createReward(
     const id = "local-" + randomToken().slice(0, 16);
     return { rewardId: id, title, cost, dollars, subscriptionId: id, status: "enabled", createdAt: Date.now() };
   }
-  if (!String(origin).startsWith("https://")) throw fail("PUBLIC_ORIGIN must be https for Twitch webhooks", 400);
+  if (!String(origin).startsWith("https://")) throw httpError("PUBLIC_ORIGIN must be https for Twitch webhooks", 400);
   const b = await pointsToken(env, channel);
   // should_redemptions_skip_request_queue stays false: only an UNFULFILLED redemption can be refunded.
   const r = await b.helix("/channel_points/custom_rewards?broadcaster_id=" + b.userId, {
@@ -126,7 +125,7 @@ export async function createReward(
     }),
   });
   if (r.status === 403)
-    throw fail(
+    throw httpError(
       "Twitch only gives channel points to Affiliates and Partners, and " + channel + " is neither yet.",
       403,
       {
@@ -136,13 +135,13 @@ export async function createReward(
   if (r.status === 401) throw notConnected(channel);
   if (r.status === 400) {
     const d = await r.json<{ message?: unknown }>().catch(() => ({}) as { message?: unknown });
-    throw fail("Twitch refused the reward: " + String(d.message || "check the title and cost"), 400, {
+    throw httpError("Twitch refused the reward: " + String(d.message || "check the title and cost"), 400, {
       reason: "points_rejected",
     });
   }
-  if (!r.ok) throw fail("Twitch reward create failed (" + r.status + ")", 502);
+  if (!r.ok) throw httpError("Twitch reward create failed (" + r.status + ")", 502);
   const created = (await r.json<{ data?: { id?: string }[] }>()).data?.[0];
-  if (!created?.id) throw fail("Twitch returned no reward", 502);
+  if (!created?.id) throw httpError("Twitch returned no reward", 502);
   const rewardId = created.id;
   // A new reward id has no subscription anywhere yet, so no other site can hold one.
   const s = await appHelix(env, "POST", "/eventsub/subscriptions", {
@@ -154,7 +153,10 @@ export async function createReward(
   const sub = s.ok ? (await s.json<{ data?: { id?: string; status?: string }[] }>()).data?.[0] : null;
   if (!sub?.id) {
     await b.helix(rewardPath(b.userId, rewardId), { method: "DELETE" }).catch(() => null);
-    throw fail("Twitch refused the redemption subscription (" + s.status + "), so the reward was removed again", 502);
+    throw httpError(
+      "Twitch refused the redemption subscription (" + s.status + "), so the reward was removed again",
+      502,
+    );
   }
   return {
     rewardId,
@@ -175,7 +177,7 @@ export async function deleteReward(
   if (localTestMode(env, url) || rewardId.startsWith("local-")) return;
   const b = await pointsToken(env, channel);
   const r = await b.helix(rewardPath(b.userId, rewardId), { method: "DELETE" });
-  if (!r.ok && r.status !== 404) throw fail("Twitch reward delete failed (" + r.status + ")", 502);
+  if (!r.ok && r.status !== 404) throw httpError("Twitch reward delete failed (" + r.status + ")", 502);
   if (subscriptionId) await deleteSubscription(env, subscriptionId);
 }
 
@@ -273,7 +275,7 @@ export function pointsView(room: Room) {
 }
 
 /** The reply a redemption gets: the outcome, the line the bot posts, and how Twitch should mark it (null: leave it). */
-export type RedeemReply = {
+type RedeemReply = {
   ok: true;
   outcome: RedeemOutcome;
   repeat: boolean;
@@ -363,79 +365,7 @@ export function redeem(
   };
 }
 
-/** Stores Twitch's answer to marking a redemption; a failure is counted and logged, since the streamer may then refund by hand. */
-export function noteMarked(room: Room, channel: string, redemptionId: string, status: number): void {
-  room.ctx.storage.sql.exec("UPDATE point_redemptions SET marked = ? WHERE id = ?", status || 1, redemptionId);
-  if (status >= 200 && status < 300) return;
-  count(room, "points_mark_failed");
-  logRoomEvent(room, "warn", "channel point redemption not marked (" + (status || "network") + ")", {
-    channel,
-    redemptionId,
-    status,
-  });
-}
-
-/** Adds a reward the Worker created; refused past MAX_POINT_REWARDS. */
-export function addReward(room: Room, channel: string, reward: PointReward, actor: string): boolean {
-  const sql = room.ctx.storage.sql;
-  // COUNT(*) always returns one row
-  if (sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM point_rewards").toArray()[0]!.n >= MAX_POINT_REWARDS)
-    return false;
-  sql.exec(
-    "INSERT OR REPLACE INTO point_rewards (reward_id, title, cost, dollars, subscription_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    reward.rewardId,
-    reward.title,
-    reward.cost,
-    reward.dollars,
-    reward.subscriptionId,
-    reward.status,
-    reward.createdAt,
-  );
-  logRoomEvent(room, "points", `${actor || "someone"} added reward ${reward.title}`, {
-    channel,
-    rewardId: reward.rewardId,
-    cost: reward.cost,
-    dollars: reward.dollars,
-  });
-  return true;
-}
-
-export function removeReward(room: Room, channel: string, rewardId: string, actor: string): void {
-  room.ctx.storage.sql.exec("DELETE FROM point_rewards WHERE reward_id = ?", rewardId);
-  logRoomEvent(room, "points", `${actor || "someone"} removed reward ${rewardId}`, { channel, rewardId });
-}
-
-/** A revoked subscription (the broadcaster removed PixFray's access, or Twitch gave up on the callback). */
-export function noteRevoked(room: Room, channel: string, subscriptionId: string, status: string): void {
-  const cut = room.ctx.storage.sql.exec(
-    "UPDATE point_rewards SET status = ? WHERE subscription_id = ?",
-    status || "revoked",
-    subscriptionId,
-  );
-  if (cut.rowsWritten)
-    logRoomEvent(room, "warn", "channel point subscription revoked: " + status, { channel, subscriptionId, status });
-}
-
-const reply = (data: unknown, status = 200): Response =>
-  new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
-const refuse = (status: number, reason: string): Response => reply({ ok: false, reason, error: reason }, status);
-
-function parseReward(v: unknown): PointReward | null {
-  if (!isObject(v)) return null;
-  const { rewardId, title, cost, dollars, subscriptionId, status, createdAt } = v;
-  if (typeof rewardId !== "string" || !rewardId || typeof subscriptionId !== "string") return null;
-  if (rewardProblem(title, cost, dollars) || typeof status !== "string" || typeof createdAt !== "number") return null;
-  // rewardProblem checked title is a string and cost and dollars integers
-  return {
-    rewardId,
-    title: (title as string).trim(),
-    cost: cost as number,
-    dollars: dollars as number,
-    subscriptionId,
-    status,
-    createdAt,
-  };
-}
+const refuse = (status: number, reason: string): Response => json({ ok: false, reason, error: reason }, status);
 
 // The room's Worker-only points routes: GET /points; POST /points/rewards {op: add|remove|revoked},
 // /points/redeem {redemption, origin} and /points/marked {redemptionId, status}.
@@ -444,39 +374,74 @@ export async function handleRoomPoints(
   request: Request,
   { path, channel, maxDollars }: { path: string; channel: string; maxDollars: number },
 ): Promise<Response> {
-  if (path === "/points" && request.method === "GET") return reply(pointsView(room));
+  const sql = room.ctx.storage.sql;
+  if (path === "/points" && request.method === "GET") return json(pointsView(room));
   if (request.method !== "POST") return refuse(405, "method_not_allowed");
   const body: unknown = await request.json().catch(() => null);
   if (!isObject(body)) return refuse(400, "invalid_body");
   if (path === "/points/redeem") {
     const r = parseRedemption(isObject(body.redemption) ? body.redemption : null);
     if (!r || r.channel !== channel) return refuse(400, "invalid_redemption");
-    return reply(redeem(room, r, { maxDollars, origin: typeof body.origin === "string" ? body.origin : "" }));
+    return json(redeem(room, r, { maxDollars, origin: typeof body.origin === "string" ? body.origin : "" }));
   }
   if (path === "/points/marked") {
-    const { redemptionId, status } = body;
-    if (typeof redemptionId !== "string" || !Number.isInteger(status)) return refuse(400, "invalid_body");
-    noteMarked(room, channel, redemptionId, status as number); // as: checked integer
-    return reply({ ok: true });
+    // Twitch's answer to marking a redemption; a failure is counted and logged, since the streamer may then refund by hand.
+    const { redemptionId } = body;
+    if (typeof redemptionId !== "string" || !Number.isInteger(body.status)) return refuse(400, "invalid_body");
+    const status = body.status as number; // as: checked integer
+    sql.exec("UPDATE point_redemptions SET marked = ? WHERE id = ?", status || 1, redemptionId);
+    if (status < 200 || status >= 300) {
+      count(room, "points_mark_failed");
+      logRoomEvent(room, "warn", "channel point redemption not marked (" + (status || "network") + ")", {
+        channel,
+        redemptionId,
+        status,
+      });
+    }
+    return json({ ok: true });
   }
-  if (path === "/points/rewards") {
-    const actor = typeof body.actor === "string" ? body.actor.slice(0, 48) : "";
-    if (body.op === "add") {
-      const reward = parseReward(body.reward);
-      if (!reward) return refuse(400, "invalid_reward");
-      return addReward(room, channel, reward, actor)
-        ? reply({ ok: true, ...pointsView(room) })
-        : refuse(409, "points_max_rewards");
-    }
-    if (body.op === "remove" && typeof body.rewardId === "string") {
-      removeReward(room, channel, body.rewardId, actor);
-      return reply({ ok: true, ...pointsView(room) });
-    }
-    if (body.op === "revoked" && typeof body.subscriptionId === "string") {
-      noteRevoked(room, channel, body.subscriptionId, typeof body.status === "string" ? body.status.slice(0, 64) : "");
-      return reply({ ok: true });
-    }
-    return refuse(400, "invalid_body");
+  if (path !== "/points/rewards") return refuse(404, "not_found");
+  const actor = (typeof body.actor === "string" && body.actor.slice(0, 48)) || "someone";
+  if (body.op === "add" && isObject(body.reward)) {
+    const { rewardId, title, cost, dollars, subscriptionId, status, createdAt } = body.reward;
+    if (typeof rewardId !== "string" || !rewardId || typeof subscriptionId !== "string")
+      return refuse(400, "invalid_reward");
+    if (rewardProblem(title, cost, dollars) || typeof status !== "string" || typeof createdAt !== "number")
+      return refuse(400, "invalid_reward");
+    // COUNT(*) always returns one row
+    if (sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM point_rewards").toArray()[0]!.n >= MAX_POINT_REWARDS)
+      return refuse(409, "points_max_rewards");
+    // rewardProblem checked title is a string and cost and dollars integers
+    const name = (title as string).trim();
+    sql.exec(
+      "INSERT OR REPLACE INTO point_rewards (reward_id, title, cost, dollars, subscription_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      rewardId,
+      name,
+      cost as number, // as: rewardProblem checked an integer
+      dollars as number, // as: as above
+      subscriptionId,
+      status,
+      createdAt,
+    );
+    logRoomEvent(room, "points", `${actor} added reward ${name}`, { channel, rewardId, cost, dollars });
+    return json({ ok: true, ...pointsView(room) });
   }
-  return refuse(404, "not_found");
+  if (body.op === "add") return refuse(400, "invalid_reward");
+  if (body.op === "remove" && typeof body.rewardId === "string") {
+    sql.exec("DELETE FROM point_rewards WHERE reward_id = ?", body.rewardId);
+    logRoomEvent(room, "points", `${actor} removed reward ${body.rewardId}`, { channel, rewardId: body.rewardId });
+    return json({ ok: true, ...pointsView(room) });
+  }
+  if (body.op !== "revoked" || typeof body.subscriptionId !== "string") return refuse(400, "invalid_body");
+  // The broadcaster removed PixFray's access, or Twitch gave up on the callback.
+  const { subscriptionId } = body;
+  const status = typeof body.status === "string" ? body.status.slice(0, 64) : "";
+  const cut = sql.exec(
+    "UPDATE point_rewards SET status = ? WHERE subscription_id = ?",
+    status || "revoked",
+    subscriptionId,
+  );
+  if (cut.rowsWritten)
+    logRoomEvent(room, "warn", "channel point subscription revoked: " + status, { channel, subscriptionId, status });
+  return json({ ok: true });
 }

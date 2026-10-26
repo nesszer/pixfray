@@ -34,7 +34,6 @@ import type { AdminEvent, Cosmetics, GameEvent, GameResult, GameState } from "./
 import {
   boardOrder,
   getProfile,
-  json,
   MAX_DOLLARS,
   normalizeProfileRow,
   normalizeUsername,
@@ -43,10 +42,10 @@ import {
   randomHex,
   safeJsonParse,
   savedLook,
-  text,
   upsertProfile,
   validUserId,
 } from "./room-shared.ts";
+import { json, refuse } from "./http.ts";
 import type { BotMessage, JsonObject, Look, Profile, ProfileRow, SavedProfile } from "./room-shared.ts";
 import {
   botCommands,
@@ -127,9 +126,10 @@ function parsed<T>(parse: (body: JsonObject) => Parsed<T>, handler: BodyHandler<
     return out.ok ? handler(room, ctx, out.value) : json({ error: out.error }, 400);
   });
 }
+const notFound = () => new Response("Not found", { status: 404 });
 // Test site only (worker dev token): elsewhere the route doesn't exist, whatever the body.
 function devOnly(handler: Handler): Handler {
-  return (room, ctx) => (room.env?.DEV_TOOLS_TOKEN ? handler(room, ctx) : text("Not found", 404));
+  return (room, ctx) => (room.env?.DEV_TOOLS_TOKEN ? handler(room, ctx) : notFound());
 }
 // A failed result also carries its reason as `error`, with the status mapped for that reason (else 400).
 function answer(out: { ok: boolean; reason?: string }, status: { [reason: string]: number } = {}): Response {
@@ -145,7 +145,7 @@ export async function route(room: ChannelRoom, request: Request): Promise<Respon
   if (stored && stored.channel !== channel) return json({ error: "channel binding mismatch" }, 409);
   // every key holds a space, so no Object.prototype name can match
   const handler = ROUTES[`${request.method} ${path}`] ?? PREFIXES.find(([prefix]) => prefix.test(path))?.[1];
-  return handler ? handler(room, { request, url, path, channel }) : text("Not found", 404);
+  return handler ? handler(room, { request, url, path, channel }) : notFound();
 }
 
 const ROUTES: { [route: string]: Handler } = {
@@ -312,7 +312,7 @@ const ROUTES: { [route: string]: Handler } = {
     const actorId = validUserId(body.actorId);
     if (!actorId) return json({ error: "authorized actor required" }, 403);
     const admin = parseRoomAdminBody(body);
-    if (!admin.ok) return json({ ok: false, reason: admin.error, error: admin.error }, 400);
+    if (!admin.ok) return refuse(400, admin.error, admin.error);
     const { action } = admin.value,
       ask = { channel, action, actorId, actorName: admin.value.actorName.slice(0, 48), payload: admin.value.payload };
     const special = own(ADMIN_ACTIONS, action);
@@ -534,7 +534,7 @@ const ADMIN_PAYLOADS: {
           .exec<Pick<ConfigHistoryRow, "config">>("SELECT config FROM config_history WHERE version = ?", version)
           .toArray()[0]
       : null;
-    if (!row) return json({ ok: false, reason: "config_version_not_found", error: "config_version_not_found" }, 404);
+    if (!row) return refuse(404, "config_version_not_found", "config_version_not_found");
     // A version saved before a setting existed has no value for it; it goes back to its default, not the current value.
     return {
       payload: { patch: { ...defaultConfig(), ...safeJsonParse(row.config, {}) } },
@@ -545,7 +545,7 @@ const ADMIN_PAYLOADS: {
   restoreRank(room, payload) {
     if (!Number.isInteger(payload.before)) return { payload };
     const rank = rankBefore(room.ctx.storage.sql, validUserId(payload.userId) || "", payload.before);
-    if (!rank) return json({ ok: false, reason: "no_rank_history", error: "no_rank_history" }, 404);
+    if (!rank) return refuse(404, "no_rank_history", "no_rank_history");
     return { payload: { userId: payload.userId, ...rank } };
   },
 };

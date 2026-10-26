@@ -18,7 +18,6 @@ import type { Config, Duel, GameEvent, GameState, ReduceOutput, Snapshot } from 
 import type { Env } from "./env.ts";
 import {
   BOT_REPLIES_PER_30S,
-  json,
   normalizeProfileRow,
   normalizeUsername,
   PROFILE_COLUMNS,
@@ -30,6 +29,7 @@ import {
   timingSafeEqual,
   upsertProfile,
 } from "./room-shared.ts";
+import { json } from "./http.ts";
 import type { BotMessage, ChatOutcome, JsonObject, Look, ProfileRow, ProfileTable } from "./room-shared.ts";
 import { route } from "./room-routes.ts";
 import { botCommand, checkAccountAge, noteBotSent, postExpired, postResults, processChatMessage } from "./room-bot.ts";

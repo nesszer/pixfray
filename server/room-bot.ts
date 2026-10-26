@@ -46,7 +46,6 @@ import {
   BOT_REPLIES_PER_30S,
   getProfile,
   getProfileByUsername,
-  json,
   normalizeProfileRow,
   normalizeUsername,
   PROFILE_COLUMNS,
@@ -56,6 +55,7 @@ import {
   upsertProfile,
   validUserId,
 } from "./room-shared.ts";
+import { json } from "./http.ts";
 import type { BotMessage, ChatOutcome, JsonObject, Profile, ProfileRow, ProfileTable } from "./room-shared.ts";
 import { leaderboard } from "./room-routes.ts";
 import { checkin, give, payDuels, petInfo, resetPair, statsInfo, streamNews, wallet } from "./room-economy.ts";
