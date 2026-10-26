@@ -14,3 +14,11 @@ export async function enforceCsp(target: BrowserContext | Page): Promise<void> {
     },
   );
 }
+// Collects page errors and CSP refusals from `page` into `errors`, each prefixed with `tag`.
+export function watchErrors(page: Page, errors: string[], tag = ""): void {
+  page.on("pageerror", (e) => errors.push(tag + e.message));
+  page.on("console", (m) => {
+    if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text()))
+      errors.push(tag + "CSP: " + m.text());
+  });
+}

@@ -10,7 +10,7 @@ import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cookies, users } from "./seed-local.ts";
-import { enforceCsp } from "./csp-helper.ts";
+import { enforceCsp, watchErrors } from "./csp-helper.ts";
 import { defaultConfig } from "../server/game.ts";
 import type { Loose } from "./fakes.ts";
 
@@ -239,11 +239,7 @@ try {
   const overlayCtx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   await enforceCsp(overlayCtx);
   const overlay = await overlayCtx.newPage();
-  overlay.on("pageerror", (e) => errors.push("overlay: " + e.message));
-  overlay.on("console", (m) => {
-    if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text()))
-      errors.push("overlay CSP: " + m.text());
-  });
+  watchErrors(overlay, errors, "overlay: ");
   await overlay.goto(arenaUrl + "&debug=1");
   await overlay.waitForFunction(() => window.__arenaDebug?.().revision > 0);
   const dbg = () => overlay.evaluate(() => window.__arenaDebug());
@@ -417,7 +413,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width, height } });
     await enforceCsp(ctx);
     const page = await ctx.newPage();
-    page.on("pageerror", (e) => errors.push(size + " page: " + e.message));
+    watchErrors(page, errors, size + " page: ");
     await page.goto(arenaUrl + "&debug=1");
     await page.waitForFunction(() => window.__arenaDebug?.().revision > 0);
     await page.waitForTimeout(800);

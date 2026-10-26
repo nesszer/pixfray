@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { enforceCsp } from "./csp-helper.ts";
+import { enforceCsp, watchErrors } from "./csp-helper.ts";
 // The fake socket the init script below puts in place of WebSocket, as the page and the test read it.
 type FakeSocket = {
   readyState: number;
@@ -22,13 +22,7 @@ const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const out = fileURLToPath(new URL("../screenshots", import.meta.url));
 fs.mkdirSync(out, { recursive: true });
 const errors: string[] = [];
-function watch(page: Page) {
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => {
-    if (/Content Security Policy|Refused to (load|execute|apply|connect|create)/.test(m.text()))
-      errors.push("CSP: " + m.text());
-  });
-}
+const watch = (page: Page) => watchErrors(page, errors);
 const statusHas = (page: Page, text: string, timeout = 30000) =>
   page.waitForFunction((t) => document.querySelector("#status")?.textContent?.includes(t), text, { timeout });
 const statusText = async (page: Page) => (await page.locator("#status").textContent()) ?? "";
