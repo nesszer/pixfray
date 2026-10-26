@@ -635,14 +635,9 @@ gitleaks git --config .gitleaks.toml --redact .   # secret scan; CI scans the wh
 bun run audit              # bun audit --audit-level=high; CI fails on a high or critical advisory
 bun run format             # oxfmt (.oxfmtrc.json); format:check only reports
 bun run lint               # oxlint --deny-warnings, type-aware (.oxlintrc.json)
-bun run typecheck          # tsc on five strict programs split by globals (strict options in tsconfig.base.json):
-                           # tsconfig.worker.json (Workers types: server/), tsconfig.web.json (DOM types: src/,
-                           # types/dom.ts), tsconfig.node.json (Workers and Node: every root, scripts/ and tests/
-                           # .ts file the next two don't list), tsconfig.node-dom.json (DOM and Node: unit tests
-                           # of DOM modules, Playwright code, the character build) and tsconfig.node-all.json
-                           # (Workers, DOM and Node: tests that import both); then node scripts/strict-check.ts,
-                           # which fails a TypeScript file in no program, a strict option off in any, a .d.ts in
-                           # any, and @ts-nocheck or an eslint-disable / oxlint-disable comment in any file
+bun run typecheck          # tsc on the five strict programs, then node scripts/strict-check.ts, which fails a
+                           # TypeScript file in no program, a strict option off, a .d.ts in a program, and
+                           # @ts-nocheck or an eslint-disable / oxlint-disable comment (docs/DEVELOPMENT.md)
 bun run test:unit          # node --import ./tests/register.ts --test "tests/*.test.ts"
 bunx cf build              # production build ("Build complete"; ignore the Docker error)
 bunx cf build --mode test
@@ -670,11 +665,11 @@ bun run test:all           # everything below, in order (scripts/test-all.ts)
   Pages bundled by Vite (`src/ui.ts`, `src/admin.ts`) load `/hats.js`, `/pets.js`, `/cosmetics.js` and
   `/upload.js` by full URL at run time, without a version. URLs, `public/overlay.html` and `public/_headers`
   stay as they are; `src/dev.ts` is the owner page's bundled entry (`admin/dev/index.html`).
-- Bindings: ASSETS, ROOMS, AUTH, `CF_VERSION_METADATA` (version metadata), `PUBLIC_ORIGIN`
-  (the EventSub callback and OAuth redirect origin), `OWNER_TWITCH_ID` (text, nesszerra's Twitch id; left out under `MINI_LOCAL_TEST=1`) and the secrets
-  `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET`, `INTERNAL_SECRET`. `GITHUB_TOKEN`,
-  `GITHUB_REPO`, `CF_API_TOKEN` and `CF_ACCOUNT_ID` are optional secrets set with
-  `cf` or the dashboard (docs/LIVE_FIX.md); they are not declared, because declared secrets are
-  required at deploy time. `CHANNEL_ORIGINS` (JSON text from `channelDomains`; left out under
-  `MINI_LOCAL_TEST=1`; anything but a JSON object of URLs means no channel domains), `CHAT_BOT` and `BOT_LOGIN` (from `site.config.js` `bot`, per environment),
-  and on the test site only `BOT_DEBUG` and the secret `DEV_TOOLS_TOKEN`.
+- Bindings (`cloudflare.config.ts`): ASSETS, ROOMS, AUTH, `BACKUPS` (D1 `<worker>-backups`, filled
+  daily at 09:00 UTC by server/backups.ts; not under `cf dev`), `CF_VERSION_METADATA`, `PUBLIC_ORIGIN` (the EventSub callback and OAuth redirect origin), the secrets
+  `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `AUTH_SECRET` and `INTERNAL_SECRET`, `CHAT_BOT` and `BOT_LOGIN`
+  (from `site.config.js` `bot`), and on the test site only `BOT_DEBUG` and the secret `DEV_TOOLS_TOKEN`.
+  `OWNER_TWITCH_ID` (the owner's Twitch id) and `CHANNEL_ORIGINS` (JSON text from `channelDomains`; anything but a
+  JSON object of URLs means no channel domains) are left out under `MINI_LOCAL_TEST=1`. `GITHUB_TOKEN`,
+  `GITHUB_REPO`, `CF_API_TOKEN` and `CF_ACCOUNT_ID` are optional secrets set outside the config
+  (docs/LIVE_FIX.md); declared secrets would be required at deploy time.
