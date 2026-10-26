@@ -1,7 +1,7 @@
 # Plan: check-ins, Mini Chat dollars, pets and builds
 
 Status (2026-10-07): done; this file is the original plan, kept for history. Current prices and rules
-are in `server/game.ts` (`DEFAULT_CONFIG`) and CONTRACTS.md: shop prices were cut to a third on
+are in `server/model.ts` (`DEFAULT_CONFIG`) and CONTRACTS.md: shop prices were cut to a third on
 2026-10-06, the give command is `!pay` on StreamElements and `!give` on channels with the PixFray bot, and
 unrated duels (see Risks) pay nothing.
 
