@@ -2,8 +2,7 @@
 // Signed-out runs against the real local server; owner states stub /api/session and /api/dev/* with page.route,
 // unless MINI_OWNER_COOKIE (a local test session id) is set, which adds one unstubbed owner run.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5195 node tests/dev-ui.ts   (screenshots go to the OS temp dir)
-import { chromeOptions } from "./chrome.ts";
-import { chromium } from "@playwright/test";
+import { launchChrome } from "./chrome.ts";
 import type { Page, Route } from "@playwright/test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -12,7 +11,7 @@ import path from "node:path";
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const shots = path.join(os.tmpdir(), "mini-chat-dev-shots");
 fs.mkdirSync(shots, { recursive: true });
-const browser = await chromium.launch(chromeOptions());
+const browser = await launchChrome();
 const sizes = [
   { name: "1280", width: 1280, height: 900 },
   { name: "390", width: 390, height: 844 },

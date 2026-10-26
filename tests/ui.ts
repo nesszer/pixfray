@@ -1,8 +1,7 @@
 // Lane B UI test: viewer dashboard ("/") and mod controls ("/admin/") at 1280px and 390px.
 // Signed-out runs against the real local server (`bunx cf dev` / vite); signed-in states stub /api/* with page.route.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5193 node tests/ui.ts
-import { chromeOptions } from "./chrome.ts";
-import { chromium } from "@playwright/test";
+import { launchChrome } from "./chrome.ts";
 import type { Page, Route } from "@playwright/test";
 import assert from "node:assert/strict";
 import { enforceCsp } from "./csp-helper.ts";
@@ -13,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const shots = fileURLToPath(new URL("../screenshots", import.meta.url));
 fs.mkdirSync(shots, { recursive: true });
-const browser = await chromium.launch(chromeOptions());
+const browser = await launchChrome();
 const errors: string[] = [];
 // The init script's WebSocket stub keeps each socket the page opens on window.__sockets (not in lib.dom).
 type StubWindow = { __sockets: { url: string }[] };

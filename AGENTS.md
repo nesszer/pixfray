@@ -42,7 +42,8 @@ It is not wrangler: never `wrangler deploy` or `--env`.
   `docs/CONTRACTS.md`; anything a streamer sees in `docs/STREAMER_SETUP.md` or `docs/DUELS.md`.
 - **Strict TypeScript.** New code is `.ts` with `.ts` imports. A port PR changes no runtime code
   (`bun run port-check`). Each `any`, `as` or `!` says why on that line or above (docs/DEVELOPMENT.md).
-- **Browser tests run headed with GPU flags** through `chromeOptions()` in `tests/chrome.ts`. Don't set `HEADLESS=1`.
+- **Browser tests run headed with GPU flags** through `launchChrome()` in `tests/chrome.ts`, which opens background
+  windows that never take focus. Don't set `HEADLESS=1`.
 - **Design:** read `DESIGN.md` before changing any page or the overlay. It documents the system in
   `public/dashboard.css` (tokens, classes, one gold accent, lock-on selection) and the patterns reviews keep catching.
   Claude Code loads it here: @DESIGN.md

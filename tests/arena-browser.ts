@@ -1,10 +1,9 @@
 // Overlay arena client against stubbed sockets: contract-shaped snapshots and events (docs/CONTRACTS.md section 3),
 // event dedupe, stale revisions, reconnect, transparent drawing and the local-only demo duel.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5199 node tests/arena-browser.ts
-import { chromium } from "@playwright/test";
 import assert from "node:assert/strict";
 import { enforceCsp } from "./csp-helper.ts";
-import { chromeOptions } from "./chrome.ts";
+import { launchChrome } from "./chrome.ts";
 import type { Loose } from "./fakes.ts";
 
 /** The stub socket the init script puts in place of WebSocket; tests push frames through its handlers. */
@@ -61,7 +60,7 @@ type ArenaWindow = {
 declare const window: ArenaWindow;
 
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
-const browser = await chromium.launch(chromeOptions());
+const browser = await launchChrome();
 const errors: string[] = [];
 const apiReads: { path: string; method: string }[] = [];
 try {

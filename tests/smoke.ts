@@ -1,5 +1,4 @@
-import { chromeOptions } from "./chrome.ts";
-import { chromium } from "@playwright/test";
+import { launchChrome } from "./chrome.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -17,7 +16,7 @@ type FakeSocket = {
 type MockWindow = { __sockets: FakeSocket[]; __irc(data: string): void };
 // Page callbacks below run in the overlay, where the init script adds them.
 declare const window: Window & typeof globalThis & MockWindow;
-const browser = await chromium.launch(chromeOptions());
+const browser = await launchChrome();
 const base = process.env.MINI_BASE_URL || "http://127.0.0.1:5173";
 const out = fileURLToPath(new URL("../screenshots", import.meta.url));
 fs.mkdirSync(out, { recursive: true });
