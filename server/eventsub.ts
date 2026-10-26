@@ -1,6 +1,6 @@
 // Twitch EventSub over webhooks: the only chat source. Twitch POSTs channel.chat.message to /api/eventsub,
 // so no local process is needed and everything runs on Cloudflare (1 Worker request + 1 DO request per message).
-import { record, seal, unseal, randomToken } from "./auth.ts";
+import { hex, record, seal, unseal, randomToken } from "./auth.ts";
 import site from "../site.config.js";
 import type { Sealed } from "./auth.ts";
 import type { Env } from "./env.ts";
@@ -61,8 +61,6 @@ export const BOT_LOGIN_URL = "/auth/login?bot=1";
 export const MAX_BOT_MESSAGE = 480; // Twitch allows 500 characters
 const HELIX = "https://api.twitch.tv/helix";
 const enc = new TextEncoder();
-const hex = (buf: ArrayBuffer): string =>
-  Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, "0")).join("");
 const text = (body: string, status: number): Response =>
   new Response(body, { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
 const hmacKey = (secret: string, usage: string): Promise<CryptoKey> =>
@@ -321,11 +319,8 @@ export async function listChatSubscriptions(env: Env): Promise<ChatSubscription[
   const all: ChatSubscription[] = [];
   let after = "";
   for (let page = 0; page < 10; page++) {
-    const r = await appHelix(
-      env,
-      "GET",
-      "/eventsub/subscriptions?type=channel.chat.message" + (after ? "&after=" + encodeURIComponent(after) : ""),
-    );
+    const next = after ? "&after=" + encodeURIComponent(after) : "";
+    const r = await appHelix(env, "GET", "/eventsub/subscriptions?type=channel.chat.message" + next);
     if (!r.ok) throw fail("Twitch subscription list failed (" + r.status + ")", 502);
     const d = await r.json<{ data?: ChatSubscription[]; pagination?: { cursor?: string } }>();
     all.push(...(d.data || []));
@@ -354,14 +349,10 @@ const callbackOrigin = (s: ChatSubscription): string => {
     return s.transport?.method || "another callback";
   }
 };
-const conflict = (where: string) =>
-  fail(
-    "Chat is connected to " +
-      where +
-      ". Only one site can receive chat at a time: disconnect it there, or take it over here.",
-    409,
-    { connectedElsewhere: where },
-  );
+const conflict = (where: string) => {
+  const error = `Chat is connected to ${where}. Only one site can receive chat at a time: disconnect it there, or take it over here.`;
+  return fail(error, 409, { connectedElsewhere: where });
+};
 // Ensures exactly one enabled channel.chat.message v1 webhook for this callback; stale or duplicate ones are deleted.
 // userId is the account that reads chat: the broadcaster or the PixFray bot.
 export async function connectChat(
@@ -397,26 +388,14 @@ export async function connectChat(
     condition: { broadcaster_user_id: broadcasterId, user_id: userId },
     transport: { method: "webhook", callback, secret: await eventsubSecret(env) },
   });
-  if (asBot && (r.status === 401 || r.status === 403))
-    throw fail(
-      "Twitch refused the chat bot. " +
-        channel +
-        " must allow it at " +
-        allowBot +
-        " (or make the bot a moderator), and the bot account must be signed in at " +
-        BOT_LOGIN_URL +
-        ".",
-      403,
-      { reconnect: allowBot },
-    );
-  if (r.status === 401 || r.status === 403)
-    throw fail(
-      "Twitch rejected the chat subscription: missing authorization. Reconnect Twitch at " +
-        RECONNECT_URL +
-        ", then click Connect chat.",
-      403,
-      { reconnect: RECONNECT_URL },
-    );
+  if (asBot && (r.status === 401 || r.status === 403)) {
+    const error = `Twitch refused the chat bot. ${channel} must allow it at ${allowBot} (or make the bot a moderator), and the bot account must be signed in at ${BOT_LOGIN_URL}.`;
+    throw fail(error, 403, { reconnect: allowBot });
+  }
+  if (r.status === 401 || r.status === 403) {
+    const error = `Twitch rejected the chat subscription: missing authorization. Reconnect Twitch at ${RECONNECT_URL}, then click Connect chat.`;
+    throw fail(error, 403, { reconnect: RECONNECT_URL });
+  }
   if (r.status === 409) throw conflict("another site"); // created elsewhere between our list and our create
   if (!r.ok) throw fail("Twitch rejected the chat subscription (" + r.status + ")", 502);
   const created = (await r.json<{ data?: ChatSubscription[] }>()).data?.[0];
@@ -427,13 +406,7 @@ export async function disconnectChat(
   env: Env,
   { subscriptionId, url }: { subscriptionId?: string | null; url: URL },
 ): Promise<void> {
-  if (
-    !subscriptionId ||
-    subscriptionId.startsWith("local-") ||
-    subscriptionId.startsWith("se-") ||
-    localTestMode(env, url)
-  )
-    return;
+  if (!subscriptionId || /^(local|se)-/.test(subscriptionId) || localTestMode(env, url)) return;
   await deleteSubscription(env, subscriptionId);
 }
 // The bot's chat line, sent with the app token (the bot granted user:write:chat + user:bot, the channel channel:bot).

@@ -52,15 +52,12 @@ export { ChannelRoom, AuthStore };
 import type { JsonObject } from "./parse.ts";
 import type { HttpError } from "./http.ts";
 
-/** A built-in or uploaded catalog entry (the fields read here). */
+// The fields read here of: a catalog entry, a leaderboard row, a saved profile, and the room's admin reply.
 type CatalogEntry = { id: string; owner?: string; [field: string]: unknown };
-/** A leaderboard row (the fields read here). */
 type BoardRow = { displayName: string; username: string; elo: number; avatar: string; wins: number; losses: number };
-/** The viewer's base look on another channel (fightersElsewhere). */
-type Fighter = { channel: string; avatar: string; color: unknown; defaultAbility: unknown; lastSeen: number };
-/** A saved profile as the room's GET /profile returns it (the fields read here). */
 type SavedLook = { avatar?: unknown; color?: unknown; defaultAbility?: unknown; lastSeen?: unknown } | null;
-/** The /play/ picker reply. */
+type AdminReply = { streamelements?: Partial<SeSettings> | null; [field: string]: unknown };
+type Fighter = { channel: string; avatar: string; color: unknown; defaultAbility: unknown; lastSeen: number };
 type PickerData = {
   channels: {
     login: string;
@@ -70,8 +67,6 @@ type PickerData = {
   catalog: CatalogEntry[];
   full: boolean;
 };
-/** The room's admin reply (the fields read here). */
-type AdminReply = { streamelements?: Partial<SeSettings> | null; [field: string]: unknown };
 // A turned-off channel keeps its admin page (to turn it back on) and its public lists; the overlay feed, the viewer
 // page's state and profile saves are refused.
 const OPEN_WHEN_PAUSED = ["access", "admin", "leaderboard", "catalog", "assets", "pets", "sprites"];
@@ -90,22 +85,16 @@ function roomFetch(request: Request | null, env: Env, channel: string, path: str
 }
 // Fighters are saved per channel. AuthStore `fighters:<userId>` lists the channels a viewer saved one on, newest first,
 // so a channel where they have none yet can offer the look they use elsewhere (GET /api/profile/:channel/others).
+// The index is rewritten on every save, so its expiry (AuthStore keeps keys like this at most 100 days) moves with it.
 const FIGHTER_INDEX_MAX = 8,
   FIGHTER_INDEX_MS = 90 * 86400000,
-  OTHERS_MAX = 5; // AuthStore keeps keys like this at most 100 days
-async function rememberFighter(env: Env, userId: string, channel: string) {
-  const prev = (await record<{ channels?: string[] } | null>(env, "fighters:" + userId))?.channels || []; // rewritten on every save, so the expiry moves with it
-  await record(
-    env,
-    "fighters:" + userId,
-    { channels: [channel, ...prev.filter((c) => c !== channel)].slice(0, FIGHTER_INDEX_MAX) },
-    Date.now() + FIGHTER_INDEX_MS,
-  );
-}
+  OTHERS_MAX = 5;
+const fighterIndex = async (env: Env, userId: string) =>
+  (await record<{ channels?: string[] } | null>(env, "fighters:" + userId))?.channels || [];
 // The viewer's base look (character, color, ability) on their other channels, newest save first. The built-in channels
 // are always checked, since fighters saved before the index existed aren't in it. Gear stays per channel.
 async function fightersElsewhere(request: Request, env: Env, user: TwitchUser, channel: string) {
-  const indexed = (await record<{ channels?: string[] } | null>(env, "fighters:" + user.id))?.channels || [];
+  const indexed = await fighterIndex(env, user.id);
   const candidates = [...new Set([...indexed, ...CHANNELS])]
     .filter((c) => c !== channel && /^[a-z0-9_]{1,25}$/.test(c))
     .slice(0, OTHERS_MAX);
@@ -146,24 +135,6 @@ function internal(request: Request | null, env: Env, channel: string, path: stri
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
 }
-// A save refused here never reaches the room, so log it there as the room logs its own refusals (owner log, warn row).
-async function refuseSave(
-  request: Request,
-  env: Env,
-  channel: string,
-  user: TwitchUser,
-  reason: string,
-  error: string,
-  status: number,
-) {
-  await internal(request, env, channel, "/dev/log", {
-    source: "warn",
-    message: `${user.login} profile not saved: ${reason}`,
-    context: { channel, action: "save", userId: user.id, user: user.login, reason },
-  }).catch(() => {});
-  return json({ error }, status);
-}
-// Chat source lifecycle (owner or mod via /api/admin, owner via /api/dev). The room only records the outcome.
 // Channel point rewards (server/points.ts): Twitch first, then the room. A reward the room refuses is removed again.
 async function pointsAction(
   env: Env,
@@ -183,10 +154,9 @@ async function pointsAction(
   }
   const { cost, dollars } = data,
     title = typeof data.title === "string" ? data.title.trim() : data.title;
-  const problem = rewardProblem(title, cost, dollars);
-  if (problem) return json({ ok: false, reason: problem, error: problem }, 400);
-  if (rewards.length >= MAX_POINT_REWARDS)
-    return json({ ok: false, reason: "points_max_rewards", error: "points_max_rewards" }, 409);
+  const problem = rewardProblem(title, cost, dollars) || (rewards.length >= MAX_POINT_REWARDS && "points_max_rewards");
+  if (problem)
+    return json({ ok: false, reason: problem, error: problem }, problem === "points_max_rewards" ? 409 : 400);
   const reward = await createReward(env, {
     channel,
     title: title as string, // rewardProblem checked these three
@@ -203,6 +173,7 @@ async function pointsAction(
   return r;
 }
 
+// Chat source lifecycle (owner or mod via /api/admin, owner via /api/dev). The room only records the outcome.
 async function chatAction(
   env: Env,
   url: URL,
@@ -228,27 +199,21 @@ async function chatAction(
     await disconnectChat(env, { subscriptionId: current.subscriptionId, url });
     return room("/chat", { action: "disconnected", reason: "disconnected" });
   }
+  const origin = env.PUBLIC_ORIGIN || url.origin;
   // CHAT_BOT (test site): chat is read and answered by the PixFray bot account (bot:twitch, signed in at /auth/login?bot=1).
   if (env.CHAT_BOT === "1") {
     const bot = await record<{ id?: string } | null>(env, "bot:twitch");
     if (!bot?.id)
-      throw httpError("Sign in the PixFray bot account first at " + BOT_LOGIN_URL, 409, { reconnect: BOT_LOGIN_URL });
+      throw httpError(`Sign in the PixFray bot account first at ${BOT_LOGIN_URL}`, 409, { reconnect: BOT_LOGIN_URL });
     const broadcasterId =
       (channel === site.defaultChannel && env.OWNER_TWITCH_ID) || (await twitchUserId(env, channel));
-    if (!broadcasterId) throw httpError("Twitch has no channel named " + channel, 404);
-    const sub = await connectChat(env, {
-      broadcasterId,
-      userId: bot.id,
-      channel,
-      origin: env.PUBLIC_ORIGIN || url.origin,
-      url,
-      takeover,
-    });
+    if (!broadcasterId) throw httpError(`Twitch has no channel named ${channel}`, 404);
+    const sub = await connectChat(env, { broadcasterId, userId: bot.id, channel, origin, url, takeover });
     return room("/chat", { action: "connected", ...sub });
   }
   const broadcasterId =
     env.OWNER_TWITCH_ID || (await record<{ id?: string } | null>(env, "owner:" + channel))?.id || "";
-  const sub = await connectChat(env, { broadcasterId, origin: env.PUBLIC_ORIGIN || url.origin, url, takeover });
+  const sub = await connectChat(env, { broadcasterId, origin, url, takeover });
   return room("/chat", { action: "connected", ...sub });
 }
 // Pages pass through the Worker (run_worker_first), and public/_headers doesn't reach responses a Worker returns,
@@ -270,13 +235,16 @@ async function page(request: Request, env: Env, url: URL): Promise<Response> {
   const r = await env.ASSETS.fetch(doc ? new Request(url.origin + doc, request) : request);
   if (!isPage(path)) return r;
   const out = new Response(r.body, r);
-  out.headers.set("Content-Security-Policy", PAGE_CSP);
-  out.headers.set("X-Frame-Options", "DENY");
-  out.headers.set("X-Content-Type-Options", "nosniff");
-  out.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  for (const [name, value] of Object.entries(PAGE_HEADERS)) out.headers.set(name, value);
   if (/^(staging|test)\./.test(url.hostname)) out.headers.set("X-Robots-Tag", "noindex, nofollow");
   return out;
 }
+const PAGE_HEADERS = {
+  "Content-Security-Policy": PAGE_CSP,
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+};
 // The bare mod page (/admin/ without ?channel=) for a signed-in streamer: their own channel's controls. Decided here,
 // so the page doesn't load once to find out and then jump. Anyone else gets the page's sign-in or set-up message.
 async function ownAdmin(request: Request, env: Env, url: URL): Promise<string | null> {
@@ -304,19 +272,17 @@ function seoFile(url: URL, path: string): Response {
   const main = url.origin === site.origins.production;
   if (path === "/sitemap.xml") {
     if (!main) return new Response("Not found", { status: 404 });
+    const urls = PUBLIC_PAGES.map((p) => `  <url><loc>${url.origin}${p}</loc></url>\n`).join("");
+    const xmlns = "http://www.sitemaps.org/schemas/sitemap/0.9";
     return text(
-      '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
-        PUBLIC_PAGES.map((p) => "  <url><loc>" + url.origin + p + "</loc></url>\n").join("") +
-        "</urlset>\n",
+      `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="${xmlns}">\n${urls}</urlset>\n`,
       "application/xml",
     );
   }
   if (url.origin === site.origins.test || /^(staging|test)\./.test(url.hostname))
     return text("User-agent: *\nDisallow: /\n", "text/plain");
-  return text(
-    "User-agent: *\nDisallow: /api/\nDisallow: /auth/\n" + (main ? "\nSitemap: " + url.origin + "/sitemap.xml\n" : ""),
-    "text/plain",
-  );
+  const sitemap = main ? `\nSitemap: ${url.origin}/sitemap.xml\n` : "";
+  return text(`User-agent: *\nDisallow: /api/\nDisallow: /auth/\n${sitemap}`, "text/plain");
 }
 // Admin-only view of the StreamElements setup: the key and the paste-ready command replies.
 function seView(env: Env, url: URL, channel: string, se: Partial<SeSettings> | null | undefined) {
@@ -350,26 +316,37 @@ async function devUser(env: Env): Promise<TwitchUser | null> {
   const id = env.OWNER_TWITCH_ID || (await record<{ id?: string } | null>(env, "owner:" + site.owner.login))?.id || "";
   return id ? { id, login: site.owner.login, displayName: site.owner.login + " (dev token)" } : null;
 }
-// Dev-token routes: save a profile for any account (test bots, an alt), or feed one chat line through the room as if
-// Twitch had delivered it. The room repeats the DEV_TOOLS_TOKEN check.
-async function handleDevtools(
-  request: Request,
-  env: Env,
-  channel: string,
-  action: string,
-  data: JsonObject,
-): Promise<Response> {
+// Dev-token routes (/api/devtools/<channel>/<action>), the test site's scripts only: save a profile for any account
+// (test bots, an alt), or feed one chat line through the room as if Twitch had delivered it. The room repeats the
+// DEV_TOOLS_TOKEN check.
+async function devtoolsRoute(request: Request, env: Env, path: string, dev: boolean): Promise<Response> {
+  // both groups are required in the pattern, so a match has them
+  const m = /^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop|style|export)$/.exec(path) as
+    | (RegExpExecArray & [string, string, string])
+    | null;
+  if (!dev || !m) return json({ error: "Not found" }, 404);
+  const [, channel, action] = m;
+  const st = await channelState(env, channel);
+  if (!isOn(st)) return json(offError(st), 403);
+  const room = (p: string, body: JsonObject) => roomFetch(null, env, channel, p, postJson(body));
+  // A copy of the channel for a site of its own (branch miolaf-frozen imports it): room tables and mod access.
+  if (action === "export") {
+    if (request.method !== "GET") return json({ error: "Use GET" }, 405);
+    const r = await roomFetch(null, env, channel, "/export");
+    if (!r.ok) return json(await r.json(), r.status);
+    const [broadcaster, modsconnected] = await Promise.all([
+      record(env, "broadcaster:" + channel),
+      record(env, "modsconnected:" + channel),
+    ]);
+    return json({ channel, at: Date.now(), tables: await r.json(), auth: { broadcaster, modsconnected } });
+  }
+  if (request.method !== "POST") return json({ error: "Use POST" }, 405);
+  const data = await bodyJson(request, 4000);
   // {live:true} starts a pretend stream for !checkin (a new stream id each time), {live:false} ends it, {live:null} asks Twitch again.
   if (action === "live") {
     const live = parseDevLive(data);
     if (!live.ok) return json({ error: live.error }, 400);
-    return roomFetch(
-      null,
-      env,
-      channel,
-      "/dev-live",
-      postJson({ live: live.value.live, streamId: live.value.streamId.slice(0, 40) }),
-    );
+    return room("/dev-live", { live: live.value.live, streamId: live.value.streamId.slice(0, 40) });
   }
   const account = parseDevAccount(data);
   if (!account.ok) return json({ error: account.error }, 400);
@@ -390,16 +367,8 @@ async function handleDevtools(
     });
     if (!look.ok) return json({ error: "Invalid profile fields" }, 400);
     const { avatar, color, defaultAbility, pet, loadout } = look.value;
-    return internal(request, env, channel, "/profile", {
-      userId,
-      username,
-      displayName,
-      avatar,
-      color,
-      defaultAbility,
-      pet,
-      ...loadout,
-    });
+    const profile = { userId, username, displayName, avatar, color, defaultAbility, pet, ...loadout };
+    return internal(request, env, channel, "/profile", profile);
   }
   // A bot buys a pet, a hat, a cosmetic or a build slot, the same room call as POST /api/shop.
   if (action === "shop") {
@@ -413,14 +382,11 @@ async function handleDevtools(
     const amount = data.amount;
     if (typeof amount !== "number" || !Number.isInteger(amount) || Math.abs(amount) > 100000)
       return json({ error: "amount: a whole number up to 100000" }, 400);
-    return roomFetch(null, env, channel, "/dev-style", postJson({ userId, amount }));
+    return room("/dev-style", { userId, amount });
   }
-  if (action === "chat") {
-    const text = account.value.text.slice(0, 500);
-    if (!text.trim()) return json({ error: "text required" }, 400);
-    return roomFetch(null, env, channel, "/dev-chat", postJson({ userId, username, displayName, text }));
-  }
-  return json({ error: "Not found" }, 404);
+  const text = account.value.text.slice(0, 500);
+  if (!text.trim()) return json({ error: "text required" }, 400);
+  return room("/dev-chat", { userId, username, displayName, text });
 }
 async function staticCatalog(env: Env, url: URL): Promise<CatalogEntry[]> {
   const r = await env.ASSETS.fetch(new Request(url.origin + "/assets/characters.json"));
@@ -473,7 +439,7 @@ export default {
       .then((results) => {
         const failed = results.filter((r) => !r.ok);
         if (failed.length)
-          return logWorkerError(env, new Error("Daily backup failed for " + failed.length + " channel(s)"), { failed });
+          return logWorkerError(env, new Error(`Daily backup failed for ${failed.length} channel(s)`), { failed });
       })
       .catch((e) => logWorkerError(env, e, { source: "backup" }));
     ctx.waitUntil(run);
@@ -510,12 +476,8 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
           ctx?.waitUntil?.(
             (async () => {
               if (mark) {
-                const status = await markRedemption(env, {
-                  channel: r.channel,
-                  rewardId: r.rewardId,
-                  redemptionId: r.id,
-                  status: mark,
-                });
+                const marked = { channel: r.channel, rewardId: r.rewardId, redemptionId: r.id, status: mark };
+                const status = await markRedemption(env, marked);
                 await rooms(r.channel, "/points/marked", postJson({ redemptionId: r.id, status }));
               }
               const senderId = await botId();
@@ -627,31 +589,6 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext | undefi
   }
 }
 
-// Dev-token routes (/api/devtools/<channel>/<action>): the test site's scripts only.
-async function devtoolsRoute(request: Request, env: Env, path: string, dev: boolean): Promise<Response> {
-  // both groups are required in the pattern, so a match has them
-  const m = /^\/api\/devtools\/([a-z0-9_]{1,25})\/(profile|chat|live|shop|style|export)$/.exec(path) as
-    | (RegExpExecArray & [string, string, string])
-    | null;
-  if (!dev || !m) return json({ error: "Not found" }, 404);
-  const [, channel, action] = m;
-  const st = await channelState(env, channel);
-  if (!isOn(st)) return json(offError(st), 403);
-  // A copy of the channel for a site of its own (branch miolaf-frozen imports it): room tables and mod access.
-  if (action === "export") {
-    if (request.method !== "GET") return json({ error: "Use GET" }, 405);
-    const r = await roomFetch(null, env, channel, "/export");
-    if (!r.ok) return json(await r.json(), r.status);
-    const [broadcaster, modsconnected] = await Promise.all([
-      record(env, "broadcaster:" + channel),
-      record(env, "modsconnected:" + channel),
-    ]);
-    return json({ channel, at: Date.now(), tables: await r.json(), auth: { broadcaster, modsconnected } });
-  }
-  if (request.method !== "POST") return json({ error: "Use POST" }, 405);
-  return handleDevtools(request, env, channel, action, await bodyJson(request, 4000));
-}
-
 /** What a channel route (/api/<route>/<channel>[/<id>]) gets once the gates in handle() have passed. */
 type RouteArgs = {
   request: Request;
@@ -728,8 +665,15 @@ async function profile({ request, env, url, channel, user, id }: RouteArgs): Pro
   if (request.method !== "POST") return json({ error: "Use GET or POST" }, 405);
   // stats/hat are optional; the room checks them against the saved wins (server/upgrades.ts).
   const look = parseProfileSave(await bodyJson(request, 4000));
-  const refused = (reason: string, error: string, status = 400) =>
-    refuseSave(request, env, channel, user, reason, error, status);
+  // A save refused here never reaches the room, so log it there as the room logs its own refusals (owner log, warn row).
+  const refused = async (reason: string, error: string, status = 400) => {
+    await internal(request, env, channel, "/dev/log", {
+      source: "warn",
+      message: `${user.login} profile not saved: ${reason}`,
+      context: { channel, action: "save", userId: user.id, user: user.login, reason },
+    }).catch(() => {});
+    return json({ error }, status);
+  };
   if (!look.ok) return refused(look.error, "Invalid profile fields");
   const { avatar, color, defaultAbility, stats, hat, pet, loadout } = look.value;
   const dynamicRes = await internal(request, env, channel, "/catalog");
@@ -751,8 +695,13 @@ async function profile({ request, env, url, channel, user, id }: RouteArgs): Pro
     pet,
     ...loadout,
   });
-  if (saved.ok)
-    await rememberFighter(env, user.id, channel).catch((e) => console.warn("fighter index write failed", e?.message));
+  if (saved.ok) {
+    const channels = [channel, ...(await fighterIndex(env, user.id)).filter((c) => c !== channel)];
+    const until = Date.now() + FIGHTER_INDEX_MS;
+    await record(env, "fighters:" + user.id, { channels: channels.slice(0, FIGHTER_INDEX_MAX) }, until).catch((e) =>
+      console.warn("fighter index write failed", e?.message),
+    );
+  }
   return saved;
 }
 
@@ -824,17 +773,12 @@ async function adminAction(
     return json({ error: "Only the site owner can restore a rank", reason: "owner_only" }, 403);
   // Can't be undone, or moves chat away from another site: the broadcaster or the owner, never a mod.
   const only =
-    data.action === "resetAllRanks"
-      ? "reset all ranks"
-      : data.action === "rotateSeKey"
-        ? "make a new StreamElements key"
-        : data.takeover === true
-          ? "move chat from another site"
-          : data.action === "createPointReward" || data.action === "deletePointReward"
-            ? "change channel point rewards"
-            : "";
+    (data.action === "resetAllRanks" && "reset all ranks") ||
+    (data.action === "rotateSeKey" && "make a new StreamElements key") ||
+    (data.takeover === true && "move chat from another site") ||
+    ((data.action === "createPointReward" || data.action === "deletePointReward") && "change channel point rewards");
   if (only && !roles.owner && !roles.broadcaster)
-    return json({ error: "Only " + channel + " can " + only, reason: "broadcaster_only" }, 403);
+    return json({ error: `Only ${channel} can ${only}`, reason: "broadcaster_only" }, 403);
   const parsed = parseAdminBody(data);
   if (!parsed.ok) return json({ ok: false, reason: parsed.error, error: parsed.error }, 400);
   const { action, takeover, value, names } = parsed.value;

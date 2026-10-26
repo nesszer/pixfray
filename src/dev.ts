@@ -11,11 +11,10 @@ import {
   parseVersions,
 } from "./parse.ts";
 import type { Channel, Channels, Progress, TargetVersions } from "./parse.ts";
-import { $, api, busy, emptyRow, errorText, h, on, row, setStatus, signOut } from "./ui.ts";
+import { $, api, busy, button, emptyRow, errorText, h, on, row, setStatus, signOut } from "./ui.ts";
 // The /api/dev/* answers the page lists from are parsed where they arrive (src/parse.ts); the smaller ones (diagnostics,
 // code tree, save, pr, restore) are read with the shapes below or checked where they are read.
 type Integration = { configured?: boolean; repo?: string; missing?: string[]; versionMetadata?: boolean };
-type SourceLabels = Record<string, string | undefined>;
 type ApiResult = Awaited<ReturnType<typeof api>>;
 const S: {
   session: unknown;
@@ -35,20 +34,14 @@ const S: {
   restoreLoaded?: boolean;
 } = { session: null, diag: null, config: null, configVersion: 0, fileSha: "", fileRef: "", progress: {} };
 // Owner, default channel and sites, from site.config.js through the page's <html data-site-*> attributes.
-const SITE = (({ siteOwner, siteChannel, siteOrigin, siteTestOrigin }) => ({
-  owner: siteOwner,
-  channel: siteChannel,
-  origin: siteOrigin,
-  testOrigin: siteTestOrigin,
-}))(
-  // the page's <html> carries all four data-site-* attributes (vite.config.ts fills them from site.config.js)
-  document.documentElement.dataset as {
-    siteOwner: string;
-    siteChannel: string;
-    siteOrigin: string;
-    siteTestOrigin: string;
-  },
-);
+// as: the page's <html> carries all four data-site-* attributes (vite.config.ts fills them from site.config.js)
+const data = document.documentElement.dataset as Record<`site${"Owner" | "Channel" | "Origin" | "TestOrigin"}`, string>;
+const SITE = {
+  owner: data.siteOwner,
+  channel: data.siteChannel,
+  origin: data.siteOrigin,
+  testOrigin: data.siteTestOrigin,
+};
 const LOGIN = "/auth/login?next=%2Fadmin%2Fdev%2F"; // come back here after signing in, not to the viewer page
 
 const status = (id: string, msg: string, kind = "") => setStatus($(id), msg, kind);
@@ -63,15 +56,13 @@ const fmtNum = (n: unknown) => Number(n).toLocaleString("en-US");
 const ago = (t: number | null | undefined) => {
   if (!t) return "never";
   const m = Math.round((Date.now() - t) / 60000);
-  return m < 1
-    ? "just now"
-    : m < 60
-      ? m + " min ago"
-      : m < 2880
-        ? Math.round(m / 60) + " h ago"
-        : Math.round(m / 1440) + " days ago";
+  if (m < 1) return "just now";
+  if (m < 60) return m + " min ago";
+  return m < 2880 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " days ago";
 };
 const short = (id: unknown) => (id ? String(id).slice(0, 8) : "–");
+const badge = (kind: string, text: unknown) => h("span", { class: "badge " + kind }, text);
+const GITHUB_BUTTONS = "#deploy-test #promote #rollback #hotfix #save-file #open-pr #load-file #load-tree".split(" ");
 function rows(tbody: string, list: Node[], empty: string, cols: number) {
   $(tbody).replaceChildren(...(list.length ? list : [emptyRow(cols, empty)]));
 }
@@ -183,26 +174,25 @@ async function loadDiagnostics() {
 function renderIntegrations(i: { github?: Integration; cloudflare?: Integration }) {
   const g: Integration = i.github || {},
     c: Integration = i.cloudflare || {};
-  const badge = (ok: boolean | undefined) =>
-    h("span", { class: "badge " + (ok ? "positive" : "warning") }, ok ? "Configured" : "Not configured");
+  const set = (ok: boolean | undefined) => badge(ok ? "positive" : "warning", ok ? "Configured" : "Not configured");
   rows(
     "#integrations",
     [
       row([
         "GitHub" + (g.repo ? " (" + g.repo + ")" : ""),
-        badge(g.configured),
+        set(g.configured),
         (g.missing || []).join(", ") || "–",
         "Code editor, deploy, promote, hotfix, rollback",
       ]),
       row([
         "Cloudflare API (read-only)",
-        badge(c.configured),
+        set(c.configured),
         (c.missing || []).join(", ") || "–",
         "Request usage, Worker versions",
       ]),
       row([
         "Version metadata binding",
-        badge(c.versionMetadata),
+        set(c.versionMetadata),
         c.versionMetadata ? "–" : "CF_VERSION_METADATA",
         "Showing the version that served this page",
       ]),
@@ -214,21 +204,9 @@ function renderIntegrations(i: { github?: Integration; cloudflare?: Integration 
   missing.hidden = !!g.configured;
   missing.textContent = g.configured
     ? ""
-    : "GitHub is not configured yet (" +
-      (g.missing || []).join(", ") +
-      "), so saving, deploying and rolling back are unavailable. See docs/LIVE_FIX.md.";
-  for (const id of [
-    "#deploy-test",
-    "#promote",
-    "#rollback",
-    "#hotfix",
-    "#save-file",
-    "#open-pr",
-    "#load-file",
-    "#load-tree",
-  ])
-    // every id in the list is a button on the page
-    $<HTMLButtonElement>(id).disabled = !g.configured;
+    : `GitHub is not configured yet (${(g.missing || []).join(", ")}), so saving, deploying and rolling back are unavailable. See docs/LIVE_FIX.md.`;
+  // every id in the list is a button on the page
+  for (const id of GITHUB_BUTTONS) $<HTMLButtonElement>(id).disabled = !g.configured;
   // Without GitHub, releases happen from a local checkout (gh and cf CLIs), so the editor and release steps stay out of the way.
   $("#sec-code").hidden = $("#sec-release").hidden = !g.configured;
   $("#local-release").hidden = !!g.configured;
@@ -247,7 +225,7 @@ function released(r: ApiResult, what: string) {
   const pr = r.data.pr
     ? ` Pull request #${r.data.pr.number} is open for main.`
     : r.data.prError
-      ? " " + r.data.prError + "."
+      ? ` ${r.data.prError}.`
       : "";
   status("#release-status", `${what} started (run ${r.data.requestId}).${extra}${pr} Watch the run below.`, "ok");
   setTimeout(loadRuns, 4000);
@@ -259,9 +237,8 @@ on("#deploy-test", (b) =>
 );
 on("#promote", (b) =>
   busy(b, async () => {
-    const number = $<HTMLInputElement>("#pr-number").value
-        ? Number($<HTMLInputElement>("#pr-number").value)
-        : undefined,
+    const pr = $<HTMLInputElement>("#pr-number").value,
+      number = pr ? Number(pr) : undefined,
       percentage = Number($<HTMLInputElement>("#percentage").value || 100);
     const what = number ? `merge #${number} and deploy main` : "deploy main as it is";
     if (!confirm(`Promote to ${new URL(SITE.origin).host}: ${what}, ${percentage}% of traffic?`)) return;
@@ -283,12 +260,8 @@ on("#rollback", (b) =>
   busy(b, async () => {
     const target = $<HTMLSelectElement>("#rb-target").value,
       versionId = $<HTMLSelectElement>("#rb-version").value;
-    if (
-      !confirm(
-        `Roll back ${new URL(target === "production" ? SITE.origin : SITE.testOrigin).host} to ${versionId ? short(versionId) : "the previous deployment"}?`,
-      )
-    )
-      return;
+    const host = new URL(target === "production" ? SITE.origin : SITE.testOrigin).host;
+    if (!confirm(`Roll back ${host} to ${versionId ? short(versionId) : "the previous deployment"}?`)) return;
     released(
       await api("/api/dev/rollback", { method: "POST", body: { target, ...(versionId ? { versionId } : {}) } }),
       "Rollback",
@@ -312,9 +285,8 @@ async function loadRuns() {
         h(
           "td",
           {},
-          h(
-            "span",
-            { class: "badge " + (x.conclusion === "success" ? "positive" : x.conclusion ? "negative" : "warning") },
+          badge(
+            x.conclusion === "success" ? "positive" : x.conclusion ? "negative" : "warning",
             x.conclusion || x.status,
           ),
         ),
@@ -382,11 +354,8 @@ on("#load-file", (b) =>
   busy(b, async () => {
     const path = $<HTMLInputElement>("#path").value.trim();
     if (!path) return status("#code-status", "Enter a file path.", "error");
-    const r = await api(
-      "/api/dev/code/file?path=" +
-        encodeURIComponent(path) +
-        (branch() ? "&branch=" + encodeURIComponent(branch()) : ""),
-    );
+    const onBranch = branch() ? "&branch=" + encodeURIComponent(branch()) : "";
+    const r = await api("/api/dev/code/file?path=" + encodeURIComponent(path) + onBranch);
     if (!r.ok) return status("#code-status", errorText(r, "Could not load the file"), "error");
     $<HTMLTextAreaElement>("#editor").value = r.data.content;
     S.fileSha = r.data.sha;
@@ -470,11 +439,7 @@ async function loadConfig() {
           {},
           x.version === r.data.configVersion
             ? h("span", { class: "muted small" }, "Current")
-            : h(
-                "button",
-                { class: "btn btn-small", type: "button", onclick: () => rollbackConfig(x.version) },
-                "Restore v" + x.version,
-              ),
+            : button("Restore v" + x.version, () => rollbackConfig(x.version)),
         ),
       ),
     ),
@@ -548,11 +513,8 @@ async function loadProgress(d: Channels, only?: string[]) {
     S.progressLoading = true;
   }
   for (let i = 0; i < logins.length; i += size) {
-    const r = parseAnswer(
-      await api("/api/dev/progress?logins=" + logins.slice(i, i + size).join(",")),
-      parseProgress,
-      "the setup progress",
-    );
+    const batch = logins.slice(i, i + size).join(",");
+    const r = parseAnswer(await api("/api/dev/progress?logins=" + batch), parseProgress, "the setup progress");
     if (run !== S.progressRun) return;
     if (r.ok) Object.assign(S.progress, r.data.progress);
     else status("#channel-status", errorText(r, "Could not read setup progress"), "error");
@@ -562,20 +524,12 @@ async function loadProgress(d: Channels, only?: string[]) {
   if (!only) S.progressLoading = false;
   renderChannels(S.channels!); // S.channels!: as above
 }
-function channelAction(action: string, login: string, button: HTMLButtonElement, approve = false) {
-  if (
-    action === "pause" &&
-    !confirm(
-      "Turn PixFray off on " + login + "? The overlay, commands and viewer page stop; fighters and ranks are kept.",
-    )
-  )
-    return;
-  return busy(button, async () => {
-    const r = parseAnswer(
-      await api("/api/dev/channels", { method: "POST", body: { action, login } }),
-      parseChannels,
-      "the channel list",
-    );
+function channelAction(action: string, login: string, control: HTMLButtonElement, approve = false) {
+  const ask = `Turn PixFray off on ${login}? The overlay, commands and viewer page stop; fighters and ranks are kept.`;
+  if (action === "pause" && !confirm(ask)) return;
+  return busy(control, async () => {
+    const answer = await api("/api/dev/channels", { method: "POST", body: { action, login } });
+    const r = parseAnswer(answer, parseChannels, "the channel list");
     if (!r.ok) return status("#channel-status", errorText(r, "Could not change " + login), "error");
     status(
       "#channel-status",
@@ -595,7 +549,7 @@ function setupOf(p: Progress | null | undefined) {
 function chatCell(p: Progress | null | undefined) {
   if (!p) return "–";
   if (p.source === "twitch") return "Twitch chat";
-  if (p.rejectedAt > p.lastCommandAt) return h("span", { class: "badge warning" }, "Old key: copy replies again");
+  if (p.rejectedAt > p.lastCommandAt) return badge("warning", "Old key: copy replies again");
   return p.commandsWorking + " of " + p.commands + " commands working";
 }
 // Why a sign-up waits for approval (server/channels.ts reviewReasons).
@@ -621,9 +575,8 @@ function renderChannels(d: Channels) {
       h(
         "td",
         {},
-        h(
-          "span",
-          { class: "badge " + (state === "off" ? "warning" : state === "on" ? "positive" : "") },
+        badge(
+          state === "off" ? "warning" : state === "on" ? "positive" : "",
           c?.review
             ? "Waiting for approval"
             : state === "off" && c?.pausedBy === "owner"
@@ -635,13 +588,7 @@ function renderChannels(d: Channels) {
       h(
         "td",
         {},
-        steps === null
-          ? "–"
-          : h(
-              "span",
-              { class: "badge " + (steps === 3 ? "positive" : "") },
-              steps === 3 ? "Done" : steps + " of 3 steps",
-            ),
+        steps === null ? "–" : badge(steps === 3 ? "positive" : "", steps === 3 ? "Done" : steps + " of 3 steps"),
       ),
       h("td", {}, p ? (p.overlays ? p.overlays + " open" : "Not open") : "–"),
       h("td", {}, chatCell(p)),
@@ -663,21 +610,8 @@ function renderChannels(d: Channels) {
           "div",
           { class: "toolbar" },
           c
-            ? h(
-                "button",
-                {
-                  class: "btn btn-small",
-                  type: "button",
-                  onclick: (e: Event) =>
-                    channelAction(
-                      c.pausedAt ? "resume" : "pause",
-                      c.login,
-                      // the handler sits on this button
-                      e.currentTarget as HTMLButtonElement,
-                      !!c.review,
-                    ),
-                },
-                c.review ? "Approve" : c.pausedAt ? "Turn on" : "Turn off",
+            ? button(c.review ? "Approve" : c.pausedAt ? "Turn on" : "Turn off", (b) =>
+                channelAction(c.pausedAt ? "resume" : "pause", c.login, b, !!c.review),
               )
             : null,
           h(
@@ -708,19 +642,12 @@ function renderChannels(d: Channels) {
   );
   const on = d.builtin.length + d.channels.filter((c) => !c.pausedAt).length;
   const done = Object.values(S.progress).filter((p) => setupOf(p) === 3).length;
+  const checking = S.progressLoading ? ` (checked ${S.progressSeen} of ${S.progressTotal} so far)` : "";
   $("#channels-title").textContent =
-    on +
-    (on === 1 ? " channel is on" : " channels are on") +
-    ", " +
-    done +
-    " with setup done right now" +
-    (S.progressLoading ? " (checked " + S.progressSeen + " of " + S.progressTotal + " so far)" : "");
+    `${on}${on === 1 ? " channel is on" : " channels are on"}, ${done} with setup done right now${checking}`;
+  const waits = `${waiting.length}${waiting.length === 1 ? " sign-up is" : " sign-ups are"} waiting for your approval`;
   $("#channels-text").textContent =
-    (waiting.length
-      ? waiting.length +
-        (waiting.length === 1 ? " sign-up is" : " sign-ups are") +
-        " waiting for your approval at the top of the table. "
-      : "") +
+    (waiting.length ? waits + " at the top of the table. " : "") +
     "Setup counts as done while the overlay is open in OBS and the duel commands work, so streamers who are live right now show up as done.";
   // the error log and restore can read any channel that is set up
   for (const id of ["#log-channel", "#restore-channel"]) {
@@ -757,15 +684,12 @@ const localInput = (t: number) => {
   const d = new Date(t - new Date(t).getTimezoneOffset() * MINUTE);
   return d.toISOString().slice(0, 16);
 };
-function restoreBounds() {
+async function loadRestore() {
   const input = $<HTMLInputElement>("#restore-at"),
     now = Date.now();
   input.min = localInput(now - RESTORE_DAYS * 86400000 + 2 * MINUTE);
   input.max = localInput(now - MINUTE);
   if (!input.value) input.value = localInput(now - 60 * MINUTE);
-}
-async function loadRestore() {
-  restoreBounds();
   const login = $<HTMLSelectElement>("#restore-channel").value;
   if (!login) return;
   const r = await api("/api/dev/restore?channel=" + encodeURIComponent(login));
@@ -783,30 +707,18 @@ async function runRestore(button: HTMLButtonElement, undo: boolean) {
   if (!login) return;
   if (!undo && !Number.isFinite(at)) return status("#restore-status", "Pick a date and time first.", "error");
   const ask = undo
-    ? "Undo the last restore of " + login + "? It goes back to how it was just before that restore."
-    : "Restore " +
-      login +
-      " to " +
-      fmtTime(at) +
-      "? Everything it saved after that time is dropped: duels, ranks, dollars, fighter changes and settings.";
+    ? `Undo the last restore of ${login}? It goes back to how it was just before that restore.`
+    : `Restore ${login} to ${fmtTime(at)}? Everything it saved after that time is dropped: duels, ranks, dollars, fighter changes and settings.`;
   if (!confirm(ask)) return;
   await busy(button, async () => {
     status("#restore-status", undo ? "Undoing the restore…" : "Restoring " + login + "…");
-    const r = await api("/api/dev/restore", {
-      method: "POST",
-      body: undo ? { channel: login, undo: true } : { channel: login, at },
-    });
+    const body = undo ? { channel: login, undo: true } : { channel: login, at };
+    const r = await api("/api/dev/restore", { method: "POST", body });
     if (!r.ok) return status("#restore-status", errorText(r, "Could not restore " + login), "error");
-    status(
-      "#restore-status",
-      (undo ? login + " is back to how it was before the restore: " : login + " is restored: ") +
-        fmtNum(r.data.profiles) +
-        " saved fighters, " +
-        fmtNum(r.data.players) +
-        " on stage." +
-        (r.data.undoSaved ? "" : " The undo point could not be saved, so this one cannot be undone from here."),
-      r.data.undoSaved ? "ok" : "warning",
-    );
+    const done = undo ? `${login} is back to how it was before the restore` : `${login} is restored`,
+      noUndo = r.data.undoSaved ? "" : " The undo point could not be saved, so this one cannot be undone from here.";
+    const counts = `${fmtNum(r.data.profiles)} saved fighters, ${fmtNum(r.data.players)} on stage.`;
+    status("#restore-status", `${done}: ${counts}${noUndo}`, r.data.undoSaved ? "ok" : "warning");
     loadRestore();
   });
 }
@@ -815,15 +727,20 @@ on("#restore", (b) => runRestore(b, false));
 on("#undo-restore", (b) => runRestore(b, true));
 
 // ---------- logs ----------
+// Labels for the stored log sources; one this page doesn't name shows its raw text.
+const SOURCES: Record<string, string | undefined> = {
+  room: "Durable Object",
+  worker: "Worker",
+  command: "Chat command",
+  warn: "Warning",
+  alarm: "Alarm",
+  duel: "Duel",
+  chat: "Chat delivery",
+};
 async function loadLogs() {
   const source = $<HTMLSelectElement>("#log-source").value,
-    r = parseAnswer(
-      await api(
-        "/api/dev/logs?channel=" + $<HTMLSelectElement>("#log-channel").value + (source ? "&source=" + source : ""),
-      ),
-      parseLogs,
-      "the logs",
-    );
+    query = $<HTMLSelectElement>("#log-channel").value + (source ? "&source=" + source : ""),
+    r = parseAnswer(await api("/api/dev/logs?channel=" + query), parseLogs, "the logs");
   if (!r.ok) return rows("#logs", [], errorText(r, "Logs unavailable"), 4);
   rows(
     "#logs",
@@ -832,22 +749,7 @@ async function loadLogs() {
         "tr",
         {},
         h("td", {}, fmtTime(x.at)),
-        h(
-          "td",
-          {},
-          // indexed by any stored source; one this page doesn't name falls back to the raw text
-          (
-            {
-              room: "Durable Object",
-              worker: "Worker",
-              command: "Chat command",
-              warn: "Warning",
-              alarm: "Alarm",
-              duel: "Duel",
-              chat: "Chat delivery",
-            } as SourceLabels
-          )[x.source] || x.source,
-        ),
+        h("td", {}, SOURCES[x.source] || x.source),
         h("td", { class: "wrap" }, x.message),
         h("td", { class: "wrap ctx" }, h("code", {}, x.context ? JSON.stringify(x.context) : "–")),
       ),
@@ -894,9 +796,7 @@ $<HTMLSelectElement>("#log-channel").addEventListener("change", () => {
 on("#clear-logs", (b) =>
   busy(b, async () => {
     if (!confirm("Clear every stored log row for " + $<HTMLSelectElement>("#log-channel").value + "?")) return;
-    const r = await api("/api/dev/logs?channel=" + $<HTMLSelectElement>("#log-channel").value, {
-      method: "DELETE",
-    });
+    const r = await api("/api/dev/logs?channel=" + $<HTMLSelectElement>("#log-channel").value, { method: "DELETE" });
     if (r.ok) {
       loadLogs();
       loadDiagnostics();

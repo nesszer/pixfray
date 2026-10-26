@@ -1,6 +1,6 @@
 import { chatStatus } from "./game.ts";
 import site from "../site.config.js";
-import { CHANNELS, record } from "./auth.ts";
+import { CHANNELS, hex, record } from "./auth.ts";
 import { channelState, overview, listRecords, setPaused, LOGIN } from "./channels.ts";
 import { SE_ACTIONS, DEFAULT_SE_NAMES } from "./streamelements.ts";
 import { rankHistory } from "./ranklog.ts";
@@ -36,14 +36,9 @@ import type { HttpError } from "./http.ts";
 import type { Env } from "./env.ts";
 import type { GameState } from "./model.ts";
 import type { JsonObject, Parsed } from "./parse.ts";
-// Live-fix space (/api/dev/*). Owned by Lane E. worker.ts and channel.ts only call the exports below;
-// keep the signatures (see docs/CONTRACTS.md, "Lane modules"). Every route is owner-only (isOwner = the
-// configured owner account). Optional integrations degrade to 501 {reason:"*_not_configured"}:
-//   GitHub (code editor + deploy flow): secret GITHUB_TOKEN, text GITHUB_REPO ("owner/name"),
-//     optional GITHUB_BASE_BRANCH (main) and GITHUB_WORKFLOW (deploy.yml).
-//   Cloudflare read-only API (request usage, versions): secret CF_API_TOKEN, text CF_ACCOUNT_ID.
-//   Current version: version_metadata binding CF_VERSION_METADATA.
-// The Worker never holds a token that can deploy; deploys run in GitHub Actions (docs/LIVE_FIX.md).
+// Live-fix space (/api/dev/*), owner only; worker.ts and channel.ts call only the exports (docs/CONTRACTS.md §8).
+// GitHub and Cloudflare are optional and answer 501 *_not_configured without their settings (docs/LIVE_FIX.md).
+// The Worker never holds a token that can deploy; deploys run in GitHub Actions.
 
 /** The Worker's request context for /api/dev/* (server/worker.ts). */
 export type DevContext = {
@@ -124,7 +119,6 @@ const fail = (status: number, error: string, reason: string, extra: JsonObject =
   json({ error, reason, ...extra }, status);
 
 // ---------- Worker side ----------
-// c = { user, owner, dev (test-site dev token: no Origin check), url, path, roomFetch(channel, path, init?), chatAction(channel, action, { takeover? }), bodyJson(request, limit), waitUntil(promise) }
 export async function handleDeveloper(request: Request, env: Env, c: DevContext): Promise<Response> {
   if (!c.user) return fail(401, "Sign in with Twitch", "sign_in_required");
   if (!c.owner) return fail(403, "Owner only", "owner_only");
@@ -143,18 +137,13 @@ export async function handleDeveloper(request: Request, env: Env, c: DevContext)
       body = await c.bodyJson(request, op === "code/save" ? MAX_FILE_BYTES * 2 + 4096 : 8000);
     } catch (error) {
       const e = error as HttpError; // bodyJson throws an HttpError (status 400 or 413)
-      return fail(
-        e.status || 400,
-        e.message || "Invalid request body",
-        e.status === 413 ? "body_too_large" : "invalid_body",
-      );
+      const reason = e.status === 413 ? "body_too_large" : "invalid_body";
+      return fail(e.status || 400, e.message || "Invalid request body", reason);
     }
-  if (c.dev && productionChange(op, body))
-    return fail(
-      403,
-      "Production deploys need the owner signed in with Twitch, not the dev token",
-      "owner_session_required",
-    );
+  if (c.dev && productionChange(op, body)) {
+    const error = "Production deploys need the owner signed in with Twitch, not the dev token";
+    return fail(403, error, "owner_session_required");
+  }
   // ?channel= picks which channel's room to read (logs, diagnostics); Worker errors land in the default channel.
   const asked = c.url.searchParams.get("channel") || "",
     channel = asked && (await channelState(env, asked)) ? asked : site.defaultChannel;
@@ -175,12 +164,22 @@ export async function handleDeveloper(request: Request, env: Env, c: DevContext)
 
 const ROUTES: { [op: string]: { [method: string]: Handler } } = {
   diagnostics: { GET: diagnostics },
-  channels: { GET: channelsList, POST: channelsAction },
+  channels: {
+    GET: async ({ env }) => json({ ...(await overview(env)), progressBatch: PROGRESS_MAX }),
+    POST: channelsAction,
+  },
   progress: { GET: progress },
   export: { GET: exportData },
   restore: { GET: restoreInfo, POST: restore },
   logs: {
-    GET: ({ room, query }) => room("/dev/logs?" + logQuery(query)),
+    GET: ({ room, query }) => {
+      const out = new URLSearchParams(),
+        source = query.get("source"),
+        limit = Number(query.get("limit"));
+      if (source && LOG_SOURCES.includes(source)) out.set("source", source);
+      if (Number.isInteger(limit) && limit >= 1 && limit <= 100) out.set("limit", String(limit));
+      return room("/dev/logs?" + out);
+    },
     DELETE: ({ room }) => room("/dev/logs", { method: "DELETE" }),
   },
   backups: { GET: backupsRead, POST: backupsRun },
@@ -203,15 +202,9 @@ const ROUTES: { [op: string]: { [method: string]: Handler } } = {
   rollback: { POST: withGithub(rollback) },
 };
 
-// Owner Channels table. Setup progress is a separate route (below), read in batches by the page, because each
-// channel's progress is one room read and a Worker request may make at most 50 subrequests (Free plan).
+// GET /api/dev/progress?logins=a,b,c: setup progress for up to 40 channels that are on. The owner page reads it in
+// batches because a Worker request may make at most 50 subrequests (Free plan): one AuthStore read plus one per login.
 const PROGRESS_MAX = 40;
-async function channelsList({ env }: RouteArgs): Promise<Response> {
-  return json({ ...(await overview(env)), progressBatch: PROGRESS_MAX });
-}
-
-// GET /api/dev/progress?logins=a,b,c: setup progress for up to 40 channels that are on (built in or enabled).
-// One AuthStore read plus one room read per login, so 41 subrequests at most.
 async function progress({ env, c, query }: RouteArgs): Promise<Response> {
   const raw = String(query.get("logins") || "")
       .split(",")
@@ -219,20 +212,16 @@ async function progress({ env, c, query }: RouteArgs): Promise<Response> {
       .filter(Boolean),
     logins = [...new Set(raw)];
   if (!logins.length)
-    return fail(
-      400,
-      "logins is required: up to " + PROGRESS_MAX + " comma-separated channel logins",
-      "logins_required",
-    );
+    return fail(400, `logins is required: up to ${PROGRESS_MAX} comma-separated channel logins`, "logins_required");
   if (logins.length > PROGRESS_MAX)
-    return fail(400, "At most " + PROGRESS_MAX + " logins per request", "too_many_logins", { max: PROGRESS_MAX });
+    return fail(400, `At most ${PROGRESS_MAX} logins per request`, "too_many_logins", { max: PROGRESS_MAX });
   const on = new Set([
     ...CHANNELS,
     ...(await listRecords(env, "channel:")).filter((r) => !r.value.pausedAt).map((r) => r.value.login),
   ]);
   const invalid = logins.filter((login) => !LOGIN.test(login) || !on.has(login));
   if (invalid.length)
-    return fail(400, "Not a channel that is on: " + invalid.slice(0, 5).join(", "), "unknown_channel", { invalid });
+    return fail(400, `Not a channel that is on: ${invalid.slice(0, 5).join(", ")}`, "unknown_channel", { invalid });
   const reads = await Promise.all(
     logins.map((login) =>
       c
@@ -281,7 +270,7 @@ async function exportData({ env, c, query }: RouteArgs): Promise<Response> {
   const login = String(query.get("channel") || "").toLowerCase();
   if (!login) return fail(400, "Use ?channel=<login> or ?registry=1", "export_target_required");
   const state = await channelState(env, login);
-  if (!state) return fail(404, login + " is not set up", "unknown_channel");
+  if (!state) return fail(404, `${login} is not set up`, "unknown_channel");
   const r = await c.roomFetch(login, "/dev/export");
   if (!r.ok) return fail(502, "The channel room could not be read", "room_unavailable", { status: r.status });
   return download(
@@ -291,11 +280,7 @@ async function exportData({ env, c, query }: RouteArgs): Promise<Response> {
   );
 }
 
-const exportHead = (at: number) => ({
-  format: "mini-chat-export",
-  version: 1,
-  exportedAt: new Date(at).toISOString(),
-});
+const exportHead = (at: number) => ({ format: "mini-chat-export", version: 1, exportedAt: new Date(at).toISOString() });
 
 // Daily backups (server/backups.ts). GET ?channel= lists the days kept; &day= downloads that day's export; &user= (login
 // or id) reads one fighter from it. POST {channel?} backs up one channel or all of them now.
@@ -311,14 +296,14 @@ async function backupsRead({ env, query }: RouteArgs): Promise<Response> {
   if (!day) return json({ channel: login, keepDays: BACKUP_DAYS, backups: await listBackups(env.BACKUPS, login) });
   if (!DAY.test(day)) return fail(400, "Use &day=YYYY-MM-DD", "invalid_day");
   const stored = await readBackup(env.BACKUPS, login, day);
-  if (!stored) return fail(404, "No backup of " + login + " on " + day, "no_backup");
+  if (!stored) return fail(404, `No backup of ${login} on ${day}`, "no_backup");
   // the handler's catch logs it and answers upstream_error, as it did when the stored JSON did not parse
-  if (!stored.ok) throw new Error("Backup of " + login + " on " + day + " is unreadable: " + stored.error);
+  if (!stored.ok) throw new Error(`Backup of ${login} on ${day} is unreadable: ${stored.error}`);
   const data = stored.value;
   if (!user) return download(data, `mini-chat-${login}-${day}-backup.json`);
   const lower = user.toLowerCase(),
     profile = data.profiles.find((p) => p.userId === user || String(p.username).toLowerCase() === lower);
-  if (!profile) return fail(404, user + " is not in the " + day + " backup", "fighter_not_in_backup");
+  if (!profile) return fail(404, `${user} is not in the ${day} backup`, "fighter_not_in_backup");
   const mine = (x: { userId: string }) => x.userId === profile.userId;
   return json({
     channel: login,
@@ -334,7 +319,7 @@ async function backupsRun({ env, c, body }: RouteArgs): Promise<Response> {
   const input = parseBackupsRun(body);
   if (!input.ok) return fail(400, "channel must be a login", input.error);
   const login = input.value.channel.toLowerCase();
-  if (login && !(await channelState(env, login))) return fail(404, login + " is not set up", "unknown_channel");
+  if (login && !(await channelState(env, login))) return fail(404, `${login} is not set up`, "unknown_channel");
   const now = Date.now();
   return json({ day: backupDay(now), channels: await backupChannels(env, now, c.roomFetch, login) });
 }
@@ -364,28 +349,23 @@ async function restore({ env, c, body }: RouteArgs): Promise<Response> {
   const input = parseRestore(body);
   if (!input.ok) return fail(400, "Send {channel, at} or {channel, undo: true}", input.error);
   const login = input.value.channel.toLowerCase(),
+    key = "restore:" + login,
     { undo, at } = input.value,
     now = Date.now();
   if (!LOGIN.test(login) || !(await channelState(env, login)))
-    return fail(404, (login || "That channel") + " is not set up", "unknown_channel");
-  const last = undo ? await record<RestoreRecord | null>(env, "restore:" + login) : null;
-  if (undo && !last?.undo) return fail(409, "There is no restore to undo on " + login, "nothing_to_undo");
-  if (
-    !undo &&
-    !(Number.isFinite(at) && at >= now - RESTORE_WINDOW_MS + RESTORE_MARGIN_MS && at <= now - RESTORE_MARGIN_MS)
-  ) {
-    return fail(400, "Pick a time between 30 days ago and 1 minute ago", "invalid_restore_time");
-  }
+    return fail(404, `${login || "That channel"} is not set up`, "unknown_channel");
+  const last = undo ? await record<RestoreRecord | null>(env, key) : null;
+  if (undo && !last?.undo) return fail(409, `There is no restore to undo on ${login}`, "nothing_to_undo");
+  const inWindow =
+    Number.isFinite(at) && at >= now - RESTORE_WINDOW_MS + RESTORE_MARGIN_MS && at <= now - RESTORE_MARGIN_MS;
+  if (!undo && !inWindow) return fail(400, "Pick a time between 30 days ago and 1 minute ago", "invalid_restore_time");
   const post = (path: string, data: unknown) => c.roomFetch(login, path, postJson(data));
   // undo is only true here when last.undo is set (checked above)
   const r = await post("/dev/restore", undo ? { bookmark: last!.undo } : { at });
   if (!r.ok) {
     const e = await r.json<RoomRefusal>().catch((): RoomRefusal => ({}));
-    return fail(
-      r.status === 501 ? 501 : 502,
-      e.error || "The channel room could not be restored",
-      e.reason || "room_unavailable",
-    );
+    const status = r.status === 501 ? 501 : 502;
+    return fail(status, e.error || "The channel room could not be restored", e.reason || "room_unavailable");
   }
   const point = await r.json<{ undo: string; revision: number }>(); // the room's /dev/restore answer
   // The restore is now armed for the room's next start, so restart it right away: waiting would apply it at some
@@ -397,24 +377,15 @@ async function restore({ env, c, body }: RouteArgs): Promise<Response> {
       // the room's /dev/restored answer
       .then((x) => (x.ok ? x.json<{ players: number; profiles: number }>() : null))
       .catch(() => null);
-  let undoSaved = true;
-  try {
-    await record(
-      env,
-      "restore:" + login,
-      undo ? null : { at, restoredAt: now, by: c.user.login, undo: point.undo },
-      now + RESTORE_WINDOW_MS,
-    );
-  } catch {
-    undoSaved = false;
+  const saved = undo ? null : { at, restoredAt: now, by: c.user.login, undo: point.undo };
+  const undoSaved = await record(env, key, saved, now + RESTORE_WINDOW_MS).then(
+    () => true,
+    () => false,
+  );
+  if (!after) {
+    const error = "Restored, but the room has not started again yet. Open the channel page in a minute to check.";
+    return fail(502, error, "restart_pending", { undoSaved });
   }
-  if (!after)
-    return fail(
-      502,
-      "Restored, but the room has not started again yet. Open the channel page in a minute to check.",
-      "restart_pending",
-      { undoSaved },
-    );
   return json({
     ok: true,
     channel: login,
@@ -431,9 +402,9 @@ async function channelsAction({ env, body }: RouteArgs): Promise<Response> {
   const input = parseChannelsAction(body);
   if (!input.ok) return fail(400, "login must be a channel login", input.error);
   const { action, login } = input.value;
+  if (action !== "pause" && action !== "resume") return fail(400, "Unknown action", "unknown_action");
   try {
-    if (action === "pause" || action === "resume") await setPaused(env, login, action === "pause", "owner");
-    else return fail(400, "Unknown action", "unknown_action");
+    await setPaused(env, login, action === "pause", "owner");
   } catch (error) {
     const e = error as HttpError; // setPaused throws an HttpError with a status and reason; anything else is unexpected
     if (e.status && e.reason) return fail(e.status, e.message, e.reason);
@@ -444,7 +415,8 @@ async function channelsAction({ env, body }: RouteArgs): Promise<Response> {
 
 async function diagnostics({ env, room }: RouteArgs): Promise<Response> {
   const [r, use] = await Promise.all([room("/dev/diagnostics"), usage(env)]);
-  const meta = env.CF_VERSION_METADATA;
+  const meta = env.CF_VERSION_METADATA,
+    gh = githubConfig(env);
   return json({
     worker: {
       version: VERSION,
@@ -453,18 +425,9 @@ async function diagnostics({ env, room }: RouteArgs): Promise<Response> {
       deployedVersion: meta?.id ? { id: meta.id, tag: meta.tag || "", timestamp: meta.timestamp || "" } : null,
     },
     room: r.ok ? await r.json() : { error: "Room unavailable", status: r.status },
-    integrations: { github: githubPublic(env), cloudflare: cloudflarePublic(env) },
+    integrations: { github: { ...gh, repo: gh.configured ? gh.repo : "" }, cloudflare: cloudflarePublic(env) },
     usage: use,
   });
-}
-
-function logQuery(query: URLSearchParams): string {
-  const out = new URLSearchParams(),
-    source = query.get("source"),
-    limit = Number(query.get("limit"));
-  if (source && LOG_SOURCES.includes(source)) out.set("source", source);
-  if (Number.isInteger(limit) && limit >= 1 && limit <= 100) out.set("limit", String(limit));
-  return out.toString();
 }
 
 // Live settings editor: a thin passthrough to the room's versioned config (docs/CONTRACTS.md section 7),
@@ -515,12 +478,12 @@ async function cf<T>(env: Env, path: string, read: Reader<T>, init: RequestInit 
   const answer = await r.json<unknown>().catch(() => undefined),
     envelope = parseCfEnvelope(answer);
   if (!r.ok || !envelope.ok || envelope.value.success === false || envelope.value.errors?.length)
-    return { ok: false, status: r.status, message: undefined };
+    return refused(r.status, undefined);
   const data = read(answer);
-  return data.ok
-    ? { ok: true, status: r.status, data: data.value }
-    : { ok: false, status: r.status, message: undefined };
+  return data.ok ? ok(r.status, data.value) : refused(r.status, undefined);
 }
+const ok = <T>(status: number, data: T): ApiResult<T> => ({ ok: true, status, data });
+const refused = <T>(status: number, message: unknown): ApiResult<T> => ({ ok: false, status, message });
 
 // Today's Worker requests (UTC day, account-wide, which is how the Free limit counts) from the GraphQL Analytics API.
 export async function usage(env: Env, now = Date.now()) {
@@ -571,13 +534,10 @@ export async function usage(env: Env, now = Date.now()) {
 
 async function versions({ env }: RouteArgs): Promise<Response> {
   const conf = cloudflarePublic(env);
-  if (!conf.configured)
-    return fail(
-      501,
-      "Cloudflare API is not configured: set CF_API_TOKEN and CF_ACCOUNT_ID",
-      "cloudflare_not_configured",
-      { missing: conf.missing },
-    );
+  if (!conf.configured) {
+    const error = "Cloudflare API is not configured: set CF_API_TOKEN and CF_ACCOUNT_ID";
+    return fail(501, error, "cloudflare_not_configured", { missing: conf.missing });
+  }
   const out: { [target: string]: unknown } = {};
   for (const [target, script] of Object.entries(SCRIPTS)) {
     const base = `/accounts/${env.CF_ACCOUNT_ID}/workers/scripts/${script}`;
@@ -619,20 +579,14 @@ function githubConfig(env: Env) {
   const missing = [!env.GITHUB_TOKEN && "GITHUB_TOKEN", !REPO.test(repo) && "GITHUB_REPO"].filter(Boolean);
   return { configured: !missing.length, missing, repo, base, workflow };
 }
-function githubPublic(env: Env) {
-  const { configured, missing, repo, base, workflow } = githubConfig(env);
-  return { configured, missing, repo: configured ? repo : "", base, workflow };
-}
+
 function withGithub(fn: (args: GithubArgs) => Promise<Response>): Handler {
   return (ctx) => {
     const g = githubConfig(ctx.env);
-    if (!g.configured)
-      return fail(
-        501,
-        "GitHub is not configured: set the GITHUB_TOKEN secret and GITHUB_REPO (see docs/LIVE_FIX.md)",
-        "github_not_configured",
-        { missing: g.missing },
-      );
+    if (!g.configured) {
+      const error = "GitHub is not configured: set the GITHUB_TOKEN secret and GITHUB_REPO (see docs/LIVE_FIX.md)";
+      return fail(501, error, "github_not_configured", { missing: g.missing });
+    }
     return fn({ ...ctx, g, gh: (path, read, init) => gh(ctx.env, g, path, read, init) });
   };
 }
@@ -656,11 +610,9 @@ async function gh<T>(
     },
   });
   const answer = r.status === 204 ? null : await r.json<unknown>().catch(() => undefined);
-  if (!r.ok) return { ok: false, status: r.status, message: isObject(answer) ? answer.message : undefined };
+  if (!r.ok) return refused<T>(r.status, isObject(answer) ? answer.message : undefined);
   const data = read(answer);
-  return data.ok
-    ? { ok: true, status: r.status, data: data.value }
-    : { ok: false, status: r.status, message: "unreadable answer" };
+  return data.ok ? ok(r.status, data.value) : refused(r.status, "unreadable answer");
 }
 function ghError(r: { status: number; message?: unknown }, what: string): Response {
   const status = [404, 409, 422].includes(r.status) ? (r.status === 422 ? 409 : r.status) : 502;
@@ -669,9 +621,7 @@ function ghError(r: { status: number; message?: unknown }, what: string): Respon
     // GitHub error bodies are { message }; clean() reads anything through String()
     `${what}: GitHub ${r.status} ${clean(r.message || "", 200)}`.trim(),
     "github_error",
-    {
-      githubStatus: r.status,
-    },
+    { githubStatus: r.status },
   );
 }
 const enc = (path: string) => path.split("/").map(encodeURIComponent).join("/");
@@ -687,7 +637,7 @@ const validRef = (ref: string, base: string) => ref === base || BRANCH.test(ref)
 async function codeTree({ g, gh, query }: GithubArgs): Promise<Response> {
   const ref = query.get("ref") || g.base;
   if (!validRef(ref, g.base)) return fail(400, "ref must be the base branch, live-fix/* or hotfix/*", "invalid_ref");
-  const r = await gh("/git/trees/" + enc(ref) + "?recursive=1", parseGhTree);
+  const r = await gh(`/git/trees/${enc(ref)}?recursive=1`, parseGhTree);
   if (!r.ok) return ghError(r, "Read tree");
   const files = (r.data.tree || [])
     .filter((x) => x.type === "blob" && validPath(x.path))
@@ -702,26 +652,19 @@ async function codeFile({ g, gh, query }: GithubArgs): Promise<Response> {
     branch = query.get("branch") || "";
   if (!validPath(path)) return fail(400, "Invalid or protected path", "invalid_path");
   if (branch && !validRef(branch, g.base)) return fail(400, "branch must be live-fix/* or hotfix/*", "invalid_branch");
+  const read = (ref: string) => gh(`/contents/${enc(path)}?ref=${encodeURIComponent(ref)}`, parseGhContent);
   let ref = branch || g.base,
-    r = await gh("/contents/" + enc(path) + "?ref=" + encodeURIComponent(ref), parseGhContent);
-  if (
-    r.status === 404 &&
-    branch &&
-    branch !== g.base &&
-    !(await gh("/git/ref/heads/" + enc(branch), ignoreAnswer)).ok
-  ) {
-    ref = g.base;
-    r = await gh("/contents/" + enc(path) + "?ref=" + encodeURIComponent(ref), parseGhContent);
-  }
+    r = await read(ref);
+  if (r.status === 404 && branch && branch !== g.base && !(await gh("/git/ref/heads/" + enc(branch), ignoreAnswer)).ok)
+    r = await read((ref = g.base));
   if (!r.ok) return ghError(r, "Read file");
   if (!r.data) return fail(400, "Path is not a file", "not_a_file"); // a directory, symlink or submodule
   if (r.data.size > MAX_FILE_BYTES || r.data.encoding !== "base64")
     return fail(413, "File is too large for the web editor (512 KB max)", "file_too_large");
   let content;
   try {
-    content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
-      fromBase64(String(r.data.content).replace(/\s+/g, "")),
-    );
+    const bytes = fromBase64(String(r.data.content).replace(/\s+/g, ""));
+    content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
   } catch {
     return fail(415, "Binary files cannot be edited here", "binary_file");
   }
@@ -744,26 +687,24 @@ async function ensureBranch(g: GithubConfig, gh: Gh, branch: string): Promise<St
 async function codeSave({ g, gh, body }: GithubArgs): Promise<Response> {
   const { path, content, branch, sha } = body;
   if (!validPath(path)) return fail(400, "Invalid or protected path", "invalid_path");
-  if (BUILD_FILE.test(path))
-    return fail(
-      403,
-      "Build and deploy files (package.json, scripts/, configs, .github/) are changed in the repository, not here",
-      "build_file",
-    );
+  if (BUILD_FILE.test(path)) {
+    const error =
+      "Build and deploy files (package.json, scripts/, configs, .github/) are changed in the repository, not here";
+    return fail(403, error, "build_file");
+  }
   if (typeof content !== "string") return fail(400, "content must be a string", "invalid_content");
   const bytes = new TextEncoder().encode(content);
   if (bytes.length > MAX_FILE_BYTES)
     return fail(413, "File is too large for the web editor (512 KB max)", "file_too_large");
-  if (typeof branch !== "string" || !BRANCH.test(branch))
-    return fail(
-      400,
-      "branch must look like live-fix/<name> or hotfix/<name>; the base branch only changes through promote",
-      "invalid_branch",
-    );
+  if (typeof branch !== "string" || !BRANCH.test(branch)) {
+    const error =
+      "branch must look like live-fix/<name> or hotfix/<name>; the base branch only changes through promote";
+    return fail(400, error, "invalid_branch");
+  }
   if (sha !== undefined && (typeof sha !== "string" || !SHA.test(sha)))
     return fail(400, "sha must be a 40-character blob sha", "invalid_sha");
   const message = clean(
-    typeof body.message === "string" && body.message.trim() ? body.message : "Live fix: " + path,
+    typeof body.message === "string" && body.message.trim() ? body.message : `Live fix: ${path}`,
     200,
   );
   const b = await ensureBranch(g, gh, branch);
@@ -772,11 +713,8 @@ async function codeSave({ g, gh, body }: GithubArgs): Promise<Response> {
     method: "PUT",
     body: JSON.stringify({ message, content: toBase64(bytes), branch, ...(sha ? { sha } : {}) }),
   });
-  if (!r.ok)
-    return ghError(
-      r,
-      r.status === 409 || r.status === 422 ? "Save conflict (reload the file from this branch)" : "Save file",
-    );
+  const conflict = r.status === 409 || r.status === 422;
+  if (!r.ok) return ghError(r, conflict ? "Save conflict (reload the file from this branch)" : "Save file");
   return json({
     ok: true,
     path,
@@ -787,13 +725,8 @@ async function codeSave({ g, gh, body }: GithubArgs): Promise<Response> {
   });
 }
 
-async function openPr(
-  g: GithubConfig,
-  gh: Gh,
-  branch: string,
-  title: string,
-  text: string,
-): Promise<Step<{ pr: { number: number; url: string; existing: boolean } }>> {
+type PrStep = Step<{ pr: { number: number; url: string; existing: boolean } }>;
+async function openPr(g: GithubConfig, gh: Gh, branch: string, title: string, text: string): Promise<PrStep> {
   const owner = g.repo.split("/")[0];
   const found = await gh("/pulls?state=open&head=" + encodeURIComponent(owner + ":" + branch), parseGhPulls);
   const open = found.ok ? found.data[0] : undefined; // an unreadable list goes on to open one, as an empty one does
@@ -813,13 +746,9 @@ async function codePr({ g, gh, body }: GithubArgs): Promise<Response> {
   const { branch, title, text } = input.value;
   if (typeof branch !== "string" || !BRANCH.test(branch))
     return fail(400, "branch must be live-fix/* or hotfix/*", "invalid_branch");
-  const p = await openPr(
-    g,
-    gh,
-    branch,
-    clean(title || "Live fix: " + branch, 120),
-    clean(text || "Opened from the mini-chat live-fix space.", 2000),
-  );
+  const prTitle = clean(title || "Live fix: " + branch, 120),
+    prText = clean(text || "Opened from the mini-chat live-fix space.", 2000);
+  const p = await openPr(g, gh, branch, prTitle, prText);
   return p.ok ? json({ ok: true, ...p.pr }) : p.response;
 }
 
@@ -841,14 +770,14 @@ async function runs({ g, gh }: GithubArgs): Promise<Response> {
 }
 
 // Every deploy, promote, hotfix and rollback is one workflow_dispatch of .github/workflows/deploy.yml.
+type Dispatched = Step<{ dispatched: { [field: string]: unknown } }>;
 async function dispatch(
   g: GithubConfig,
   gh: Gh,
   ref: string,
   inputs: { [input: string]: unknown },
-): Promise<Step<{ dispatched: { [field: string]: unknown } }>> {
-  const requestId =
-    "r" + Array.from(crypto.getRandomValues(new Uint8Array(5)), (x) => x.toString(16).padStart(2, "0")).join("");
+): Promise<Dispatched> {
+  const requestId = "r" + hex(crypto.getRandomValues(new Uint8Array(5)));
   const all = {
     operation: "deploy",
     target: "test",
@@ -868,14 +797,12 @@ async function dispatch(
     ? { ok: true, dispatched: { requestId, ref, ...all } }
     : { ok: false, response: ghError(r, "Start workflow") };
 }
-function common(
-  body: JsonObject,
-): { error: Response; sha?: undefined; reason?: undefined } | { error?: undefined; sha: unknown; reason: string } {
+function common(body: JsonObject): Step<{ sha: unknown; reason: string }> {
   if (body.sha !== undefined && body.sha !== "" && (typeof body.sha !== "string" || !SHA.test(body.sha)))
-    return { error: fail(400, "sha must be a 40-character commit sha", "invalid_sha") };
+    return { ok: false, response: fail(400, "sha must be a 40-character commit sha", "invalid_sha") };
   if (body.reason !== undefined && typeof body.reason !== "string")
-    return { error: fail(400, "reason must be a string", "invalid_reason") };
-  return { sha: body.sha || "", reason: clean(body.reason || "", 100) };
+    return { ok: false, response: fail(400, "reason must be a string", "invalid_reason") };
+  return { ok: true, sha: body.sha || "", reason: clean(body.reason || "", 100) };
 }
 
 async function deployTest({ g, gh, body }: GithubArgs): Promise<Response> {
@@ -885,7 +812,7 @@ async function deployTest({ g, gh, body }: GithubArgs): Promise<Response> {
   if (typeof ref !== "string" || !validRef(ref, g.base))
     return fail(400, "ref must be the base branch, live-fix/* or hotfix/*", "invalid_ref");
   const x = common(body);
-  if (x.error) return x.error;
+  if (!x.ok) return x.response;
   const d = await dispatch(g, gh, ref, { target: "test", sha: x.sha, reason: x.reason || "test deploy of " + ref });
   return d.ok ? json({ ok: true, ...d.dispatched }, 202) : d.response;
 }
@@ -899,18 +826,16 @@ async function promote({ g, gh, body }: GithubArgs): Promise<Response> {
   if (body.number !== undefined && (!Number.isInteger(body.number) || body.number < 1))
     return fail(400, "number must be a pull request number", "invalid_number");
   const x = common(body);
-  if (x.error) return x.error;
+  if (!x.ok) return x.response;
   let merged: { number: unknown; sha: unknown; alreadyMerged: boolean } | null = null,
     sha = x.sha;
   if (body.number) {
     const pr = await gh("/pulls/" + body.number, parseGhPull);
     if (!pr.ok) return ghError(pr, "Read pull request");
-    if (pr.data.base?.ref !== g.base || !BRANCH.test(pr.data.head?.ref || ""))
-      return fail(
-        400,
-        "Only live-fix/* or hotfix/* pull requests into the base branch can be promoted",
-        "invalid_pull_request",
-      );
+    if (pr.data.base?.ref !== g.base || !BRANCH.test(pr.data.head?.ref || "")) {
+      const error = "Only live-fix/* or hotfix/* pull requests into the base branch can be promoted";
+      return fail(400, error, "invalid_pull_request");
+    }
     if (pr.data.merged) merged = { number: body.number, sha: pr.data.merge_commit_sha, alreadyMerged: true };
     else {
       if (pr.data.state !== "open") return fail(409, "Pull request is closed", "pull_request_closed");
@@ -919,11 +844,8 @@ async function promote({ g, gh, body }: GithubArgs): Promise<Response> {
         body: JSON.stringify({ merge_method: "squash", sha: pr.data.head.sha }),
       });
       // an ok status with an unreadable answer may still have merged on GitHub
-      if (!m.ok)
-        return ghError(
-          m,
-          m.status < 300 ? "Merge pull request (it may have merged; check GitHub)" : "Merge pull request",
-        );
+      const unsure = m.status < 300 ? " (it may have merged; check GitHub)" : "";
+      if (!m.ok) return ghError(m, `Merge pull request${unsure}`);
       merged = { number: body.number, sha: m.data.sha, alreadyMerged: false };
     }
     sha = merged.sha;
@@ -943,7 +865,7 @@ async function hotfix({ g, gh, body }: GithubArgs): Promise<Response> {
   if (typeof body.branch !== "string" || !body.branch.startsWith("hotfix/") || !BRANCH.test(body.branch))
     return fail(400, "branch must look like hotfix/<name>", "invalid_branch");
   const x = common(body);
-  if (x.error) return x.error;
+  if (!x.ok) return x.response;
   const d = await dispatch(g, gh, body.branch, {
     target: "production",
     sha: x.sha,
@@ -951,40 +873,25 @@ async function hotfix({ g, gh, body }: GithubArgs): Promise<Response> {
     reason: x.reason || "hotfix " + body.branch,
   });
   if (!d.ok) return d.response;
-  const p = await openPr(
-    g,
-    gh,
-    body.branch,
-    "Hotfix: " + body.branch,
-    "Deployed to production as a hotfix from the live-fix space. Merge so the base branch keeps it.",
-  );
-  return json(
-    {
-      ok: true,
-      ...d.dispatched,
-      pr: p.ok ? p.pr : null,
-      prError: p.ok ? undefined : "Pull request not opened; open it manually",
-    },
-    202,
-  );
+  const text = "Deployed to production as a hotfix from the live-fix space. Merge so the base branch keeps it.";
+  const p = await openPr(g, gh, body.branch, "Hotfix: " + body.branch, text);
+  const pr = p.ok ? { pr: p.pr } : { pr: null, prError: "Pull request not opened; open it manually" };
+  return json({ ok: true, ...d.dispatched, ...pr }, 202);
 }
 
 async function rollback({ g, gh, body }: GithubArgs): Promise<Response> {
   // Object.hasOwn turns any value into a key, so a non-string target is simply not found
   if (!Object.hasOwn(SCRIPTS, body.target as PropertyKey))
     return fail(400, "target must be test or production", "invalid_target");
-  if (
-    body.versionId !== undefined &&
-    body.versionId !== "" &&
-    (typeof body.versionId !== "string" || !UUID.test(body.versionId))
-  )
+  const { versionId = "" } = body;
+  if (versionId !== "" && (typeof versionId !== "string" || !UUID.test(versionId)))
     return fail(400, "versionId must be a Worker version UUID", "invalid_version");
   const x = common(body);
-  if (x.error) return x.error;
+  if (!x.ok) return x.response;
   const d = await dispatch(g, gh, g.base, {
     operation: "rollback",
     target: body.target,
-    version_id: body.versionId || "",
+    version_id: versionId,
     reason: x.reason || "rollback " + body.target,
   });
   return d.ok ? json({ ok: true, ...d.dispatched }, 202) : d.response;
@@ -1000,6 +907,10 @@ function clean(value: unknown, max: number): string {
 // Reached only with the internal secret (ChannelRoom.authorized), so these routes trust the caller.
 /** An error_log row. */
 type LogRow = { id: number; at: number; source: string; message: string; context: string };
+/** What the Worker posts to /dev/backup. */
+type BackupBody = { at?: unknown; status?: unknown };
+/** What the Worker posts to /dev/log. */
+type LogBody = { source?: unknown; message?: unknown; context?: unknown };
 
 export async function handleRoomDeveloper(
   room: DevRoom,
@@ -1078,9 +989,7 @@ export async function handleRoomDeveloper(
   }
   if (path === "/dev/log" && method === "POST") {
     // Any JSON: trace stringifies and clips every field
-    const body = await request
-      .json<{ source?: unknown; message?: unknown; context?: unknown } | null>()
-      .catch((): { source?: unknown; message?: unknown; context?: unknown } => ({}));
+    const body = await request.json<LogBody | null>().catch((): LogBody => ({}));
     // The Worker logs errors here, and as "warn" the profile saves it refuses before they reach the room.
     const context = body?.context;
     trace(
@@ -1127,9 +1036,7 @@ export async function handleRoomDeveloper(
   if (path === "/dev/backup" && method === "POST") {
     if (!room.env.BACKUPS) return json({ error: "No BACKUPS database is bound", reason: "backups_unavailable" }, 501);
     // Any JSON: both fields are checked below
-    const { at, status } = await request
-      .json<{ at?: unknown; status?: unknown }>()
-      .catch((): { at?: unknown; status?: unknown } => ({}));
+    const { at, status } = await request.json<BackupBody>().catch((): BackupBody => ({}));
     // includes() is false for anything but those strings
     if (!Number.isInteger(at) || !["builtin", "on", "paused"].includes(status as string))
       return json({ error: "Send {at, status}", reason: "invalid_backup" }, 400);
@@ -1258,15 +1165,16 @@ function roomExport(room: DevRoom, channel: string) {
     names = { ...DEFAULT_SE_NAMES, ...stored };
   if (names.accept === "!accept") names.accept = DEFAULT_SE_NAMES.accept;
   if (names.top === "!top") names.top = DEFAULT_SE_NAMES.top;
+  const counted = {
+    profiles,
+    configVersions: history,
+    customCharacters: characters,
+    purchases,
+    builds,
+    customPets: pets,
+  };
   return {
-    counts: {
-      profiles: profiles.length,
-      configVersions: history.length,
-      customCharacters: characters.length,
-      purchases: purchases.length,
-      builds: builds.length,
-      customPets: pets.length,
-    },
+    counts: Object.fromEntries(Object.entries(counted).map(([k, list]) => [k, list.length])),
     profiles,
     purchases,
     builds,

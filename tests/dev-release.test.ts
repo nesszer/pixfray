@@ -86,16 +86,11 @@ test("deploy and rollback plans pick the right versions", () => {
   assert.deepEqual(planRollback(deployments), { previous: V(3), target: V(2) });
   assert.deepEqual(planRollback(deployments, V(1)), { previous: V(3), target: V(1) });
   assert.equal(planRollback([deployments[0]!]).target, null); // the fixture list has three entries
-  assert.equal(
-    findVersionByTag(
-      [
-        { id: V(5), metadata: { created_on: "1" }, annotations: { "workers/tag": "gh-a" } },
-        { id: V(6), metadata: { created_on: "2" }, annotations: { "workers/tag": "gh-a" } },
-      ],
-      "gh-a",
-    ),
-    V(6),
-  );
+  const tagged = [
+    { id: V(5), metadata: { created_on: "1" }, annotations: { "workers/tag": "gh-a" } },
+    { id: V(6), metadata: { created_on: "2" }, annotations: { "workers/tag": "gh-a" } },
+  ];
+  assert.equal(findVersionByTag(tagged, "gh-a"), V(6));
   assert.equal(findVersionByTag([], "gh-a"), null);
   assert.deepEqual(missingSecrets({ resources: { bindings: [{ name: "AUTH_SECRET", type: "secret_text" }] } }), [
     "INTERNAL_SECRET",
@@ -245,16 +240,12 @@ test("deploy workflow parses and exposes the inputs /api/dev dispatches", () => 
 test("deploy workflow keeps the Cloudflare token out of check and deploys the commit check verified", () => {
   const wf = loadYaml(".github/workflows/deploy.yml");
   const { check, release } = wf.jobs;
-  assert.deepEqual(
-    Object.keys(wf.jobs).filter((job) => JSON.stringify(wf.jobs[job]).includes("CLOUDFLARE_API_TOKEN")),
-    ["release", "rollback"],
-  );
+  const tokenJobs = Object.keys(wf.jobs).filter((job) => JSON.stringify(wf.jobs[job]).includes("CLOUDFLARE_API_TOKEN"));
+  assert.deepEqual(tokenJobs, ["release", "rollback"]);
   assert.equal(check.environment, undefined, "check has no environment");
   assert.deepEqual(check.permissions, { contents: "read" });
-  assert.deepEqual(
-    release.steps.filter((s: Step) => JSON.stringify(s).includes("CLOUDFLARE_API_TOKEN")),
-    [release.steps.at(-1)],
-  );
+  const tokenSteps = release.steps.filter((s: Step) => JSON.stringify(s).includes("CLOUDFLARE_API_TOKEN"));
+  assert.deepEqual(tokenSteps, [release.steps.at(-1)]);
   const releaseRuns = release.steps.map((s: Step) => s.run || "").join("\n");
   assert.doesNotMatch(releaseRuns, /\bbun (run (check|format|lint|test|typecheck)|test)\b/);
   assert.equal(release.needs, "check");
@@ -289,16 +280,12 @@ test("CI workflow checks every push to main, scans for secrets and never sees se
   const on = wf.on;
   assert.ok(on.push.branches.includes("main"));
   assert.ok(wf.jobs.test.steps.some((s: Step) => s.run === "bun run check"));
-  assert.ok(
-    wf.jobs.test.steps.some((s: Step) => s.run === "bun run audit"),
-    "dependencies are audited",
-  );
+  const audited = wf.jobs.test.steps.some((s: Step) => s.run === "bun run audit");
+  assert.ok(audited, "dependencies are audited");
   const scan = wf.jobs.secrets;
   assert.equal(scan.steps[0].with["fetch-depth"], 0, "the secret scan sees the whole history");
-  assert.ok(
-    scan.steps.some((s: Step) => /sha256sum -c/.test(s.run || "")),
-    "the gitleaks binary is checksum-pinned",
-  );
+  const pinned = scan.steps.some((s: Step) => /sha256sum -c/.test(s.run || ""));
+  assert.ok(pinned, "the gitleaks binary is checksum-pinned");
   assert.ok(scan.steps.some((s: Step) => /gitleaks git --config \.gitleaks\.toml --redact/.test(s.run || "")));
   assert.doesNotMatch(readFileSync(".github/workflows/ci.yml", "utf8"), /secrets\./);
 });

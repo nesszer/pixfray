@@ -73,13 +73,11 @@ test("claimMessage(): expired rows are swept so the table stays small", () => {
     T = 5_000_000;
   for (let i = 0; i < 20; i++) claimMessage(sql, "old" + i, T);
   claimMessage(sql, "new", T + EVENTSUB_DEDUPE_MS + 120_000);
-  assert.deepEqual(
-    sql
-      .exec("SELECT id FROM eventsub_seen")
-      .toArray()
-      .map((r) => r.id),
-    ["new"],
-  );
+  const ids = sql
+    .exec("SELECT id FROM eventsub_seen")
+    .toArray()
+    .map((r) => r.id);
+  assert.deepEqual(ids, ["new"]);
 });
 
 test("a command delivered twice, the second time to a fresh room instance, runs once", async () => {
@@ -130,16 +128,10 @@ test("plain chat lines are not written to storage; only commands are", async () 
   await connect(r);
   for (let i = 0; i < 5; i++)
     assert.equal((await deliver(r, "chat-" + i, "hello everyone", { bot: false })).status, 200);
-  assert.deepEqual(
-    ctx.storage.sql.exec("SELECT name FROM sqlite_master WHERE name='eventsub_seen'").toArray(),
-    [],
-    "no table, no writes",
-  );
-  assert.deepEqual(
-    (await deliver(r, "chat-0", "hello everyone", { bot: false })).body,
-    { ok: true, duplicate: true },
-    "still deduped in memory",
-  );
+  const tables = ctx.storage.sql.exec("SELECT name FROM sqlite_master WHERE name='eventsub_seen'").toArray();
+  assert.deepEqual(tables, [], "no table, no writes");
+  const again = await deliver(r, "chat-0", "hello everyone", { bot: false });
+  assert.deepEqual(again.body, { ok: true, duplicate: true }, "still deduped in memory");
   await deliver(r, "cmd-1", "!ranks");
   assert.deepEqual(rows(ctx), ["cmd-1"]);
 });

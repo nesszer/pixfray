@@ -69,27 +69,21 @@ test("every frame rectangle sits inside its atlas image", () => {
       assert.ok(Array.isArray(list) && list.length, c.id + " " + name + " is a non-empty list");
       for (const f of list) {
         assert.ok(rect(f), c.id + " " + name + " frame " + JSON.stringify(f));
-        assert.ok(
-          f.x + f.w <= width && f.y + f.h <= height,
-          c.id + " " + name + " frame " + JSON.stringify(f) + " outside " + width + "x" + height,
-        );
+        const outside = `${c.id} ${name} frame ${JSON.stringify(f)} outside ${width}x${height}`;
+        assert.ok(f.x + f.w <= width && f.y + f.h <= height, outside);
       }
     }
   }
 });
 
 test("combat-ready characters exist and every character is licensed in ASSET_LICENSES.md", () => {
-  assert.ok(
-    catalog.filter((c) => c.animations?.attack && c.animations?.ko).length >= 5,
-    "at least five characters have drawn attack and ko frames",
-  );
+  const drawn = catalog.filter((c) => c.animations?.attack && c.animations?.ko).length;
+  assert.ok(drawn >= 5, "at least five characters have drawn attack and ko frames");
   for (const c of catalog) {
     assert.ok(licenses.includes("`" + c.id + "`"), c.id + " is listed in ASSET_LICENSES.md");
-    assert.ok(
-      // as string: split always returns at least one item, so pop() has one
-      licenses.includes(c.url.split("/").pop() as string),
-      c.url + " file is listed in ASSET_LICENSES.md",
-    );
+    // as string: split always returns at least one item, so pop() has one
+    const file = c.url.split("/").pop() as string;
+    assert.ok(licenses.includes(file), c.url + " file is listed in ASSET_LICENSES.md");
     assert.ok(licenses.includes(c.source), c.source + " is listed in ASSET_LICENSES.md");
   }
   for (const notice of [
@@ -121,11 +115,10 @@ test("the reserve lists at least 25 characters, each with a source and license",
       .trim()
       .replace(/ \(.*\)$/, ""),
   );
-  for (const r of rows)
-    assert.ok(
-      packNames.some((n) => r.includes("| " + n + " |")),
-      "reserve row has a vetted pack: " + r.slice(0, 60),
-    );
+  for (const r of rows) {
+    const vetted = packNames.some((n) => r.includes("| " + n + " |"));
+    assert.ok(vetted, "reserve row has a vetted pack: " + r.slice(0, 60));
+  }
   const launched = new Set(catalog.map((c) => c.label.toLowerCase()));
   for (const r of rows)
     assert.ok(!launched.has(must(r.split("|")[2]).trim().toLowerCase()), "reserve does not repeat a launch character");

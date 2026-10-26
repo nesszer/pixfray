@@ -163,11 +163,8 @@ test("SE: a refused (channel, key) pair is answered locally for 60 s, then asked
     [KEY, "nesszerra", 5, "and asked each time"],
   ];
   for (const [key, channel, calls, why] of steps) {
-    assert.deepEqual(
-      await call(key, channel),
-      [200, key === KEY ? "ok" : WRONG_KEY_TEXT],
-      "HTTP 200 so the bot shows it",
-    );
+    const answer = await call(key, channel);
+    assert.deepEqual(answer, [200, key === KEY ? "ok" : WRONG_KEY_TEXT], "HTTP 200 so the bot shows it");
     assert.equal(f.fetched.length, calls, why);
   }
   now += 59_000;
@@ -218,11 +215,8 @@ test("OWNER_TWITCH_ID decides ownership with or without the owner record", async
   f.entries.set("owner:nesszerra", { id: ME.id });
   assert.equal(await isOwner(f.env, ME), true, "record and env agree");
   f.entries.set("owner:nesszerra", { id: "9" });
-  assert.equal(
-    await isOwner(f.env, other),
-    false,
-    "a stale or wrong record cannot grant ownership while the env is set",
-  );
+  const stale = await isOwner(f.env, other);
+  assert.equal(stale, false, "a stale or wrong record cannot grant ownership while the env is set");
   assert.deepEqual(await access(f.env, ME, "nesszerra"), { owner: true, moderator: false, canManage: true });
   // without the env the record decides (local test server)
   delete f.env.OWNER_TWITCH_ID;
@@ -422,10 +416,8 @@ test("admin snapshot: a token seen without a marker gets one, and viewing keeps 
   assert.equal(f.entries.get("broadcaster:nesszerra").touched, stamp);
   assert.equal(f.expires.get("broadcaster:nesszerra"), writes);
   // and the token can still be opened after the extra field was added
-  assert.equal(
-    (await unseal<{ access_token: string }>(f.env, f.entries.get("broadcaster:nesszerra"))).access_token,
-    "a1",
-  );
+  const opened = await unseal<{ access_token: string }>(f.env, f.entries.get("broadcaster:nesszerra"));
+  assert.equal(opened.access_token, "a1");
 });
 
 test("robots.txt and sitemap.xml follow the host: production lists its pages, the test site stays out of search", async () => {

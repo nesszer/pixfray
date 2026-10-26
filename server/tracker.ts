@@ -45,6 +45,16 @@ export function ensureTrackerSchema(sql: SqlStorage): void {
 
 const utcDay = (at: number) => new Date(at).toISOString().slice(0, 10);
 
+// A daily_stats data column, or {} when it is missing or unreadable.
+function parseCounts(data: string | undefined): Counts {
+  try {
+    // JSON.parse is typed any; flush writes this column from a Counts object
+    return data ? JSON.parse(data) : {};
+  } catch {
+    return {};
+  }
+}
+
 function tracker(room: Room, now: number): Tracker {
   let t = trackers.get(room.ctx);
   const day = utcDay(now);
@@ -53,10 +63,7 @@ function tracker(room: Room, now: number): Tracker {
   const sql = room.ctx.storage.sql;
   // a restarted room keeps counting where the last flush left today
   const row = sql.exec<{ data: string }>("SELECT data FROM daily_stats WHERE day = ?", day).toArray()[0];
-  let counts: Counts = {};
-  try {
-    if (row) counts = JSON.parse(row.data);
-  } catch {}
+  const counts = parseCounts(row?.data);
   if (!t) sql.exec("DELETE FROM daily_stats WHERE day < ?", utcDay(now - KEEP_DAYS * 86_400_000));
   t = {
     day,
@@ -78,11 +85,8 @@ function flush(room: Room, t: Tracker): void {
   t.dirty = false;
   t.flushedAt = Date.now();
   t.counts.rows_written = (t.counts.rows_written || 0) + 1;
-  room.ctx.storage.sql.exec(
-    "INSERT INTO daily_stats (day, data) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET data = excluded.data",
-    t.day,
-    JSON.stringify(t.counts),
-  );
+  const save = "INSERT INTO daily_stats (day, data) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET data = excluded.data";
+  room.ctx.storage.sql.exec(save, t.day, JSON.stringify(t.counts));
 }
 
 /** Adds to today's counter. Counts reach SQLite at most every FLUSH_MS and at the end of each request and alarm (settleCounts). Never throws. */
@@ -93,14 +97,11 @@ export function count(room: Room, name: string, n = 1): void {
     t.counts[name] = (t.counts[name] || 0) + n;
     t.dirty = true;
     if (name === "requests" || name === "alarms") {
-      const load = (t.counts.requests || 0) + (t.counts.alarms || 0);
+      const { requests = 0, alarms = 0 } = t.counts;
       for (const at of DAILY_ALERTS)
-        if (load >= at && !t.counts["alert_" + at]) {
+        if (requests + alarms >= at && !t.counts["alert_" + at]) {
           t.counts["alert_" + at] = 1;
-          trace(room, "warn", `room load passed ${at} requests and alarms today`, {
-            requests: t.counts.requests || 0,
-            alarms: t.counts.alarms || 0,
-          });
+          trace(room, "warn", `room load passed ${at} requests and alarms today`, { requests, alarms });
         }
     }
     if (now - t.flushedAt >= FLUSH_MS) flush(room, t);
@@ -134,13 +135,7 @@ export function readCounts(room: Room, days = 7): { day: string; counts: Counts 
   return room.ctx.storage.sql
     .exec<{ day: string; data: string }>("SELECT day, data FROM daily_stats ORDER BY day DESC LIMIT ?", days)
     .toArray()
-    .map((r) => {
-      let counts: Counts = {};
-      try {
-        counts = JSON.parse(r.data);
-      } catch {}
-      return { day: r.day, counts };
-    });
+    .map((r) => ({ day: r.day, counts: parseCounts(r.data) }));
 }
 
 /**
@@ -166,25 +161,17 @@ function storeLog(room: Room, t: Tracker, source: string, message: string, conte
   const sql = room.ctx.storage.sql;
   let ctx = JSON.stringify(context ?? {}) || "{}";
   if (ctx.length > 2000) ctx = JSON.stringify({ truncated: ctx.slice(0, 1900) });
-  sql.exec(
-    "INSERT INTO error_log (at, source, message, context) VALUES (?, ?, ?, ?)",
-    Date.now(),
-    source,
-    String(message || "unknown").slice(0, 500),
-    ctx,
-  );
+  const insert = "INSERT INTO error_log (at, source, message, context) VALUES (?, ?, ?, ?)";
+  sql.exec(insert, Date.now(), source, String(message || "unknown").slice(0, 500), ctx);
   t.counts.rows_written = (t.counts.rows_written || 0) + 1;
   // Trimming scans the table, so it runs every TRIM_EVERY rows per source: each source keeps its own tail, and a burst
   // of traces never pushes the errors out.
   t.sinceTrim[source] = (t.sinceTrim[source] || 0) + 1;
   if (t.sinceTrim[source] < TRIM_EVERY) return;
   t.sinceTrim[source] = 0;
-  const cut = sql.exec(
-    "DELETE FROM error_log WHERE source = ? AND id <= (SELECT id FROM error_log WHERE source = ? ORDER BY id DESC LIMIT 1 OFFSET ?)",
-    source,
-    source,
-    KEEP_ROWS[source] ?? KEEP_DEFAULT,
-  );
+  const trim =
+    "DELETE FROM error_log WHERE source = ? AND id <= (SELECT id FROM error_log WHERE source = ? ORDER BY id DESC LIMIT 1 OFFSET ?)";
+  const cut = sql.exec(trim, source, source, KEEP_ROWS[source] ?? KEEP_DEFAULT);
   t.counts.rows_written += cut.rowsWritten ?? 0;
 }
 

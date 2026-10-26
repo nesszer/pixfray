@@ -134,14 +134,8 @@ export async function signUp(env: Env, user: TwitchUser, check = async (): Promi
   const reasons = await check();
   if (reasons.length) {
     const now = Date.now();
-    await saveChannel(env, {
-      id: user.id,
-      login,
-      enabledAt: now,
-      pausedAt: now,
-      pausedBy: "owner",
-      review: { reasons, at: now },
-    });
+    const review = { reasons, at: now };
+    await saveChannel(env, { id: user.id, login, enabledAt: now, pausedAt: now, pausedBy: "owner", review });
     throw fail(403, "This channel is waiting for the site owner to approve it", "review");
   }
   await saveChannel(env, { id: user.id, login, enabledAt: Date.now() });
