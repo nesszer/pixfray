@@ -1056,20 +1056,23 @@ async function start() {
     if (gap) setTimeout(() => pumpDuel(id, q), gap);
     else pumpDuel(id, q);
   }
+  // Events that only announce a line: its text and color, or null for no line.
+  const ANNOUNCED: Partial<Record<string, (event: ArenaEvent) => [string, string?] | null>> = {
+    challenge_created: (e) => [nameOf(e.a) + " challenges " + nameOf(e.b) + " to a duel"],
+    challenge_declined: (e) => [nameOf(e.declinedBy) + " declined the duel", "#e2e8f0"],
+    challenge_expired: (e) => ["Challenge to " + nameOf(e.b) + " expired", "#e2e8f0"],
+    // !: a missing reason reads the key "undefined", which falls through to "not scored"
+    duel_cancelled: (e) => ["Duel cancelled · " + (CANCEL_TEXT[e.reason!] || "not scored"), "#e2e8f0"],
+    chat_disconnected: () => ["Duels paused · chat offline", "#e2e8f0"],
+    chat_connected: () => (arenaChat?.connected !== false ? ["Duels are live", "#a7f3d0"] : null),
+  };
   function handleArenaEvent(event: ArenaEvent) {
     if (!event || typeof event !== "object") return;
     if (Number.isFinite(event.at) && Date.now() - event.at > EVENT_FRESH_MS) return;
-    const now = Date.now();
+    const now = Date.now(),
+      line = ANNOUNCED[event.type]?.(event);
+    if (line) announceArena(line[0], line[1], event.duelId);
     switch (event.type) {
-      case "challenge_created":
-        announceArena(nameOf(event.a) + " challenges " + nameOf(event.b) + " to a duel", undefined, event.duelId);
-        break;
-      case "challenge_declined":
-        announceArena(nameOf(event.declinedBy) + " declined the duel", "#e2e8f0", event.duelId);
-        break;
-      case "challenge_expired":
-        announceArena("Challenge to " + nameOf(event.b) + " expired", "#e2e8f0", event.duelId);
-        break;
       case "duel_started":
         if (event.duelId && event.a && event.b) {
           replays.set(event.duelId, {
@@ -1192,10 +1195,6 @@ async function start() {
         if (results.length > 20) results.shift();
         break;
       }
-      case "duel_cancelled":
-        // !: a missing reason reads the key "undefined", which falls through to "not scored"
-        announceArena("Duel cancelled · " + (CANCEL_TEXT[event.reason!] || "not scored"), "#e2e8f0", event.duelId);
-        break;
       case "player_respawned": {
         const p = findPlayer(event.userId);
         // The server times the respawn from the settled duel, but the overlay's replay of it runs longer. While the
@@ -1211,12 +1210,6 @@ async function start() {
         }
         break;
       }
-      case "chat_disconnected":
-        announceArena("Duels paused · chat offline", "#e2e8f0");
-        break;
-      case "chat_connected":
-        if (arenaChat?.connected !== false) announceArena("Duels are live", "#a7f3d0");
-        break;
       default:
     }
     updateStatus();
