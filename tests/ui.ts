@@ -2,7 +2,7 @@
 // Signed-out runs against the real local server (`bunx cf dev` / vite); signed-in states stub /api/* with page.route.
 // Usage: MINI_BASE_URL=http://127.0.0.1:5193 node tests/ui.ts
 import { launchChrome } from "./chrome.ts";
-import type { BrowserContext, Page, Route } from "@playwright/test";
+import type { BrowserContext, Locator, Page, Route } from "@playwright/test";
 import assert from "node:assert/strict";
 import { enforceCsp } from "./csp-helper.ts";
 import { makePng } from "./upload-helpers.ts";
@@ -158,14 +158,37 @@ async function withPage(
   await fn(page, context);
   await context.close();
 }
-async function text(page: Page, sel: string) {
-  const t = await page.locator(sel).textContent();
+type Where = Page | Locator;
+async function text(w: Where, sel: string) {
+  const t = await w.locator(sel).textContent();
   assert.ok(t !== null, sel + " is on the page");
   return t;
 }
-async function hidden(page: Page, sel: string, message?: string) {
-  assert.equal(await page.locator(sel).isHidden(), true, message ?? sel + " hidden");
+async function hidden(w: Where, sel: string, message?: string) {
+  assert.equal(await w.locator(sel).isHidden(), true, message ?? sel + " hidden");
 }
+// One check on w.locator(sel) each; leaving out the message keeps assert's own.
+const textIs = async (w: Where, sel: string, want: string, msg?: string) => assert.equal(await text(w, sel), want, msg);
+const textHas = async (w: Where, sel: string, re: RegExp, msg?: string) => assert.match(await text(w, sel), re, msg);
+const countIs = async (w: Where, sel: string, n: number, msg?: string) =>
+  assert.equal(await w.locator(sel).count(), n, msg);
+const visibleIs = async (w: Where, sel: string, want: boolean, msg?: string) =>
+  assert.equal(await w.locator(sel).isVisible(), want, msg);
+const disabledIs = async (w: Where, sel: string, want: boolean, msg?: string) =>
+  assert.equal(await w.locator(sel).isDisabled(), want, msg);
+const checkedIs = async (w: Where, sel: string, want: boolean, msg?: string) =>
+  assert.equal(await w.locator(sel).isChecked(), want, msg);
+const valueIs = async (w: Where, sel: string, want: string, msg?: string) =>
+  assert.equal(await w.locator(sel).inputValue(), want, msg);
+const hrefs = (w: Where, sel: string) => w.locator(sel).evaluateAll((a) => a.map((x) => x.getAttribute("href")));
+// The element's parent (its .table-wrap) shows it whole, with no sideways scroll.
+const fitsWrap = (w: Where, sel: string) =>
+  w
+    .locator(sel)
+    .locator("xpath=..")
+    .evaluate((n) => n.scrollWidth <= n.clientWidth + 1);
+const attrIs = async (w: Where, sel: string, name: string, want: string | null, msg?: string) =>
+  assert.equal(await w.locator(sel).getAttribute(name), want, msg);
 // Waits until the element's text matches; the pattern travels as source and flags.
 const waitText = (page: Page, sel: string, re: RegExp, options?: { timeout: number }) =>
   page.waitForFunction(
@@ -190,6 +213,17 @@ const viewerAccess = { owner: false, moderator: false, canManage: false },
   modAccess = { owner: false, moderator: true, canManage: true },
   broadcasterAccess = { owner: false, broadcaster: true, moderator: false, canManage: true };
 const disconnected = { connected: false, status: "disconnected", subscriptionId: "", createdAt: 0 };
+// A working chat connection as the snapshot's chatStatus reports it.
+const chatOn = (fields: object) => ({
+  connected: true,
+  status: "enabled",
+  subscriptionId: "sub-bot",
+  createdAt: now - 86400000,
+  lastNotificationAt: now - 120000,
+  lastRevocationReason: "",
+  checkedAt: 0,
+  ...fields,
+});
 const seKey = "k".repeat(48);
 // StreamElements setup with no command seen yet; commands holds one reply line per action, each carrying the key.
 const seSetup = (fields: object = {}, actions: string[] = []) => ({
@@ -315,28 +349,21 @@ try {
       });
       // Loose: the session body, read by field below
       const session = await page.evaluate(() => fetch("/api/session").then((r) => r.json<Loose>()));
-      if (session.configured === false) assert.match(await text(page, "#signin-note"), /isn't set up/);
-      else assert.equal(await page.locator("#save-signin").isVisible(), true);
-      assert.equal(
-        await page.locator('#who a[href^="/auth/login"]').count(),
-        0,
-        "one sign-in button: the fighter card has it",
-      );
-      assert.equal(
-        await page.locator("#obs-setup").count(),
-        0,
-        "the OBS link lives in mod controls, not on the viewer page",
-      );
+      if (session.configured === false) await textHas(page, "#signin-note", /isn't set up/);
+      else await visibleIs(page, "#save-signin", true);
+      await countIs(page, '#who a[href^="/auth/login"]', 0, "one sign-in button: the fighter card has it");
+      await countIs(page, "#obs-setup", 0, "the OBS link lives in mod controls, not on the viewer page");
       if (await page.locator("#leaderboard tr.empty").count())
-        assert.match(
-          await text(page, "#leaderboard tr.empty"),
+        await textHas(
+          page,
+          "#leaderboard tr.empty",
           /To get on the board: sign in and save your fighter.*!challenge @viewer/,
         );
       await page.locator("#char-soldier").check({ force: true });
-      assert.match(await text(page, "#preview-caption"), /Soldier/);
+      await textHas(page, "#preview-caption", /Soldier/);
       // Character search and type filters.
       await page.fill("#char-search", "zomb");
-      assert.equal(await page.locator("#characters .char-option:visible").count(), 1, "search finds the zombie");
+      await countIs(page, "#characters .char-option:visible", 1, "search finds the zombie");
       await page.fill("#char-search", "");
       await page.locator("#char-groups [data-group=robots]").click();
       const robots = await page
@@ -351,36 +378,32 @@ try {
       // Tabs: the rules link opens Rules; the hash picks the tab on load.
       await hidden(page, "#panel-shop");
       await page.locator('.hero-copy a[href="#duels"]').click();
-      assert.equal(await page.locator("#tab-rules").getAttribute("aria-selected"), "true");
-      assert.equal(await page.locator("#duels").isVisible(), true);
+      await attrIs(page, "#tab-rules", "aria-selected", "true");
+      await visibleIs(page, "#duels", true);
       assert.equal(new URL(page.url()).hash, "#duels");
       await page.locator("#tab-shop").click();
-      assert.equal(await page.locator("#panel-shop").isVisible(), true);
+      await visibleIs(page, "#panel-shop", true);
       await hidden(page, "#panel-ranks");
       await page.keyboard.press("ArrowRight");
-      assert.equal(
-        await page.locator("#tab-pets").getAttribute("aria-selected"),
-        "true",
-        "arrow keys move between tabs",
-      );
+      await attrIs(page, "#tab-pets", "aria-selected", "true", "arrow keys move between tabs");
       assert.equal(new URL(page.url()).hash, "#pets");
       // Shop tiles and try-on while signed out: the preview wears it; buying needs a sign-in.
       await page.locator("#tab-shop").click();
       await page.locator('.jump a[href="#shop-trail"]').click();
       await page.waitForSelector("#trail-flames", { state: "attached" });
       await page.locator("label[for=trail-flames]").click();
-      assert.match(await text(page, "#status-trail"), /Trying on Flames in the preview\. Sign in to buy it\./);
-      assert.equal(await page.locator("#play-win").isDisabled(), true, "no win effect or taunt yet");
+      await textHas(page, "#status-trail", /Trying on Flames in the preview\. Sign in to buy it\./);
+      await disabledIs(page, "#play-win", true, "no win effect or taunt yet");
       await page.locator('.jump a[href="#win-effects"]').click();
       await page.locator("label[for=effect-confetti]").click();
-      assert.equal(await page.locator("#play-win").isDisabled(), false);
+      await disabledIs(page, "#play-win", false);
       assert.match((await page.locator("#preview").getAttribute("aria-label"))!, /Flames trail/); // the page sets this attribute
       await page.locator("#tab-fighter").click();
       await shot(page, "viewer-signed-out-real-" + s.name);
       await page.goto(base + "/admin/");
       await page.waitForFunction(() => !document.querySelector("#gate-text")!.textContent.includes("Checking")); // the page has this element
       await hidden(page, "#app");
-      assert.match(await text(page, "#gate-text"), /Sign in|isn't set up/);
+      await textHas(page, "#gate-text", /Sign in|isn't set up/);
       await shot(page, "admin-signed-out-real-" + s.name);
     });
 
@@ -388,18 +411,10 @@ try {
   for (const s of sizes)
     await withPage(s, async (page) => {
       await page.goto(base + "/changelog/");
-      assert.equal(await text(page, "h1:visible"), "What's new in PixFray");
-      assert.equal(
-        await page.locator(".btn-primary:visible").count(),
-        0,
-        "the header's Pick your fighter stays the only gold",
-      );
+      await textIs(page, "h1:visible", "What's new in PixFray");
+      await countIs(page, ".btn-primary:visible", 0, "the header's Pick your fighter stays the only gold");
       assert.ok((await page.locator("section.release").count()) > 0);
-      assert.equal(
-        await page.locator(".changelog .page-index").isVisible(),
-        s.width > 900,
-        "index only beside the notes",
-      );
+      await visibleIs(page, ".changelog .page-index", s.width > 900, "index only beside the notes");
       await shot(page, "changelog-" + s.name);
     });
 
@@ -408,61 +423,50 @@ try {
     await withPage(s, async (page, context) => {
       await page.goto(base + "/play/");
       await page.waitForSelector("#channel-list a");
-      assert.equal(await text(page, "h1:visible"), "Which stream are you watching?");
-      assert.equal(
-        await page.locator(".topbar .nav-cta").getAttribute("href"),
-        "/play/",
-        "the picker is the current page, not a channel",
-      );
-      const links = await page.locator("#channel-list a").evaluateAll((a) => a.map((x) => x.getAttribute("href")));
+      await textIs(page, "h1:visible", "Which stream are you watching?");
+      await attrIs(page, ".topbar .nav-cta", "href", "/play/", "the picker is the current page, not a channel");
+      const links = await hrefs(page, "#channel-list a");
       assert.deepEqual(links.slice(0, 2), ["/?channel=nesszerra", "/?channel=miolafff"], "built-in channels first");
       await hidden(page, "#fighter", "no fighter form until a channel is picked");
-      assert.equal(await page.locator("#save-signin").isVisible(), false);
+      await visibleIs(page, "#save-signin", false);
       await shot(page, "viewer-picker-" + s.name);
       // the search only finds channels with PixFray on; any other name gets this site's /start/ link to send its streamer
       await page.fill("#channel-q", "some_streamer");
-      assert.equal(await page.locator("#channel-list li:visible").count(), 0, "rows filter as you type");
+      await countIs(page, "#channel-list li:visible", 0, "rows filter as you type");
       const host = new URL(base).host;
       assert.ok(
         (await text(page, "#channel-status")).startsWith(
           `some_streamer isn't on ${host} yet. Send them this link to set it up: ${host}/start`,
         ),
       );
-      assert.equal(await page.locator("#channel-status a").getAttribute("href"), "/start/");
-      assert.match(
-        await text(page, "#channel-status .invite-note"),
-        /run their own copy of PixFray have it on their own site/,
-      );
-      assert.equal(await page.locator('a[href*="some_streamer"]').count(), 0, "no link to a channel without PixFray");
+      await attrIs(page, "#channel-status a", "href", "/start/");
+      await textHas(page, "#channel-status .invite-note", /run their own copy of PixFray have it on their own site/);
+      await countIs(page, 'a[href*="some_streamer"]', 0, "no link to a channel without PixFray");
       await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
       await page.click('#channel-status button:has-text("Copy invite link")');
       await waitText(page, "#channel-status button", /^Copied$/);
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), base + "/start/");
       await page.fill("#channel-q", "some streamer!");
-      assert.equal(await text(page, "#channel-status"), "No channel with PixFray matches that name.");
+      await textIs(page, "#channel-status", "No channel with PixFray matches that name.");
       await page.fill("#channel-q", "some_streamer");
       await shot(page, "viewer-picker-search-" + s.name);
       await page.fill("#channel-q", "https://www.twitch.tv/miolafff");
-      assert.equal(await page.locator("#channel-list li:visible").count(), 1, "a pasted Twitch link finds the channel");
+      await countIs(page, "#channel-list li:visible", 1, "a pasted Twitch link finds the channel");
       await page.fill("#channel-q", "");
       assert.ok((await page.locator("#channel-list li:visible").count()) >= 2);
       await page.locator("#channel-list a", { hasText: "miolafff" }).click();
       await page.waitForSelector("#characters input[name=character]");
-      assert.match(await text(page, "#hero-title"), /miolafff/);
-      assert.equal(
-        await page.locator(".topbar .nav-cta").getAttribute("href"),
-        "/?channel=miolafff",
-        '"Pick your fighter" keeps the channel',
-      );
-      assert.equal(await page.locator(".brand").getAttribute("href"), "/", "the brand goes home (the intro)");
+      await textHas(page, "#hero-title", /miolafff/);
+      await attrIs(page, ".topbar .nav-cta", "href", "/?channel=miolafff", '"Pick your fighter" keeps the channel');
+      await attrIs(page, ".brand", "href", "/", "the brand goes home (the intro)");
       // the home page is the intro, and it offers the way back to the channel picked last
       await page.goto(base + "/");
       assert.equal(await page.locator("h1").first().textContent(), "Your Twitch chat, in the ring.");
       await page.waitForFunction(
         () => document.querySelector("#hero-actions .btn")?.textContent === "Back to miolafff",
       );
-      assert.equal(await page.locator("#hero-actions .btn").getAttribute("href"), "/?channel=miolafff");
-      assert.equal(await text(page, '#hero-actions a[href="/play/"]'), "Pick another channel");
+      await attrIs(page, "#hero-actions .btn", "href", "/?channel=miolafff");
+      await textIs(page, '#hero-actions a[href="/play/"]', "Pick another channel");
     });
   // 1c. With many channels signed up, eight rows show and the rest are a search away.
   await withPage(sizes[0], async (page) => {
@@ -478,14 +482,11 @@ try {
     });
     await page.goto(base + "/play/");
     await page.waitForSelector("#channel-list a");
-    assert.equal(await page.locator("#channel-list li:visible").count(), 8);
-    assert.match(await text(page, "#channel-status"), /find the other 4 channels/);
+    await countIs(page, "#channel-list li:visible", 8);
+    await textHas(page, "#channel-status", /find the other 4 channels/);
     await page.fill("#channel-q", "streamer_9");
-    assert.deepEqual(
-      await page.locator("#channel-list li:visible a").evaluateAll((a) => a.map((x) => x.getAttribute("href"))),
-      ["/?channel=streamer_9"],
-    );
-    assert.equal(await text(page, "#channel-status"), "");
+    assert.deepEqual(await hrefs(page, "#channel-list li:visible a"), ["/?channel=streamer_9"]);
+    await textIs(page, "#channel-status", "");
     await page.press("#channel-q", "Enter");
     await page.waitForURL(/channel=streamer_9/);
   });
@@ -496,12 +497,13 @@ try {
       await page.goto(base + "/play/");
       await page.waitForSelector("#channel-list a");
       await page.fill("#channel-q", "some_streamer");
-      assert.match(
-        await text(page, "#channel-status"),
+      await textHas(
+        page,
+        "#channel-status",
         /isn't on .* yet\. This site is full right now; they can run their own copy\./,
       );
-      assert.equal(await page.locator("#channel-status a").getAttribute("href"), "/start/#source");
-      assert.equal(await page.locator("#channel-status button").count(), 0, "no invite link to a full site");
+      await attrIs(page, "#channel-status a", "href", "/start/#source");
+      await countIs(page, "#channel-status button", 0, "no invite link to a full site");
       await shot(page, "viewer-picker-full-" + s.name, ".landing-inner");
     });
 
@@ -510,11 +512,7 @@ try {
     await stubSession(page, null);
     await page.goto(base + "/?channel=nesszerra");
     await page.waitForSelector("#save-signin:visible");
-    assert.equal(
-      await page.locator('#who a[href^="/auth/login"]').count(),
-      0,
-      "no second sign-in button in the top bar",
-    );
+    await countIs(page, '#who a[href^="/auth/login"]', 0, "no second sign-in button in the top bar");
     await page.screenshot({ path: shots + "/viewer-signed-out-configured-1280.png", fullPage: false });
   });
 
@@ -539,20 +537,16 @@ try {
     });
     await page.goto(base + "/?channel=nesszerra");
     await page.waitForSelector("#save-signin:visible");
-    assert.equal(
-      await text(page, "#save-signin"),
-      "Sign in with Twitch to save",
-      "a first visit gets the plain sign-in",
-    );
-    assert.equal(await text(page, "#save-status"), "");
+    await textIs(page, "#save-signin", "Sign in with Twitch to save", "a first visit gets the plain sign-in");
+    await textIs(page, "#save-status", "");
     await page.evaluate(() => localStorage.setItem("pixfray:signed-in", "1"));
     await page.reload();
     await waitText(page, "#save-status", /signed out/);
-    assert.equal(await text(page, "#save-signin"), "Sign in to load your fighter");
+    await textIs(page, "#save-signin", "Sign in to load your fighter");
     await page.locator("#char-soldier").check({ force: true });
     await page.locator("#save-signin").click();
     await waitText(page, "#save-status", /from before you signed in are back/);
-    assert.equal(await page.locator("#char-soldier").isChecked(), true, "the pick made while signed out came back");
+    await checkedIs(page, "#char-soldier", true, "the pick made while signed out came back");
     await hidden(page, "#others", "a restored draft is not replaced by an offer");
     await page.screenshot({ path: shots + "/viewer-draft-restored-390.png", fullPage: false });
     // A plain visit with no fighter here: one offer per usable fighter elsewhere.
@@ -564,8 +558,8 @@ try {
       "unknown characters are not offered",
     );
     await page.locator("#others button").click();
-    assert.equal(await page.locator("#char-player").isChecked(), true);
-    assert.match(await text(page, "#save-status"), /Copied your miolafff fighter/);
+    await checkedIs(page, "#char-player", true);
+    await textHas(page, "#save-status", /Copied your miolafff fighter/);
     await shot(page, "viewer-others-offer-390", false);
   });
 
@@ -614,37 +608,30 @@ try {
       );
       await page.goto(base + "/?channel=nesszerra");
       await page.waitForSelector("#save:not([hidden])");
-      assert.equal(await page.locator("#char-zombie").isChecked(), true);
-      assert.equal(await page.locator("#color").inputValue(), "#f472b6");
-      assert.equal(
-        await page.locator("#swatches > :last-child").getAttribute("class"),
-        "custom-color",
-        "Custom comes after the preset colors",
-      );
-      assert.equal(await page.locator("input[name=ability]").count(), 0, "no ability picker with quick duels");
+      await checkedIs(page, "#char-zombie", true);
+      await valueIs(page, "#color", "#f472b6");
+      await attrIs(page, "#swatches > :last-child", "class", "custom-color", "Custom comes after the preset colors");
+      await countIs(page, "input[name=ability]", 0, "no ability picker with quick duels");
       await hidden(page, "#admin-link");
-      assert.match(await text(page, "#stat-elo"), /1012/);
+      await textHas(page, "#stat-elo", /1012/);
       assert.equal((await text(page, "#stat-streak")).trim(), "3");
-      assert.equal(await text(page, "#stat-dollars"), "$12");
-      assert.match(await text(page, "#cmd-give"), /up to \$100 per stream, after your first 5 duels/);
+      await textIs(page, "#stat-dollars", "$12");
+      await textHas(page, "#cmd-give", /up to \$100 per stream, after your first 5 duels/);
       await page.waitForSelector("#leaderboard tr.me", { state: "attached" });
       await page.locator("label[for=char-adventurer]").click();
       await page.locator('.swatch[data-color="#34d399"]').click();
       // Builds: one free slot; the next costs $60.
-      assert.match(await text(page, "#build-list"), /Build 1\s*On stream/);
+      await textHas(page, "#build-list", /Build 1\s*On stream/);
       assert.equal(
         await page.getByRole("button", { name: "Buy build slot 2 for $60" }).isDisabled(),
         true,
         "$12 is not enough for a slot",
       );
       // Hats and upgrades: 2 wins + 1 check-in point = 3 points; the crown needs 20 wins.
-      assert.match(await text(page, "#points-note"), /3 of 3 points/);
+      await textHas(page, "#points-note", /3 of 3 points/);
       await page.locator("#tab-shop").click();
-      assert.match(await text(page, "#shop-note"), /^You have \$12\./);
-      assert.equal(
-        await page.locator("#hats .char-option:has(#hat-crown)").getAttribute("class"),
-        "char-option locked",
-      );
+      await textHas(page, "#shop-note", /^You have \$12\./);
+      await attrIs(page, "#hats .char-option:has(#hat-crown)", "class", "char-option locked");
       await page.locator("label[for=hat-cap]").click();
       assert.ok((await text(page, "#upgrades-help")).includes("2 from wins and 1 from check-ins"));
       // Shop: hats past the wins can be bought; a pet buy needs a second click to confirm, then the pet is picked.
@@ -658,18 +645,18 @@ try {
       await hidden(page, "#hat-picker");
       assert.equal(await page.getByRole("button", { name: "Buy Cape for $25" }).isDisabled(), true);
       await page.locator('.jump a[href="#shop-title"]').click();
-      assert.equal(await text(page, ".jump a[aria-current]"), "Titles");
+      await textIs(page, ".jump a[aria-current]", "Titles");
       assert.equal(await page.getByRole("button", { name: "Buy Iron Wall title for $15" }).isDisabled(), true);
       await page.locator("label[for=title-wall]").click();
-      assert.match(await text(page, "#save-status"), /Trying on Iron Wall\. Buy it to save this look\./);
+      await textHas(page, "#save-status", /Trying on Iron Wall\. Buy it to save this look\./);
       await page.locator("#save").click();
-      assert.match(await text(page, "#save-status"), /Not saved: buy Iron Wall first/);
+      await textHas(page, "#save-status", /Not saved: buy Iron Wall first/);
       assert.equal(posted, null);
       await page.locator("label[for=title-none]").click();
       await page.evaluate(() => scrollTo(0, 0));
       await page.screenshot({ path: shots + "/viewer-shop-" + s.name + ".png", fullPage: true });
       await page.locator("#tab-pets").click();
-      assert.equal(await page.locator("#pet-none").isChecked(), true);
+      await checkedIs(page, "#pet-none", true);
       assert.equal(await page.getByRole("button", { name: "Buy Dragon for $300" }).isDisabled(), true);
       const buyMouse = page.getByRole("button", { name: "Buy Mouse for $10" });
       await buyMouse.click();
@@ -678,16 +665,16 @@ try {
       await buyMouse.click();
       await waitText(page, "#pet-status", /price changed/);
       assert.deepEqual(bought, { kind: "pet", id: "mouse", price: 10 });
-      assert.equal(await text(page, "#pet-status"), "Not bought: the price changed to $11. Check it and buy again.");
+      await textIs(page, "#pet-status", "Not bought: the price changed to $11. Check it and buy again.");
       const buyMouse2 = page.getByRole("button", { name: "Buy Mouse for $11" });
       await buyMouse2.click();
       await buyMouse2.click();
       await waitText(page, "#pet-status", /^Bought/);
       assert.deepEqual(bought, { kind: "pet", id: "mouse", price: 11 });
-      assert.equal(await page.locator("#pet-mouse").isChecked(), true);
-      assert.equal(await text(page, "#stat-dollars"), "$1");
-      assert.match(await text(page, "#pet-note"), /you own 1, you have \$1/);
-      assert.equal(await page.locator("#items-petcolor input").count(), 9, "eight pet colors and none");
+      await checkedIs(page, "#pet-mouse", true);
+      await textIs(page, "#stat-dollars", "$1");
+      await textHas(page, "#pet-note", /you own 1, you have \$1/);
+      await countIs(page, "#items-petcolor input", 9, "eight pet colors and none");
       await page.evaluate(() => scrollTo(0, 0));
       await page.screenshot({ path: shots + "/viewer-pets-" + s.name + ".png", fullPage: true });
       await page.locator("#tab-fighter").click();
@@ -709,7 +696,7 @@ try {
         ],
         "all twelve presets",
       );
-      assert.match(await text(page, "#upgrade-list"), /Next level costs 1 point/);
+      await textHas(page, "#upgrade-list", /Next level costs 1 point/);
       await page.getByRole("button", { name: "Put a level into Power for 1 point" }).click();
       await page.getByRole("button", { name: "Put a level into Power for 1 point" }).click();
       await page.getByRole("button", { name: "Put a level into Luck for 1 point" }).click();
@@ -718,7 +705,7 @@ try {
         true,
         "no points left",
       );
-      assert.match(await text(page, "#save-status"), /unsaved/i);
+      await textHas(page, "#save-status", /unsaved/i);
       if (s.name === "1280")
         await page.screenshot({ path: shots + "/viewer-signed-in-editing-1280.png", fullPage: true });
       await page.locator("#save").click();
@@ -739,12 +726,8 @@ try {
         title: "",
         build: 0,
       }); // the saved ability is kept as is
-      assert.match(await text(page, "#upgrade-list"), /2 \/ 16 \+1/, "the mouse adds +1 power past the points");
-      assert.match(
-        await text(page, "#upgrade-list"),
-        /\+12% damage dealt \(1 from your pet\)/,
-        "plain numbers, pet included",
-      );
+      await textHas(page, "#upgrade-list", /2 \/ 16 \+1/, "the mouse adds +1 power past the points");
+      await textHas(page, "#upgrade-list", /\+12% damage dealt \(1 from your pet\)/, "plain numbers, pet included");
       await noOverflow(page, "viewer signed-in " + s.name);
       if (s.name !== "1280") {
         // phones: explanation tables wrap instead of scrolling sideways, and the fighter bar stays at the bottom while picking
@@ -752,13 +735,8 @@ try {
         for (const w of await page.locator(".table-wrap:has(.prose-table)").all())
           assert.ok(await w.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "duel table fits at " + s.name);
         await page.locator("#tab-ranks").click();
-        const lb = page.locator("#leaderboard");
-        assert.equal(await lb.locator("th.col-char").isVisible(), false, "no Character column on phones");
-        assert.ok(
-          // the table sits in its wrap
-          await lb.evaluate((t) => t.parentElement!.scrollWidth <= t.parentElement!.clientWidth + 1),
-          "leaderboard fits without sideways scrolling at " + s.name,
-        );
+        await visibleIs(page, "#leaderboard th.col-char", false, "no Character column on phones");
+        assert.ok(await fitsWrap(page, "#leaderboard"), "leaderboard fits without sideways scrolling at " + s.name);
         await page.locator("#tab-fighter").click();
         await page.locator("#upgrade-list").evaluate((n) => n.scrollIntoView({ block: "start" }));
         const bar = await box(page, ".hero-card"),
@@ -791,8 +769,9 @@ try {
     await buyMouse.click();
     await buyMouse.click();
     await waitText(page, "#pet-status", /may have gone through/);
-    assert.equal(
-      await text(page, "#pet-status"),
+    await textIs(
+      page,
+      "#pet-status",
       "Your purchase may have gone through, but this page couldn't read the answer. Reload the page to check.",
     );
     assert.equal(await buyMouse.isDisabled(), true, "no second buy while the first may have gone through");
@@ -814,17 +793,18 @@ try {
       );
       await page.goto(base + "/?channel=nesszerra&signed_in=1");
       await waitText(page, "#save-status", /^Signed in/);
-      assert.equal(await text(page, "#save-status"), "Signed in as Viewer_One. Pick a fighter and save.");
+      await textIs(page, "#save-status", "Signed in as Viewer_One. Pick a fighter and save.");
       assert.equal(new URL(page.url()).search, "?channel=nesszerra", "the signed_in flag is gone from the address");
       await hidden(page, "#next-step");
       await page.locator("label[for=char-adventurer]").click();
       await page.locator("#save").click();
       await page.waitForSelector("#next-step:not([hidden])");
-      assert.equal(
-        await text(page, "#next-step"),
+      await textIs(
+        page,
+        "#next-step",
         "Saved. Next: in nesszerra's chat, type !challenge @friend. They answer !fight.",
       );
-      assert.equal(await text(page, "#save-status"), "", "the next step replaces the plain saved line");
+      await textIs(page, "#save-status", "", "the next step replaces the plain saved line");
       if (s.name !== "1280") {
         const bar = await box(page, ".hero-card"),
           vh = page.viewportSize()!.height; // newPage sets a viewport
@@ -894,17 +874,17 @@ try {
       });
       await page.goto(base + "/?channel=nesszerra");
       await page.waitForSelector("#sprite-maker:not([hidden])");
-      assert.equal(await page.locator("#char-v-mine-aaaaaa").count(), 1, "the viewer's own sprite is in their list");
-      assert.equal(await page.locator("#char-v-other-bbbbbb").count(), 0, "another viewer's sprite is not");
-      assert.match(await text(page, "label[for=char-v-mine-aaaaaa]"), /Your sprite/);
-      assert.match(await text(page, "#sprite-current"), /Mine is approved/);
-      assert.equal(await page.locator("#sprite-send").isDisabled(), true);
+      await countIs(page, "#char-v-mine-aaaaaa", 1, "the viewer's own sprite is in their list");
+      await countIs(page, "#char-v-other-bbbbbb", 0, "another viewer's sprite is not");
+      await textHas(page, "label[for=char-v-mine-aaaaaa]", /Your sprite/);
+      await textHas(page, "#sprite-current", /Mine is approved/);
+      await disabledIs(page, "#sprite-send", true);
       await page
         .locator("#sprite-file")
         .setInputFiles({ name: "my_cat.png", mimeType: "image/png", buffer: ball(300, 200) });
       await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#sprite-send")!.disabled); // the page has this element
-      assert.equal(await page.locator("#sprite-name").inputValue(), "my cat");
-      assert.match(await text(page, "#sprite-size"), /^\d+ x 116 px$/);
+      await valueIs(page, "#sprite-name", "my cat");
+      await textHas(page, "#sprite-size", /^\d+ x 116 px$/);
       const painted = () =>
         page.locator("#sprite-canvas").evaluate((c: HTMLCanvasElement) => {
           const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data; // a 2d canvas, so the context exists
@@ -915,18 +895,18 @@ try {
       assert.ok((await painted()) > 1000, "the preview shows the sprite");
       await page.locator("#sprite-ai").click();
       await waitText(page, "#sprite-status", /^Redrawn/);
-      assert.equal(await page.locator("#sprite-plain").isVisible(), true);
-      assert.equal(await text(page, "#sprite-ai"), "Redraw again");
-      assert.match(await text(page, "#sprite-note"), /2 AI redraws/);
+      await visibleIs(page, "#sprite-plain", true);
+      await textIs(page, "#sprite-ai", "Redraw again");
+      await textHas(page, "#sprite-note", /2 AI redraws/);
       await noOverflow(page, "viewer sprite maker " + s.name);
       await page.locator("#sprite-maker").scrollIntoViewIfNeeded();
       await page.locator("#sprite-maker").screenshot({ path: shots + "/viewer-sprite-maker-" + s.name + ".png" });
       await page.locator("#sprite-send").click();
       await waitText(page, "#sprite-current", /waiting for a mod/);
-      assert.match(await text(page, "#sprite-status"), /^Sent/);
+      await textHas(page, "#sprite-status", /^Sent/);
       assert.deepEqual([sent.label, sent.ai, sent.image.startsWith("iVBORw0KGgo")], ["my cat", true, true]);
-      assert.match(await text(page, "#sprite-current"), /my cat is waiting for a mod/);
-      assert.equal(await page.locator("#sprite-send").isDisabled(), true, "the form clears after sending");
+      await textHas(page, "#sprite-current", /my cat is waiting for a mod/);
+      await disabledIs(page, "#sprite-send", true, "the form clears after sending");
     });
 
   // 4. Signed in but not a moderator -> admin gate.
@@ -944,7 +924,7 @@ try {
     await page.goto(base + "/admin/");
     await waitText(page, "#gate-text", /PixFray isn't on for viewer_one yet/);
     assert.equal(await page.locator("h1").first().textContent(), "PixFray mod controls");
-    assert.equal(await page.locator('#gate-actions a[href="/start/"]').count(), 1);
+    await countIs(page, '#gate-actions a[href="/start/"]', 1);
     await shot(page, "admin-bare-gate-390");
   });
 
@@ -956,7 +936,7 @@ try {
     await page.goto(base + "/admin/?channel=nesszerra");
     await waitText(page, "#gate-text", /Couldn't load the arena/);
     await hidden(page, "#app");
-    assert.equal(await text(page, "#gate-actions button"), "Try again");
+    await textIs(page, "#gate-actions button", "Try again");
   });
 
   // 5. Moderator admin (fully stubbed). Covers toggle, cancel, resets, config save, 409 conflict and revert.
@@ -969,15 +949,7 @@ try {
           conflictNext = false,
           reconnectNext = true,
           quickOff = false; // quickOff: the HP-fight abilities only matter when config.quickDuel is false
-        let chatStatus = {
-          connected: true,
-          status: "enabled",
-          subscriptionId: "sub-1",
-          createdAt: now - 86400000,
-          lastNotificationAt: now - 4000,
-          lastRevocationReason: "",
-          checkedAt: now - 600000,
-        };
+        let chatStatus = chatOn({ subscriptionId: "sub-1", lastNotificationAt: now - 4000, checkedAt: now - 600000 });
         const history = () => [
           {
             version: 3,
@@ -1151,48 +1123,45 @@ try {
         await page.waitForSelector("#app:not([hidden])");
         await waitText(page, "#summary-title", /^Duels are live$/);
         await hidden(page, "#open-chat-setup", "no chat-setup shortcut while chat is live");
-        assert.equal(await page.locator("#duels tbody tr").count(), 2);
-        assert.equal(await page.locator("#players tbody tr").count(), 4);
-        assert.equal(await page.locator("#ranks tbody tr").count(), 3);
-        assert.equal(await page.locator("#history tbody tr").count(), 3);
+        await countIs(page, "#duels tbody tr", 2);
+        await countIs(page, "#players tbody tr", 4);
+        await countIs(page, "#ranks tbody tr", 3);
+        await countIs(page, "#history tbody tr", 3);
         assert.match(
           (await page.locator("#history tbody tr").nth(1).textContent())!,
           /Heavy strike damage 35 HP → 30 HP/,
         );
-        assert.match(await text(page, "#usage-title"), /1 of 24/);
-        assert.equal(await page.locator("#dev-open").isVisible(), role === "owner"); // on the Live tab, shown first
-        assert.equal(await text(page, "#dev-link"), "Owner");
+        await textHas(page, "#usage-title", /1 of 24/);
+        await visibleIs(page, "#dev-open", role === "owner"); // on the Live tab, shown first
+        await textIs(page, "#dev-link", "Owner");
         const liveText = await text(page, "#panel-live"),
           headline = await page.locator("#stats, #summary-text, #meta").allTextContents();
         for (const jargon of ["state revision", "Rules version", "Live-fix"])
           assert.ok(!liveText.includes(jargon), 'no "' + jargon + '" on the Live tab');
         assert.ok(!/round/i.test(headline.join(" ")), "no global round number in the summary");
-        assert.match(await text(page, "#stats"), /Twitch chat\s*Connected/);
-        assert.match(await text(page, "#stats"), /Duels\s*On\s*accepting commands/);
+        await textHas(page, "#stats", /Twitch chat\s*Connected/);
+        await textHas(page, "#stats", /Duels\s*On\s*accepting commands/);
         // the summary holds at most the one primary action; the stats and then the moderation buttons follow, all inside the 1280x800 fold
-        assert.equal(
-          await page.locator(".summary #toggle-duels, .summary #reset-health, .summary #reset-round").count(),
+        await countIs(
+          page,
+          ".summary #toggle-duels, .summary #reset-health, .summary #reset-round",
           0,
           "moderation buttons are not in the summary",
         );
-        assert.equal(
-          await page.locator(".summary .btn-primary:visible").count(),
-          0,
-          "no primary action while chat works",
-        );
+        await countIs(page, ".summary .btn-primary:visible", 0, "no primary action while chat works");
         assert.deepEqual(await page.locator("#panel-live .moderation button").evaluateAll((b) => b.map((x) => x.id)), [
           "toggle-duels",
           "reset-health",
           "reset-round",
         ]);
-        assert.equal(await text(page, "#moderation-title"), "Moderation");
+        await textIs(page, "#moderation-title", "Moderation");
         assert.ok(
           await page.locator(".moderation").evaluate(
             (n) => n.getBoundingClientRect().top > document.querySelector("#stats")!.getBoundingClientRect().bottom, // the page has this element
           ),
           "Moderation comes after the stats",
         );
-        assert.match(await text(page, "#meta"), /^Signed in as (the broadcaster|a moderator)\.$/);
+        await textHas(page, "#meta", /^Signed in as (the broadcaster|a moderator)\.$/);
         await hidden(page, "#panel-chat", "only the Live tab shows at first");
         await page.click("#tab-chat");
         assert.equal(new URL(page.url()).hash, "#chat");
@@ -1203,9 +1172,9 @@ try {
         );
         assert.match((await page.locator("#demo").getAttribute("href"))!, /arena=1&demo=1$/); // the page sets this attribute
         await hidden(page, "#se-health", "no StreamElements note before any command");
-        assert.equal(await page.locator("#owner-chat").isVisible(), role === "owner");
-        assert.match(await text(page, "#chat-text"), /Last chat message/);
-        assert.equal(await text(page, "#connect-chat"), "Reconnect chat");
+        await visibleIs(page, "#owner-chat", role === "owner");
+        await textHas(page, "#chat-text", /Last chat message/);
+        await textIs(page, "#connect-chat", "Reconnect chat");
         if (s.name === "1280") {
           // first try: Twitch says the broadcaster authorization is missing, so the page points at the reconnect link
           await page.click("#connect-chat");
@@ -1225,20 +1194,12 @@ try {
           // chat offline: the Live tab points at the fix instead of offering to pause
           await page.click("#tab-live");
           await waitText(page, "#summary-title", /^Waiting for chat$/);
-          assert.equal(await page.locator("#open-chat-setup").isVisible(), true);
-          assert.equal(await page.locator("#toggle-duels.btn-primary").count(), 0, "one primary action");
-          assert.equal(
-            await page.locator(".summary .btn-primary:visible").count(),
-            1,
-            "the summary holds just the primary action",
-          );
-          assert.match(
-            await text(page, "#stats"),
-            /Duels\s*Waiting\s*for chat/,
-            'Duels are not "On" while chat is down',
-          );
+          await visibleIs(page, "#open-chat-setup", true);
+          await countIs(page, "#toggle-duels.btn-primary", 0, "one primary action");
+          await countIs(page, ".summary .btn-primary:visible", 1, "the summary holds just the primary action");
+          await textHas(page, "#stats", /Duels\s*Waiting\s*for chat/, 'Duels are not "On" while chat is down');
           await page.click("#open-chat-setup");
-          assert.equal(await page.locator("#tab-chat").getAttribute("aria-selected"), "true");
+          await attrIs(page, "#tab-chat", "aria-selected", "true");
         }
         assert.ok(
           await page.evaluate(() =>
@@ -1252,12 +1213,12 @@ try {
           await page.waitForFunction(
             () => !document.querySelector("#upload-root")!.textContent.includes("isn't available"), // the page has this element
           );
-          assert.equal(await page.locator("#upload-root .status.error").count(), 0, await text(page, "#upload-root"));
+          await countIs(page, "#upload-root .status.error", 0, await text(page, "#upload-root"));
         }
         for (const tab of ["live", "players", "rules", "characters", "chat"]) {
           await page.click("#tab-" + tab);
-          assert.equal(await page.locator("#panel-" + tab).isVisible(), true, tab + " panel shows");
-          assert.equal(await page.locator("[role=tabpanel]:visible").count(), 1, "one panel at a time");
+          await visibleIs(page, "#panel-" + tab, true, tab + " panel shows");
+          await countIs(page, "[role=tabpanel]:visible", 1, "one panel at a time");
           if (tab === "characters") {
             const panel = await page.locator("#panel-characters").innerText(),
               count = (re: RegExp) => (panel.match(re) || []).length;
@@ -1265,24 +1226,17 @@ try {
             assert.ok(count(/PNG only/g) <= 1 && count(/characters per channel/g) <= 1, "upload limits appear once");
             assert.ok(count(/1.5 MB|1.50 MB/g) <= 1, "the atlas size limit appears once");
             assert.match(panel, /Viewer sprites waiting for review \(1\)/);
-            assert.equal(await page.locator("#sprite-pending tbody tr").count(), 1);
-            assert.match(await text(page, "#tab-characters"), /Characters \(1\)/);
+            await countIs(page, "#sprite-pending tbody tr", 1);
+            await textHas(page, "#tab-characters", /Characters \(1\)/);
           }
           if (tab === "rules") {
-            assert.equal(
-              await page.locator("#config-fields .config-group:visible").count(),
-              5,
-              "only the groups that apply show",
-            );
-            assert.equal(await page.locator("#cfg-petPriceLegendary").inputValue(), "900");
-            assert.equal(await page.locator("#cfg-streakBonus").isChecked(), true);
-            assert.equal(
-              await page.locator("#cfg-abilities-strike-damage").count(),
-              1,
-              "the HP fight inputs stay in the form",
-            );
-            assert.equal(
-              await page.locator("#cfg-abilities-strike-damage").isVisible(),
+            await countIs(page, "#config-fields .config-group:visible", 5, "only the groups that apply show");
+            await valueIs(page, "#cfg-petPriceLegendary", "900");
+            await checkedIs(page, "#cfg-streakBonus", true);
+            await countIs(page, "#cfg-abilities-strike-damage", 1, "the HP fight inputs stay in the form");
+            await visibleIs(
+              page,
+              "#cfg-abilities-strike-damage",
               false,
               "HP fight abilities are hidden unless quick duels are off",
             );
@@ -1293,7 +1247,7 @@ try {
         // arrow keys move between tabs
         await page.focus("#tab-chat");
         await page.keyboard.press("ArrowRight");
-        assert.equal(await page.locator("#tab-live").getAttribute("aria-selected"), "true");
+        await attrIs(page, "#tab-live", "aria-selected", "true");
         assert.equal(await page.evaluate(() => document.activeElement!.id), "tab-live"); // a page always has a focused element
         if (s.name === "390") {
           // phones: with unsaved rule changes the Save bar stays at the bottom of the screen
@@ -1337,15 +1291,15 @@ try {
         // mod gift: a Twitch name (with or without @) and a whole amount
         await page.locator("#gift-user").fill("@Cara");
         await page.locator("#gift-send").click();
-        assert.match(await text(page, "#gift-status"), /whole number/);
+        await textHas(page, "#gift-status", /whole number/);
         await page.locator("#gift-amount").fill("25");
         await page.locator("#gift-send").click();
         await waitText(page, "#gift-status", /^Gave/);
         assert.deepEqual(posts.at(-1), { action: "giftDollars", payload: { username: "Cara", amount: 25 } });
-        assert.equal(await text(page, "#gift-status"), "Gave $25 to Cara. They have $75 now.");
+        await textIs(page, "#gift-status", "Gave $25 to Cara. They have $75 now.");
         // config: invalid value blocks save, valid value saves only the changed field
         await page.click("#tab-rules");
-        assert.equal(await page.locator("#history").isVisible(), false, "version history starts collapsed");
+        await visibleIs(page, "#history", false, "version history starts collapsed");
         // hidden HP-fight inputs still round trip: saving another field sends only that field
         await page.locator("#cfg-maxHp").fill("120");
         await page.locator("#config-save").click();
@@ -1360,15 +1314,15 @@ try {
         await page.reload();
         await page.waitForSelector("#app:not([hidden])");
         await page.click("#tab-rules");
-        assert.equal(await page.locator("#config-fields .config-group:visible").count(), 6);
+        await countIs(page, "#config-fields .config-group:visible", 6);
         assert.match(
           (await page.locator("#config-fields .config-group:visible").last().locator("legend").textContent())!,
           /HP fight abilities/,
         );
         const strike = page.locator("#cfg-abilities-strike-damage");
         await strike.fill("5000");
-        assert.equal(await page.locator("#config-save").isDisabled(), true);
-        assert.match(await text(page, "#config-status"), /between 1 HP and 1000 HP/);
+        await disabledIs(page, "#config-save", true);
+        await textHas(page, "#config-status", /between 1 HP and 1000 HP/);
         await strike.fill("12");
         await page.locator("#cfg-abilities-strike-cooldownMs").fill("2.5");
         await page.locator("#config-note").fill("faster strikes");
@@ -1388,7 +1342,7 @@ try {
         await page.locator("#cfg-maxHp").fill("150");
         await page.locator("#config-save").click();
         await waitText(page, "#config-status", /someone else saved/);
-        assert.match(await text(page, "#config-status"), /Max health 100 HP → 150 HP/);
+        await textHas(page, "#config-status", /Max health 100 HP → 150 HP/);
         await page.locator("#config-form").screenshot({ path: shots + "/admin-config-conflict-1280.png" });
         await page.click("#history-title");
         await page
@@ -1402,7 +1356,7 @@ try {
           await page.click("#tab-chat");
           // Duel announcements save to the channel config (live overlays follow it); the link stays the same.
           await page.click("#obs-setup details > summary"); // overlay options start folded
-          assert.equal(await page.locator("#announce").inputValue(), "off");
+          await valueIs(page, "#announce", "off");
           await page.selectOption("#announce", "top");
           await page.waitForFunction(
             () =>
@@ -1419,7 +1373,7 @@ try {
           // The on-stream limit is a channel setting too; out-of-range values are refused before posting.
           await page.fill("#cap", "9");
           await page.locator("#cap").dispatchEvent("change");
-          assert.match(await text(page, "#cap-status"), /15 to 100/);
+          await textHas(page, "#cap-status", /15 to 100/);
           await page.fill("#cap", "30");
           await page.locator("#cap").dispatchEvent("change");
           await page.waitForFunction(
@@ -1459,28 +1413,23 @@ try {
     },
   ])
     await withPage(sizes[0], async (page) => {
-      const chatStatus = {
-        connected: true,
+      const chatStatus = chatOn({
         source: "streamelements",
-        status: "enabled",
         subscriptionId: "se-streamelements",
-        createdAt: now - 86400000,
         lastNotificationAt: se.lastCommandAt,
-        lastRevocationReason: "",
-        checkedAt: 0,
-      };
+      });
       const names = { challenge: "!challenge", accept: "!fight", decline: "!no" },
         fields = { names, lastCommandAt: se.lastCommandAt, rejectedAt: se.rejectedAt };
       const streamelements = seSetup(fields, ["challenge", "accept", "decline"]);
       await stubAdmin(page, { lb: board, snapshot: () => ({ revision: 5, chatStatus, streamelements }) });
       await page.goto(base + "/admin/#chat");
       await page.waitForSelector("#se-health:not([hidden])");
-      assert.match(await text(page, "#se-health"), se.expect);
+      await textHas(page, "#se-health", se.expect);
       assert.equal(await page.locator("#se-health").evaluate((n) => n.classList.contains("warning")), se.warn);
       await hidden(page, "#checkin-test"); // check-in test mode is for the site channel only
       // the Live tab tells the same story as Stream setup
-      assert.equal(await text(page, "#summary-title"), se.live);
-      assert.match(await text(page, "#stats"), new RegExp("StreamElements\\s*" + se.stat));
+      await textIs(page, "#summary-title", se.live);
+      await textHas(page, "#stats", new RegExp("StreamElements\\s*" + se.stat));
       // the reply column never shows the key; Copy reply still copies the whole line
       const previews = await page.locator("#se-table code.reply-preview").allTextContents();
       assert.equal(previews.length, 3);
@@ -1500,16 +1449,7 @@ try {
       let overlays = 0,
         duelModuleOff = false,
         seen: Record<string, number> = { challenge: Date.now() - 125000, decline: Date.now() - 125000 };
-      const chatStatus = {
-        connected: true,
-        source: "streamelements",
-        status: "enabled",
-        subscriptionId: "se-streamelements",
-        createdAt: now - 86400000,
-        lastNotificationAt: now - 120000,
-        lastRevocationReason: "",
-        checkedAt: 0,
-      };
+      const chatStatus = chatOn({ source: "streamelements", subscriptionId: "se-streamelements" });
       const posts = await stubAdmin(page, {
         lb: board,
         snapshot: () => ({
@@ -1529,17 +1469,18 @@ try {
       });
       await page.goto(base + "/admin/");
       await page.waitForSelector("#setup-next:not([hidden])");
-      assert.equal(await text(page, "#setup-next"), "Stream setup: 0 of 3 steps done. Next: open the overlay in OBS.");
+      await textIs(page, "#setup-next", "Stream setup: 0 of 3 steps done. Next: open the overlay in OBS.");
       await page.click("#setup-next a");
-      assert.equal(await page.locator("#panel-chat").isVisible(), true);
+      await visibleIs(page, "#panel-chat", true);
       assert.equal(await page.evaluate(() => document.activeElement!.id), "check-overlay"); // a page always has a focused element
-      assert.equal(await text(page, "#check-title"), "Stream setup: 0 of 3 steps done");
-      assert.match(await text(page, "#check-overlay"), /To do.*No overlay is open/s);
-      assert.match(
-        await text(page, "#check-commands"),
+      await textIs(page, "#check-title", "Stream setup: 0 of 3 steps done");
+      await textHas(page, "#check-overlay", /To do.*No overlay is open/s);
+      await textHas(
+        page,
+        "#check-commands",
         /2 of 7 commands have reached PixFray\. Not used yet: !accept, !rematch, !top, !elo, !help\./,
       );
-      assert.match(await text(page, "#check-mods"), /Done.*moderators of nesszerra can sign in/s);
+      await textHas(page, "#check-mods", /Done.*moderators of nesszerra can sign in/s);
       assert.deepEqual(await page.locator("#se-table [data-seen]").allTextContents(), [
         "Working · 2 min ago",
         "Not used yet",
@@ -1591,18 +1532,19 @@ try {
         null,
         { timeout: 15000 },
       );
-      assert.match(await text(page, "#check-overlay"), /1 overlay is connected right now/);
+      await textHas(page, "#check-overlay", /1 overlay is connected right now/);
       await hidden(page, "#setup-next");
       // check-in test mode: on for 15 minutes, then off again
-      assert.equal(await text(page, "#checkin-test-title"), "Test !checkin while offline");
+      await textIs(page, "#checkin-test-title", "Test !checkin while offline");
       await page.click("#checkin-test-toggle");
       await waitText(page, "#checkin-test-title", /^!checkin test mode is on$/);
       assert.deepEqual(posts.at(-1), { action: "checkinTest", value: true });
-      assert.match(
-        await text(page, "#checkin-test-text"),
+      await textHas(
+        page,
+        "#checkin-test-text",
         /^Until .+ \(turned on by ModMia\), !checkin answers while the stream is offline/,
       );
-      assert.equal(await text(page, "#checkin-test-toggle"), "Turn test mode off");
+      await textIs(page, "#checkin-test-toggle", "Turn test mode off");
       await shot(page, "admin-checkin-test-" + s.name, "#checkin-test");
       await page.click("#checkin-test-toggle");
       await waitText(page, "#checkin-test-title", /^Test !checkin while offline$/);
@@ -1619,16 +1561,7 @@ try {
         counters: [{ name: "nt", value: 1 }],
         max: 50,
       };
-      const chatStatus = {
-        connected: true,
-        source: "twitch",
-        status: "enabled",
-        subscriptionId: "sub-bot",
-        createdAt: now - 86400000,
-        lastNotificationAt: now - 120000,
-        lastRevocationReason: "",
-        checkedAt: now,
-      };
+      const chatStatus = chatOn({ source: "twitch", checkedAt: now });
       const posts = await stubAdmin(page, {
         lb: board,
         post: (body, r) => {
@@ -1682,25 +1615,26 @@ try {
       await page.click("#tab-chat");
       await page.waitForSelector("#bot-commands:not([hidden])");
       // a bot site: the bot step replaces the StreamElements steps, Done while the bot reads chat
-      assert.equal(await text(page, "#check-bot [data-badge]"), "Done");
-      assert.match(
-        await text(page, "#check-bot [data-detail]"),
+      await textIs(page, "#check-bot [data-badge]", "Done");
+      await textHas(
+        page,
+        "#check-bot [data-detail]",
         /^The PixFray bot \(pixfray\) reads your chat and answers the duel commands\. It last answered a command \d+ (s|min) ago\. Type \/mod pixfray/,
       );
-      for (const id of ["#check-duel", "#check-commands"])
-        assert.equal(await page.locator(id).isHidden(), true, id + " hidden on a bot site");
-      assert.equal(await text(page, "#check-title"), "Stream setup is done");
+      for (const id of ["#check-duel", "#check-commands"]) await hidden(page, id, id + " hidden on a bot site");
+      await textIs(page, "#check-title", "Stream setup is done");
       assert.deepEqual(await page.locator("#bot-commands-table tbody td:first-child").allTextContents(), [
         "!nt",
         "!tablet",
       ]);
       // the bot's health: a drop newer than the last sent reply is a warning
-      assert.match(
-        await text(page, "#bot-health"),
+      await textHas(
+        page,
+        "#bot-health",
         /^Bot: last command \d+ (s|min) ago \(alice !fray\), last reply sent \d+ (s|min) ago\. 41 sent, 1 dropped\. The last reply was dropped \d+ (s|min) ago: the same line twice within 30 s \(msg_duplicate\)\. Type !fray debug/,
       );
-      assert.equal(await page.locator("#bot-health").getAttribute("class"), "small callout warning");
-      assert.equal(await page.locator('[data-counter="nt"]').inputValue(), "1");
+      await attrIs(page, "#bot-health", "class", "small callout warning");
+      await valueIs(page, '[data-counter="nt"]', "1");
       // add (a PixFray name is refused with a reason), edit with a rename, set a counter, delete
       await page.fill("#command-name", "fray");
       await page.fill("#command-reply", "x");
@@ -1711,9 +1645,9 @@ try {
       await page.click("#command-save");
       await waitText(page, "#command-status", /Added !sens/);
       assert.deepEqual(posts.at(-1), { action: "saveCommand", payload: { name: "!sens", reply: "0.14 3600dpi" } });
-      assert.equal(await page.locator("#command-name").inputValue(), "");
+      await valueIs(page, "#command-name", "");
       await page.click('[data-edit="!tablet"]');
-      assert.equal(await text(page, "#command-save"), "Save changes");
+      await textIs(page, "#command-save", "Save changes");
       await page.fill("#command-name", "!pad");
       await page.click("#command-save");
       await waitText(page, "#command-status", /Saved !pad/);
@@ -1732,13 +1666,7 @@ try {
       assert.deepEqual(posts.at(-1), { action: "setCounter", payload: { name: "nt", value: 20 } });
       await noOverflow(page, "chat commands " + s.name);
       for (const id of ["#bot-commands-table", "#bot-counters-table"])
-        assert.ok(
-          await page
-            .locator(id)
-            .locator("xpath=..")
-            .evaluate((n) => n.scrollWidth <= n.clientWidth + 1),
-          id + " does not scroll sideways at " + s.name,
-        );
+        assert.ok(await fitsWrap(page, id), id + " does not scroll sideways at " + s.name);
       await page.locator("#bot-commands").screenshot({ path: shots + "/admin-bot-commands-" + s.name + ".png" });
       page.once("dialog", (d) => d.accept());
       await page.click('[data-delete="!sens"]');
@@ -1831,15 +1759,14 @@ try {
           const detail = (await text(page, "#check-mods [data-detail]")).trim();
           assert.match(detail, c.text, c.name + " " + s.name);
           assert.ok(!/Only \w+ can open this page/.test(detail), c.name + ": the old wording is gone");
-          assert.equal(await text(page, "#check-mods [data-badge]"), c.badge, c.name + " badge");
+          await textIs(page, "#check-mods [data-badge]", c.badge, c.name + " badge");
           if (c.link) {
             assert.equal(await text(page, "#check-mods a"), c.link[0]);
             assert.equal(await page.locator("#check-mods a").getAttribute("href"), c.link[1]);
-          } else
-            assert.equal(await page.locator("#check-mods a").count(), 0, c.name + ": no connect link for this viewer");
+          } else await countIs(page, "#check-mods a", 0, c.name + ": no connect link for this viewer");
           if (c.paused) {
             await page.click("#tab-live");
-            assert.match(await text(page, "#stats"), /Duels\s*Paused\s*commands ignored/);
+            await textHas(page, "#stats", /Duels\s*Paused\s*commands ignored/);
           }
           if (s.name === "1280" && /owner, not/.test(c.name))
             await page.locator("#check-mods").screenshot({ path: shots + "/admin-step4-owner-1280.png" });
@@ -1850,12 +1777,7 @@ try {
   {
     const ch = "newstreamer";
     const cases = [
-      {
-        name: "broadcaster",
-        session: newstreamer,
-        access: broadcasterAccess,
-        query: "",
-      },
+      { name: "broadcaster", session: newstreamer, access: broadcasterAccess, query: "" },
       {
         name: "broadcaster back with bot=allowed",
         session: newstreamer,
@@ -1867,18 +1789,7 @@ try {
     for (const c of cases)
       for (const s of sizes)
         await withPage(s, async (page) => {
-          let chatStatus: {
-            connected: boolean;
-            source?: string;
-            status: string;
-            subscriptionId: string;
-            createdAt: number;
-          } = {
-            connected: false,
-            status: "disconnected",
-            subscriptionId: "",
-            createdAt: 0,
-          };
+          let chatStatus: object = disconnected;
           const posts = await stubAdmin(page, {
             channel: ch,
             who: c.session,
@@ -1892,50 +1803,36 @@ try {
               ...botSite,
             }),
             post: (_body, r) => {
-              chatStatus = {
-                connected: true,
-                source: "twitch",
-                status: "enabled",
-                subscriptionId: "sub-bot",
-                createdAt: now,
-              };
+              chatStatus = chatOn({ source: "twitch", createdAt: now });
               return json(r, { ok: true, chatStatus });
             },
           });
           await page.goto(base + "/admin/?channel=" + ch + c.query + "#chat");
           await page.waitForSelector("#app:not([hidden])");
           await page.waitForFunction(() => document.querySelector("#check-bot [data-detail]")!.textContent.length > 0); // the page has this element
-          for (const id of ["#check-duel", "#check-commands"])
-            assert.equal(await page.locator(id).isHidden(), true, c.name + ": " + id + " hidden");
-          assert.equal(
-            await page.locator("#chat-box").isHidden(),
-            false,
-            c.name + ": the chat connection shows on a signed-up channel",
-          );
+          for (const id of ["#check-duel", "#check-commands"]) await hidden(page, id, c.name + ": " + id + " hidden");
+          await visibleIs(page, "#chat-box", true, c.name + ": the chat connection shows on a signed-up channel");
           if (c.query) {
             await waitText(page, "#check-bot [data-badge]", /^Done$/);
             assert.deepEqual(posts, [{ action: "connectChat" }], "bot=allowed connects chat once");
             assert.equal(new URL(page.url()).searchParams.get("bot"), null, "the flag leaves the address");
-            assert.match(await text(page, "#bot-status"), /Chat connected/);
-            assert.equal(await text(page, "#check-title"), "Stream setup is done");
-            assert.equal(
-              await page.locator("#copy").getAttribute("class"),
-              "btn btn-primary",
-              "Copy link is primary again",
-            );
+            await textHas(page, "#bot-status", /Chat connected/);
+            await textIs(page, "#check-title", "Stream setup is done");
+            await attrIs(page, "#copy", "class", "btn btn-primary", "Copy link is primary again");
           } else if (c.access === broadcasterAccess) {
-            assert.equal(await text(page, "#check-bot [data-badge]"), "To do");
-            assert.equal(await text(page, "#check-title"), "Stream setup: 1 of 2 steps done");
+            await textIs(page, "#check-bot [data-badge]", "To do");
+            await textIs(page, "#check-title", "Stream setup: 1 of 2 steps done");
             const add = page.locator("#bot-actions a");
             assert.equal(await add.textContent(), "Add the PixFray bot");
             assert.equal(await add.getAttribute("href"), "/auth/login?channel=newstreamer&connect=bot");
-            assert.equal(await page.locator("#panel-chat .btn-primary").count(), 1, "one primary button");
+            await countIs(page, "#panel-chat .btn-primary", 1, "one primary button");
             assert.equal(await add.getAttribute("class"), "btn btn-primary");
-            assert.match(await text(page, "#setup-next"), /Next: add the PixFray bot to your chat\./);
+            await textHas(page, "#setup-next", /Next: add the PixFray bot to your chat\./);
             await shot(page, "admin-bot-step-" + s.name, "#check-bot");
           } else {
-            assert.match(
-              await text(page, "#check-bot [data-detail]"),
+            await textHas(
+              page,
+              "#check-bot [data-detail]",
               /^Ask newstreamer to open this page and click Add the PixFray bot, or to type \/mod pixfray/,
             );
             await page.click("#bot-actions button");
@@ -1950,18 +1847,8 @@ try {
     const ch = "newstreamer",
       login = "/auth/login?channel=newstreamer&connect=points";
     const cases = [
-      {
-        name: "broadcaster, not allowed yet",
-        session: newstreamer,
-        access: broadcasterAccess,
-        ready: false,
-      },
-      {
-        name: "broadcaster, allowed",
-        session: newstreamer,
-        access: broadcasterAccess,
-        ready: true,
-      },
+      { name: "broadcaster, not allowed yet", session: newstreamer, access: broadcasterAccess, ready: false },
+      { name: "broadcaster, allowed", session: newstreamer, access: broadcasterAccess, ready: true },
       { name: "moderator", session: mod, access: modAccess, ready: true },
       {
         name: "site owner, not allowed yet",
@@ -2009,13 +1896,7 @@ try {
             who: c.session,
             access: c.access,
             snapshot: () => ({
-              chatStatus: {
-                connected: true,
-                source: "twitch",
-                status: "enabled",
-                subscriptionId: "sub-bot",
-                createdAt: now,
-              },
+              chatStatus: chatOn({ source: "twitch", createdAt: now }),
               streamelements: null,
               overlays: 1,
               modsReady: true,
@@ -2065,29 +1946,23 @@ try {
           if (c.name === "moderator") {
             await hidden(page, "#points-form");
             await hidden(page, "#points-connect");
-            assert.equal(await text(page, "#points-note"), "Only newstreamer can add or delete rewards.");
+            await textIs(page, "#points-note", "Only newstreamer can add or delete rewards.");
           } else if (c.name === "site owner, not allowed yet") {
             await hidden(page, "#points-connect", "Twitch takes only the broadcaster's account");
             await hidden(page, "#points-form");
-            assert.equal(
-              await text(page, "#points-note"),
+            await textIs(
+              page,
+              "#points-note",
               "newstreamer has to allow channel point rewards, signed in to Twitch as themself.",
             );
           } else if (!c.ready) {
             await hidden(page, "#points-form", "no form before the permission");
-            assert.equal(await page.locator("#points-login").getAttribute("href"), login);
-            assert.match(
-              await text(page, "#points-connect-text"),
-              /^Twitch no longer lets PixFray manage these rewards\./,
-            );
+            await attrIs(page, "#points-login", "href", login);
+            await textHas(page, "#points-connect-text", /^Twitch no longer lets PixFray manage these rewards\./);
           } else {
             await hidden(page, "#points-connect");
             await page.click("#points-add");
-            assert.equal(
-              await text(page, "#points-status"),
-              "Name the reward with 1 to 45 characters.",
-              "checked before sending",
-            );
+            await textIs(page, "#points-status", "Name the reward with 1 to 45 characters.", "checked before sending");
             await page.fill("#points-title-input", "Taken");
             await page.fill("#points-cost", "100");
             await page.fill("#points-dollars", "10");
@@ -2107,24 +1982,18 @@ try {
               action: "createPointReward",
               payload: { title: "Reward 5", cost: 500, dollars: 50 },
             });
-            assert.equal(await page.locator("#points-table tbody tr").count(), 5);
-            assert.equal(await page.locator("#points-add").isDisabled(), true, "five rewards is the limit");
-            assert.equal(await text(page, "#points-note"), "5 of 5 rewards. Delete one to add another.");
+            await countIs(page, "#points-table tbody tr", 5);
+            await disabledIs(page, "#points-add", true, "five rewards is the limit");
+            await textIs(page, "#points-note", "5 of 5 rewards. Delete one to add another.");
             await noOverflow(page, "channel points " + s.name);
             for (const t of ["#points-table", "#points-redemptions"])
-              assert.ok(
-                await page
-                  .locator(t)
-                  .locator("xpath=..")
-                  .evaluate((n) => n.scrollWidth <= n.clientWidth + 1),
-                t + " fits without sideways scrolling at " + s.name,
-              );
+              assert.ok(await fitsWrap(page, t), t + " fits without sideways scrolling at " + s.name);
             await page.locator("#points").screenshot({ path: shots + "/admin-points-" + s.name + ".png" });
             page.once("dialog", (d) => d.accept());
             await page.click('[data-reward="rw1"]');
             await waitText(page, "#points-status", /^Deleted PixFray \$100\.$/);
             assert.deepEqual(posts.at(-1), { action: "deletePointReward", payload: { rewardId: "rw1" } });
-            assert.equal(await page.locator("#points-add").isDisabled(), false, "room for one more");
+            await disabledIs(page, "#points-add", false, "room for one more");
           }
         });
   }
@@ -2132,11 +2001,13 @@ try {
   for (const s of sizes)
     await withPage(s, async (page) => {
       await page.goto(base + "/start/");
-      assert.equal(await text(page, "#signup-title"), "Sign in with the Twitch account you stream on");
-      assert.equal(await page.locator("#signup-actions a.btn-primary").getAttribute("href"), "/auth/login?signup=1");
-      assert.equal(await page.locator("#signup-actions a").count(), 1);
-      assert.equal(
-        await page.locator("#ready-actions a.btn-primary").getAttribute("href"),
+      await textIs(page, "#signup-title", "Sign in with the Twitch account you stream on");
+      await attrIs(page, "#signup-actions a.btn-primary", "href", "/auth/login?signup=1");
+      await countIs(page, "#signup-actions a", 1);
+      await attrIs(
+        page,
+        "#ready-actions a.btn-primary",
+        "href",
         "/auth/login?signup=1",
         "the closing band repeats the sign-in",
       );
@@ -2167,11 +2038,8 @@ try {
       // back from Twitch after cancelling the permission: offer setup without mod access, and drop ?error from the URL
       await page.goto(base + "/start/?error=denied");
       await page.waitForSelector("#signup-problem:not([hidden])");
-      assert.match(await text(page, "#signup-problem"), /cancelled the Twitch permission/);
-      assert.deepEqual(
-        await page.locator("#signup-actions a").evaluateAll((a) => a.map((x) => x.getAttribute("href"))),
-        ["/auth/login?signup=1", "/auth/login?signup=1&mods=0"],
-      );
+      await textHas(page, "#signup-problem", /cancelled the Twitch permission/);
+      assert.deepEqual(await hrefs(page, "#signup-actions a"), ["/auth/login?signup=1", "/auth/login?signup=1&mods=0"]);
       assert.equal(new URL(page.url()).search, "");
       if (s.name === "390") await page.locator("#signup").screenshot({ path: shots + "/start-denied-390.png" });
       for (const [error, re] of [
@@ -2180,7 +2048,7 @@ try {
       ] as const) {
         await page.goto(base + "/start/?error=" + error);
         await page.waitForSelector("#signup-problem:not([hidden])");
-        assert.match(await text(page, "#signup-problem"), re);
+        await textHas(page, "#signup-problem", re);
       }
       await page.goto(base + "/start/?invite=" + "ab".repeat(16));
       await hidden(page, "#signup-problem", "an old invite link opens the plain sign-up");
@@ -2205,27 +2073,24 @@ try {
       await page.waitForSelector("#app:not([hidden])");
       await waitText(page, "#check-status", /permission was cancelled/);
       assert.equal(new URL(page.url()).search, "?channel=newstreamer", "the mods flag is dropped from the URL");
-      assert.equal(
-        await page.locator("#check-mods a").getAttribute("href"),
-        "/auth/login?channel=newstreamer&connect=mods",
-      );
+      await attrIs(page, "#check-mods a", "href", "/auth/login?channel=newstreamer&connect=mods");
       await hidden(page, "#chat-box", "Twitch chat connection is for nesszerra only");
-      assert.equal(await page.locator("#troubleshoot").isVisible(), true);
+      await visibleIs(page, "#troubleshoot", true);
       assert.deepEqual(await page.locator("#checklist > li:not([hidden]) h3").allTextContents(), [
         "Add the overlay to OBS",
         "Turn off the StreamElements Duel module",
         "Add the chat commands to StreamElements",
         "Let your moderators help",
       ]);
-      assert.equal(await text(page, "#summary-title"), "Waiting for chat");
-      assert.match(await text(page, "#stats"), /Duels\s*Waiting\s*for chat/);
-      assert.equal(await page.locator("#channel-power").isVisible(), true);
+      await textIs(page, "#summary-title", "Waiting for chat");
+      await textHas(page, "#stats", /Duels\s*Waiting\s*for chat/);
+      await visibleIs(page, "#channel-power", true);
       await hidden(page, "#paused-note");
       await page.click("#power-toggle");
       await page.waitForSelector("#paused-note:not([hidden])");
       assert.deepEqual(posts.at(-1), { action: "pauseChannel" });
-      assert.equal(await text(page, "#power-title"), "PixFray is off on newstreamer");
-      assert.equal(await text(page, "#power-toggle"), "Turn PixFray back on");
+      await textIs(page, "#power-title", "PixFray is off on newstreamer");
+      await textIs(page, "#power-toggle", "Turn PixFray back on");
       await shot(page, "admin-paused-" + s.name, false);
       await page.locator("#channel-power").screenshot({ path: shots + "/admin-power-" + s.name + ".png" });
       await page.click("#power-toggle");
@@ -2239,12 +2104,12 @@ try {
     await page.route("**/api/state/*", (r) => json(r, { error: "off", off }, 403));
     await page.goto(base + "/?channel=newstreamer");
     await page.waitForSelector("#off-note:not([hidden])");
-    assert.match(await text(page, "#off-note"), /PixFray is off on newstreamer's channel right now/);
-    assert.equal(await page.locator(".fighter-card").isVisible(), true);
+    await textHas(page, "#off-note", /PixFray is off on newstreamer's channel right now/);
+    await visibleIs(page, ".fighter-card", true);
     off = "not_enabled";
     await page.goto(base + "/?channel=nobodyhere");
     await page.waitForSelector("#off-note:not([hidden])");
-    assert.match(await text(page, "#off-note"), /isn't set up on nobodyhere's channel/);
+    await textHas(page, "#off-note", /isn't set up on nobodyhere's channel/);
     await hidden(page, ".fighter-card");
     await shot(page, "viewer-not-set-up-390", false);
   });
@@ -2292,7 +2157,7 @@ try {
       if (!paused) {
         assert.equal(await leaving(), false, "nothing edited yet");
         await page.locator("#build-list button.build").nth(1).click();
-        assert.match(await text(page, "#save-status"), /Build 2 isn't on stream/);
+        await textHas(page, "#save-status", /Build 2 isn't on stream/);
         assert.equal(await leaving(), false, "only looking at build 2");
         await page.locator('.swatch[data-color="#f472b6"]').click();
         assert.equal(await leaving(), true, "build 2 was changed");
@@ -2300,9 +2165,10 @@ try {
         assert.equal(await leaving(), true, "the edit in build 2 is still unsaved");
       } else {
         await page.waitForSelector("#off-note:not([hidden])");
-        assert.equal(await page.locator("#save").isDisabled(), true);
-        assert.match(
-          await text(page, "#save-status"),
+        await disabledIs(page, "#save", true);
+        await textHas(
+          page,
+          "#save-status",
           /PixFray is off on this channel right now, so saving and buying are closed. Your fighter is kept./,
         );
         await hidden(page, "#next-step");
@@ -2333,9 +2199,9 @@ try {
     );
     await page.goto(base + "/?channel=nesszerra");
     await page.waitForSelector("#build-list button.build");
-    assert.equal(await page.locator("#build-list > *").count(), 5, "five builds and no buy button");
+    await countIs(page, "#build-list > *", 5, "five builds and no buy button");
     assert.doesNotMatch(await text(page, "#build-list"), /null/, "no slot for sale leaves no text");
-    assert.equal(await text(page, "#build-note"), "(5 of 5)");
+    await textIs(page, "#build-note", "(5 of 5)");
   });
   // /start: the sign-in line sits below the copy (beside the demo on wide screens), never over it.
   for (const size of sizes)
@@ -2356,7 +2222,7 @@ try {
       await page.route("**/api/leaderboard/**", (r) => json(r, board));
       await page.goto(base + "/intro/");
       assert.equal(new URL(page.url()).pathname, "/", "the old /intro/ address moves to the home page");
-      assert.equal(await page.locator("#hero-actions .btn").getAttribute("href"), "/play/");
+      await attrIs(page, "#hero-actions .btn", "href", "/play/");
       await page.waitForFunction(() => document.querySelector("#loader")?.classList.contains("is-done"), null, {
         timeout: 30000,
       });
