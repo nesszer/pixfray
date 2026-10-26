@@ -78,10 +78,8 @@ td.ctx {
   #sec-health .stat-strip {
     grid-template-columns: 1fr;
   }
-}
 
-/* phones: the topbar keeps "For streamers" and the fighter link, like the mod page (which hides its own current link) */
-@media (max-width: 480px) {
+  /* phones: the topbar keeps "For streamers" and the fighter link, like the mod page (which hides its own current link) */
   .topbar nav a[href="/admin/"] {
     display: none;
   }
