@@ -39,9 +39,8 @@ const STREAK_MILESTONES = new Map([
 const MAX_BONUS = 1_000_000; // stored check-in points; a sanity bound, far past any real streak
 const MAX_GIFT = 10_000; // the most a mod can add or take back in one gift
 
-// !checkin: once per stream, only while Twitch says the channel is live. Gives config.checkinPoints, plus the
-// STREAK_MILESTONES extra when the streak reaches a milestone. A streak counts this channel's streams with
-// check-ins (the streams table) in a row; one missed stream a week is forgiven. Points are stored apart from wins (bonus_points), so a rank reset keeps them.
+// !checkin: once per live stream. A streak counts this channel's streams with check-ins in a row (one missed stream a
+// week is forgiven); points are kept apart from wins (bonus_points), so a rank reset keeps them.
 export async function checkin(
   room: ChannelRoom,
   channel: string,
@@ -262,9 +261,8 @@ export function builds(
   return out;
 }
 
-// Shop: a pet (price by tier, config) or a hat before its wins unlock it (hatPrice). Pays with the dollars the
-// stream has shown, like give(). A pet takes duel dollars only; anything else spends style dollars (channel point
-// rewards) first, then dollars. Buying doesn't equip; the dashboard selects it and the viewer saves.
+// Shop: paid with the dollars the stream has shown. A pet takes duel dollars only; anything else spends style dollars
+// first. Buying doesn't equip; the dashboard selects it and the viewer saves.
 export function buy(
   room: ChannelRoom,
   channel: string,
@@ -423,9 +421,8 @@ export function syncPetBoosts(room: ChannelRoom, state: GameState, userIds: read
   return changed;
 }
 
-// !pet [@name]: a saved fighter's active pet as the catalog names it, or null when there's no such fighter.
-// !stats [@name]: the upgrade levels that count in duels, unspent points and the pet's boost, as the stream has shown
-// them (a quick duel still playing doesn't give its win away, like !wallet).
+// !stats [@name] and !pet [@name] (below), as the stream has shown them (a quick duel still playing doesn't give its
+// win away, like !wallet); null when there's no such fighter.
 export function statsInfo(
   room: ChannelRoom,
   channel: string,

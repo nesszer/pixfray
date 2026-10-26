@@ -110,10 +110,8 @@ export type Player = Cosmetics & {
   lastOpponentId?: string;
 };
 
-/**
- * A fighter as a caller hands it to the reducer: a saved profile row, a dashboard save or a stub built from a chat
- * message. Any field may be missing; rows carry extra columns (dollars, build, streak...).
- */
+// A fighter as a caller hands it to the reducer (a profile row, a dashboard save or a chat stub). Any field may be
+// missing; rows carry extra columns.
 export type ProfileInput = { [K in keyof Player]?: Player[K] | undefined } & {
   dollars?: number | undefined;
   [key: string]: unknown;
@@ -352,10 +350,7 @@ export type Snapshot = {
 /** Whether Twitch posted a line, and its drop_reason code (or the error) when it didn't. */
 export type SendResult = { sent: boolean; reason: string };
 
-/**
- * A channel room's export as backups.ts stores it (the owner page's download). Only the fields developer.ts reads
- * are named; the room's export code is the full shape. exportedAt is the ISO time of exportHead in developer.ts.
- */
+// A room's export as backups.ts stores it. Only the fields developer.ts reads are named; exportedAt is an ISO time.
 export type BackupExport = {
   exportedAt: string;
   profiles: { userId: string; username: string }[];

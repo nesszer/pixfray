@@ -36,9 +36,8 @@ import type {
 
 const DEFAULT_CONFIG: Config = {
   enabled: true,
-  // Quick duels: accepting settles the duel at once with a d6 exchange (hit, counter or miss).
-  // Off = the HP fight with !attack/!strike/!heavy/!heal. StreamElements has no attack commands, so its duels
-  // always settle quickly (commands marked quick: true).
+  // Quick duels settle on accept; off = the HP fight (!attack/!strike/!heavy/!heal). StreamElements has no attack
+  // commands, so its duels always settle quickly.
   quickDuel: true,
   // Overlay duel banner: "off", "top" or "bottom". Live overlays read it from the snapshot, so mods change it without a new OBS link.
   announce: "off",
@@ -55,8 +54,7 @@ const DEFAULT_CONFIG: Config = {
   sharedCooldownMs: 1_000,
   initialElo: 1_000,
   eloK: 24,
-  // !checkin: upgrade points per stream check-in, and extra points at streak milestones (server/room-economy.ts
-  // STREAK_MILESTONES: +1 at 3, 7, 14 and 30 streams, +2 at 60, +3 at 100, +5 at 200, +10 at 365).
+  // !checkin: points per check-in, plus extra at streak milestones (server/room-economy.ts STREAK_MILESTONES).
   checkinPoints: 1,
   streakBonus: true,
   // The highest level of each upgrade stat that counts on this channel; levels above it stay saved.
@@ -72,8 +70,7 @@ const DEFAULT_CONFIG: Config = {
   giveMinDuels: 5,
   // The PixFray bot posts the !fray line every this many minutes while the channel is live (0 = off, else 10 to 240).
   reminderMin: 0,
-  // The PixFray bot as a whole (!fray off / !fray on, or the admin page). Off: it ignores every command and posts nothing
-  // (no replies, results, expired challenges or reminders); chatters still walk on the overlay.
+  // The whole PixFray bot: off, it ignores commands and posts nothing; chatters still walk on the overlay.
   botEnabled: true,
   // Shop (server/pets.ts): pet prices by tier, and hats before their wins at wins needed x hatPricePerWin (0 = off).
   // A duel pays about $4, so a common pet is ~3 duels, a recolor ~5 and a legendary pet ~75 (prices cut to a third on 2026-10-06).
@@ -580,21 +577,15 @@ const freshCooldowns = (duel: Duel): Record<string, Cooldowns> => ({
   [duel.b]: { sharedUntil: 0, strikeUntil: 0, heavyUntil: 0, healUntil: 0 },
 });
 
-// Quick duel: a d6 exchange settled at once. Fighters take turns swinging, the challenger first:
-// 6 is a crit (50% of the channel's max HP), 5 a hit (34%), 3-4 a miss, 1-2 the other fighter counters (34%).
-// First to 0 HP loses. After QUICK_MAX_ROLLS rolls the fighter with more HP wins; equal HP goes to
-// sudden death, where the next hit or counter knocks out. A winner who took no damage is flawless (+3 Elo).
-// Upgrades (server/upgrades.ts) then change the swing in this order, each check with its own roll (slot k reads
-// rolls[k * SLOT_ROLLS + i]): the attacker's luck turns a miss into a hit, their crit turns a hit into a crit, the
-// defender's dodge turns a hit or crit into a miss, and the defender's counter turns a miss into their counter.
-// Power and guard scale each blow, and counter adds its damage bonus to the defender's counters.
+// Quick duel: a d6 exchange settled at once, the challenger swinging first: 6 crit (50% of max HP), 5 hit (34%), 3-4
+// miss, 1-2 the defender counters (34%). After QUICK_MAX_ROLLS more HP wins; equal HP goes to sudden death. A winner
+// who took no damage is flawless (+3 Elo). Upgrades then apply luck, crit, dodge and counter in that order, each with
+// its own roll (slot k reads rolls[k * SLOT_ROLLS + i]); power and guard scale each blow (docs/DUELS.md).
 // rolls are numbers in [0, 1) from the room; missing ones come from a hash so the reducer stays pure.
 const QUICK_MAX_ROLLS = 12;
-// A quick duel is settled at once, but the overlay plays it out over seconds and viewers see the stream a few
-// seconds behind chat (config.streamDelayMs). Until revealAt, chat replies, !elo, !ranks and the leaderboard keep the pre-fight
-// numbers (hiddenResults), so the stream shows the winner first. Pacing mirrors src/served/overlay.ts: a walk-in
-// of up to 2.2 s, then about 1.8 s per roll before the result banner.
-// REPLAY_SLACK_MS covers the overlay running a little long on a 12-roll fight, so chat never gets ahead of it.
+// The overlay plays a quick duel out over seconds and the stream runs config.streamDelayMs behind chat, so until
+// revealAt chat, !elo, !ranks and the leaderboard keep pre-fight numbers (hiddenResults). Pacing mirrors
+// src/served/overlay.ts (walk-in up to 2.2 s, ~1.8 s per roll); REPLAY_SLACK_MS covers a long 12-roll fight.
 const REPLAY_WALK_MS = 2200,
   REPLAY_ROLL_MS = 1800,
   REPLAY_SLACK_MS = 500;

@@ -1,6 +1,5 @@
-// StreamElements chat source. Each game action is a StreamElements custom command whose reply is
-// $(customapi <url>): the bot GETs /api/se/<channel>/<action>?k=..&id=..&u=..&d=..&t=..&m=.. and posts our reply.
-// The trigger word lives only in StreamElements, so commands can be renamed there freely.
+// StreamElements chat source: each action is an SE custom command replying $(customapi <url>) for
+// /api/se/<channel>/<action>; the trigger word lives only in StreamElements, so commands can be renamed there.
 import { hiddenResults, stripInvisible } from "./game.ts";
 import { boostText } from "./pets.ts";
 import { LATEST_RELEASE } from "./release.ts";
@@ -147,9 +146,8 @@ export async function handleStreamElements(
   return reply(typeof data.reply === "string" ? data.reply : MISSED_TEXT);
 }
 
-// $(1) as sent by StreamElements -> a Twitch login, or '' for none. '-' means no argument; chat clients
-// append invisible characters (U+E0000, U+034F) to repeated messages; those are stripped first. Extra leading @ and
-// trailing punctuation ("@@bob", "@bob," or "bob!") still mean bob.
+// $(1) from StreamElements -> a Twitch login, or '' ('-' = no argument). Invisible characters chat clients append
+// (U+E0000, U+034F) are stripped first; extra @ and trailing punctuation ("@@bob", "bob!") still mean bob.
 const bare = (text: string): string => stripInvisible(text).replace(/\s/g, "");
 export function seTarget(raw: unknown): string {
   const m = /^@*([a-z0-9_]{1,25})[,.!?;:]*$/i.exec(bare(String(raw || "")));
@@ -194,8 +192,7 @@ export function seCommandText(action: string, target: string): string {
 const secs = (ms: number) => Math.max(1, Math.ceil(ms / 1000));
 const short = (s: string | undefined) => String(s || "").slice(0, 25);
 const plural = (n: number | undefined, word: string, many = word + "s") => `${n} ${n === 1 ? word : many}`;
-// Channel links name the channel so viewers land in the right room.
-// Always names the channel: /play/ asks which stream the viewer watches.
+// Channel links name the channel so viewers land in the right room (/play/ would ask which stream).
 const siteLink = (origin: string, channel: string, hash = "") =>
   origin ? `${origin}/${channel ? "?channel=" + channel : ""}${hash}` : "";
 const gearUp = (origin: string, channel: string, lead = "Gear up at") => {

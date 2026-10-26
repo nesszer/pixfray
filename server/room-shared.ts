@@ -93,10 +93,7 @@ export type BotStatusRow = {
   held_at: number;
   held_reason: string;
 };
-/**
- * A chat message as /eventsub, /chat and /dev-chat hand it to the room (server/eventsub.ts): the EventSub envelope
- * fields the room reads, each unchecked until it is read.
- */
+// A chat message as /eventsub, /chat and /dev-chat hand it to the room: the EventSub fields read, each unchecked.
 export type BotMessage = {
   messageId?: unknown;
   messageType?: unknown;
@@ -173,7 +170,6 @@ export const PROFILE_COLUMNS =
 export function errorText(error: unknown, max?: number): string {
   return String((error as Thrown)?.message || error).slice(0, max);
 }
-// A table's own entry for a name a client sent (never an Object.prototype method).
 // Adds each "name TYPE ..." column the table doesn't have yet (the schema's later versions).
 export function addColumns(sql: SqlStorage, table: string, columns: string[]): void {
   const have = sql
@@ -183,6 +179,7 @@ export function addColumns(sql: SqlStorage, table: string, columns: string[]): v
   for (const column of columns)
     if (!have.includes(column.slice(0, column.indexOf(" ")))) sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
 }
+// A table's own entry for a name a client sent (never an Object.prototype method).
 export function own<T>(table: { [name: string]: T }, name: string): T | undefined {
   return Object.hasOwn(table, name) ? table[name] : undefined;
 }
@@ -292,8 +289,7 @@ export function normalizeProfileRow(row: ProfileRow | null | undefined, config: 
   };
 }
 
-// The active pet (server/pets.ts): its id, tier and boost (a legendary's from the owner's roll); none when it's gone
-// (a deleted upload).
+// The active pet (server/pets.ts): id, tier and boost (a legendary's from the owner's roll); none for a deleted upload.
 export function petFieldsOf(row: { pet: string; pet_custom: string | null; pet_roll: string | null }) {
   const pet = petOf(row.pet, row.pet_custom, row.pet_roll);
   return { pet: pet ? pet.id : "", petTier: pet ? pet.tier : "", petBoost: pet ? pet.boost : emptyStats() };

@@ -97,8 +97,7 @@ export class ChannelRoom extends DurableObject<Env> {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
-    // Overlays send "ping" every 20 s to catch a half-open socket. The runtime answers "pong" itself, without waking this
-    // object from hibernation or billing its time (src/served/arena-client.ts).
+    // The runtime answers overlays' 20 s "ping" itself, without waking this object (src/served/arena-client.ts).
     if (typeof WebSocketRequestResponsePair === "function")
       ctx.setWebSocketAutoResponse?.(new WebSocketRequestResponsePair("ping", "pong"));
     const sql = this.ctx.storage.sql;
@@ -110,11 +109,8 @@ export class ChannelRoom extends DurableObject<Env> {
     );
     const int = (column: string) => column + " INTEGER NOT NULL DEFAULT 0";
     const str = (column: string) => column + " TEXT NOT NULL DEFAULT ''";
-    // v2.5: upgrade points spent from wins (server/upgrades.ts) and the hat; v2.10 crit, dodge, counter; v2.11 vitality.
-    // v2.6: !checkin points live apart from wins, so a rank reset keeps them; v2.7: dollars and what each viewer gave in
-    // which stream (!give). upsertProfile never writes either. 0.12.0: style dollars from channel point rewards
-    // (server/points.ts) buy looks and build slots, never pets, and !give never moves them, so points can't buy strength.
-    // v2.8: the active pet, plus bought items and uploaded pets (server/pets.ts). PROFILE_COLUMNS reads custom_pets.
+    // bonus_points live apart from wins so a rank reset keeps them; upsertProfile never writes them or dollars.
+    // style_dollars (channel point rewards) buy looks and build slots, never pets, and !give never moves them.
     addColumns(sql, "profiles", [
       ...STATS.map(int),
       str("hat"),
@@ -130,9 +126,7 @@ export class ChannelRoom extends DurableObject<Env> {
     const rolled = ensurePetSchema(sql);
     // v3.1: sprites viewers made from their own images, waiting for a mod or approved (server/sprites.ts).
     ensureSpriteSchema(sql);
-    // v2.9: cosmetics worn (server/cosmetics.ts) and the active build slot. Each slot's loadout is a JSON row in builds;
-    // the profile columns always hold the active one. Bought build slots are owned_items rows of kind "slot".
-    // v3.0: when the fighter's Twitch account was made (0 = not known yet) and when the room last asked Twitch.
+    // Each build slot's loadout is a builds row; the profile columns hold the active one. 0 = account age unknown.
     addColumns(sql, "profiles", [
       ...["recolor", "pet_color", "accessory", "trail", "win_effect", "taunt", "title"].map(str),
       int("build"),
@@ -164,8 +158,7 @@ export class ChannelRoom extends DurableObject<Env> {
       "CREATE TABLE IF NOT EXISTS bot_commands (name TEXT PRIMARY KEY, reply TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '')",
     );
     sql.exec("CREATE TABLE IF NOT EXISTS bot_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)");
-    // The bot's health, for the admin page and "!fray debug": the last command heard, reply sent, reply Twitch dropped
-    // (with its reason) and reply the room held back (reply cap, cooldown, old subscription). Totals count since creation.
+    // The bot's health for the admin page and "!fray debug"; totals count since creation.
     sql.exec(
       "CREATE TABLE IF NOT EXISTS bot_status (id INTEGER PRIMARY KEY CHECK (id = 1), heard_at INTEGER NOT NULL DEFAULT 0, heard TEXT NOT NULL DEFAULT '', sent_at INTEGER NOT NULL DEFAULT 0, sent_total INTEGER NOT NULL DEFAULT 0, failed_at INTEGER NOT NULL DEFAULT 0, failed_total INTEGER NOT NULL DEFAULT 0, failed_reason TEXT NOT NULL DEFAULT '', held_at INTEGER NOT NULL DEFAULT 0, held_reason TEXT NOT NULL DEFAULT '')",
     );
@@ -185,10 +178,8 @@ export class ChannelRoom extends DurableObject<Env> {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS se_settings (id INTEGER PRIMARY KEY CHECK (id = 1), secret TEXT NOT NULL, names TEXT NOT NULL)",
     );
-    // v2.4: when a StreamElements command last reached this room with the right key, and with a wrong one, so the admin
-    // page can tell when the bot's commands were copied from another site (test vs production) or an old key.
-    // v2.5: when each command (action) last arrived with the right key, for the setup checklist, and the broadcaster's
-    // "StreamElements Duel module is off" tick (nothing can check it for them).
+    // The last command with the right key and with a wrong one (an old key, or the other site's), per action too,
+    // and the broadcaster's "Duel module is off" tick (nothing can check it for them).
     addColumns(sql, "se_settings", [
       int("last_command_at"),
       int("rejected_at"),
@@ -387,11 +378,7 @@ export class ChannelRoom extends DurableObject<Env> {
     this.flushLooksSoon();
   }
 
-  // ---------- look sync ----------
-  // Every write to a saved fighter (website save, duel result, approved or removed sprite, rank reset, delete) is pushed
-  // to open overlays as one {type:"looks"} message per turn of the event loop. It carries only viewers the active list
-  // doesn't: snapshots already carry those, and a pushed look (masked while a duel result is hidden) must not overwrite
-  // them. looks maps login -> look, or null for a deleted fighter; reset: every saved look is stale (all ranks reset).
+  // in the active list (snapshots carry those, and a masked look must not overwrite them). null = deleted.
   lookChanged(userId: unknown): void {
     (this.dirtyLooks ||= new Set()).add(String(userId));
     this.flushLooksSoon();

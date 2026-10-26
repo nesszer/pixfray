@@ -1,7 +1,5 @@
-// The PixFray bot's own text commands, set on the admin page (Chat commands): a name like !sens and the line the bot
-// answers with. A reply may use ${user} (who typed it), ${touser} (the @name after the command, else ${user}),
-// ${count name} (adds 1 to counter "name" and shows it) and ${getcount name} (shows it). $(...) works the same, as in
-// StreamElements.
+// The bot's own text commands (admin page, Chat commands). A reply may use ${user}, ${touser} (the @name after the
+// command, else ${user}), ${count name} (adds 1 and shows it) and ${getcount name}; $(...) works the same, as in SE.
 
 export const MAX_BOT_COMMANDS = 50;
 export const MAX_COMMAND_REPLY = 400;

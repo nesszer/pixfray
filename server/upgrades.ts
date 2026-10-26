@@ -1,16 +1,6 @@
-// Fighter upgrades and hats: the rules live here so the duel math, profile saving and the dashboard agree.
-// Every win earns one upgrade point, and so does every stream check-in (bonus points, kept on a rank reset), with no
-// cap. Points buy stat levels: levels 1-8 cost 1 point each, and the cost doubles every 8 levels after that (9-16
-// cost 2, 17-24 cost 4, ...). Points can be moved around (respec) for free whenever the fighter is not in a duel.
-//   power: +4% damage dealt per level      guard: -4% damage taken per level
-//   luck:  4% per level that a miss still lands as a hit
-//   crit:  4% per level that a hit becomes a crit; in an HP fight, 4% that a strike or heavy deals +50%
-//   dodge: 4% per level that a hit or crit on you misses (quick duels)
-//   counter: +2% counter damage per level, and 2% per level that a foe's miss becomes your counter (quick duels)
-//   vitality: +4 max HP per level in a duel (both kinds), up to +60; blows stay sized on the channel's base max HP
-// Above level 8 each level adds half a step at first and the effect closes in on the stat's ceiling (statValue).
-// A channel's maxStatLevel (config) caps the levels that count there; levels above it stay saved.
-// Hats are cosmetic; some unlock at a number of wins. The overlay draws them (src/served/hats.ts).
+// Fighter upgrades and hats, in one place so the duel math, profile saving and the dashboard agree. The rules (points,
+// level costs, each stat's effect and ceiling) are in docs/CONTRACTS.md §6 and docs/DUELS.md. The overlay draws hats
+// (src/served/hats.ts).
 
 export const STATS = ["power", "guard", "luck", "crit", "dodge", "counter", "vitality"] as const; // const: each stat a literal, so Stat names them
 export type Stat = (typeof STATS)[number];
@@ -114,11 +104,9 @@ export function cleanStats(input?: unknown, max = LEVEL_LIMIT): Stats {
   return out;
 }
 
-// Levels the fighter can use with these points. A rank reset lowers the points; levels come off the last stat in
-// STATS first (vitality, counter, dodge, crit, luck, guard, then power) until the build fits, so a stored build never counts
-// for more than the points allow.
-// maxLevel (the channel's maxStatLevel) then caps each stat; levels above it stay saved but don't count.
-// boost (the active pet's, server/pets.ts) is added after both, so it may take a stat past the cap.
+// Levels the fighter can use with these points: after a rank reset, levels come off the last stat in STATS first until
+// the build fits. maxLevel (the channel's maxStatLevel) then caps each stat; boost (the pet's) is added after both, so
+// it may take a stat past the cap.
 export function effectiveStats(
   stats: unknown,
   earned: Earned,

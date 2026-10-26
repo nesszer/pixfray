@@ -1,12 +1,6 @@
-// Pets (docs/PROGRESSION_PLAN.md, Stage 3): bought with PixFray dollars, one active per fighter, each with a small
-// stat boost by tier. Built-in pets are drawn in code (src/served/pets.ts, same ids); streamers can upload their own as
-// PNGs (custom_pets, ids "p-..."), picking the tier and the boosted stat. A legendary pet boosts LEGENDARY_ROLL stats
-// rolled for each owner when they buy it (owned_items.roll), with one free reroll (owned_items.rerolled).
-//
-// GET    /api/pets/:channel        public: { pets:[{id,label,tier,boost,price,custom,url?}], hatPricePerWin }
-// GET    /api/pets/:channel/:id    public: an uploaded pet's PNG
-// POST   /api/pets/:channel        canManage: { label, tier, stat, stat2?, image:"<base64 PNG>" } -> 201 {ok, item}
-// DELETE /api/pets/:channel/:id    canManage -> {ok, id}; owners lose it and fighters using it go back to no pet
+// Pets: bought with PixFray dollars, one active per fighter, a small stat boost by tier. Built-in ones are drawn in
+// src/served/pets.ts (same ids); uploads are custom_pets ("p-..."). A legendary boosts LEGENDARY_ROLL stats rolled per
+// owner on purchase (owned_items.roll), with one free reroll. Routes /api/pets: docs/CONTRACTS.md §2.
 import { cleanStats, emptyStats, STATS } from "./upgrades.ts";
 import { readPng } from "./uploads.ts";
 import type { Stat, Stats } from "./upgrades.ts";
@@ -125,9 +119,8 @@ export const PETS: BuiltinPet[] = [
 ];
 const BUILTIN = new Map(PETS.map((p) => [p.id, p]));
 
-// common/uncommon +1 to one stat, rare +2, epic +2 and +1 to a second stat, legendary +1 to each rolled stat (none
-// before an owner rolls it, as in the catalog). Uncommon is cheaper than rare and looks better than common; its boost
-// matches common on purpose (the plan keeps boosts small so a pet never decides a duel on its own).
+// common/uncommon +1 to one stat, rare +2, epic +2 and +1 to a second, legendary +1 to each rolled stat. Uncommon
+// matches common on purpose: boosts stay small so a pet never decides a duel on its own.
 export function tierBoost(tier: string, stat: string | undefined, stat2?: string, roll: readonly Stat[] = []): Stats {
   const out = emptyStats();
   if (tier === "legendary") {

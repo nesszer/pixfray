@@ -301,8 +301,7 @@ export async function streamElements(
   return runCommand(room, channel, input, origin, settings, { kind: "se", subscriptionId: SE_SUBSCRIPTION_ID });
 }
 
-// A chat line read by the PixFray bot. Its first word is matched against the channel's command names (the same names
-// StreamElements uses); anything else, like another bot's command, gets no reply. Replies are capped per 30 s.
+// A chat line read by the PixFray bot: only the channel's command names get a reply, capped per 30 s.
 export async function botCommand(
   room: ChannelRoom,
   channel: string,
@@ -351,8 +350,7 @@ export async function botCommand(
     if (verified.visible) room.broadcast(verified.state);
     await room.scheduleAlarm(verified.state);
   }
-  // "!fray off" / "!fray on" (broadcaster or a mod) turns the whole bot off or on in this channel; while it's off,
-  // every other command gets no reply.
+  // "!fray off" / "!fray on" (broadcaster or a mod): while off, every other command gets no reply.
   const chatterId = validUserId(ev.chatter_user_id),
     boss = chatterId === validUserId(ev.broadcaster_user_id) || ev.mod === true;
   const say = (line: string) => sendBotLines(room, [line], channel);
@@ -435,8 +433,7 @@ export async function botCommand(
     input.target &&
     getProfileByUsername(room, input.target, state.config)?.userId === validUserId(msg.botId)
   ) {
-    // The bot account isn't a fighter or a wallet (yet; it may become a boss viewers fight together). The test site's
-    // sparring bot (BOT_DEBUG) still plays.
+    // The bot account isn't a fighter or wallet (yet: maybe a co-op boss); the test site's sparring bot still plays.
     lines = [BOT_TARGET_ACTIONS[action]!(settings.names)]; // checked in the condition above
   } else {
     const since = room.readState(channel).revision;
@@ -1028,8 +1025,7 @@ export function newAccounts(room: ChannelRoom, ids: unknown[], now: number): str
     .map((r) => r.user_id);
 }
 
-// One channel.chat.message: a presence update, plus a game command when the text parses as one.
-// No chat replies; rejected commands are logged to the room event list.
+// One channel.chat.message: a presence update, plus a game command when it parses as one (no replies; rejects logged).
 export function processChatMessage(
   room: ChannelRoom,
   channel: string,
@@ -1184,10 +1180,9 @@ export async function postExpired(room: ChannelRoom, channel: string, since: num
   await postBotLines(room, channel, expiredLines(room, room.readState(channel), since));
 }
 
-// The result of each duel the stream has now played (revealAt passed in the last 2 minutes), once, from the alarm.
-// The "Fight on" reply says to watch the stream; this line follows the replay, so chat never spoils it.
-// A line held back by the reply cap or refused by Twitch stays due and is tried again (the alarm wakes every
-// RESULT_RETRY_MS) until it is 2 minutes old. A bot command also posts due results first, in case the alarm missed one.
+// The result of each duel the stream has now played (revealAt in the last 2 minutes), once, so chat never spoils the
+// replay. A line held back or refused stays due (the alarm wakes every RESULT_RETRY_MS) until it is 2 minutes old;
+// a bot command also posts due results first, in case the alarm missed one.
 export async function postResults(room: ChannelRoom, channel: string, now: number): Promise<void> {
   if (room.postingResults) return room.postingResults; // the alarm and a command at once: post each line once
   room.postingResults = postResultsOnce(room, channel, now).finally(() => {

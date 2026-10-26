@@ -1,9 +1,6 @@
-// Twitch channel point rewards that add style dollars (docs/CONTRACTS.md §2, §4, §7). The broadcaster allows it once
-// at /auth/login?channel=<login>&connect=points (channel:manage:redemptions). PixFray creates each reward with the
-// broadcaster's token, so only PixFray can fulfil, refund or delete it, and subscribes to that reward's redemptions.
-// A redemption adds the reward's dollars to the viewer's style balance (profiles.style_dollars: looks and build slots,
-// never pets, never moved by !give) and is marked FULFILLED; with no fighter it is CANCELED, which gives the viewer
-// their points back.
+// Twitch channel point rewards that add style dollars (docs/CONTRACTS.md §2, §4, §7). PixFray creates each reward with
+// the broadcaster's token, so only PixFray can fulfil, refund or delete it. A redemption is marked FULFILLED, or with
+// no fighter CANCELED, which gives the viewer their points back.
 import { openBroadcaster, POINTS_SCOPE, randomToken } from "./auth.ts";
 import { appHelix, deleteSubscription, eventsubSecret, localTestMode, EVENTSUB_PATH } from "./eventsub.ts";
 import { logRoomEvent } from "./developer.ts";
@@ -285,11 +282,8 @@ export type RedeemReply = {
   dollars: number;
 };
 
-/**
- * Adds a reward's dollars to the redeeming viewer's style balance, once per redemption id. A reward PixFray doesn't own is
- * ignored (Twitch lets only the app that made it change it). With no fighter the redemption is refunded when it is still
- * UNFULFILLED, which it always is for PixFray's rewards unless the streamer turned on skipping the request queue.
- */
+// Adds a reward's dollars to the viewer's style balance, once per redemption id; ignores rewards PixFray doesn't own.
+// With no fighter it refunds the redemption while UNFULFILLED (always, unless the streamer skips the request queue).
 export function redeem(
   room: Room,
   r: Redemption,
@@ -443,10 +437,8 @@ function parseReward(v: unknown): PointReward | null {
   };
 }
 
-/**
- * The room's Worker-only points routes: GET /points (the admin view); POST /points/rewards {op: add|remove|revoked};
- * POST /points/redeem {redemption, origin}; POST /points/marked {redemptionId, status}.
- */
+// The room's Worker-only points routes: GET /points; POST /points/rewards {op: add|remove|revoked},
+// /points/redeem {redemption, origin} and /points/marked {redemptionId, status}.
 export async function handleRoomPoints(
   room: Room,
   request: Request,
