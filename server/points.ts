@@ -78,19 +78,22 @@ export function rewardProblem(title: unknown, cost: unknown, dollars: unknown): 
 
 // ---------- Worker side: Helix with the broadcaster's token, EventSub with the app token ----------
 
+// The refusal that sends the streamer to the points sign-in link.
+const notConnected = (channel: string) =>
+  fail(channel + " must allow channel point rewards at " + pointsLoginUrl(channel), 409, {
+    reason: "points_not_connected",
+    reconnect: pointsLoginUrl(channel),
+  });
+const rewardPath = (broadcasterId: string, rewardId: string) =>
+  "/channel_points/custom_rewards?broadcaster_id=" + broadcasterId + "&id=" + encodeURIComponent(rewardId);
+
 // The broadcaster's token, refused with the points sign-in link when it is missing or lacks channel:manage:redemptions.
 async function pointsToken(env: Env, channel: string) {
-  const reconnect = pointsLoginUrl(channel);
-  const refuse = () =>
-    fail(channel + " must allow channel point rewards at " + reconnect, 409, {
-      reason: "points_not_connected",
-      reconnect,
-    });
   // an expired or revoked token throws from the renewal or the validation; both mean sign in again
   const b = await openBroadcaster(env, channel).catch(() => null);
-  if (!b) throw refuse();
+  if (!b) throw notConnected(channel);
   const { scopes } = await b.validate().catch(() => ({ scopes: [] as string[] }));
-  if (!scopes.includes(POINTS_SCOPE)) throw refuse();
+  if (!scopes.includes(POINTS_SCOPE)) throw notConnected(channel);
   return b;
 }
 
@@ -133,11 +136,7 @@ export async function createReward(
         reason: "points_not_affiliate",
       },
     );
-  if (r.status === 401)
-    throw fail(channel + " must allow channel point rewards at " + pointsLoginUrl(channel), 409, {
-      reason: "points_not_connected",
-      reconnect: pointsLoginUrl(channel),
-    });
+  if (r.status === 401) throw notConnected(channel);
   if (r.status === 400) {
     const d = await r.json<{ message?: unknown }>().catch(() => ({}) as { message?: unknown });
     throw fail("Twitch refused the reward: " + String(d.message || "check the title and cost"), 400, {
@@ -157,11 +156,7 @@ export async function createReward(
   });
   const sub = s.ok ? (await s.json<{ data?: { id?: string; status?: string }[] }>()).data?.[0] : null;
   if (!sub?.id) {
-    await b
-      .helix("/channel_points/custom_rewards?broadcaster_id=" + b.userId + "&id=" + encodeURIComponent(rewardId), {
-        method: "DELETE",
-      })
-      .catch(() => null);
+    await b.helix(rewardPath(b.userId, rewardId), { method: "DELETE" }).catch(() => null);
     throw fail("Twitch refused the redemption subscription (" + s.status + "), so the reward was removed again", 502);
   }
   return {
@@ -182,10 +177,7 @@ export async function deleteReward(
 ): Promise<void> {
   if (localTestMode(env, url) || rewardId.startsWith("local-")) return;
   const b = await pointsToken(env, channel);
-  const r = await b.helix(
-    "/channel_points/custom_rewards?broadcaster_id=" + b.userId + "&id=" + encodeURIComponent(rewardId),
-    { method: "DELETE" },
-  );
+  const r = await b.helix(rewardPath(b.userId, rewardId), { method: "DELETE" });
   if (!r.ok && r.status !== 404) throw fail("Twitch reward delete failed (" + r.status + ")", 502);
   if (subscriptionId) await deleteSubscription(env, subscriptionId);
 }

@@ -103,13 +103,13 @@ export function emptyStats(): Stats {
   return { power: 0, guard: 0, luck: 0, crit: 0, dodge: 0, counter: 0, vitality: 0 };
 }
 
-// Any input -> whole numbers within 0..LEVEL_LIMIT for each stat.
-export function cleanStats(input?: unknown): Stats {
+// Any input -> whole numbers within 0..max for each stat.
+export function cleanStats(input?: unknown, max = LEVEL_LIMIT): Stats {
   const out = emptyStats();
   for (const key of STATS) {
     // Any value: ?. reads undefined from null or undefined, and Number() turns whatever it reads into a number
     const v = Number((input as LooseStats | null | undefined)?.[key]);
-    out[key] = Number.isInteger(v) ? Math.max(0, Math.min(LEVEL_LIMIT, v)) : 0;
+    out[key] = Number.isInteger(v) ? Math.max(0, Math.min(max, v)) : 0;
   }
   return out;
 }

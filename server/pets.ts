@@ -7,7 +7,7 @@
 // GET    /api/pets/:channel/:id    public: an uploaded pet's PNG
 // POST   /api/pets/:channel        canManage: { label, tier, stat, stat2?, image:"<base64 PNG>" } -> 201 {ok, item}
 // DELETE /api/pets/:channel/:id    canManage -> {ok, id}; owners lose it and fighters using it go back to no pet
-import { emptyStats, STATS } from "./upgrades.ts";
+import { cleanStats, emptyStats, STATS } from "./upgrades.ts";
 import { readPng } from "./uploads.ts";
 import type { Stat, Stats } from "./upgrades.ts";
 import type { Config } from "./model.ts";
@@ -91,13 +91,6 @@ export type PetsContext = {
 type HttpError = Error & { status?: number };
 
 export const TIERS: readonly string[] = ["common", "uncommon", "rare", "epic", "legendary"];
-export const TIER_LABELS: Record<string, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
 export const PRICE_KEYS: Record<string, keyof PetPriceConfig> = {
   common: "petPriceCommon",
   uncommon: "petPriceUncommon",
@@ -150,15 +143,7 @@ export function tierBoost(tier: string, stat: string | undefined, stat2?: string
   return out;
 }
 
-export function cleanBoost(input?: unknown): Stats {
-  const out = emptyStats();
-  for (const key of STATS) {
-    // Any value: ?. reads undefined from null or undefined, and Number() turns whatever it reads into a number
-    const v = Number((input as Partial<Record<Stat, unknown>> | null | undefined)?.[key]);
-    out[key] = Number.isInteger(v) ? Math.max(0, Math.min(MAX_BOOST, v)) : 0;
-  }
-  return out;
-}
+export const cleanBoost = (input?: unknown): Stats => cleanStats(input, MAX_BOOST);
 
 export const builtinPet = (id: string): BuiltinPet | null => BUILTIN.get(id) || null;
 
@@ -246,29 +231,19 @@ export function ensurePetSchema(sql: SqlStorage): string[] {
 
 // The channel's pet catalog with prices from its config: built-ins first, then uploads in upload order.
 export function petCatalog(sql: SqlStorage, channel: string, config: PetPriceConfig | null | undefined): PetEntry[] {
-  const builtins = PETS.map((p): PetEntry => ({
+  const entry = (p: BuiltinPet | CustomPetRow, custom: boolean): PetEntry => ({
     id: p.id,
     label: p.label,
     tier: p.tier,
     boost: tierBoost(p.tier, p.stat, p.stat2),
     price: petPrice(p.tier, config),
-    custom: false,
-  }));
+    custom,
+  });
   const custom = sql
     .exec<CustomPetRow>("SELECT id, label, tier, stat, stat2, width, height FROM custom_pets ORDER BY created_at, id")
     .toArray()
-    .map((r): PetEntry => ({
-      id: r.id,
-      label: r.label,
-      tier: r.tier,
-      boost: tierBoost(r.tier, r.stat, r.stat2),
-      price: petPrice(r.tier, config),
-      custom: true,
-      url: `/api/pets/${channel}/${r.id}`,
-      width: r.width,
-      height: r.height,
-    }));
-  return [...builtins, ...custom];
+    .map((r) => ({ ...entry(r, true), url: `/api/pets/${channel}/${r.id}`, width: r.width, height: r.height }));
+  return [...PETS.map((p) => entry(p, false)), ...custom];
 }
 
 const json = (data: unknown, status = 200): Response =>
