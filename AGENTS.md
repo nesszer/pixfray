@@ -49,8 +49,8 @@ It is not wrangler: never `wrangler deploy` or `--env`.
 
 ## Where things go
 
-- **Channel setting (mods change it on the mod page):** `DEFAULT_CONFIG` and `CONFIG_CHECKS` in
-  `server/game.ts`; a `GROUPS` field in `src/admin/rules.ts`; reads in `server/room-*.ts`, `channel.ts`;
+- **Channel setting (mods change it on the mod page):** `DEFAULT_CONFIG` in `server/model.ts`,
+  `CONFIG_CHECKS` in `server/game.ts`; a `GROUPS` field in `src/admin/rules.ts`; reads in `server/room-*.ts`, `channel.ts`;
   a test with a valid patch and an `invalid_config_<key>` rejection; `docs/CONTRACTS.md` §7.
 - **Bot chat command:** `botCommand` or `QUICK_COMMANDS` in `server/room-bot.ts`; names and texts in
   `server/streamelements.ts` (`botNames()`, `DEFAULT_SE_NAMES`, `se*Text`). Mods' own text commands are
@@ -85,19 +85,19 @@ Each one has happened here. Check for it by name before calling work done.
 [Design]|DESIGN.md: readers, copy, tokens, motion, overlay, primitives, avoid list, verify
 [PixFray docs]|root: ./docs
 |README.md: map of these docs
-|STREAMER_SETUP.md: /start sign-in, OBS overlay, adding the bot, mods, viewer sprites, StreamElements, troubleshooting, turning PixFray or the bot off
+|STREAMER_SETUP.md: sign-in, OBS overlay, the bot, mods, viewer sprites, StreamElements, troubleshooting, turning off
 |DUELS.md: chat commands, duel rolls, dollars, ranked vs unrated, mod and broadcaster controls
 |PAGES.md: every page and overlay URL option (channel size cap arena announce sound bubbles fx demo debug)
-|CONTRACTS.md: §1 conventions|§2 HTTP routes, channel registry, admin actions|§3 overlay socket /api/live|§4 EventSub /api/eventsub|§5 characters, catalog|§6 game rules|§7 config and balance|§8 modules, signatures|§9 tests and build
+|CONTRACTS.md: §1 conventions|§2 routes, registry, admin actions|§3 /api/live|§4 /api/eventsub|§5 characters|§6 game rules|§7 config|§8 modules, signatures|§9 tests, build
 |TWITCH_SETUP.md: Twitch app, EventSub chat, PixFray bot account
 |SELF_HOSTING.md: site.config.js, Twitch app, secrets, deploy, limits
 |DEVELOPMENT.md: local dev, test suites, TypeScript programs, live chat env vars
 |DEVTOOLS.md: test-site tools (bot fighters, scripted duels, alt account in real chat, OBS)
 |LIVE_FIX.md: release flow, owner page fix/deploy/rollback, backups
 |ASSET_LICENSES.md, CHARACTER_RESERVE.md: character and font sources|PROGRESSION_PLAN.md: historical
-[Code]|server/: worker.ts routes|http.ts replies|channel.ts ChannelRoom|room-routes.ts routes, admin|room-bot.ts chat|room-economy.ts shop|room-shared.ts|game.ts rules, config|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts sprites.ts developer.ts security.ts ratelimit.ts dedupe.ts tracker.ts|points.ts|upgrades.ts pets.ts cosmetics.ts
+[Code]|server/: worker.ts routes|http.ts replies|channel.ts ChannelRoom|room-routes.ts routes, admin|room-bot.ts chat|room-economy.ts shop|room-shared.ts|game.ts rules, config|eventsub.ts webhooks, slimEvent, sendChat|auth.ts sessions, Helix mod checks|channels.ts registry|botcommands.ts|streamelements.ts|uploads.ts sprites.ts developer.ts security.ts ratelimit.ts dedupe.ts tracker.ts points.ts upgrades.ts pets.ts cosmetics.ts
 |src/: admin.ts admin/ mod page|dashboard.ts dashboard/ fighter page|start.ts sign-up|setup.ts|intro/ home page 3D|scrub.ts|sprite-maker.ts spritify.ts autosprite.ts|fighter3d.ts voxthumb.ts
-|src/served/: overlay.ts|text.ts helpers|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
+|src/served/: overlay.ts entry, overlay-*.ts|pixels.ts canvas|text.ts helpers|arena-client.ts|chat.ts IRC|public/: overlay.html|dashboard.css tokens
 |tests/: *.test.ts unit|fakes.ts worker-fakes.ts doubles|smoke.ts|ui.ts arena-browser.ts|e2e-local.ts|chrome.ts
 |scripts/: strict-check.ts|devtools.ts|logs.ts|release.ts|live-chat-e2e.ts|test-all.ts|configure-twitch.ps1
 ```

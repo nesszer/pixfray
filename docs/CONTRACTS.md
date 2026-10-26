@@ -589,7 +589,10 @@ The channel Durable Object is split along these seams; each room module takes th
 | `server/room-routes.ts` | `route(room, request)`: the DO's paths in one `ROUTES` table plus `PREFIXES`; `ADMIN_ACTIONS` and `ADMIN_PAYLOADS` tables for `POST /admin`; profile save, sprites, leaderboard |
 | `server/room-bot.ts` | `botCommand` (the one `BOT_TARGET_ACTIONS` check), `QUICK_COMMANDS` shared by the bot and dev chat, `processChatMessage`, custom commands, result and expiry lines |
 | `server/room-economy.ts` | `checkin`, wallet, `give`, shop `buy` and builds, pets, `payDuels`, the live-stream lookup |
-| `server/room-shared.ts` | Row and message types, profile reads and writes, `json`, `own`, `errorText` |
+| `server/room-shared.ts` | Row and message types, profile reads and writes, `own`, `errorText` |
+| `src/served/overlay.ts` | Overlay entry; `overlay-stage`, `-sprites`, `-move`, `-duels`, `-fx`, `-draw`, `-sync` (version reload), `-demo`; `pixels.ts` canvas helpers (`opaqueBox`, `drawGrid`, `Frame`), also used by `src/ui.ts` |
+| `src/intro/main.ts` | Home page entry; `page.ts` the page without 3D (loader, ladder, scroll mapping), `film.ts` the post-processing pass, `world.ts` the arena scene |
+| `src/admin/characters.ts` | Uploads; takes `formatBytes` and `LIMITS` from `src/served/atlas.ts` |
 
 Keep these signatures; worker.ts and the room modules call them.
 
@@ -642,7 +645,7 @@ export function parseArenaSnapshot(value), parseLooksMessage(value), parseLook(v
 // parseDemoMessage answers null for a message with no demoPaused field (a browser extension's), which the demo
 // ignores without a warning; one with a demoPaused that isn't true or false still warns once
 // src/served/text.ts (Lane B, served as /text.js): the overlay's pure helpers, kept off the canvas for Node tests
-export function parseCap(value, fallback = 100), effectiveCap(urlCap, serverMax), parseCommand(text), sanitizeColor(value),
+export function channelName(value), parseCap(value, fallback = 100), effectiveCap(urlCap, serverMax), parseCommand(text), sanitizeColor(value),
   stripExtraMarks(text), truncateText(text, max, ellipsis = ""), clipName(text), readableColor(hex, minContrast?),
   overlayVersionFromUrl(url), overlayVersionFromHtml(html)
 // src/parse.ts (Lane B, bundled into the pages): /api/session, /api/access, the fighter page's profile, shop, state

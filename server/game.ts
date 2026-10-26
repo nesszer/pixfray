@@ -414,7 +414,7 @@ const freshCooldowns = (duel: Duel): Record<string, Cooldowns> => ({
 const QUICK_MAX_ROLLS = 12;
 // The overlay plays a quick duel out over seconds and the stream runs config.streamDelayMs behind chat, so until
 // revealAt chat, !elo, !ranks and the leaderboard keep pre-fight numbers (hiddenResults). Pacing mirrors
-// src/served/overlay.ts: walk-in up to 2.2 s, ~1.8 s per roll, and 0.5 s slack for a long 12-roll fight.
+// src/served/overlay-duels.ts: walk-in up to 2.2 s, ~1.8 s per roll, and 0.5 s slack for a long 12-roll fight.
 export const replayMs = (rolls: number): number => 2200 + 1800 * Math.max(1, rolls) + 500;
 const QUICK_FLAWLESS_BONUS = 3;
 const SLOT_ROLLS = 24;

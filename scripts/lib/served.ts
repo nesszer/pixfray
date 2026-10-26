@@ -1,7 +1,7 @@
 // The modules served at fixed URLs (/overlay.js, /hats.js, /upload.js, ...): their source is src/served/<name>.js or
 // .ts, and vite.config.ts serves each as plain JavaScript under /<name>.js. OBS keeps running cached code after a
 // reload, so the build adds ?v=<hash of the served code> to every reference between them and in public/*.html, and
-// the overlay compares that hash with the page's to reload itself (src/served/overlay.ts). Kept under scripts/, so
+// the overlay compares that hash with the page's to reload itself (src/served/overlay-sync.ts). Kept under scripts/, so
 // the owner editor can read it but never save it (server/developer.ts BUILD_FILE).
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
@@ -46,7 +46,7 @@ export function linkServed(text: string, names: readonly string[], version: stri
 
 /** One version for all served modules: the first 10 lowercase hex digits of a SHA-256 over each module's URL name
  * and served code with its imports linked unversioned, in name order, so `./x.ts` and `./x.js` hash alike. It
- * changes when served code or a served comment does; the overlay's check reads 6 to 64 hex digits (src/served/overlay.ts
+ * changes when served code or a served comment does; the overlay's check reads 6 to 64 hex digits (src/served/text.ts
  * overlayVersionFromUrl). */
 export function servedVersion(modules: readonly { name: string; code: string }[]): string {
   const hash = createHash("sha256"),
