@@ -117,6 +117,95 @@ async function stub(page: Page, { configured, calls = { progress: [] } }: StubOp
     miolafff: progress({ commandsWorking: 4, duelCommands: true, duelModuleOff: true, lastCommandAt: now - 120000 }),
     oldstreamer: progress({ source: "", rejectedAt: now - 60000 }),
   };
+  // answers for the dev API ops; the GitHub ones need the token (501 below without it)
+  const answers: Record<string, unknown> = {
+    diagnostics: diag(configured),
+    stats: {
+      channel: "nesszerra",
+      days: [
+        { day: "2026-10-16", counts: { requests: 1840, alarms: 212, event_challenge_created: 9, bot_sent: 31 } },
+        { day: "2026-10-15", counts: { requests: 2310, alarms: 260, bot_sent: 44 } },
+      ],
+    },
+    logs: [
+      {
+        id: 2,
+        at: now - 600000,
+        source: "room",
+        message: "room error",
+        context: { path: "/eventsub", method: "POST" },
+      },
+      {
+        id: 1,
+        at: now - 900000,
+        source: "worker",
+        message: "Unexpected token in JSON at position 0",
+        context: { path: "/api/profile/nesszerra" },
+      },
+    ],
+  };
+  const github: Record<string, unknown> = {
+    runs: [
+      {
+        id: 1,
+        title: "deploy test live-fix/overlay-text r1a2b3c4d5e",
+        status: "completed",
+        conclusion: "success",
+        branch: "live-fix/overlay-text",
+        createdAt: new Date(now - 1200000).toISOString(),
+        url: "https://github.com/",
+      },
+      {
+        id: 2,
+        title: "deploy production main r9f8e7d6c5b",
+        status: "in_progress",
+        conclusion: null,
+        branch: "main",
+        createdAt: new Date(now - 60000).toISOString(),
+        url: "https://github.com/",
+      },
+    ],
+    versions: {
+      production: {
+        script: "nesszerra-mini-chat",
+        deployments: [
+          {
+            id: "d",
+            createdOn: new Date(now - 60000).toISOString(),
+            message: "promote #7",
+            versions: [
+              { versionId: "5d1c9a3e-0000-4000-8000-000000000001", percentage: 90 },
+              { versionId: "4c0b8a2d-0000-4000-8000-000000000000", percentage: 10 },
+            ],
+          },
+        ],
+        versions: [
+          {
+            id: "4c0b8a2d-0000-4000-8000-000000000000",
+            number: 11,
+            tag: "gh-0a1b2c3-1200",
+            createdOn: new Date(now - 86400000).toISOString(),
+          },
+        ],
+      },
+      test: { script: "nesszerra-mini-chat-test", deployments: [], versions: [], error: "Cloudflare API error 404" },
+    },
+    "code/file": {
+      path: "src/served/overlay.js",
+      ref: "main",
+      sha: "a".repeat(40),
+      size: 120,
+      content: "// overlay\nconst size = 60;\nexport function draw(ctx) {\n  ctx.fillText('hello', 10, 10);\n}\n",
+    },
+    "code/save": {
+      ok: true,
+      path: "src/served/overlay.js",
+      branch: "live-fix/overlay-text",
+      branchCreated: true,
+      sha: "b".repeat(40),
+      commit: "c".repeat(40),
+    },
+  };
   await page.route("**/api/session", (r) =>
     json(r, { user: owner, owner: true, configured: true, channels: ["nesszerra"], productionEnabled: false }),
   );
@@ -124,7 +213,6 @@ async function stub(page: Page, { configured, calls = { progress: [] } }: StubOp
     const u = new URL(r.request().url()),
       op = u.pathname.slice("/api/dev/".length),
       method = r.request().method();
-    if (op === "diagnostics") return json(r, diag(configured));
     if (op === "settings" && method === "GET")
       return json(r, {
         config,
@@ -136,31 +224,7 @@ async function stub(page: Page, { configured, calls = { progress: [] } }: StubOp
         ],
       });
     if (op === "settings") return json(r, { ok: true });
-    if (op === "stats")
-      return json(r, {
-        channel: "nesszerra",
-        days: [
-          { day: "2026-10-16", counts: { requests: 1840, alarms: 212, event_challenge_created: 9, bot_sent: 31 } },
-          { day: "2026-10-15", counts: { requests: 2310, alarms: 260, bot_sent: 44 } },
-        ],
-      });
-    if (op === "logs")
-      return json(r, [
-        {
-          id: 2,
-          at: now - 600000,
-          source: "room",
-          message: "room error",
-          context: { path: "/eventsub", method: "POST" },
-        },
-        {
-          id: 1,
-          at: now - 900000,
-          source: "worker",
-          message: "Unexpected token in JSON at position 0",
-          context: { path: "/api/profile/nesszerra" },
-        },
-      ]);
+    if (Object.hasOwn(answers, op)) return json(r, answers[op]);
     if (op === "channels" && method === "POST") {
       // !: the page's channel actions always POST a JSON body
       const b: { action: string; login: string } = JSON.parse(r.request().postData()!);
@@ -190,70 +254,7 @@ async function stub(page: Page, { configured, calls = { progress: [] } }: StubOp
         },
         501,
       );
-    if (op === "runs")
-      return json(r, [
-        {
-          id: 1,
-          title: "deploy test live-fix/overlay-text r1a2b3c4d5e",
-          status: "completed",
-          conclusion: "success",
-          branch: "live-fix/overlay-text",
-          createdAt: new Date(now - 1200000).toISOString(),
-          url: "https://github.com/",
-        },
-        {
-          id: 2,
-          title: "deploy production main r9f8e7d6c5b",
-          status: "in_progress",
-          conclusion: null,
-          branch: "main",
-          createdAt: new Date(now - 60000).toISOString(),
-          url: "https://github.com/",
-        },
-      ]);
-    if (op === "versions")
-      return json(r, {
-        production: {
-          script: "nesszerra-mini-chat",
-          deployments: [
-            {
-              id: "d",
-              createdOn: new Date(now - 60000).toISOString(),
-              message: "promote #7",
-              versions: [
-                { versionId: "5d1c9a3e-0000-4000-8000-000000000001", percentage: 90 },
-                { versionId: "4c0b8a2d-0000-4000-8000-000000000000", percentage: 10 },
-              ],
-            },
-          ],
-          versions: [
-            {
-              id: "4c0b8a2d-0000-4000-8000-000000000000",
-              number: 11,
-              tag: "gh-0a1b2c3-1200",
-              createdOn: new Date(now - 86400000).toISOString(),
-            },
-          ],
-        },
-        test: { script: "nesszerra-mini-chat-test", deployments: [], versions: [], error: "Cloudflare API error 404" },
-      });
-    if (op === "code/file")
-      return json(r, {
-        path: "src/served/overlay.js",
-        ref: "main",
-        sha: "a".repeat(40),
-        size: 120,
-        content: "// overlay\nconst size = 60;\nexport function draw(ctx) {\n  ctx.fillText('hello', 10, 10);\n}\n",
-      });
-    if (op === "code/save")
-      return json(r, {
-        ok: true,
-        path: "src/served/overlay.js",
-        branch: "live-fix/overlay-text",
-        branchCreated: true,
-        sha: "b".repeat(40),
-        commit: "c".repeat(40),
-      });
+    if (Object.hasOwn(github, op)) return json(r, github[op]);
     if (op === "deploy") return json(r, { ok: true, requestId: "r0123456789" }, 202);
     return json(r, { error: "unexpected " + op }, 500);
   });
@@ -270,32 +271,42 @@ async function open(size: Size, setup?: OpenSetup) {
   await page.goto(base + "/admin/dev/", { waitUntil: "networkidle" });
   return { ctx, page };
 }
-async function noOverflow(page: Page, label: string) {
+// an element's text; page.textContent takes the first match
+async function text(page: Page, sel: string) {
+  const t = await page.textContent(sel);
+  assert.ok(t !== null, sel + " is on the page");
+  return t;
+}
+const waitText = (page: Page, sel: string, re: RegExp) =>
+  page.waitForFunction(
+    ([s, source, flags]) => new RegExp(source, flags).test(document.querySelector(s)?.textContent ?? ""),
+    [sel, re.source, re.flags] as const,
+  );
+// no sideways scroll, then a full-page screenshot
+async function shot(page: Page, name: string) {
   const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  assert.ok(wide <= 1, `${label}: page scrolls sideways by ${wide}px`);
+  assert.ok(wide <= 1, `${name}: page scrolls sideways by ${wide}px`);
+  await page.screenshot({ path: path.join(shots, `dev-${name}.png`), fullPage: true });
 }
 
 for (const size of sizes) {
   // 1. Real server, signed out: the gate offers Twitch sign-in and hides the app.
   let { ctx, page } = await open(size);
-  // !: the element is on the page, so its textContent is a string (also on the assertions right below)
-  assert.match((await page.textContent("#gate-text"))!, /Sign in with the nesszerra Twitch account/);
+  assert.match(await text(page, "#gate-text"), /Sign in with the nesszerra Twitch account/);
   assert.equal(
     await page.getAttribute("#gate-actions a", "href"),
     "/auth/login?next=%2Fadmin%2Fdev%2F",
     "signing in comes back to the owner page",
   );
   assert.equal(await page.isVisible("#app"), false);
-  await page.screenshot({ path: path.join(shots, `dev-signed-out-${size.name}.png`), fullPage: true });
+  await shot(page, `signed-out-${size.name}`);
   await ctx.close();
 
   // 2. Owner, integrations not configured: the editor and release steps are hidden, and the page points to the local CLI flow.
   ({ ctx, page } = await open(size, { stub: { configured: false } }));
   assert.equal(await page.isVisible("#app"), true);
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#summary-title"))!, /chat offline/);
-  // !: the element is on the page, so its textContent is a string
-  assert.match((await page.textContent("#github-missing"))!, /GITHUB_TOKEN, GITHUB_REPO/);
+  assert.match(await text(page, "#summary-title"), /chat offline/);
+  assert.match(await text(page, "#github-missing"), /GITHUB_TOKEN, GITHUB_REPO/);
   // lead counters first, then the rest by name; a day without a counter shows a dash
   assert.deepEqual(
     await page.$$eval("#stats tr", (trs: HTMLTableRowElement[]) => trs.map((t) => t.innerText.split("	").join(" "))),
@@ -309,45 +320,33 @@ for (const size of sizes) {
     true,
   ]);
   assert.equal(await page.$eval("#local-release", (p: HTMLElement) => p.hidden), false);
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#local-release"))!, /bunx cf deploy --mode test/);
+  assert.match(await text(page, "#local-release"), /bunx cf deploy --mode test/);
   assert.equal(await page.textContent("#dev-tools-title"), "Developer tools: raw settings and integrations");
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#s-requests-note"))!, /not configured/);
+  assert.match(await text(page, "#s-requests-note"), /not configured/);
   assert.equal(
     await page.$eval("#dev-tools", (d: HTMLDetailsElement) => d.open),
     false,
     "developer tools start folded",
   );
   assert.equal(await page.locator("#sec-codex, #codex-toggle").count(), 0);
-  await noOverflow(page, "unconfigured " + size.name);
-  await page.screenshot({ path: path.join(shots, `dev-unconfigured-${size.name}.png`), fullPage: true });
+  await shot(page, `unconfigured-${size.name}`);
   await ctx.close();
 
   // 3. Owner, everything configured: channel progress, then load, save and deploy in the developer tools.
   const calls = { progress: [] };
   ({ ctx, page } = await open(size, { stub: { configured: true, calls } }));
-  await page.waitForFunction(
-    // !: the owner page always has #channels-title
-    () => document.querySelector("#channels-title")!.textContent === "3 channels are on, 1 with setup done right now",
-  );
+  await waitText(page, "#channels-title", /^3 channels are on, 1 with setup done right now$/);
   assert.deepEqual(
     calls.progress,
     [["nesszerra", "miolafff"], ["oldstreamer"]],
     "progress is read in batches of progressBatch",
   );
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#channels"))!, /nesszerra.*Built in.*Done.*1 open.*Twitch chat.*1 min ago/s);
-  assert.match(
-    // !: the element is on the page, so its textContent is a string
-    (await page.textContent("#channels"))!,
+  for (const row of [
+    /nesszerra.*Built in.*Done.*1 open.*Twitch chat.*1 min ago/s,
     /miolafff.*2 of 3 steps.*Not open.*4 of 7 commands working.*2 min ago/s,
-  );
-  assert.match(
-    // !: the element is on the page, so its textContent is a string
-    (await page.textContent("#channels"))!,
     /oldstreamer.*On.*0 of 3 steps.*Old key: copy replies again.*never/s,
-  );
+  ])
+    assert.match(await text(page, "#channels"), row);
   assert.equal(
     await page.getAttribute("#channels tr:nth-child(3) a >> nth=0", "href"),
     "/admin/?channel=oldstreamer#chat",
@@ -366,31 +365,21 @@ for (const size of sizes) {
   );
   await page.click('a[href="#dev-tools"]');
   assert.equal(await page.$eval("#dev-tools", (d: HTMLDetailsElement) => d.open), true);
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#s-requests"))!, /18,234/);
-  // !: the element is on the page, so its textContent is a string
-  assert.match((await page.textContent("#runs"))!, /deploy test live-fix\/overlay-text/);
-  // !: the element is on the page, so its textContent is a string
-  assert.match((await page.textContent("#deployments"))!, /promote #7/);
+  assert.match(await text(page, "#s-requests"), /18,234/);
+  assert.match(await text(page, "#runs"), /deploy test live-fix\/overlay-text/);
+  assert.match(await text(page, "#deployments"), /promote #7/);
   await page.fill("#branch", "live-fix/overlay-text");
   await page.fill("#path", "src/served/overlay.js");
   await page.click("#load-file");
   // !: the owner page always has the #editor textarea
   await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("#editor")!.value.includes("overlay"));
   await page.click("#save-file");
-  await page.waitForFunction(() =>
-    // !: #code-status is on the page, and an element's textContent is a string, never null
-    /Saved to live-fix\/overlay-text/.test(document.querySelector("#code-status")!.textContent!),
-  );
+  await waitText(page, "#code-status", /Saved to live-fix\/overlay-text/);
   await page.click("#deploy-test");
-  await page.waitForFunction(() =>
-    // !: the element is on the page, so its textContent is a string
-    /Test deploy of live-fix\/overlay-text started/.test(document.querySelector("#release-status")!.textContent!),
-  );
+  await waitText(page, "#release-status", /Test deploy of live-fix\/overlay-text started/);
   page.on("dialog", (d) => d.accept());
   // Channels: the sign-up link to send a streamer, and turning a signed-up channel off.
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#channels"))!, /miolafff.*Built in/s);
+  assert.match(await text(page, "#channels"), /miolafff.*Built in/s);
   assert.deepEqual(await page.$$eval("#log-channel option", (o: HTMLOptionElement[]) => o.map((x) => x.value)), [
     "nesszerra",
     "miolafff",
@@ -400,13 +389,10 @@ for (const size of sizes) {
   assert.equal(await page.textContent("#signup-link"), base + "/start/");
   assert.equal(await page.locator("#invite-form, #invites").count(), 0, "no invite form or list");
   await page.click('#channels button:has-text("Turn off")');
-  // !: the element is on the page, so its textContent is a string
-  await page.waitForFunction(() => /oldstreamer is off/.test(document.querySelector("#channel-status")!.textContent!));
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#channels"))!, /oldstreamer.*Off \(by you\).*Turn on/s);
+  await waitText(page, "#channel-status", /oldstreamer is off/);
+  assert.match(await text(page, "#channels"), /oldstreamer.*Off \(by you\).*Turn on/s);
   await page.locator("#sec-channels").screenshot({ path: path.join(shots, `dev-channels-${size.name}.png`) });
-  await noOverflow(page, "configured " + size.name);
-  await page.screenshot({ path: path.join(shots, `dev-configured-${size.name}.png`), fullPage: true });
+  await shot(page, `configured-${size.name}`);
   await ctx.close();
 }
 
@@ -415,13 +401,10 @@ if (process.env.MINI_OWNER_COOKIE) {
   // !: sizes has two entries
   const { ctx, page } = await open(sizes[0]!, { cookie: process.env.MINI_OWNER_COOKIE });
   assert.equal(await page.isVisible("#app"), true);
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#github-missing"))!, /GITHUB_TOKEN/);
+  assert.match(await text(page, "#github-missing"), /GITHUB_TOKEN/);
   assert.equal(await page.$eval("#local-release", (p: HTMLElement) => p.hidden), false);
-  // !: an element's textContent, as above
-  assert.match((await page.textContent("#config-version"))!, /version \d+/);
-  // !: the element is on the page, so its textContent is a string
-  assert.match((await page.textContent("#channels"))!, /nesszerra.*Built in/s);
+  assert.match(await text(page, "#config-version"), /version \d+/);
+  assert.match(await text(page, "#channels"), /nesszerra.*Built in/s);
   await page.screenshot({ path: path.join(shots, "dev-real-owner-1280.png"), fullPage: true });
   await ctx.close();
 }
